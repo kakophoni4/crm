@@ -97,6 +97,22 @@ async def upsert_chat_for_bot(
     )
     found = existing.scalar_one_or_none()
     if found is not None:
+        await session.execute(
+            text(
+                """
+                UPDATE chats
+                SET assigned_group_id = :gid,
+                    assigned_department_id = :did,
+                    updated_at = now()
+                WHERE id = :chat_id
+                """
+            ),
+            {
+                "chat_id": int(found),
+                "gid": assigned_group_id,
+                "did": assigned_department_id,
+            },
+        )
         return int(found)
 
     insert = await session.execute(

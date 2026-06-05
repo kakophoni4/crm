@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.chats.filters import ChatListSort
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import ChatCreateRequest, ChatListResponse, ChatStatusPatchRequest
-from app.modules.chats.scope import can_view_chat, resolve_chats_read_permission
+from app.modules.chats.scope import can_view_chat_async, resolve_chats_read_permission
 from app.modules.chats.serialization import to_chat_detail, to_chat_list_item
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
@@ -194,7 +194,7 @@ class ChatService:
     async def _get_mutable_chat(self, actor: User, chat_id: int) -> Chat:
         ctx = await self._scope_loader.load(actor)
         chat = await self._repo.get_by_id(chat_id)
-        if chat is None or not can_view_chat(ctx, chat):
+        if chat is None or not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
         return chat
 

@@ -210,6 +210,70 @@ class BotRepository:
         )
         return [int(row[0]) for row in result.all()]
 
+    async def sync_chats_after_group_assignment(
+        self,
+        bot_id: int,
+        department_id: int,
+        group_ids: list[int],
+    ) -> None:
+        if len(group_ids) == 1:
+            group_id = group_ids[0]
+            await self._session.execute(
+                text(
+                    """
+                    INSERT INTO contact_group_assignments (
+                        contact_id, group_id, owner_user_id, assigned_at, assignment_source
+                    )
+                    SELECT DISTINCT
+                        c.contact_id,
+                        :new_gid,
+                        old_cga.owner_user_id,
+                        now(),
+                        'migration'
+                    FROM chats c
+                    JOIN contact_group_assignments old_cga
+                      ON old_cga.contact_id = c.contact_id
+                     AND old_cga.group_id = c.assigned_group_id
+                     AND old_cga.owner_user_id IS NOT NULL
+                    LEFT JOIN contact_group_assignments new_cga
+                      ON new_cga.contact_id = c.contact_id
+                     AND new_cga.group_id = :new_gid
+                    WHERE c.bot_id = :bid
+                      AND c.status != 'archived'
+                      AND c.assigned_group_id IS DISTINCT FROM :new_gid
+                      AND new_cga.id IS NULL
+                    ON CONFLICT (contact_id, group_id) DO NOTHING
+                    """
+                ),
+                {"new_gid": group_id, "bid": bot_id},
+            )
+            await self._session.execute(
+                text(
+                    """
+                    UPDATE chats
+                    SET assigned_group_id = :gid,
+                        assigned_department_id = :did,
+                        updated_at = now()
+                    WHERE bot_id = :bid AND status != 'archived'
+                    """
+                ),
+                {"gid": group_id, "did": department_id, "bid": bot_id},
+            )
+        else:
+            await self._session.execute(
+                text(
+                    """
+                    UPDATE chats
+                    SET assigned_group_id = NULL,
+                        assigned_department_id = :did,
+                        updated_at = now()
+                    WHERE bot_id = :bid AND status != 'archived'
+                    """
+                ),
+                {"did": department_id, "bid": bot_id},
+            )
+        await self._session.flush()
+
 
 class BotEventInboxRepository:
     def __init__(self, session: AsyncSession) -> None:

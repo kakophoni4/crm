@@ -9,7 +9,7 @@ from app.modules.audit.service import AuditService
 from app.modules.chats.repository import ChatRepository
 from app.modules.files.service import FilesService
 from app.modules.chats.schemas import AttachmentInput, OutboundMessageRequest
-from app.modules.chats.scope import can_view_chat
+from app.modules.chats.scope import can_view_chat_async
 from app.modules.chats.serialization import to_message_response
 from app.modules.chats.timeutil import utc_now
 from app.modules.chats.workflow_status import on_outbound_reply_to_client
@@ -122,13 +122,11 @@ class ChatMessagesService:
     ) -> dict[str, Any]:
         ctx = await self._scope_loader.load(actor)
         chat = await self._repo.get_by_id(chat_id)
-        if chat is None or not can_view_chat(ctx, chat):
+        if chat is None or not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
         if lead_id is not None:
             lead = await LeadRepository(self._session).get_by_id(lead_id)
             if lead is None or lead.contact_id != chat.contact_id:
-                raise NotFound(message="Lead not found")
-            if chat.assigned_group_id is not None and lead.group_id != chat.assigned_group_id:
                 raise NotFound(message="Lead not found")
         rows, next_cursor = await self._repo.list_messages(
             chat_id,
@@ -164,7 +162,7 @@ class ChatMessagesService:
 
         ctx = await self._scope_loader.load(actor)
         chat = await self._repo.get_by_id(chat_id)
-        if chat is None or not can_view_chat(ctx, chat):
+        if chat is None or not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
 
         takeover = await self._repo.get_active_takeover(chat_id)
@@ -368,7 +366,7 @@ class ChatMessagesService:
 
         ctx = await self._scope_loader.load(actor)
         chat = await self._repo.get_by_id(chat_id)
-        if chat is None or not can_view_chat(ctx, chat):
+        if chat is None or not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
 
         message = await self._repo.get_message_in_chat(chat_id, message_id)

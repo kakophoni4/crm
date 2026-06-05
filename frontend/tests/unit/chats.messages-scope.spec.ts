@@ -48,9 +48,18 @@ describe('chats message scope', () => {
     listMessagesMock.mockResolvedValue({ items: [{ id: 1, lead_id: 42 }], next_cursor: null })
   })
 
-  it('loads current lead messages with lead_id param', async () => {
+  it('loads all chat messages by default', async () => {
     const store = useChatsStore()
     await store.openChat(1)
+    expect(listMessagesMock).toHaveBeenCalledWith(1, { limit: 50, lead_id: undefined })
+  })
+
+  it('switches to current lead with lead_id param', async () => {
+    const store = useChatsStore()
+    await store.openChat(1)
+    listMessagesMock.mockClear()
+    listMessagesMock.mockResolvedValue({ items: [{ id: 1, lead_id: 42 }], next_cursor: null })
+    await store.setMessageScope('current_lead')
     expect(listMessagesMock).toHaveBeenCalledWith(1, { limit: 50, lead_id: 42 })
   })
 

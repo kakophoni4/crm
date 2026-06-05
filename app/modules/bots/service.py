@@ -192,6 +192,11 @@ class BotService:
             bot.owner_type = BotOwnerType.DEPARTMENT
             bot.owner_id = new_department_id
             await self._repo.replace_group_assignments(bot.id, [])
+            await self._repo.sync_chats_after_group_assignment(
+                bot.id,
+                new_department_id,
+                [],
+            )
 
         if body.outbound_url is not None:
             bot.outbound_url = body.outbound_url
@@ -231,6 +236,11 @@ class BotService:
 
         await self._repo.replace_group_assignments(bot.id, valid_group_ids)
         await self._sync_owner_from_assignments(bot)
+        await self._repo.sync_chats_after_group_assignment(
+            bot.id,
+            bot.department_id,
+            valid_group_ids,
+        )
         await self._repo.save(bot)
         await self._session.commit()
         row = await self._repo.get_list_row(bot.id)

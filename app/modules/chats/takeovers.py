@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.repository import ChatRepository
-from app.modules.chats.scope import can_view_chat, chat_department_id
+from app.modules.chats.scope import can_view_chat_async, chat_department_id
 from app.modules.chats.serialization import to_takeover_response
 from app.modules.chats.timeutil import utc_now
 from app.modules.contacts.scope_loader import ScopeLoader
@@ -46,7 +46,7 @@ class ChatTakeoversService:
         if not self._can_takeover_department(actor, dept_id):
             raise PermissionDenied(message="Takeover allowed only in your department")
 
-        if not can_view_chat(ctx, chat):
+        if not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
 
         active = await self._repo.get_active_takeover(chat_id)

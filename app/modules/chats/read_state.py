@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.repository import ChatRepository
-from app.modules.chats.scope import can_view_chat
+from app.modules.chats.scope import can_view_chat_async
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.chat_read_state import ChatReadState
@@ -38,7 +38,7 @@ class ChatReadStateService:
     ) -> dict[str, int | str | None]:
         ctx = await self._scope_loader.load(actor)
         chat = await self._repo.get_by_id(chat_id)
-        if chat is None or not can_view_chat(ctx, chat):
+        if chat is None or not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
 
         latest_id = await self._latest_message_id(chat_id)

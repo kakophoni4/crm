@@ -42,7 +42,7 @@ export const useChatsStore = defineStore('chats', () => {
   const messages = ref<ChatMessage[]>([])
   const messagesLoading = ref(false)
   const messagesNextCursor = ref<string | null>(null)
-  const messageScope = ref<MessageScope>('current_lead')
+  const messageScope = ref<MessageScope>('all')
   const leadClosedBanner = ref(false)
 
   const typingByChatId = ref<Record<number, boolean>>({})
@@ -459,7 +459,7 @@ export const useChatsStore = defineStore('chats', () => {
     leadClosedBanner.value = false
     currentChatId.value = chatId
     clearHighlight(chatId)
-    messageScope.value = 'current_lead'
+    messageScope.value = 'all'
 
     const cached = listItems.value.find((c) => c.id === chatId)
     currentChat.value = cached ? ({ ...cached } as ChatDetail) : null
@@ -524,7 +524,7 @@ export const useChatsStore = defineStore('chats', () => {
     currentChat.value = null
     messages.value = []
     messagesNextCursor.value = null
-    messageScope.value = 'current_lead'
+    messageScope.value = 'all'
   }
 
   async function loadOlderMessages(): Promise<void> {

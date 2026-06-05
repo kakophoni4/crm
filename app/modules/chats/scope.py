@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import ColumnElement, or_
+from sqlalchemy import ColumnElement, exists, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.bots.repository import BotRepository
+from app.modules.db.models.bot_group_assignment import BotGroupAssignment
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import UserRole
 from app.modules.db.models.user import User
@@ -27,13 +30,26 @@ def resolve_chats_read_permission(actor: User) -> Permission:
     return Permission.CHATS_READ_OWN
 
 
+def _bot_assigned_to_groups(group_ids: set[int]) -> ColumnElement[bool]:
+    return exists(
+        select(1).where(
+            BotGroupAssignment.bot_id == Chat.bot_id,
+            BotGroupAssignment.group_id.in_(group_ids),
+            Chat.bot_id.isnot(None),
+        ),
+    )
+
+
 def _user_group_chat_clause(ctx: ScopeContext) -> ColumnElement[bool] | None:
     group_ids = visible_group_ids(ctx)
     if group_ids == SCOPE_ALL:
         return None
     if not isinstance(group_ids, set) or not group_ids:
         return Chat.id == -1
-    return Chat.assigned_group_id.in_(group_ids)
+    return or_(
+        Chat.assigned_group_id.in_(group_ids),
+        _bot_assigned_to_groups(group_ids),
+    )
 
 
 def chat_visibility_clause(ctx: ScopeContext, perm: Permission) -> ColumnElement[bool] | None:
@@ -64,9 +80,28 @@ def chat_visibility_clause(ctx: ScopeContext, perm: Permission) -> ColumnElement
         ]
         if dept_group_ids:
             clauses.append(Chat.assigned_group_id.in_(dept_group_ids))
+            clauses.append(_bot_assigned_to_groups(dept_group_ids))
         return or_(*clauses)
 
     return Chat.id == -1
+
+
+async def can_view_chat_async(
+    session: AsyncSession,
+    ctx: ScopeContext,
+    chat: Chat,
+) -> bool:
+    if can_view_chat(ctx, chat):
+        return True
+    if chat.bot_id is None:
+        return False
+    group_ids = visible_group_ids(ctx)
+    if group_ids == SCOPE_ALL:
+        return True
+    if not isinstance(group_ids, set) or not group_ids:
+        return False
+    assigned = await BotRepository(session).list_assigned_group_ids(chat.bot_id)
+    return bool(set(assigned) & group_ids)
 
 
 def can_view_chat(ctx: ScopeContext, chat: Chat) -> bool:
@@ -81,7 +116,9 @@ def can_view_chat(ctx: ScopeContext, chat: Chat) -> bool:
                 return True
             if not isinstance(group_ids, set):
                 return False
-            return chat.assigned_group_id in group_ids if chat.assigned_group_id else False
+            if chat.assigned_group_id in group_ids if chat.assigned_group_id else False:
+                return True
+            return False
         return chat.assigned_user_id == ctx.actor.id
     if perm == Permission.CHATS_READ_GROUP:
         group_ids = visible_group_ids(ctx)
@@ -89,7 +126,9 @@ def can_view_chat(ctx: ScopeContext, chat: Chat) -> bool:
             return True
         if not isinstance(group_ids, set):
             return False
-        return chat.assigned_group_id in group_ids if chat.assigned_group_id else False
+        if chat.assigned_group_id in group_ids if chat.assigned_group_id else False:
+            return True
+        return False
     if perm == Permission.CHATS_READ_DEPARTMENT:
         dept_ids = visible_department_ids(ctx)
         if dept_ids == SCOPE_ALL:
@@ -108,7 +147,8 @@ def can_view_chat(ctx: ScopeContext, chat: Chat) -> bool:
 
 def visible_chat_ids(ctx: ScopeContext) -> str:
     """Returns resolved read permission slug for repository scoping."""
-    return resolve_chats_read_permission(ctx.actor).value
+    perm = resolve_chats_read_permission(ctx.actor)
+    return perm.value
 
 
 def chat_department_id(chat: Chat) -> int | None:
