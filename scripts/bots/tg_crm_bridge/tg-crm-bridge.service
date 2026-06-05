@@ -1,0 +1,14 @@
+[Unit]
+Description=CRM Telegram bridge (TG <-> CRM)
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/crm-bots
+EnvironmentFile=/root/crm-bots/.env
+ExecStart=/root/crm-bots/venv/bin/python /root/crm-bots/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

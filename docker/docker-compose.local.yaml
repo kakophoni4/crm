@@ -1,0 +1,12 @@
+# Local smoke overlay — HTTP ports without Traefik (do not pass --profile with-proxy).
+#   docker compose -f docker/docker-compose.staging.yaml -f docker/docker-compose.local.yaml \
+#     --env-file deploy/.env.staging up -d --build
+
+services:
+  api:
+    ports:
+      - "8000:8000"
+
+  frontend:
+    ports:
+      - "${FRONTEND_LOCAL_PORT:-8080}:80"

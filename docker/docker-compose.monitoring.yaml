@@ -1,0 +1,95 @@
+# Observability stack (dev): Prometheus + Grafana + optional API for /metrics scrape.
+# Requires crm-net from docker-compose.dev.yaml:
+#   docker compose -f docker/docker-compose.dev.yaml -f docker/docker-compose.monitoring.yaml up -d
+#
+# Do NOT use admin/admin outside local dev. Production: Alertmanager + secrets (phase 7).
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: crm-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --web.enable-admin-api
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - crm-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: crm-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - crm-net
+
+  # Dev-only scrape target (api-metrics:8000). On staging/prod, Prometheus scrapes the real `api` service.
+  # Skip if you run uvicorn on the host: set target host.docker.internal:8000 in prometheus.yml.
+  api-metrics:
+    image: python:3.12-slim
+    container_name: crm-api-metrics
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ..:/app
+    environment:
+      APP_ENV: dev
+      METRICS_ENABLED: "true"
+      DATABASE_URL: postgresql+asyncpg://crm:crm@crm-postgres:5432/crm
+      REDIS_URL: redis://crm-redis:6379/0
+      S3_ENDPOINT: http://crm-minio:9000
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: miniominio
+      JWT_SECRET: changeme_dev_secret_min_32_chars_xxxxxx
+      PGCRYPTO_KEY: changeme_dev_pgcrypto_key
+      SMTP_HOST: crm-mailhog
+      SMTP_PORT: "1025"
+    command: >
+      sh -c "pip install -q -e '.[dev]' &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    networks:
+      - crm-net
+
+networks:
+  crm-net:
+    name: crm-net
+
+volumes:
+  prometheus-data:
+    name: crm-prometheus-data
+  grafana-data:
+    name: crm-grafana-data

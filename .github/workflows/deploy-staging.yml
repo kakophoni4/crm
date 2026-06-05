@@ -1,0 +1,71 @@
+name: Deploy Staging
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Docker Build]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_KEY }}
+
+      - name: Add staging host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.STAGING_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pull and restart stack
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_SSH_USER }}
+          STAGING_PATH: ${{ secrets.STAGING_PATH }}
+        run: |
+          set -euo pipefail
+          COMPOSE_FILES="-f docker/docker-compose.staging.yaml"
+          if ssh "${STAGING_USER}@${STAGING_HOST}" \
+            "test -f '${STAGING_PATH}/deploy/staging/docker-compose.override.yaml'"; then
+            COMPOSE_FILES="${COMPOSE_FILES} -f deploy/staging/docker-compose.override.yaml"
+          fi
+          ssh "${STAGING_USER}@${STAGING_HOST}" \
+            "set -euo pipefail && cd '${STAGING_PATH}' && \
+            docker compose ${COMPOSE_FILES} --env-file deploy/.env.staging \
+              --profile with-proxy pull api worker frontend && \
+            docker compose ${COMPOSE_FILES} --env-file deploy/.env.staging \
+              --profile with-proxy up -d"
+
+      - name: Post-deploy smoke
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_SSH_USER }}
+          STAGING_PATH: ${{ secrets.STAGING_PATH }}
+          STAGING_SMOKE_API_URL: ${{ secrets.STAGING_SMOKE_API_URL }}
+          STAGING_SMOKE_APP_URL: ${{ secrets.STAGING_SMOKE_APP_URL }}
+        run: |
+          set -euo pipefail
+          SMOKE_URL_OVERRIDE=""
+          if [[ -n "${STAGING_SMOKE_API_URL}" && -n "${STAGING_SMOKE_APP_URL}" ]]; then
+            SMOKE_URL_OVERRIDE="export BASE_URL='${STAGING_SMOKE_API_URL}' FRONTEND_URL='${STAGING_SMOKE_APP_URL}' &&"
+          fi
+          SMOKE_PREFIX="set -a && . deploy/.env.staging && set +a && ${SMOKE_URL_OVERRIDE} \
+            export BASE_URL=\${BASE_URL:-https://api.\${DOMAIN}} && \
+            export FRONTEND_URL=\${FRONTEND_URL:-https://app.\${DOMAIN}} && \
+            export SMOKE_EMAIL=\${SMOKE_EMAIL:-\${SEED_ADMIN_EMAIL}} && \
+            export SMOKE_PASSWORD=\${SMOKE_PASSWORD:-\${SEED_ADMIN_PASSWORD}} && \
+            export METRICS_ENABLED=\${METRICS_ENABLED:-true} && \
+            export SMOKE_TLS_INSECURE=\${SMOKE_TLS_INSECURE:-true} &&"
+          ssh "${STAGING_USER}@${STAGING_HOST}" \
+            "set -euo pipefail && cd '${STAGING_PATH}' && ${SMOKE_PREFIX} \
+            chmod +x scripts/smoke/staging_smoke.sh && ./scripts/smoke/staging_smoke.sh"

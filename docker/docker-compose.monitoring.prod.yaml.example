@@ -1,0 +1,47 @@
+# Production/staging monitoring overlay: Alertmanager + Prometheus notifications.
+# Prefer deploy/docker-compose.monitoring.prod.yaml.example (paths from repo root via deploy/).
+# This file is kept for backward compatibility when merging from docker/ directory only.
+#
+#   cp docker/docker-compose.monitoring.prod.yaml.example deploy/prod/docker-compose.monitoring.override.yaml
+#   cp docker/alertmanager/alertmanager.yml.example docker/alertmanager/alertmanager.yml
+#
+# See docs/OBSERVABILITY.md
+
+services:
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: crm-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    networks:
+      - crm-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    volumes:
+      - ./prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./prometheus/alerts.smoke.yml:/etc/prometheus/alerts.smoke.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+
+volumes:
+  alertmanager-data:
+    name: crm-alertmanager-data
+
+networks:
+  crm-net:
+    external: true

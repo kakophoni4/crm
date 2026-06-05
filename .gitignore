@@ -1,0 +1,17 @@
+.env
+deploy/.env.staging
+deploy/.env.prod
+.secrets/
+docker/alertmanager/alertmanager.yml
+.venv/
+__pycache__/
+node_modules/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store

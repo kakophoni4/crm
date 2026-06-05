@@ -1,0 +1,18 @@
+# Optional smoke alert for staging observability validation.
+# Fires immediately; route to webhook receiver in alertmanager.yml.
+# Remove alerts.smoke.yml from rule_files in prod if you do not want a permanent test alert.
+
+groups:
+  - name: crm_observability_smoke
+    rules:
+      - alert: ObservabilitySmokeTest
+        expr: vector(1)
+        for: 1m
+        labels:
+          severity: info
+          service: crm-api
+        annotations:
+          summary: Staging observability smoke test alert
+          description: >
+            Intentional always-firing alert for Alertmanager routing checks.
+            Disable by removing alerts.smoke.yml from Prometheus rule_files on production.

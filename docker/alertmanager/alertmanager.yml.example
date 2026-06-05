@@ -1,0 +1,56 @@
+# Copy to alertmanager/alertmanager.yml (gitignored) and configure receivers.
+# Do not commit webhook URLs, bot tokens, or SMTP passwords.
+# Docs: https://prometheus.io/docs/alerting/latest/configuration/
+
+global:
+  resolve_timeout: 5m
+  # smtp_smarthost: 'smtp.example.com:587'
+  # smtp_from: 'alertmanager@example.com'
+  # smtp_auth_username: 'alertmanager@example.com'
+  # smtp_auth_password_file: /etc/alertmanager/smtp_password
+
+route:
+  receiver: default
+  group_by: ["alertname", "service", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Staging smoke test → dedicated receiver (webhook placeholder)
+    - matchers:
+        - alertname="ObservabilitySmokeTest"
+      receiver: staging-smoke
+      repeat_interval: 30m
+      continue: false
+    - matchers:
+        - severity="critical"
+      receiver: oncall
+      continue: true
+    - matchers:
+        - severity="warning"
+      receiver: default
+
+receivers:
+  - name: default
+    # webhook_configs:
+    #   - url: "https://hooks.example.com/crm-alerts-default"
+    #     send_resolved: true
+
+  - name: staging-smoke
+    # Uncomment for staging smoke (Slack/Telegram gateway, etc.):
+    # webhook_configs:
+    #   - url: "https://hooks.example.com/crm-staging-observability-smoke"
+    #     send_resolved: true
+
+  - name: oncall
+    # email_configs:
+    #   - to: "oncall@example.com"
+    #     send_resolved: true
+    # webhook_configs:
+    #   - url: "https://hooks.example.com/crm-oncall"
+    #     send_resolved: true
+
+inhibit_rules:
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: ["alertname", "service"]

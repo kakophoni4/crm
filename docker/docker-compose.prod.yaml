@@ -1,0 +1,68 @@
+# CRM Chat Center — production overrides (use with staging base file).
+#
+#   cp deploy/env.prod.example deploy/.env.prod
+#   docker compose -f docker/docker-compose.staging.yaml -f docker/docker-compose.prod.yaml \
+#     --env-file deploy/.env.prod --profile with-proxy up -d --build
+#
+# Differences vs staging-only:
+#   - Let's Encrypt production CA (ACME_CA_SERVER unset → production directory)
+#   - restart: always on all services
+#   - memory limits on app tier and data stores
+#   - no SEED_ADMIN_* (set only in staging env)
+#   - adminer / mailhog are not part of this stack
+
+name: crm-prod
+
+services:
+  traefik:
+    restart: always
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=crm-staging-net
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?ACME_EMAIL is required}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    mem_limit: 256m
+
+  postgres:
+    restart: always
+    mem_limit: 1g
+
+  redis:
+    restart: always
+    mem_limit: 256m
+
+  minio:
+    restart: always
+    mem_limit: 512m
+
+  api:
+    restart: always
+    mem_limit: 768m
+    environment:
+      APP_ENV: production
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SEED_ADMIN_EMAIL: ""
+      SEED_ADMIN_PASSWORD: ""
+
+  worker:
+    restart: always
+    mem_limit: 512m
+
+  frontend:
+    restart: always
+    mem_limit: 128m
+
+volumes:
+  staging-pgdata:
+    name: crm-prod-pgdata
+  staging-miniodata:
+    name: crm-prod-miniodata
+  traefik-letsencrypt:
+    name: crm-prod-traefik-le

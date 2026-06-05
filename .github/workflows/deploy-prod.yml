@@ -1,0 +1,71 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image tag to deploy (git SHA, latest, or vX.Y.Z)"
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+
+      - name: Add production host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.PROD_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pull and restart stack
+        env:
+          PROD_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_PATH: ${{ secrets.PROD_PATH }}
+          CRM_IMAGE_TAG: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          COMPOSE_FILES="-f docker/docker-compose.staging.yaml -f docker/docker-compose.prod.yaml"
+          if ssh "${PROD_USER}@${PROD_HOST}" \
+            "test -f '${PROD_PATH}/deploy/prod/docker-compose.override.yaml'"; then
+            COMPOSE_FILES="${COMPOSE_FILES} -f deploy/prod/docker-compose.override.yaml"
+          fi
+          ssh "${PROD_USER}@${PROD_HOST}" \
+            "set -euo pipefail && cd '${PROD_PATH}' && \
+            export CRM_IMAGE_TAG='${CRM_IMAGE_TAG}' && \
+            docker compose ${COMPOSE_FILES} --env-file deploy/.env.prod \
+              --profile with-proxy pull api worker frontend && \
+            docker compose ${COMPOSE_FILES} --env-file deploy/.env.prod \
+              --profile with-proxy up -d"
+
+      - name: Post-deploy smoke
+        env:
+          PROD_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_PATH: ${{ secrets.PROD_PATH }}
+          PROD_SMOKE_API_URL: ${{ secrets.PROD_SMOKE_API_URL }}
+          PROD_SMOKE_APP_URL: ${{ secrets.PROD_SMOKE_APP_URL }}
+        run: |
+          set -euo pipefail
+          SMOKE_URL_OVERRIDE=""
+          if [[ -n "${PROD_SMOKE_API_URL}" && -n "${PROD_SMOKE_APP_URL}" ]]; then
+            SMOKE_URL_OVERRIDE="export BASE_URL='${PROD_SMOKE_API_URL}' FRONTEND_URL='${PROD_SMOKE_APP_URL}' &&"
+          fi
+          SMOKE_PREFIX="set -a && . deploy/.env.prod && set +a && ${SMOKE_URL_OVERRIDE} \
+            export BASE_URL=\${BASE_URL:-https://api.\${DOMAIN}} && \
+            export FRONTEND_URL=\${FRONTEND_URL:-https://app.\${DOMAIN}} && \
+            export SMOKE_EMAIL=\${SMOKE_EMAIL:-\${SEED_ADMIN_EMAIL}} && \
+            export SMOKE_PASSWORD=\${SMOKE_PASSWORD:-\${SEED_ADMIN_PASSWORD}} && \
+            export METRICS_ENABLED=\${METRICS_ENABLED:-true} && \
+            unset SMOKE_TLS_INSECURE &&"
+          ssh "${PROD_USER}@${PROD_HOST}" \
+            "set -euo pipefail && cd '${PROD_PATH}' && ${SMOKE_PREFIX} \
+            chmod +x scripts/smoke/staging_smoke.sh && ./scripts/smoke/staging_smoke.sh"

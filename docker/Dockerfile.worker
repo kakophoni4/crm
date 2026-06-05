@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+# CRM Chat Center — background workers (standalone image, no local API image dependency)
+
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY app ./app
+
+RUN pip install --upgrade pip \
+    && pip install .
+
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin appuser
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser pyproject.toml README.md ./
+
+USER appuser
+
+CMD ["python", "-m", "app.workers.run"]

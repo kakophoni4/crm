@@ -1,0 +1,17 @@
+# Monitoring overlay for staging/prod stack (joins crm-staging-net).
+#   docker compose -f docker/docker-compose.staging.yaml \
+#     -f docker/docker-compose.monitoring.yaml \
+#     -f docker/docker-compose.monitoring.staging.yaml \
+#     -f deploy/prod/docker-compose.monitoring.override.yaml \
+#     --env-file deploy/.env.staging --profile with-proxy up -d
+#
+# Prometheus scrapes staging `api:8000` (not dev `api-metrics`).
+
+services:
+  api-metrics:
+    profiles: ["dev-metrics-only"]
+
+networks:
+  crm-net:
+    name: crm-staging-net
+    external: true

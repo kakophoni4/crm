@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+from typing import Any
+
+import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.bots.chats_bridge import (
+    IngestResult,
+    insert_inbound_message,
+    update_contact_telegram_fields,
+    update_inbound_message_edited,
+    upsert_chat_for_bot,
+    upsert_contact_from_telegram,
+)
+from app.modules.bots.ownership_bridge import handle_inbound_ownership
+from app.modules.bots.repository import BotEventInboxRepository, BotRepository
+from app.modules.contacts.status_automation import apply_auto_contact_status
+from app.modules.db.models.bot import Bot
+from app.modules.db.models.contact import Contact
+from app.modules.db.models.department import Department
+from app.modules.db.models.enums import BotOwnerType, UserRole
+from app.modules.db.models.group import Group
+from app.modules.db.models.user import User
+from app.modules.leads.department_inbox import get_or_create_department_inbox_group
+from app.modules.leads.service import LeadService
+from app.realtime.events import publish
+from app.shared.db import get_session_factory
+from app.workers.bots.queue import enqueue
+
+logger = structlog.get_logger(__name__)
+
+
+async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
+    event_id = str(payload.get("event_id", ""))
+    if not event_id:
+        return
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        inbox_repo = BotEventInboxRepository(session)
+        row = await inbox_repo.get_for_processing(event_id)
+        if row is None:
+            return
+        if row.status == "done":
+            return
+        if row.status == "processing":
+            return
+
+        await inbox_repo.mark_processing(row)
+        await session.commit()
+
+        try:
+            bot_repo = BotRepository(session)
+            bot = await bot_repo.get_by_id(row.bot_id)
+            if bot is None:
+                raise RuntimeError("bot not found")
+
+            envelope = row.payload
+            event_type = str(envelope.get("event", ""))
+            inner = envelope.get("payload") or {}
+
+            if event_type == "message.received":
+                result = await _handle_message_received(session, bot, envelope, inner)
+                for idx in result.attachment_indices:
+                    await enqueue(
+                        "download_attachment",
+                        {"message_id": result.message_id, "attachment_index": idx},
+                    )
+                await publish(
+                    "chat.message.inbound",
+                    {
+                        "chat_id": result.chat_id,
+                        "message_id": result.message_id,
+                        "contact_id": result.contact_id,
+                        "bot_code": bot.code,
+                    },
+                )
+            elif event_type == "message.edited":
+                await _handle_message_edited(session, bot, inner)
+            elif event_type == "contact.updated":
+                contact = inner
+                await update_contact_telegram_fields(
+                    session,
+                    telegram_user_id=int(contact["telegram_user_id"]),
+                    telegram_username=contact.get("telegram_username"),
+                    first_name=contact.get("first_name"),
+                    last_name=contact.get("last_name"),
+                )
+            else:
+                logger.info("bot_event_ignored", event_type=event_type, event_id=event_id)
+
+            await inbox_repo.mark_done(row)
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            async with session_factory() as fail_session:
+                fail_row = await BotEventInboxRepository(fail_session).get_for_processing(event_id)
+                if fail_row is not None:
+                    await BotEventInboxRepository(fail_session).mark_failed(fail_row, str(exc))
+                    await fail_session.commit()
+            logger.exception("process_bot_event_failed", event_id=event_id)
+            raise
+
+
+async def _resolve_created_by(session: AsyncSession, bot: Bot) -> int:
+    head: int | None = None
+    if bot.owner_type == BotOwnerType.GROUP:
+        result = await session.execute(
+            select(Department.head_user_id)
+            .join(Group, Group.department_id == Department.id)
+            .where(Group.id == bot.owner_id),
+        )
+        head = result.scalar_one_or_none()
+    elif bot.owner_type == BotOwnerType.DEPARTMENT:
+        result = await session.execute(
+            select(Department.head_user_id).where(Department.id == bot.owner_id),
+        )
+        head = result.scalar_one_or_none()
+
+    if head is not None:
+        return int(head)
+
+    admin_row = await session.execute(
+        select(User.id).where(User.role == UserRole.ADMIN).order_by(User.id).limit(1),
+    )
+    admin_id = admin_row.scalar_one_or_none()
+    if admin_id is None:
+        raise RuntimeError("no admin user found in database")
+    return int(admin_id)
+
+
+async def _handle_message_received(
+    session: Any,
+    bot: Bot,
+    envelope: dict[str, Any],
+    inner: dict[str, Any],
+) -> IngestResult:
+    contact_data = inner["contact"]
+    message_data = inner["message"]
+    created_by = await _resolve_created_by(session, bot)
+
+    contact_id = await upsert_contact_from_telegram(
+        session,
+        telegram_user_id=int(contact_data["telegram_user_id"]),
+        telegram_username=contact_data.get("telegram_username"),
+        first_name=contact_data.get("first_name"),
+        last_name=contact_data.get("last_name"),
+        created_by=created_by,
+    )
+    chat_id = await upsert_chat_for_bot(
+        session,
+        contact_id=contact_id,
+        bot_id=bot.id,
+        owner_type=BotOwnerType(bot.owner_type),
+        owner_id=bot.owner_id,
+    )
+    contact_row = await session.get(Contact, contact_id)
+    if contact_row is not None:
+        await apply_auto_contact_status(session, contact_row, bot_id=bot.id)
+    lead_id: int | None = None
+    if bot.owner_type == BotOwnerType.GROUP:
+        group_id = bot.owner_id
+    else:
+        group_id = await get_or_create_department_inbox_group(
+            session,
+            bot.owner_id,
+            created_by=created_by,
+        )
+
+    lead = await LeadService(session).ensure_open_lead(
+        contact_id=contact_id,
+        group_id=group_id,
+        bot_id=bot.id,
+        chat_id=chat_id,
+    )
+    lead_id = lead.id
+    await handle_inbound_ownership(
+        session,
+        contact_id=contact_id,
+        group_id=group_id,
+        chat_id=chat_id,
+    )
+    return await insert_inbound_message(
+        session,
+        chat_id=chat_id,
+        lead_id=lead_id,
+        text_body=message_data.get("text"),
+        external_message_id=str(message_data["external_id"]),
+        external_event_id=str(envelope.get("event_id", "")),
+        attachments=list(message_data.get("attachments") or []),
+        reply_to_external_id=message_data.get("reply_to_external_id"),
+    )
+
+
+async def _handle_message_edited(session: Any, bot: Bot, inner: dict[str, Any]) -> None:
+    message_data = inner.get("message") or inner
+    await update_inbound_message_edited(
+        session,
+        bot_id=bot.id,
+        external_message_id=str(message_data["external_id"]),
+        text_body=message_data.get("text"),
+    )

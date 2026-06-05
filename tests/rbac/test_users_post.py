@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_admin_post_users_returns_201(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    db_ready: None,
+) -> None:
+    dept = await client.post(
+        "/api/v1/departments",
+        headers=admin_headers,
+        json={"name": f"RBAC Dept {uuid.uuid4().hex[:6]}"},
+    )
+    assert dept.status_code == 201, dept.text
+    dept_id = dept.json()["id"]
+    group = await client.post(
+        "/api/v1/groups",
+        headers=admin_headers,
+        json={"name": "RBAC Group", "department_id": dept_id},
+    )
+    assert group.status_code == 201, group.text
+    group_id = group.json()["id"]
+    username = f"admin_created_{uuid.uuid4().hex[:8]}"
+    response = await client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={
+            "username": username,
+            "full_name": "Admin Created User",
+            "password": "TempPass!234",
+            "role": "user",
+            "group_id": group_id,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["username"] == username
+    assert body["email"] == f"{username}@crm.local"
+    assert body["group_id"] == group_id
+
+
+@pytest.mark.asyncio
+async def test_operator_post_users_returns_403(
+    client: AsyncClient,
+    operator_a_headers: dict[str, str],
+    chats_org: dict[str, object],
+    db_ready: None,
+) -> None:
+    me = await client.get("/api/v1/auth/me", headers=operator_a_headers)
+    assert me.status_code == 200
+    group_id = me.json()["group_id"]
+    assert group_id is not None
+    response = await client.post(
+        "/api/v1/users",
+        headers=operator_a_headers,
+        json={
+            "username": f"denied_{uuid.uuid4().hex[:8]}",
+            "full_name": "Denied User",
+            "password": "TempPass!234",
+            "role": "user",
+            "group_id": group_id,
+        },
+    )
+    assert response.status_code == 403

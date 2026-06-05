@@ -1,0 +1,35 @@
+# Python
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+*$py.class
+*.egg-info
+crm_chat_center.egg-info
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+htmlcov
+
+# Node
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/tests
+tests
+
+# VCS / local data
+.git
+.gitignore
+backups
+**/.env
+**/.env.*
+!**/.env.example
+
+# IDE / OS
+.cursor
+.vscode
+*.swp
+Thumbs.db
+.DS_Store

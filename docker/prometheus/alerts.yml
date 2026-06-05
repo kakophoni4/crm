@@ -1,0 +1,54 @@
+# CRM Chat Center alert rules.
+#
+# Dev: Prometheus has no Alertmanager (see prometheus.yml). Rules still evaluate;
+#       firing alerts show at http://localhost:9090/alerts (notifications are not sent).
+# Prod: wire Alertmanager (email/Telegram) in phase 7 — do not rely on UI-only alerts.
+
+groups:
+  - name: crm_chat_center
+    rules:
+      - alert: BotOutboundFailureRateHigh
+        expr: |
+          (
+            sum(rate(bot_outbound_total{status="failed"}[5m]))
+            /
+            clamp_min(sum(rate(bot_outbound_total[5m])), 0.001)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High bot outbound failure rate
+          description: More than 10% of bot outbound dispatches failed over 5m.
+
+      - alert: RedisStreamDepthHigh
+        expr: redis_stream_pending{stream="crm:bots:jobs"} > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis stream backlog (crm:bots:jobs)
+          description: Pending messages in consumer group bots-workers exceeded 100 for 10m.
+
+      - alert: WsDisconnectRate
+        expr: rate(ws_disconnect_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated WebSocket disconnect rate
+          description: More than 10 WS disconnects/s (5m rate) — check realtime hub and proxies.
+
+      - alert: ApiErrorRate5xx
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total[5m])), 0.001)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: API 5xx error rate above 1%
+          description: HTTP 5xx responses exceed 1% of traffic over 5m.

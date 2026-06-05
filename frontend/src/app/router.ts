@@ -1,0 +1,345 @@
+import type { RouteRecordRaw } from 'vue-router'
+
+import { createRouter, createWebHistory } from 'vue-router'
+
+
+
+import AppLayout from '@/widgets/app-layout/AppLayout.vue'
+
+import { requiresAdminMeta } from '@/shared/lib/admin-routes'
+
+import { useAuthStore } from '@/shared/store/auth'
+
+
+
+/** Sync check for guards/tests — call `ensureSession()` in navigation for refresh flow. */
+
+export function requireAuth(): boolean {
+
+  return useAuthStore().isAuthenticated
+
+}
+
+
+
+/** Sync admin check for unit tests (store must be hydrated). */
+
+export function requireAdmin(): boolean {
+
+  return useAuthStore().isAdmin
+
+}
+
+
+
+const routes: RouteRecordRaw[] = [
+
+  {
+
+    path: '/',
+
+    redirect: '/chats',
+
+  },
+
+  {
+
+    path: '/login',
+
+    name: 'login',
+
+    component: () => import('@/pages/login/index.vue'),
+
+    meta: { layout: false, public: true },
+
+  },
+
+  {
+
+    path: '/',
+
+    component: AppLayout,
+
+    meta: { requiresAuth: true },
+
+    beforeEnter: async () => {
+
+      const ok = await useAuthStore().ensureSession()
+
+      return ok || { name: 'login', query: { redirect: '/chats' } }
+
+    },
+
+    children: [
+
+      {
+
+        path: 'dashboard',
+
+        name: 'dashboard',
+
+        component: () => import('@/pages/dashboard/index.vue'),
+
+      },
+
+      {
+
+        path: 'chats',
+
+        name: 'chats',
+
+        component: () => import('@/pages/chats/index.vue'),
+
+      },
+
+      {
+
+        path: 'contacts',
+
+        name: 'contacts',
+
+        component: () => import('@/pages/contacts/index.vue'),
+
+      },
+
+      {
+
+        path: 'contacts/:id',
+
+        name: 'contact-detail',
+
+        component: () => import('@/pages/contacts/[id].vue'),
+
+        props: (route) => ({ id: Number(route.params.id) }),
+
+      },
+
+      {
+
+        path: 'settings/group-escalation',
+
+        name: 'group-escalation',
+
+        component: () => import('@/pages/settings/group-escalation.vue'),
+
+        meta: { requiresSenior: true },
+
+      },
+
+      {
+
+        path: 'settings/statuses',
+
+        name: 'admin-statuses',
+
+        component: () => import('@/pages/admin/statuses.vue'),
+
+        meta: { requiresSeniorOrAdmin: true },
+
+      },
+
+      {
+
+        path: 'admin/statuses',
+
+        redirect: { name: 'admin-statuses' },
+
+      },
+
+      {
+
+        path: 'settings/users',
+
+        name: 'settings-users',
+
+        component: () => import('@/pages/admin/users.vue'),
+
+        meta: { requiresSeniorOrAdmin: true },
+
+      },
+
+      {
+
+        path: 'settings/groups',
+
+        name: 'settings-groups',
+
+        component: () => import('@/pages/admin/groups.vue'),
+
+        meta: { requiresSeniorOrAdmin: true },
+
+      },
+
+      {
+
+        path: 'admin',
+
+        meta: { requiresAdmin: true },
+
+        children: [
+
+          {
+
+            path: '',
+
+            name: 'admin',
+
+            component: () => import('@/pages/admin/index.vue'),
+
+          },
+
+          {
+
+            path: 'departments',
+
+            name: 'admin-departments',
+
+            component: () => import('@/pages/admin/departments.vue'),
+
+          },
+
+          {
+
+            path: 'groups',
+
+            name: 'admin-groups',
+
+            component: () => import('@/pages/admin/groups.vue'),
+
+          },
+
+          {
+
+            path: 'users',
+
+            name: 'admin-users',
+
+            component: () => import('@/pages/admin/users.vue'),
+
+          },
+
+          {
+
+            path: 'bots',
+
+            name: 'admin-bots',
+
+            component: () => import('@/pages/admin/bots.vue'),
+
+          },
+
+        ],
+
+      },
+
+    ],
+
+  },
+
+  {
+
+    path: '/:catchAll(.*)',
+
+    component: AppLayout,
+
+    children: [
+
+      {
+
+        path: '',
+
+        name: 'not-found',
+
+        component: () => import('@/pages/not-found/index.vue'),
+
+      },
+
+    ],
+
+  },
+
+]
+
+
+
+export const router = createRouter({
+
+  history: createWebHistory(import.meta.env.BASE_URL),
+
+  routes,
+
+})
+
+
+
+router.beforeEach(async (to) => {
+
+  if (to.meta.public && to.name === 'login') {
+
+    const auth = useAuthStore()
+
+    await auth.hydrate()
+
+    if (auth.isAuthenticated) {
+
+      const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/chats'
+
+      return redirect
+
+    }
+
+    return true
+
+  }
+
+
+
+  const needsSeniorOrAdmin = to.matched.some((r) => r.meta.requiresSeniorOrAdmin)
+
+  if (needsSeniorOrAdmin) {
+
+    const auth = useAuthStore()
+
+    await auth.ensureSession()
+
+    if (!auth.isAuthenticated) return { name: 'login' }
+
+    const role = auth.user?.role
+
+    if (role !== 'admin' && role !== 'senior') return { name: 'contacts' }
+
+  }
+
+
+
+  const needsAdmin =
+
+    requiresAdminMeta(to.meta) || to.matched.some((record) => requiresAdminMeta(record.meta))
+
+  if (needsAdmin) {
+
+    const auth = useAuthStore()
+
+    await auth.ensureSession()
+
+    if (!auth.isAuthenticated) {
+
+      return { name: 'login', query: { redirect: to.fullPath } }
+
+    }
+
+    if (!auth.isAdmin) {
+
+      return { name: 'contacts' }
+
+    }
+
+  }
+
+
+
+  return true
+
+})
+
+

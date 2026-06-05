@@ -1,0 +1,14 @@
+import { expect, test } from '@playwright/test'
+
+import { loginAsOperator, openFirstChat } from '../helpers/auth'
+
+test.beforeEach(async ({ page }) => {
+  test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Set E2E_EMAIL and E2E_PASSWORD')
+  await loginAsOperator(page)
+})
+
+test('open first chat and see message scope tabs @requires-auth', async ({ page }) => {
+  await openFirstChat(page)
+  await expect(page.getByRole('tab', { name: 'Текущая сделка' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Весь чат' })).toBeVisible()
+})

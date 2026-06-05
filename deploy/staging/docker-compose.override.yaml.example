@@ -1,0 +1,18 @@
+# GHCR image overrides for CI/CD staging (copy to deploy/staging/docker-compose.override.yaml).
+# Merge:
+#   docker compose -f docker/docker-compose.staging.yaml \
+#     -f deploy/staging/docker-compose.override.yaml \
+#     --env-file deploy/.env.staging --profile with-proxy pull
+#
+# Required in deploy/.env.staging (GHCR_OWNER is mandatory when this file is present):
+#   GHCR_OWNER=your-github-org-or-user
+#   CRM_IMAGE_TAG=latest          # or commit SHA / v1.2.3
+#   SKIP_COMPOSE_BUILD=1          # optional; migrate_and_up.sh skips build when override exists
+
+services:
+  api:
+    image: ghcr.io/${GHCR_OWNER}/crm-api:${CRM_IMAGE_TAG:-latest}
+  worker:
+    image: ghcr.io/${GHCR_OWNER}/crm-worker:${CRM_IMAGE_TAG:-latest}
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/crm-frontend:${CRM_IMAGE_TAG:-latest}

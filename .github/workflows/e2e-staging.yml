@@ -1,0 +1,38 @@
+# Optional Playwright smoke on staging — manual only; does not block merge to main.
+name: E2E Staging (optional)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  playwright-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: Run smoke (login, chat, close-lead)
+        working-directory: e2e
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: npx playwright test
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

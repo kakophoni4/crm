@@ -1,0 +1,161 @@
+Metadata-Version: 2.4
+Name: crm-chat-center
+Version: 0.1.0
+Summary: CRM Chat Center backend
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.111
+Requires-Dist: uvicorn[standard]>=0.30
+Requires-Dist: pydantic>=2.7
+Requires-Dist: pydantic-settings>=2.3
+Requires-Dist: sqlalchemy[asyncio]>=2.0
+Requires-Dist: asyncpg>=0.29
+Requires-Dist: psycopg[binary]>=3.1
+Requires-Dist: alembic>=1.13
+Requires-Dist: redis>=5.0
+Requires-Dist: httpx>=0.27
+Requires-Dist: structlog>=24.1
+Requires-Dist: sentry-sdk>=2.5
+Requires-Dist: prometheus-client>=0.20
+Requires-Dist: prometheus-fastapi-instrumentator>=7.0
+Requires-Dist: python-jose[cryptography]>=3.3
+Requires-Dist: passlib[bcrypt]>=1.7
+Requires-Dist: bcrypt<4.1,>=4.0
+Requires-Dist: python-multipart>=0.0.9
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: httpx-ws>=0.6; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+Requires-Dist: testcontainers[postgresql,redis]>=4.4; extra == "dev"
+Requires-Dist: docker>=7.1; extra == "dev"
+Requires-Dist: types-passlib>=1.7; extra == "dev"
+Requires-Dist: schemathesis>=4.18; extra == "dev"
+
+# CRM Chat Center
+
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![Docker Build](https://github.com/OWNER/REPO/actions/workflows/docker-build.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/docker-build.yml)
+
+> Замените `OWNER/REPO` в URL бэйджей на ваш GitHub org/repo. Деплой staging/prod: [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+Multi-tenant CRM с фокусом на **чат-центр**: общение с клиентами через Telegram (несколько ботов), иерархический RBAC (Admin → Department → Senior → Group → User), передача и перехват чатов, аудит изменений.
+
+## Локальный запуск (dev)
+
+Инфраструктура (PostgreSQL, Redis, MinIO, Adminer, MailHog) поднимается в Docker; **приложение** (FastAPI / worker / frontend) запускается отдельно — см. backlog своей команды в `docs/teams/`.
+
+**Требования:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (или Docker Engine + Compose v2), свободные порты `5432`, `6379`, `9000`, `9001`, `8080`, `1025`, `8025`.
+
+### Windows (PowerShell)
+
+1. Клонируй репозиторий и перейди в корень проекта.
+2. Запусти зависимости:
+   ```powershell
+   .\scripts\dev.ps1
+   ```
+   Скрипт создаст `.env` из `.env.example`, если файла ещё нет, и поднимет `docker/docker-compose.dev.yaml`.
+3. Проверь сервисы: `docker compose -f docker/docker-compose.dev.yaml ps` — статус **Up** (для postgres/redis/minio — **healthy**).
+4. Открой в браузере:
+   - Adminer (БД): http://localhost:8080 — сервер `crm-postgres`, пользователь `crm`, пароль `crm`, БД `crm`
+   - MinIO console: http://localhost:9001 — `minio` / `miniominio`
+   - MailHog: http://localhost:8025
+5. Когда backend появится в репозитории: скопируй переменные из `.env`, установи зависимости Python и запусти API на порту `8000` (см. `docs/teams/01_backend_core.md`).
+
+Остановка: `docker compose -f docker/docker-compose.dev.yaml down`  
+Полный сброс данных: `docker compose -f docker/docker-compose.dev.yaml down -v` (см. [`docker/README.md`](docker/README.md)).
+
+### macOS / Linux (bash)
+
+1. Клонируй репозиторий и перейди в корень проекта.
+2. Сделай скрипт исполняемым (один раз): `chmod +x scripts/dev.sh`
+3. Запусти зависимости:
+   ```bash
+   ./scripts/dev.sh
+   ```
+4. Проверь `docker compose -f docker/docker-compose.dev.yaml ps` и те же URL, что выше.
+5. Backend — из `.env`, порт `8000`, когда модуль `app/` будет добавлен.
+
+Ручной старт без скрипта:
+
+```bash
+cp -n .env.example .env   # не перезаписывает существующий .env
+docker compose -f docker/docker-compose.dev.yaml up -d
+```
+
+Подробности по сервисам и томам — в [`docker/README.md`](docker/README.md).
+
+**Мониторинг (Prometheus + Grafana):** [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — `make monitoring-up` или compose с `docker-compose.monitoring.yaml`.
+
+---
+
+> Документ предназначен для команды разработки. Все требования и контракты ниже — источник истины. Любые изменения архитектуры или матрицы прав должны фиксироваться в этих файлах через PR.
+
+---
+
+## Структура документации
+
+### Общие документы (читают все)
+| Файл | Назначение |
+|---|---|
+| [`docs/TECH_SPEC.md`](docs/TECH_SPEC.md) | Полное ТЗ: бизнес-логика, сценарии, требования |
+| [`docs/CONTACT_OWNERSHIP.md`](docs/CONTACT_OWNERSHIP.md) | **Владение карточкой в группе**, эскалация, аудит ответов |
+| [`docs/AUDIT_REFACTOR_OWNERSHIP.md`](docs/AUDIT_REFACTOR_OWNERSHIP.md) | Аудит расхождений код/доки и план рефакторинга |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Архитектура системы, диаграммы, выбор технологий |
+| [`docs/DATABASE.md`](docs/DATABASE.md) | Модель данных, схемы таблиц, индексы, миграции |
+| [`docs/RBAC_MATRIX.md`](docs/RBAC_MATRIX.md) | Матрица прав по ролям и областям видимости |
+| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | REST/WebSocket контракт между бэкендом и фронтом |
+| [`docs/EVENTS.md`](docs/EVENTS.md) | Шина внутренних событий, форматы payload |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Дорожная карта по фазам и milestone |
+| [`docs/EXECUTION_ORDER.md`](docs/EXECUTION_ORDER.md) | Критический путь, зависимости, недельный план |
+| [`docs/BOTS_INTEGRATION.md`](docs/BOTS_INTEGRATION.md) | Публичный контракт интеграции с готовыми ботами |
+
+### Задачи по командам / субагентам
+| Файл | Кто читает |
+|---|---|
+| [`docs/teams/00_overview.md`](docs/teams/00_overview.md) | Все — как команды стыкуются |
+| [`docs/teams/01_backend_core.md`](docs/teams/01_backend_core.md) | Backend Core (auth, users, departments, groups, RBAC) |
+| [`docs/teams/02_backend_chats.md`](docs/teams/02_backend_chats.md) | Backend Chats (chats, messages, transfers, takeover, realtime) |
+| [`docs/teams/03_bots_integration.md`](docs/teams/03_bots_integration.md) | Backend Bots Integration (HTTP+HMAC, ingest/outbound) |
+| [`docs/teams/04_backend_contacts.md`](docs/teams/04_backend_contacts.md) | Backend Contacts (карточки, статусы, аудит полей) |
+| [`docs/teams/05_frontend.md`](docs/teams/05_frontend.md) | Frontend (Vue 3 SPA) |
+| [`docs/teams/06_devops.md`](docs/teams/06_devops.md) | DevOps (инфраструктура, CI/CD, мониторинг) |
+| [`docs/teams/07_qa.md`](docs/teams/07_qa.md) | QA (тест-планы, автотесты) |
+
+---
+
+## Стек (короткий список)
+
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic v2
+- **DB:** PostgreSQL 16
+- **Cache / PubSub / Refresh-token store:** Redis 7
+- **Очереди задач:** ARQ (Redis-based)
+- **Realtime:** WebSocket (FastAPI) + Redis Pub/Sub
+- **Telegram:** aiogram 3 (webhook-режим, multi-bot)
+- **Файлы:** MinIO (S3-совместимый)
+- **Frontend:** Vue 3 + TypeScript + Pinia + Vite + Naive UI
+- **Инфраструктура:** Docker Compose (dev), Traefik (TLS), Loki + Grafana, Sentry
+
+Подробное обоснование выбора — в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
+## Старт для нового разработчика
+
+1. Прочитай [`docs/TECH_SPEC.md`](docs/TECH_SPEC.md) — пойми задачу целиком.
+2. Прочитай [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) и [`docs/RBAC_MATRIX.md`](docs/RBAC_MATRIX.md).
+3. Найди свой файл в `docs/teams/` — там твой backlog и интерфейсы со смежниками.
+4. Не трогай чужие модули напрямую — общайся через сервисный слой и события (см. [`docs/EVENTS.md`](docs/EVENTS.md)).
+5. Любое изменение публичного контракта (БД, API, события) — отдельным PR с обновлением `docs/`.
+
+---
+
+## Принципы разработки
+
+1. **Modular monolith.** Один Python-процесс, но строгие границы между модулями. Микросервисы — только когда модуль реально упрётся.
+2. **Один источник истины для прав.** Все проверки доступа идут через `core/auth/scope.py`. Никаких `if user.role == 'admin'` в роутерах.
+3. **События первого класса.** Любое значимое действие публикует событие в шину (см. `docs/EVENTS.md`). Это даст лёгкий выезд в микросервисы и аудит «бесплатно».
+4. **Никаких сырых telegram_id наружу.** Поле маскируется на уровне сериализатора, в логах фильтруется.
+5. **Каждое изменение — миграция Alembic.** Не править схему руками.
+6. **Тесты обязательны** для слоя сервисов и RBAC. UI — e2e-сценарии для критичных потоков.
