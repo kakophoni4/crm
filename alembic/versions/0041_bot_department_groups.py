@@ -40,6 +40,17 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        UPDATE bots b
+        SET department_id = sub.id
+        FROM (SELECT id FROM departments ORDER BY id ASC LIMIT 1) sub
+        WHERE b.department_id IS NULL
+           OR NOT EXISTS (
+               SELECT 1 FROM departments d WHERE d.id = b.department_id
+           )
+        """
+    )
+    op.execute(
+        """
         ALTER TABLE bots
         ALTER COLUMN department_id SET NOT NULL
         """
