@@ -46,6 +46,44 @@ async def test_admin_post_users_returns_201(
 
 
 @pytest.mark.asyncio
+async def test_admin_post_senior_with_department_returns_201(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    db_ready: None,
+) -> None:
+    dept = await client.post(
+        "/api/v1/departments",
+        headers=admin_headers,
+        json={"name": f"Senior Dept {uuid.uuid4().hex[:6]}"},
+    )
+    assert dept.status_code == 201, dept.text
+    dept_id = dept.json()["id"]
+    username = f"senior_{uuid.uuid4().hex[:8]}"
+    response = await client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={
+            "username": username,
+            "full_name": "Department Senior",
+            "password": "TempPass!234",
+            "role": "senior",
+            "department_id": dept_id,
+            "set_as_department_head": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["role"] == "senior"
+    assert body["department_id"] == dept_id
+    assert body["group_id"] is None
+
+    dept_list = await client.get("/api/v1/departments", headers=admin_headers)
+    assert dept_list.status_code == 200, dept_list.text
+    match = next(item for item in dept_list.json()["items"] if item["id"] == dept_id)
+    assert match["head_user_id"] == body["id"]
+
+
+@pytest.mark.asyncio
 async def test_operator_post_users_returns_403(
     client: AsyncClient,
     operator_a_headers: dict[str, str],

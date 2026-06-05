@@ -50,17 +50,9 @@ class DepartmentService:
         if role != UserRole.ADMIN:
             raise PermissionDenied()
 
-        if body.head_user_id is not None:
-            head = await self._session.get(User, body.head_user_id)
-            if head is None:
-                raise ValidationError(
-                    message="head_user_id does not exist",
-                    details={"head_user_id": body.head_user_id},
-                )
-
         department = Department(
             name=body.name.strip(),
-            head_user_id=body.head_user_id,
+            head_user_id=None,
             created_by=actor.id,
         )
         try:
@@ -87,13 +79,14 @@ class DepartmentService:
 
         if body.name is not None:
             department.name = body.name.strip()
-        if body.head_user_id is not None:
-            head = await self._session.get(User, body.head_user_id)
-            if head is None:
-                raise ValidationError(
-                    message="head_user_id does not exist",
-                    details={"head_user_id": body.head_user_id},
-                )
+        if "head_user_id" in body.model_fields_set:
+            if body.head_user_id is not None:
+                head = await self._session.get(User, body.head_user_id)
+                if head is None:
+                    raise ValidationError(
+                        message="head_user_id does not exist",
+                        details={"head_user_id": body.head_user_id},
+                    )
             department.head_user_id = body.head_user_id
 
         try:

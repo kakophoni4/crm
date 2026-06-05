@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.repository import AuthRepository
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.db.models.department import Department
 from app.modules.db.models.enums import UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, can_act_on_user, visible_user_ids
@@ -74,6 +75,66 @@ class UserService:
             raise PermissionDenied(message="Senior can only assign groups in own department")
         return group.id, group.department_id
 
+    async def _resolve_department(self, actor: User, department_id: int) -> int:
+        department = await self._session.get(Department, department_id)
+        if department is None:
+            raise ValidationError(
+                message="department_id does not exist",
+                details={"department_id": department_id},
+            )
+        actor_role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        if actor_role == UserRole.SENIOR and actor.department_id != department_id:
+            raise PermissionDenied(message="Senior can only assign own department")
+        return department.id
+
+    async def _set_department_head(self, department_id: int, user_id: int) -> None:
+        department = await self._session.get(Department, department_id)
+        if department is None:
+            raise ValidationError(
+                message="department_id does not exist",
+                details={"department_id": department_id},
+            )
+        department.head_user_id = user_id
+        await self._session.flush()
+
+    async def _resolve_create_assignment(
+        self,
+        actor: User,
+        body: UserCreateRequest,
+    ) -> tuple[int | None, int | None]:
+        role = body.role if isinstance(body.role, UserRole) else UserRole(str(body.role))
+        if role == UserRole.ADMIN:
+            if body.group_id is not None or body.department_id is not None:
+                raise ValidationError(
+                    message="Admin must not be assigned to a group or department",
+                )
+            return None, None
+        if role == UserRole.USER:
+            if body.group_id is None:
+                raise ValidationError(
+                    message="group_id is required for user role",
+                    details={"field": "group_id"},
+                )
+            group_id, department_id = await self._resolve_group(actor, body.group_id)
+            return group_id, department_id
+        if role == UserRole.SENIOR:
+            if body.department_id is None:
+                raise ValidationError(
+                    message="department_id is required for senior role",
+                    details={"field": "department_id"},
+                )
+            department_id = await self._resolve_department(actor, body.department_id)
+            group_id: int | None = None
+            if body.group_id is not None:
+                group_id, group_department_id = await self._resolve_group(actor, body.group_id)
+                if group_department_id != department_id:
+                    raise ValidationError(
+                        message="group must belong to the selected department",
+                        details={"group_id": group_id, "department_id": department_id},
+                    )
+            return group_id, department_id
+        raise PermissionDenied()
+
     async def list_users(
         self,
         actor: User,
@@ -103,7 +164,7 @@ class UserService:
 
     async def create_user(self, actor: User, body: UserCreateRequest) -> UserOut:
         self._ensure_can_create_role(actor, body.role)
-        group_id, department_id = await self._resolve_group(actor, body.group_id)
+        group_id, department_id = await self._resolve_create_assignment(actor, body)
 
         email = (body.email.strip().lower() if body.email else f"{body.username}@crm.local")
         user = User(
@@ -119,6 +180,19 @@ class UserService:
         )
         try:
             created = await self._repo.add(user)
+            if body.set_as_department_head:
+                if department_id is None:
+                    raise ValidationError(
+                        message="set_as_department_head requires department assignment",
+                    )
+                role = (
+                    body.role if isinstance(body.role, UserRole) else UserRole(str(body.role))
+                )
+                if role != UserRole.SENIOR:
+                    raise ValidationError(
+                        message="Only senior can be assigned as department head",
+                    )
+                await self._set_department_head(department_id, created.id)
             await self._repo.commit()
         except IntegrityError as exc:
             await self._repo.rollback()
@@ -158,11 +232,49 @@ class UserService:
         if body.role is not None:
             self._ensure_can_create_role(actor, body.role)
             target.role = body.role
+            if body.role == UserRole.ADMIN:
+                target.group_id = None
+                target.department_id = None
+            elif body.role == UserRole.SENIOR and body.department_id is None and body.group_id is None:
+                if target.department_id is None:
+                    raise ValidationError(
+                        message="department_id is required when role is senior",
+                        details={"field": "department_id"},
+                    )
+
+        effective_role = (
+            target.role if isinstance(target.role, UserRole) else UserRole(str(target.role))
+        )
+
+        if body.department_id is not None:
+            if actor_role != UserRole.ADMIN:
+                raise PermissionDenied()
+            if effective_role != UserRole.SENIOR:
+                raise ValidationError(
+                    message="department_id applies only to senior role",
+                    details={"field": "department_id"},
+                )
+            target.department_id = await self._resolve_department(actor, body.department_id)
+            if body.group_id is None:
+                target.group_id = None
+
         if body.group_id is not None:
             group_id, department_id = await self._resolve_group(actor, body.group_id)
+            if effective_role == UserRole.SENIOR and target.department_id is not None:
+                if department_id != target.department_id:
+                    raise ValidationError(
+                        message="group must belong to the selected department",
+                    )
             target.group_id = group_id
-            if actor_role == UserRole.ADMIN:
+            if actor_role == UserRole.ADMIN and effective_role == UserRole.USER:
                 target.department_id = department_id
+
+        if body.set_as_department_head:
+            if effective_role != UserRole.SENIOR or target.department_id is None:
+                raise ValidationError(
+                    message="Only senior with department can be department head",
+                )
+            await self._set_department_head(target.department_id, target.id)
 
         await self._session.flush()
         await self._repo.commit()

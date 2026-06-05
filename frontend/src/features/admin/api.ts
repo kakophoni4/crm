@@ -135,7 +135,9 @@ export async function createUser(body: {
   full_name: string
   password: string
   role: 'user' | 'senior' | 'admin'
-  group_id: number | null
+  group_id?: number | null
+  department_id?: number | null
+  set_as_department_head?: boolean
 }): Promise<AdminUser> {
   const { data } = await http.post<AdminUser>('/users', body)
   return data
@@ -143,7 +145,11 @@ export async function createUser(body: {
 
 export async function updateUser(
   id: number,
-  body: Partial<Pick<AdminUser, 'full_name' | 'group_id' | 'role' | 'status'>>,
+  body: Partial<
+    Pick<AdminUser, 'full_name' | 'group_id' | 'department_id' | 'role' | 'status'> & {
+      set_as_department_head?: boolean
+    }
+  >,
 ): Promise<AdminUser> {
   const { data } = await http.patch<AdminUser>(`/users/${id}`, body)
   return data

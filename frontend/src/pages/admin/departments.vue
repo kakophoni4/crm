@@ -114,7 +114,6 @@ async function onSave(): Promise<void> {
     } else {
       await createDepartment({
         name: form.value.name.trim(),
-        head_user_id: form.value.head_user_id,
       })
       message.success('Отдел создан')
     }
@@ -165,7 +164,7 @@ onMounted(async () => {
         <NFormItem label="Название">
           <NInput v-model:value="form.name" />
         </NFormItem>
-        <NFormItem label="Руководитель (необязательно)">
+        <NFormItem v-if="editing" label="Руководитель">
           <NSelect
             v-model:value="form.head_user_id"
             :options="headUserOptions"

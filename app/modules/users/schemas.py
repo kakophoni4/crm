@@ -44,15 +44,19 @@ class UserCreateRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=256)
     password: PasswordField
     role: UserRole = UserRole.USER
-    group_id: int = Field(gt=0)
+    group_id: int | None = Field(default=None, gt=0)
+    department_id: int | None = Field(default=None, gt=0)
+    set_as_department_head: bool = False
 
 
 class UserUpdateRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=256)
     group_id: int | None = Field(default=None, gt=0)
+    department_id: int | None = Field(default=None, gt=0)
     role: UserRole | None = None
     status: UserStatus | None = None
     availability: UserAvailability | None = None
+    set_as_department_head: bool | None = None
 
 
 class ResetPasswordResponse(BaseModel):

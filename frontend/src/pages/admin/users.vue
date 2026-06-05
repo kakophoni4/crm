@@ -2,6 +2,7 @@
 import type { DataTableColumns, SelectOption } from 'naive-ui'
 import {
   NButton,
+  NCheckbox,
   NDataTable,
   NForm,
   NFormItem,
@@ -14,10 +15,17 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 
-import type { AdminUser, Group } from '@/features/admin/api'
-import { createUser, listGroups, listUsers, resetUserPassword, updateUser } from '@/features/admin/api'
+import type { AdminUser, Department, Group } from '@/features/admin/api'
+import {
+  createUser,
+  listDepartments,
+  listGroups,
+  listUsers,
+  resetUserPassword,
+  updateUser,
+} from '@/features/admin/api'
 import {
   adminRemoveUser,
   approveUserDeletionRequest,
@@ -37,6 +45,7 @@ const isAdmin = computed(() => auth.user?.role === 'admin')
 const loading = ref(false)
 const rows = ref<AdminUser[]>([])
 const groups = ref<Group[]>([])
+const departments = ref<Department[]>([])
 const pendingDeletions = ref<UserDeletionRequest[]>([])
 const showModal = ref(false)
 const editing = ref<AdminUser | null>(null)
@@ -46,6 +55,8 @@ const form = ref({
   password: '',
   role: 'user' as 'user' | 'senior' | 'admin',
   group_id: null as number | null,
+  department_id: null as number | null,
+  set_as_department_head: false,
 })
 
 const pendingByUserId = computed(() => {
@@ -69,8 +80,27 @@ const roleOptions = computed<SelectOption[]>(() =>
 )
 
 const groupOptions = computed<SelectOption[]>(() =>
-  groups.value.map((g) => ({ label: g.name, value: g.id })),
+  groups.value.map((g) => {
+    const dept = departments.value.find((d) => d.id === g.department_id)
+    const suffix = dept ? ` (${dept.name})` : ''
+    return { label: `${g.name}${suffix}`, value: g.id }
+  }),
 )
+
+const departmentOptions = computed<SelectOption[]>(() =>
+  departments.value.map((d) => ({ label: d.name, value: d.id })),
+)
+
+const showGroupField = computed(() => form.value.role === 'user')
+const showDepartmentField = computed(() => form.value.role === 'senior')
+const showDepartmentHeadCheckbox = computed(
+  () => form.value.role === 'senior' && form.value.department_id != null,
+)
+
+function departmentName(id: number | null): string {
+  if (id == null) return '—'
+  return departments.value.find((d) => d.id === id)?.name ?? '—'
+}
 
 function canRequestDeletion(row: AdminUser): boolean {
   if (!isSenior.value) return false
@@ -88,9 +118,15 @@ function canAdminApprovePending(row: AdminUser): boolean {
 }
 
 const columns = computed<DataTableColumns<AdminUser>>(() => [
-  { title: 'Логин', key: 'email', ellipsis: { tooltip: true } },
+  { title: 'Логин', key: 'username', ellipsis: { tooltip: true } },
   { title: 'Имя', key: 'full_name' },
   { title: 'Роль', key: 'role', width: 100 },
+  {
+    title: 'Отдел',
+    key: 'department_id',
+    width: 140,
+    render: (row) => departmentName(row.department_id),
+  },
   {
     title: 'Группа',
     key: 'group_id',
@@ -204,21 +240,50 @@ function openCreate(): void {
     password: '',
     role: 'user',
     group_id: groups.value[0]?.id ?? null,
+    department_id: departments.value[0]?.id ?? null,
+    set_as_department_head: false,
   }
   showModal.value = true
 }
 
 function openEdit(row: AdminUser): void {
   editing.value = row
+  const isDeptHead = departments.value.some(
+    (d) => d.head_user_id === row.id && d.id === row.department_id,
+  )
   form.value = {
     username: row.username,
     full_name: row.full_name,
     password: '',
     role: row.role,
     group_id: row.group_id,
+    department_id: row.department_id,
+    set_as_department_head: isDeptHead,
   }
   showModal.value = true
 }
+
+watch(
+  () => form.value.role,
+  (role) => {
+    if (role === 'admin') {
+      form.value.group_id = null
+      form.value.department_id = null
+      form.value.set_as_department_head = false
+    } else if (role === 'senior') {
+      form.value.group_id = null
+      if (form.value.department_id == null) {
+        form.value.department_id = departments.value[0]?.id ?? null
+      }
+    } else {
+      form.value.department_id = null
+      form.value.set_as_department_head = false
+      if (form.value.group_id == null) {
+        form.value.group_id = groups.value[0]?.id ?? null
+      }
+    }
+  },
+)
 
 async function loadPendingDeletions(): Promise<void> {
   if (!isSenior.value && !isAdmin.value) {
@@ -240,8 +305,14 @@ async function loadPendingDeletions(): Promise<void> {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    rows.value = await listUsers()
-    groups.value = await listGroups()
+    const [users, groupList, deptList] = await Promise.all([
+      listUsers(),
+      listGroups(),
+      listDepartments(),
+    ])
+    rows.value = users
+    groups.value = groupList
+    departments.value = deptList
     await loadPendingDeletions()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить пользователей')
@@ -250,35 +321,54 @@ async function load(): Promise<void> {
   }
 }
 
+function validateForm(role: 'user' | 'senior' | 'admin'): string | null {
+  if (!editing.value) {
+    if (!form.value.username.trim() || !form.value.password) {
+      return 'Заполните логин и пароль'
+    }
+  }
+  if (!form.value.full_name.trim()) {
+    return 'Укажите имя'
+  }
+  if (role === 'user' && form.value.group_id == null) {
+    return 'Выберите группу для оператора'
+  }
+  if (role === 'senior' && form.value.department_id == null) {
+    return 'Выберите отдел для старшего'
+  }
+  return null
+}
+
 async function onSave(): Promise<void> {
+  const role = isSenior.value ? 'user' : form.value.role
+  const validationError = validateForm(role)
+  if (validationError) {
+    message.warning(validationError)
+    return
+  }
+
   try {
     if (editing.value) {
-      const role = isSenior.value ? undefined : form.value.role
+      const patchRole = isSenior.value ? undefined : form.value.role
       await updateUser(editing.value.id, {
         full_name: form.value.full_name.trim(),
-        ...(role !== undefined ? { role } : {}),
-        group_id: form.value.role === 'admin' ? null : form.value.group_id,
+        ...(patchRole !== undefined ? { role: patchRole } : {}),
+        group_id: form.value.role === 'user' ? form.value.group_id : null,
+        department_id: form.value.role === 'senior' ? form.value.department_id : null,
+        ...(form.value.role === 'senior' && form.value.set_as_department_head
+          ? { set_as_department_head: true }
+          : {}),
       })
       message.success('Пользователь обновлён')
     } else {
-      const role = isSenior.value ? 'user' : form.value.role
-      const needsGroup = role !== 'admin'
-      if (
-        !form.value.username ||
-        !form.value.password ||
-        (needsGroup && form.value.group_id == null)
-      ) {
-        message.warning(
-          needsGroup ? 'Заполните логин, пароль и группу' : 'Заполните логин и пароль',
-        )
-        return
-      }
       await createUser({
         username: form.value.username.trim(),
         full_name: form.value.full_name.trim(),
         password: form.value.password,
         role,
-        group_id: role === 'admin' ? null : form.value.group_id,
+        group_id: role === 'user' ? form.value.group_id : null,
+        department_id: role === 'senior' ? form.value.department_id : null,
+        set_as_department_head: role === 'senior' && form.value.set_as_department_head,
       })
       message.success('Пользователь создан')
     }
@@ -371,8 +461,20 @@ onMounted(() => void load())
         <NFormItem v-if="!isSenior" label="Роль">
           <NSelect v-model:value="form.role" :options="roleOptions" />
         </NFormItem>
-        <NFormItem v-if="form.role !== 'admin'" label="Группа">
-          <NSelect v-model:value="form.group_id" :options="groupOptions" />
+        <NFormItem v-if="showGroupField" label="Группа">
+          <NSelect v-model:value="form.group_id" :options="groupOptions" placeholder="Выбрать" />
+        </NFormItem>
+        <NFormItem v-if="showDepartmentField" label="Отдел">
+          <NSelect
+            v-model:value="form.department_id"
+            :options="departmentOptions"
+            placeholder="Выбрать"
+          />
+        </NFormItem>
+        <NFormItem v-if="showDepartmentHeadCheckbox">
+          <NCheckbox v-model:checked="form.set_as_department_head">
+            Назначить руководителем отдела
+          </NCheckbox>
         </NFormItem>
       </NForm>
       <template #footer>
@@ -399,5 +501,4 @@ onMounted(() => void load())
   font-size: 1.5rem;
   font-weight: 700;
 }
-
 </style>
