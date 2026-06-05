@@ -10,6 +10,7 @@ import {
   NSelect,
   NSpace,
   NSpin,
+  NSwitch,
   useMessage,
 } from 'naive-ui'
 import { computed, h, onMounted, ref } from 'vue'
@@ -21,6 +22,7 @@ import {
   listDepartments,
   listGroups,
   rotateBotSecret,
+  updateBot,
 } from '@/features/admin/api'
 import { AppError } from '@/shared/api/http'
 
@@ -30,8 +32,10 @@ const rows = ref<BotItem[]>([])
 const departments = ref<Department[]>([])
 const groups = ref<Group[]>([])
 const showModal = ref(false)
+const showEditModal = ref(false)
 const secretsModal = ref(false)
 const lastSecrets = ref('')
+const editingBot = ref<BotItem | null>(null)
 const form = ref({
   code: '',
   name: '',
@@ -40,6 +44,11 @@ const form = ref({
   inbound_secret: '',
   outbound_secret: '',
 })
+const editForm = ref({
+  name: '',
+  ownerId: '' as string,
+  is_active: true,
+})
 
 function randomSecret(): string {
   const bytes = new Uint8Array(24)
@@ -47,54 +56,76 @@ function randomSecret(): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').slice(0, 32)
 }
 
+function ownerKey(ownerType: BotItem['owner_type'], ownerId: number): string {
+  return ownerType === 'department' ? `dept_${ownerId}` : `grp_${ownerId}`
+}
+
+function parseOwnerKey(ownerId: string): { owner_type: 'department' | 'group'; owner_id: number } {
+  const [prefix, idStr] = ownerId.split('_')
+  return {
+    owner_type: prefix === 'dept' ? 'department' : 'group',
+    owner_id: Number(idStr),
+  }
+}
+
 const ownerOptions = computed<SelectOption[]>(() => [
   ...departments.value.map((d) => ({ label: 'Отдел: ' + d.name, value: 'dept_' + d.id })),
   ...groups.value.map((g) => ({ label: 'Группа: ' + g.name, value: 'grp_' + g.id })),
 ])
 
-function ownerLabel(row: BotItem): string {
-  if (row.owner_type === 'department') {
-    const dept = departments.value.find((d) => d.id === row.owner_id)
-    return 'Отдел: ' + (dept?.name ?? String(row.owner_id))
-  }
-  const grp = groups.value.find((g) => g.id === row.owner_id)
-  return 'Группа: ' + (grp?.name ?? String(row.owner_id))
-}
+const columns = computed<DataTableColumns<BotItem>>(() => {
+  const deptById = new Map(departments.value.map((d) => [d.id, d.name]))
+  const grpById = new Map(groups.value.map((g) => [g.id, g.name]))
 
-const columns = computed<DataTableColumns<BotItem>>(() => [
-  { title: 'Код', key: 'code', width: 140 },
-  { title: 'Название', key: 'name' },
-  {
-    title: 'Владелец',
-    key: 'owner_id',
-    width: 200,
-    render: (row) => ownerLabel(row),
-  },
-  {
-    title: 'Активен',
-    key: 'is_active',
-    width: 90,
-    render: (row) => (row.is_active ? 'да' : 'нет'),
-  },
-  {
-    title: '',
-    key: 'actions',
-    width: 360,
-    render: (row) =>
-      h(NSpace, null, () => [
-        h(
-          NButton,
-          { size: 'small', onClick: () => onRotate(row, 'inbound') },
-          { default: () => 'Обновить входящий ключ' },
-        ),
-        h(
-          NButton,
-          { size: 'small', onClick: () => onRotate(row, 'outbound') },
-          { default: () => 'Обновить исходящий ключ' },
-        ),
-      ]),
-  },
-])
+  function ownerLabel(row: BotItem): string {
+    if (row.owner_type === 'department') {
+      const name = deptById.get(row.owner_id)
+      return name ? `Отдел: ${name}` : `Отдел #${row.owner_id} (не найден)`
+    }
+    const name = grpById.get(row.owner_id)
+    return name ? `Группа: ${name}` : `Группа #${row.owner_id} (не найдена)`
+  }
+
+  return [
+    { title: 'Код', key: 'code', width: 140 },
+    { title: 'Название', key: 'name' },
+    {
+      title: 'Владелец',
+      key: 'owner_id',
+      width: 220,
+      render: (row) => ownerLabel(row),
+    },
+    {
+      title: 'Активен',
+      key: 'is_active',
+      width: 90,
+      render: (row) => (row.is_active ? 'да' : 'нет'),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 420,
+      render: (row) =>
+        h(NSpace, null, () => [
+          h(
+            NButton,
+            { size: 'small', onClick: () => openEdit(row) },
+            { default: () => 'Изменить' },
+          ),
+          h(
+            NButton,
+            { size: 'small', onClick: () => onRotate(row, 'inbound') },
+            { default: () => 'Обновить входящий ключ' },
+          ),
+          h(
+            NButton,
+            { size: 'small', onClick: () => onRotate(row, 'outbound') },
+            { default: () => 'Обновить исходящий ключ' },
+          ),
+        ]),
+    },
+  ]
+})
 
 function openCreate(): void {
   form.value = {
@@ -108,9 +139,24 @@ function openCreate(): void {
   showModal.value = true
 }
 
+function openEdit(row: BotItem): void {
+  editingBot.value = row
+  editForm.value = {
+    name: row.name,
+    ownerId: ownerKey(row.owner_type, row.owner_id),
+    is_active: row.is_active,
+  }
+  showEditModal.value = true
+}
+
+async function loadReferenceData(): Promise<void> {
+  ;[departments.value, groups.value] = await Promise.all([listDepartments(), listGroups()])
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
+    await loadReferenceData()
     rows.value = await listBots()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить ботов')
@@ -132,9 +178,7 @@ async function onSave(): Promise<void> {
     message.warning('Секреты должны быть не короче 16 символов')
     return
   }
-  const [prefix, idStr] = form.value.ownerId.split('_')
-  const owner_type = prefix === 'dept' ? 'department' : 'group'
-  const owner_id = Number(idStr)
+  const { owner_type, owner_id } = parseOwnerKey(form.value.ownerId)
   try {
     const created = await createBot({
       code: form.value.code.trim(),
@@ -157,6 +201,34 @@ async function onSave(): Promise<void> {
   }
 }
 
+async function onSaveEdit(): Promise<void> {
+  const bot = editingBot.value
+  if (!bot) return
+  if (!editForm.value.name.trim()) {
+    message.warning('Укажите название')
+    return
+  }
+  if (!editForm.value.ownerId) {
+    message.warning('Выберите владельца')
+    return
+  }
+  const { owner_type, owner_id } = parseOwnerKey(editForm.value.ownerId)
+  try {
+    await updateBot(bot.id, {
+      name: editForm.value.name.trim(),
+      owner_type,
+      owner_id,
+      is_active: editForm.value.is_active,
+    })
+    showEditModal.value = false
+    editingBot.value = null
+    message.success('Бот обновлён')
+    await load()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Ошибка сохранения')
+  }
+}
+
 async function onRotate(row: BotItem, kind: 'inbound' | 'outbound'): Promise<void> {
   try {
     const { secret } = await rotateBotSecret(row.id, kind)
@@ -168,9 +240,8 @@ async function onRotate(row: BotItem, kind: 'inbound' | 'outbound'): Promise<voi
   }
 }
 
-onMounted(async () => {
-  ;[departments.value, groups.value] = await Promise.all([listDepartments(), listGroups()])
-  await load()
+onMounted(() => {
+  void load()
 })
 </script>
 
@@ -218,6 +289,38 @@ onMounted(async () => {
         <NSpace justify="end">
           <NButton @click="showModal = false">Отмена</NButton>
           <NButton type="primary" @click="onSave">Создать</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="showEditModal"
+      preset="card"
+      title="Изменить бота"
+      style="max-width: 520px"
+    >
+      <NForm label-placement="top">
+        <NFormItem label="Код">
+          <NInput :value="editingBot?.code ?? ''" disabled />
+        </NFormItem>
+        <NFormItem label="Название">
+          <NInput v-model:value="editForm.name" />
+        </NFormItem>
+        <NFormItem label="Владелец (отдел или группа)">
+          <NSelect
+            v-model:value="editForm.ownerId"
+            :options="ownerOptions"
+            placeholder="Выберите…"
+          />
+        </NFormItem>
+        <NFormItem label="Активен">
+          <NSwitch v-model:value="editForm.is_active" />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showEditModal = false">Отмена</NButton>
+          <NButton type="primary" @click="onSaveEdit">Сохранить</NButton>
         </NSpace>
       </template>
     </NModal>

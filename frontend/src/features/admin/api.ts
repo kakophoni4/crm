@@ -172,6 +172,21 @@ export async function createBot(body: BotCreateBody): Promise<BotCreateResponse>
   return data
 }
 
+export async function updateBot(
+  id: number,
+  body: {
+    name?: string
+    owner_type?: 'department' | 'group'
+    owner_id?: number
+    outbound_url?: string
+    health_url?: string | null
+    is_active?: boolean
+  },
+): Promise<BotItem> {
+  const { data } = await http.patch<BotItem>(`/bots/${id}`, body)
+  return data
+}
+
 export async function rotateBotSecret(
   botId: number,
   kind: 'inbound' | 'outbound',
