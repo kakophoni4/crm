@@ -13,6 +13,7 @@ from app.modules.auth.schemas import (
     MeResponse,
     TokenPairResponse,
 )
+from app.modules.chats.timeutil import utc_now
 from app.modules.db.models.enums import UserPresence, UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac import ROLE_PERMISSIONS
@@ -97,7 +98,7 @@ class AuthService:
             )
 
         user.presence = UserPresence.ONLINE
-        user.last_seen_at = datetime.now(UTC)
+        user.last_seen_at = utc_now()
 
         access, refresh, _jti = await self._issue_tokens(user)
         await self._session.commit()
