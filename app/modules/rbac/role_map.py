@@ -68,6 +68,7 @@ _SENIOR_EXTRA: frozenset[Permission] = frozenset(
         Permission.CONTACTS_MERGE,
         # §3.7 Bots
         Permission.BOTS_DEACTIVATE_DEPT,
+        Permission.BOTS_REASSIGN,
         # §3.9 Audit
         Permission.AUDIT_READ_DEPARTMENT,
         # Analytics

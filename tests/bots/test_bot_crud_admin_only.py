@@ -48,8 +48,7 @@ async def test_admin_creates_and_lists_bot(
         json={
             "code": "admin_created_bot",
             "name": "Admin Bot",
-            "owner_type": "department",
-            "owner_id": dept_id,
+            "department_id": dept_id,
             "outbound_url": "https://bot.example.com/cmd2",
             "health_url": "https://bot.example.com/health2",
             "inbound_secret": "a" * 32,
@@ -58,6 +57,8 @@ async def test_admin_creates_and_lists_bot(
     )
     assert response.status_code == 201, response.text
     data = response.json()
+    assert data["department_id"] == dept_id
+    assert data["department_name"] is not None
     assert data["secrets"]["inbound_secret"] == "a" * 32
     assert "inbound_secret" not in {k for k in data if k != "secrets"}
 

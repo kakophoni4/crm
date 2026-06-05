@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.crypto import decrypt_secret, encrypt_secret
@@ -13,9 +14,68 @@ from app.modules.db.models.bot_outbound_log import BotOutboundLog
 from app.modules.db.models.enums import BotOutboundStatus, BotOwnerType
 
 
+@dataclass(frozen=True)
+class BotListRow:
+    bot: Bot
+    department_name: str | None
+    assigned_group_ids: list[int]
+    assigned_group_names: list[str]
+
+
 class BotRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def list_bots_with_meta(self) -> list[BotListRow]:
+        result = await self._session.execute(
+            text(
+                """
+                SELECT
+                    b.id,
+                    d.name AS department_name,
+                    COALESCE(
+                        array_agg(bga.group_id ORDER BY g.name)
+                            FILTER (WHERE bga.group_id IS NOT NULL),
+                        '{}'
+                    ) AS assigned_group_ids,
+                    COALESCE(
+                        array_agg(g.name ORDER BY g.name)
+                            FILTER (WHERE g.id IS NOT NULL),
+                        '{}'
+                    ) AS assigned_group_names
+                FROM bots b
+                LEFT JOIN departments d ON d.id = b.department_id
+                LEFT JOIN bot_group_assignments bga ON bga.bot_id = b.id
+                LEFT JOIN groups g ON g.id = bga.group_id
+                GROUP BY b.id, d.name
+                ORDER BY b.code
+                """
+            ),
+        )
+        meta_by_id: dict[int, tuple[str | None, list[int], list[str]]] = {}
+        for row in result.mappings():
+            meta_by_id[int(row["id"])] = (
+                row["department_name"],
+                [int(gid) for gid in (row["assigned_group_ids"] or [])],
+                [str(name) for name in (row["assigned_group_names"] or [])],
+            )
+
+        bots = await self.list_bots()
+        rows: list[BotListRow] = []
+        for bot in bots:
+            department_name, group_ids, group_names = meta_by_id.get(
+                bot.id,
+                (None, [], []),
+            )
+            rows.append(
+                BotListRow(
+                    bot=bot,
+                    department_name=department_name,
+                    assigned_group_ids=group_ids,
+                    assigned_group_names=group_names,
+                ),
+            )
+        return rows
 
     async def list_bots(self) -> list[Bot]:
         result = await self._session.execute(select(Bot).order_by(Bot.code))
@@ -23,6 +83,16 @@ class BotRepository:
 
     async def get_by_id(self, bot_id: int) -> Bot | None:
         return await self._session.get(Bot, bot_id)
+
+    async def get_list_row(self, bot_id: int) -> BotListRow | None:
+        bot = await self.get_by_id(bot_id)
+        if bot is None:
+            return None
+        rows = await self.list_bots_with_meta()
+        for row in rows:
+            if row.bot.id == bot_id:
+                return row
+        return BotListRow(bot=bot, department_name=None, assigned_group_ids=[], assigned_group_names=[])
 
     async def get_by_code(self, code: str) -> Bot | None:
         result = await self._session.execute(select(Bot).where(Bot.code == code))
@@ -33,6 +103,7 @@ class BotRepository:
         *,
         code: str,
         name: str,
+        department_id: int,
         owner_type: BotOwnerType,
         owner_id: int,
         outbound_url: str,
@@ -46,6 +117,7 @@ class BotRepository:
         bot = Bot(
             code=code,
             name=name,
+            department_id=department_id,
             owner_type=owner_type,
             owner_id=owner_id,
             outbound_url=outbound_url,
@@ -83,6 +155,60 @@ class BotRepository:
             {"oid": owner_id},
         )
         return result.scalar_one_or_none() is not None
+
+    async def department_exists(self, department_id: int) -> bool:
+        result = await self._session.execute(
+            text("SELECT 1 FROM departments WHERE id = :did LIMIT 1"),
+            {"did": department_id},
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def list_assigned_group_ids(self, bot_id: int) -> list[int]:
+        result = await self._session.execute(
+            text(
+                """
+                SELECT group_id
+                FROM bot_group_assignments
+                WHERE bot_id = :bid
+                ORDER BY group_id
+                """
+            ),
+            {"bid": bot_id},
+        )
+        return [int(row[0]) for row in result.all()]
+
+    async def replace_group_assignments(self, bot_id: int, group_ids: list[int]) -> None:
+        await self._session.execute(
+            text("DELETE FROM bot_group_assignments WHERE bot_id = :bid"),
+            {"bid": bot_id},
+        )
+        for group_id in group_ids:
+            await self._session.execute(
+                text(
+                    """
+                    INSERT INTO bot_group_assignments (bot_id, group_id)
+                    VALUES (:bid, :gid)
+                    """
+                ),
+                {"bid": bot_id, "gid": group_id},
+            )
+        await self._session.flush()
+
+    async def groups_in_department(self, group_ids: list[int], department_id: int) -> list[int]:
+        if not group_ids:
+            return []
+        stmt = text(
+            """
+            SELECT id FROM groups
+            WHERE department_id = :did AND id IN :gids
+            ORDER BY id
+            """
+        ).bindparams(bindparam("gids", expanding=True))
+        result = await self._session.execute(
+            stmt,
+            {"did": department_id, "gids": group_ids},
+        )
+        return [int(row[0]) for row in result.all()]
 
 
 class BotEventInboxRepository:

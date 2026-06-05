@@ -15,6 +15,7 @@ from app.modules.bots.chats_bridge import (
     upsert_contact_from_telegram,
 )
 from app.modules.bots.ownership_bridge import handle_inbound_ownership
+from app.modules.bots.routing import resolve_bot_routing
 from app.modules.bots.repository import BotEventInboxRepository, BotRepository
 from app.modules.contacts.status_automation import apply_auto_contact_status
 from app.modules.db.models.bot import Bot
@@ -106,16 +107,17 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
 
 async def _resolve_created_by(session: AsyncSession, bot: Bot) -> int:
     head: int | None = None
-    if bot.owner_type == BotOwnerType.GROUP:
+    routing = await resolve_bot_routing(session, bot)
+    if routing.owner_type == BotOwnerType.GROUP:
         result = await session.execute(
             select(Department.head_user_id)
             .join(Group, Group.department_id == Department.id)
-            .where(Group.id == bot.owner_id),
+            .where(Group.id == routing.owner_id),
         )
         head = result.scalar_one_or_none()
-    elif bot.owner_type == BotOwnerType.DEPARTMENT:
+    else:
         result = await session.execute(
-            select(Department.head_user_id).where(Department.id == bot.owner_id),
+            select(Department.head_user_id).where(Department.id == routing.department_id),
         )
         head = result.scalar_one_or_none()
 
@@ -149,23 +151,24 @@ async def _handle_message_received(
         last_name=contact_data.get("last_name"),
         created_by=created_by,
     )
+    routing = await resolve_bot_routing(session, bot)
     chat_id = await upsert_chat_for_bot(
         session,
         contact_id=contact_id,
         bot_id=bot.id,
-        owner_type=BotOwnerType(bot.owner_type),
-        owner_id=bot.owner_id,
+        owner_type=routing.owner_type,
+        owner_id=routing.owner_id,
     )
     contact_row = await session.get(Contact, contact_id)
     if contact_row is not None:
         await apply_auto_contact_status(session, contact_row, bot_id=bot.id)
     lead_id: int | None = None
-    if bot.owner_type == BotOwnerType.GROUP:
-        group_id = bot.owner_id
+    if routing.lead_group_id is not None:
+        group_id = routing.lead_group_id
     else:
         group_id = await get_or_create_department_inbox_group(
             session,
-            bot.owner_id,
+            routing.department_id,
             created_by=created_by,
         )
 

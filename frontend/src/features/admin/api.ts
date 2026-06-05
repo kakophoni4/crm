@@ -45,6 +45,11 @@ export interface BotItem {
   id: number
   code: string
   name: string
+  department_id: number
+  department_name: string | null
+  assigned_group_ids: number[]
+  assigned_group_names: string[]
+  owner_label: string
   owner_type: 'department' | 'group'
   owner_id: number
   outbound_url: string
@@ -55,8 +60,7 @@ export interface BotItem {
 export interface BotCreateBody {
   code: string
   name: string
-  owner_type: 'department' | 'group'
-  owner_id: number
+  department_id: number
   outbound_url: string
   inbound_secret: string
   outbound_secret: string
@@ -176,14 +180,23 @@ export async function updateBot(
   id: number,
   body: {
     name?: string
-    owner_type?: 'department' | 'group'
-    owner_id?: number
+    department_id?: number
     outbound_url?: string
     health_url?: string | null
     is_active?: boolean
   },
 ): Promise<BotItem> {
   const { data } = await http.patch<BotItem>(`/bots/${id}`, body)
+  return data
+}
+
+export async function setBotGroupAssignments(
+  id: number,
+  groupIds: number[],
+): Promise<BotItem> {
+  const { data } = await http.put<BotItem>(`/bots/${id}/group-assignments`, {
+    group_ids: groupIds,
+  })
   return data
 }
 

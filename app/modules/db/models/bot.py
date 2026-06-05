@@ -19,6 +19,7 @@ class Bot(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     owner_type: Mapped[BotOwnerType] = mapped_column(bot_owner_type_pg, nullable=False)
     owner_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    department_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     inbound_secret_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     outbound_secret_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     outbound_url: Mapped[str] = mapped_column(Text, nullable=False)

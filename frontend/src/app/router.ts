@@ -172,6 +172,18 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'settings/bots',
+
+        name: 'settings-bots',
+
+        component: () => import('@/pages/settings/bots.vue'),
+
+        meta: { requiresSeniorOrAdmin: true },
+
+      },
+
+      {
+
         path: 'admin',
 
         meta: { requiresAdmin: true },

@@ -56,13 +56,13 @@ async def bots_org(
                 text(
                     """
                     INSERT INTO bots (
-                        code, name, owner_type, owner_id,
+                        code, name, owner_type, owner_id, department_id,
                         inbound_secret_encrypted, outbound_secret_encrypted,
                         outbound_url, health_url, is_active
                     )
                     VALUES (
                         'test_bot_a', 'Test Bot',
-                        'department', :dept_id,
+                        'department', :dept_id, :dept_id,
                         pgp_sym_encrypt(:in_secret, :key),
                         pgp_sym_encrypt(:out_secret, :key),
                         'https://bot.example.com/crm/cmd',
@@ -82,6 +82,25 @@ async def bots_org(
             bot_id = connection.execute(
                 text("SELECT id FROM bots WHERE code = 'test_bot_a'"),
             ).scalar_one()
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO groups (name, department_id)
+                    VALUES ('Bots Test Group', :dept_id)
+                    ON CONFLICT (department_id, name) DO NOTHING
+                    """
+                ),
+                {"dept_id": dept_id},
+            )
+            group_id = connection.execute(
+                text(
+                    """
+                    SELECT id FROM groups
+                    WHERE department_id = :dept_id AND name = 'Bots Test Group'
+                    """
+                ),
+                {"dept_id": dept_id},
+            ).scalar_one()
     finally:
         engine.dispose()
 
@@ -89,6 +108,7 @@ async def bots_org(
         "bot_id": bot_id,
         "bot_code": "test_bot_a",
         "dept_id": dept_id,
+        "group_id": group_id,
         "inbound_secret": INBOUND_SECRET,
         "outbound_secret": OUTBOUND_SECRET,
     }
@@ -179,6 +199,59 @@ async def admin_headers(
             "username": "admin",
             "password": test_settings.seed_admin_password,
         },
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest_asyncio.fixture
+async def senior_headers(
+    client: AsyncClient,
+    db_ready: None,
+    test_settings: Settings,
+) -> dict[str, str]:
+    del test_settings
+    email = "senior.bots@crm.local"
+    password = "TestPass!234567"
+    password_hash = hash_password(password)
+    engine = create_engine(_sync_database_url(os.environ["DATABASE_URL"]))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO departments (name)
+                    VALUES ('Bots Test Dept')
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                ),
+            )
+            dept_id = connection.execute(
+                text("SELECT id FROM departments WHERE name = 'Bots Test Dept'"),
+            ).scalar_one()
+            connection.execute(text("DELETE FROM users WHERE email = :email"), {"email": email})
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO users (
+                        email, username, password_hash, full_name, role, department_id
+                    )
+                    VALUES (:email, :username, :ph, 'Bots Senior', 'senior', :dept_id)
+                    """
+                ),
+                {
+                    "email": email,
+                    "username": email.split("@")[0],
+                    "ph": password_hash,
+                    "dept_id": dept_id,
+                },
+            )
+    finally:
+        engine.dispose()
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"username": email, "password": password},
     )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}

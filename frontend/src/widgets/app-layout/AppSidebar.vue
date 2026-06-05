@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Bot,
   LayoutDashboard,
   MessageSquare,
   Settings,
@@ -81,6 +82,11 @@ const menuOptions = computed(() => {
       key: 'settings-groups',
       icon: () => h(NIcon, null, { default: () => h(UsersRound) }),
     })
+    items.push({
+      label: 'Боты',
+      key: 'settings-bots',
+      icon: () => h(NIcon, null, { default: () => h(Bot) }),
+    })
   }
 
   if (auth.isAdmin) {
@@ -102,6 +108,7 @@ const activeKey = computed(() => {
   if (route.name === 'admin-statuses') return 'admin-statuses'
   if (route.name === 'settings-users') return 'settings-users'
   if (route.name === 'settings-groups') return 'settings-groups'
+  if (route.name === 'settings-bots') return 'settings-bots'
   if (typeof route.name === 'string' && route.name.startsWith('admin')) return 'admin'
   return null
 })
@@ -141,6 +148,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'settings-groups') {
     void router.push({ name: 'settings-groups' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'settings-bots') {
+    void router.push({ name: 'settings-bots' })
     emit('closeDrawer')
     return
   }

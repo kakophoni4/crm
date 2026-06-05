@@ -10,6 +10,7 @@ from app.modules.bots.schemas import (
     BotCreateRequest,
     BotCreateResponse,
     BotEventAcceptedResponse,
+    BotGroupAssignmentsRequest,
     BotHealthResponse,
     BotListResponse,
     BotResponse,
@@ -43,19 +44,19 @@ def _client_ip(request: Request) -> str:
 
 @router.get("/api/v1/bots", response_model=BotListResponse)
 async def list_bots(
-    _actor: Annotated[User, Depends(requires_permission(Permission.BOTS_READ))],
+    actor: Annotated[User, Depends(requires_permission(Permission.BOTS_READ))],
     service: Annotated[BotService, Depends(_service)],
 ) -> BotListResponse:
-    return await service.list_bots()
+    return await service.list_bots(actor)
 
 
 @router.get("/api/v1/bots/{bot_id}", response_model=BotResponse)
 async def get_bot(
     bot_id: int,
-    _actor: Annotated[User, Depends(requires_permission(Permission.BOTS_READ))],
+    actor: Annotated[User, Depends(requires_permission(Permission.BOTS_READ))],
     service: Annotated[BotService, Depends(_service)],
 ) -> BotResponse:
-    return await service.get_bot(bot_id)
+    return await service.get_bot(bot_id, actor)
 
 
 @router.post("/api/v1/bots", response_model=BotCreateResponse, status_code=201)
@@ -71,10 +72,20 @@ async def create_bot(
 async def update_bot(
     bot_id: int,
     body: BotUpdateRequest,
-    _actor: Annotated[User, Depends(requires_permission(Permission.BOTS_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.BOTS_MANAGE))],
     service: Annotated[BotService, Depends(_service)],
 ) -> BotResponse:
-    return await service.update_bot(bot_id, body)
+    return await service.update_bot(bot_id, body, actor)
+
+
+@router.put("/api/v1/bots/{bot_id}/group-assignments", response_model=BotResponse)
+async def set_bot_group_assignments(
+    bot_id: int,
+    body: BotGroupAssignmentsRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.BOTS_REASSIGN))],
+    service: Annotated[BotService, Depends(_service)],
+) -> BotResponse:
+    return await service.set_group_assignments(bot_id, body, actor)
 
 
 @router.post("/api/v1/bots/{bot_id}/rotate-secret", response_model=RotateSecretResponse)
@@ -90,10 +101,10 @@ async def rotate_secret(
 @router.delete("/api/v1/bots/{bot_id}", response_model=BotResponse)
 async def delete_bot(
     bot_id: int,
-    _actor: Annotated[User, Depends(requires_permission(Permission.BOTS_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.BOTS_MANAGE))],
     service: Annotated[BotService, Depends(_service)],
 ) -> BotResponse:
-    return await service.soft_delete(bot_id)
+    return await service.soft_delete(bot_id, actor)
 
 
 @router.get("/api/v1/bots/{bot_id}/health", response_model=BotHealthResponse)

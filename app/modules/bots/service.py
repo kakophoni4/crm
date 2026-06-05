@@ -10,10 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.hmac_util import sign_health_get, verify_inbound
 from app.modules.bots.ip_allowlist import ip_allowed
-from app.modules.bots.repository import BotEventInboxRepository, BotRepository
+from app.modules.bots.repository import BotEventInboxRepository, BotListRow, BotRepository
 from app.modules.bots.schemas import (
     BotCreateRequest,
     BotCreateResponse,
+    BotGroupAssignmentsRequest,
     BotHealthResponse,
     BotListResponse,
     BotResponse,
@@ -21,12 +22,16 @@ from app.modules.bots.schemas import (
     BotUpdateRequest,
     RotateSecretResponse,
 )
+from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.bot import Bot
-from app.modules.db.models.enums import BotOwnerType
+from app.modules.db.models.enums import BotOwnerType, UserRole
+from app.modules.db.models.user import User
+from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids
 from app.realtime.events import publish
 from app.shared.exceptions import (
     AuthenticationRequired,
     Conflict,
+    PermissionDenied,
     NotFound,
     ValidationError,
 )
@@ -43,12 +48,36 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.astimezone(UTC).isoformat()
 
 
-def _to_response(bot: Bot) -> BotResponse:
+def _build_owner_label(
+    *,
+    department_name: str | None,
+    assigned_group_names: list[str],
+) -> str:
+    dept_part = department_name or "неизвестный отдел"
+    if not assigned_group_names:
+        return f"Отдел: {dept_part} (не распределён)"
+    if len(assigned_group_names) == 1:
+        return f"Отдел: {dept_part} → {assigned_group_names[0]}"
+    groups = ", ".join(assigned_group_names)
+    return f"Отдел: {dept_part} → {groups}"
+
+
+def _to_response(row: BotListRow) -> BotResponse:
+    bot = row.bot
     allowlist = [str(item) for item in bot.ip_allowlist] if bot.ip_allowlist else None
+    owner_label = _build_owner_label(
+        department_name=row.department_name,
+        assigned_group_names=row.assigned_group_names,
+    )
     return BotResponse(
         id=bot.id,
         code=bot.code,
         name=bot.name,
+        department_id=bot.department_id,
+        department_name=row.department_name,
+        assigned_group_ids=row.assigned_group_ids,
+        assigned_group_names=row.assigned_group_names,
+        owner_label=owner_label,
         owner_type=BotOwnerType(bot.owner_type),
         owner_id=bot.owner_id,
         outbound_url=bot.outbound_url,
@@ -69,28 +98,62 @@ class BotService:
         self._repo = BotRepository(session)
         self._inbox = BotEventInboxRepository(session)
 
-    async def list_bots(self) -> BotListResponse:
-        bots = await self._repo.list_bots()
-        return BotListResponse(items=[_to_response(bot) for bot in bots])
+    async def _visible_department_ids(self, actor: User) -> set[int] | str:
+        ctx = await ScopeLoader(self._session).load(actor)
+        return visible_department_ids(ctx)
 
-    async def get_bot(self, bot_id: int) -> BotResponse:
-        bot = await self._repo.get_by_id(bot_id)
-        if bot is None:
+    async def _filter_rows(self, actor: User, rows: list[BotListRow]) -> list[BotListRow]:
+        visible = await self._visible_department_ids(actor)
+        if visible == SCOPE_ALL:
+            return rows
+        allowed = set(visible)
+        return [row for row in rows if row.bot.department_id in allowed]
+
+    async def _get_row_for_actor(self, actor: User, bot_id: int) -> BotListRow:
+        row = await self._repo.get_list_row(bot_id)
+        if row is None:
             raise NotFound(message="Bot not found")
-        return _to_response(bot)
+        visible = await self._visible_department_ids(actor)
+        if visible != SCOPE_ALL and row.bot.department_id not in set(visible):
+            raise NotFound(message="Bot not found")
+        return row
+
+    async def _sync_owner_from_assignments(self, bot: Bot) -> None:
+        group_ids = await self._repo.list_assigned_group_ids(bot.id)
+        if len(group_ids) == 1:
+            bot.owner_type = BotOwnerType.GROUP
+            bot.owner_id = group_ids[0]
+        else:
+            bot.owner_type = BotOwnerType.DEPARTMENT
+            bot.owner_id = bot.department_id
+
+    async def list_bots(self, actor: User) -> BotListResponse:
+        rows = await self._filter_rows(actor, await self._repo.list_bots_with_meta())
+        return BotListResponse(items=[_to_response(row) for row in rows])
+
+    async def get_bot(self, bot_id: int, actor: User) -> BotResponse:
+        row = await self._get_row_for_actor(actor, bot_id)
+        return _to_response(row)
 
     async def create_bot(self, body: BotCreateRequest) -> BotCreateResponse:
+        department_id = body.department_id
+        if department_id is None:
+            if body.owner_type != BotOwnerType.DEPARTMENT:
+                raise ValidationError(message="Admin must assign bot to a department")
+            department_id = body.owner_id
+        if department_id is None or not await self._repo.department_exists(department_id):
+            raise ValidationError(message="department_id not found")
+
         existing = await self._repo.get_by_code(body.code)
         if existing is not None:
             raise Conflict(message="Bot code already exists")
-        if not await self._repo.owner_exists(body.owner_type, body.owner_id):
-            raise ValidationError(message="owner_id not found for owner_type")
 
         bot = await self._repo.create(
             code=body.code,
             name=body.name,
-            owner_type=body.owner_type,
-            owner_id=body.owner_id,
+            department_id=department_id,
+            owner_type=BotOwnerType.DEPARTMENT,
+            owner_id=department_id,
             outbound_url=body.outbound_url,
             health_url=body.health_url,
             ip_allowlist=body.ip_allowlist,
@@ -98,7 +161,9 @@ class BotService:
             outbound_secret=body.outbound_secret,
         )
         await self._session.commit()
-        response = _to_response(bot)
+        row = await self._repo.get_list_row(bot.id)
+        assert row is not None
+        response = _to_response(row)
         return BotCreateResponse(
             **response.model_dump(),
             secrets=BotSecretsResponse(
@@ -107,20 +172,27 @@ class BotService:
             ),
         )
 
-    async def update_bot(self, bot_id: int, body: BotUpdateRequest) -> BotResponse:
-        bot = await self._repo.get_by_id(bot_id)
-        if bot is None:
-            raise NotFound(message="Bot not found")
+    async def update_bot(self, bot_id: int, body: BotUpdateRequest, actor: User) -> BotResponse:
+        row = await self._get_row_for_actor(actor, bot_id)
+        bot = row.bot
 
         if body.name is not None:
             bot.name = body.name
-        if body.owner_type is not None:
-            bot.owner_type = body.owner_type
-        if body.owner_id is not None:
-            owner_type = body.owner_type or BotOwnerType(bot.owner_type)
-            if not await self._repo.owner_exists(owner_type, body.owner_id):
-                raise ValidationError(message="owner_id not found for owner_type")
-            bot.owner_id = body.owner_id
+
+        new_department_id = body.department_id
+        if new_department_id is None and body.owner_type == BotOwnerType.DEPARTMENT and body.owner_id:
+            new_department_id = body.owner_id
+
+        if new_department_id is not None:
+            if actor.role != UserRole.ADMIN:
+                raise PermissionDenied(message="Only admin can move bot between departments")
+            if not await self._repo.department_exists(new_department_id):
+                raise ValidationError(message="department_id not found")
+            bot.department_id = new_department_id
+            bot.owner_type = BotOwnerType.DEPARTMENT
+            bot.owner_id = new_department_id
+            await self._repo.replace_group_assignments(bot.id, [])
+
         if body.outbound_url is not None:
             bot.outbound_url = body.outbound_url
         if body.health_url is not None:
@@ -132,16 +204,48 @@ class BotService:
 
         await self._repo.save(bot)
         await self._session.commit()
-        return _to_response(bot)
+        row = await self._repo.get_list_row(bot.id)
+        assert row is not None
+        return _to_response(row)
 
-    async def soft_delete(self, bot_id: int) -> BotResponse:
-        bot = await self._repo.get_by_id(bot_id)
-        if bot is None:
-            raise NotFound(message="Bot not found")
+    async def set_group_assignments(
+        self,
+        bot_id: int,
+        body: BotGroupAssignmentsRequest,
+        actor: User,
+    ) -> BotResponse:
+        row = await self._get_row_for_actor(actor, bot_id)
+        bot = row.bot
+
+        if actor.role == UserRole.ADMIN:
+            pass
+        elif actor.role == UserRole.SENIOR:
+            if actor.department_id != bot.department_id:
+                raise PermissionDenied(message="Bot is outside your department")
+        else:
+            raise PermissionDenied(message="Insufficient permissions")
+
+        valid_group_ids = await self._repo.groups_in_department(body.group_ids, bot.department_id)
+        if len(valid_group_ids) != len(set(body.group_ids)):
+            raise ValidationError(message="All groups must belong to the bot department")
+
+        await self._repo.replace_group_assignments(bot.id, valid_group_ids)
+        await self._sync_owner_from_assignments(bot)
+        await self._repo.save(bot)
+        await self._session.commit()
+        row = await self._repo.get_list_row(bot.id)
+        assert row is not None
+        return _to_response(row)
+
+    async def soft_delete(self, bot_id: int, actor: User) -> BotResponse:
+        row = await self._get_row_for_actor(actor, bot_id)
+        bot = row.bot
         bot.is_active = False
         await self._repo.save(bot)
         await self._session.commit()
-        return _to_response(bot)
+        row = await self._repo.get_list_row(bot.id)
+        assert row is not None
+        return _to_response(row)
 
     async def rotate_secret(self, bot_id: int, kind: str) -> RotateSecretResponse:
         bot = await self._repo.get_by_id(bot_id)

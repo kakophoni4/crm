@@ -4,7 +4,7 @@ from app.modules.db.models.audit_log_entry import AuditLogEntry
 from app.modules.db.models.base import Base
 from app.modules.db.models.bot import Bot
 from app.modules.db.models.bot_event_inbox import BotEventInbox
-from app.modules.db.models.bot_outbound_log import BotOutboundLog
+from app.modules.db.models.bot_group_assignment import BotGroupAssignment
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.chat_read_state import ChatReadState
@@ -45,6 +45,7 @@ __all__ = [
     "Base",
     "Bot",
     "BotEventInbox",
+    "BotGroupAssignment",
     "BotOutboundLog",
     "BotOutboundStatus",
     "BotOwnerType",
