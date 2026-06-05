@@ -482,26 +482,20 @@ export const useChatsStore = defineStore('chats', () => {
           ? { ...detail, assigned_group_name: groupName }
           : detail
 
-      const leadId =
-        messageScope.value === 'current_lead' ? detail.current_lead?.id : undefined
-      if (messageScope.value === 'current_lead' && leadId == null) {
-        messages.value = []
-        messagesNextCursor.value = null
-      } else {
-        const msgs = await chatsApi.listMessages(chatId, {
-          limit: 50,
-          lead_id: leadId,
-        })
-        if (!isActiveChat(chatId, seq)) return
+      const leadId = resolveMessagesLeadId()
+      const msgs = await chatsApi.listMessages(chatId, {
+        limit: 50,
+        lead_id: leadId,
+      })
+      if (!isActiveChat(chatId, seq)) return
 
-        messages.value = await enrichMessagesWithReplyAudit(
-          detail.contact_id,
-          detail.assigned_group_id,
-          msgs.items,
-        )
-        if (!isActiveChat(chatId, seq)) return
-        messagesNextCursor.value = msgs.next_cursor
-      }
+      messages.value = await enrichMessagesWithReplyAudit(
+        detail.contact_id,
+        detail.assigned_group_id,
+        msgs.items,
+      )
+      if (!isActiveChat(chatId, seq)) return
+      messagesNextCursor.value = msgs.next_cursor
 
       void chatsApi.markChatRead(chatId).catch(() => undefined)
       const idx = listItems.value.findIndex((c) => c.id === chatId)

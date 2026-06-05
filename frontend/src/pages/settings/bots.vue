@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DataTableColumns, SelectOption } from 'naive-ui'
-import { NButton, NDataTable, NSelect, NSpace, NSpin, useMessage } from 'naive-ui'
+import { NButton, NDataTable, NSelect, NSpin, useMessage } from 'naive-ui'
 import { computed, h, onMounted, ref } from 'vue'
 
 import type { BotItem, Group } from '@/features/admin/api'
