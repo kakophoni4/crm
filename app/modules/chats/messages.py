@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.service import AuditService
 from app.modules.chats.repository import ChatRepository
+from app.modules.chats.read_state import upsert_read_state
 from app.modules.files.service import FilesService
 from app.modules.chats.schemas import AttachmentInput, OutboundMessageRequest
 from app.modules.chats.scope import can_view_chat_async
@@ -157,6 +158,12 @@ class ChatMessagesService:
         if body.idempotency_key:
             existing = await self._repo.get_message_by_idempotency(body.idempotency_key)
             if existing is not None:
+                await upsert_read_state(
+                    self._session,
+                    user_id=actor.id,
+                    chat_id=chat_id,
+                    last_read_message_id=existing.id,
+                )
                 owner_fields = await self._repo.get_message_owner_fields(existing.id)
                 return existing, {"idempotent": True}, owner_fields
 
@@ -210,6 +217,13 @@ class ChatMessagesService:
             idempotency_key=body.idempotency_key,
         )
         message = await self._repo.add_message(message)
+
+        await upsert_read_state(
+            self._session,
+            user_id=actor.id,
+            chat_id=chat_id,
+            last_read_message_id=message.id,
+        )
 
         chat.last_message_at = now
         chat.last_message_preview = _preview_text(body.text) or (

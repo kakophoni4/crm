@@ -585,6 +585,14 @@ export const useChatsStore = defineStore('chats', () => {
       } else {
         messages.value.push(saved)
       }
+      void chatsApi.markChatRead(chatId, { last_read_message_id: saved.id }).catch(() => undefined)
+      const listIdx = listItems.value.findIndex((c) => c.id === chatId)
+      if (listIdx >= 0) {
+        listItems.value[listIdx] = {
+          ...listItems.value[listIdx],
+          unread_for_me: false,
+        }
+      }
     } catch (err) {
       const idx = messages.value.findIndex((m) => m._clientKey === clientKey)
       if (idx >= 0) {

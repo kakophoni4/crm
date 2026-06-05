@@ -16,6 +16,31 @@ from app.realtime.events import publish
 from app.shared.exceptions import NotFound, ValidationError
 
 
+async def upsert_read_state(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    chat_id: int,
+    last_read_message_id: int | None,
+) -> None:
+    """Update per-user read cursor without committing (caller owns transaction)."""
+    now = datetime.now(UTC)
+    stmt = insert(ChatReadState).values(
+        user_id=user_id,
+        chat_id=chat_id,
+        last_read_message_id=last_read_message_id,
+        read_at=now,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "chat_id"],
+        set_={
+            "last_read_message_id": last_read_message_id,
+            "read_at": now,
+        },
+    )
+    await session.execute(stmt)
+
+
 class ChatReadStateService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
