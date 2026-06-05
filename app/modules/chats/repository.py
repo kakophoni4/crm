@@ -24,11 +24,13 @@ from app.modules.db.models.chat_takeover import ChatTakeover
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
 from app.modules.db.models.enums import ChatStatus
+from app.modules.db.models.group import Group
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.user import User
 from app.modules.rbac.permissions import Permission
 from app.modules.rbac.scope import ScopeContext
+from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
 from app.modules.search.trgm import trgm_or_ilike, trgm_search_indexes_available
 
 _HEADLINE_OPTS = "StartSel=<mark>, StopSel=</mark>, MaxWords=25, MinWords=3"
@@ -112,10 +114,11 @@ class ChatRepository:
             ]
         else:
             order_by = chat_list_order_by(sort)
-        # Card owner lives in contact_group_assignments for (contact, assigned_group),
-        # not in chats.last_handled_by_user_id.
+        # Card owner lives in contact_group_assignments for (contact, owner_group),
+        # not in chats.last_handled_by_user_id. Department bots use synthetic inbox group.
         card_owner_cga = aliased(ContactGroupAssignment)
         card_owner_user = aliased(User)
+        inbox_group = aliased(Group)
         stmt = (
             select(
                 Chat,
@@ -123,10 +126,20 @@ class ChatRepository:
                 card_owner_user.full_name,
             )
             .outerjoin(
+                inbox_group,
+                and_(
+                    Chat.assigned_group_id.is_(None),
+                    Chat.assigned_department_id.isnot(None),
+                    inbox_group.department_id == Chat.assigned_department_id,
+                    inbox_group.name == DEPT_INBOX_GROUP_NAME,
+                ),
+            )
+            .outerjoin(
                 card_owner_cga,
                 and_(
                     card_owner_cga.contact_id == Chat.contact_id,
-                    card_owner_cga.group_id == Chat.assigned_group_id,
+                    card_owner_cga.group_id
+                    == func.coalesce(Chat.assigned_group_id, inbox_group.id),
                 ),
             )
             .outerjoin(card_owner_user, card_owner_user.id == card_owner_cga.owner_user_id)
@@ -166,11 +179,21 @@ class ChatRepository:
             stmt = stmt.where(latest_msg.c.max_message_id.isnot(None))
         if needs_reply:
             needs_owner = aliased(ContactGroupAssignment)
-            stmt = stmt.join(
+            needs_inbox = aliased(Group)
+            stmt = stmt.outerjoin(
+                needs_inbox,
+                and_(
+                    Chat.assigned_group_id.is_(None),
+                    Chat.assigned_department_id.isnot(None),
+                    needs_inbox.department_id == Chat.assigned_department_id,
+                    needs_inbox.name == DEPT_INBOX_GROUP_NAME,
+                ),
+            ).join(
                 needs_owner,
                 and_(
                     needs_owner.contact_id == Chat.contact_id,
-                    needs_owner.group_id == Chat.assigned_group_id,
+                    needs_owner.group_id
+                    == func.coalesce(Chat.assigned_group_id, needs_inbox.id),
                 ),
             ).where(
                 or_(

@@ -16,6 +16,7 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import ChatStatus, StatusKind
 from app.modules.db.models.user import User
+from app.modules.leads.department_inbox import get_department_inbox_group_id
 from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids, visible_user_ids
 from app.modules.statuses.validation import ensure_status_kind
 from app.realtime.events import publish
@@ -114,11 +115,14 @@ class ChatService:
                 unread_for_me=unread_map.get(chat.id, False),
                 lead_in_scope=lead_in_scope,
             )
-            if chat.assigned_group_id is not None:
+            owner_group_id = chat.assigned_group_id
+            if owner_group_id is None and chat.current_lead is not None:
+                owner_group_id = chat.current_lead.group_id
+            if owner_user_id is not None and owner_group_id is not None:
                 item.card_owner_user_id = owner_user_id
                 item.card_owner_name = owner_full_name
                 item.card_owner_full_name = owner_full_name
-                item.card_owner_group_id = chat.assigned_group_id
+                item.card_owner_group_id = owner_group_id
             items.append(item)
         return ChatListResponse(
             items=items,
@@ -140,19 +144,25 @@ class ChatService:
             )
         )
         payload = to_chat_detail(chat, lead_in_scope=lead_in_scope)
-        if chat.assigned_group_id is None:
+        owner_group_id = chat.assigned_group_id
+        if owner_group_id is None and chat.assigned_department_id is not None:
+            owner_group_id = await get_department_inbox_group_id(
+                self._session,
+                chat.assigned_department_id,
+            )
+        if owner_group_id is None:
             return payload
         owner_map = await self._repo.get_card_owner_map(
-            {(chat.contact_id, chat.assigned_group_id)},
+            {(chat.contact_id, owner_group_id)},
         )
         owner_user_id, owner_name = owner_map.get(
-            (chat.contact_id, chat.assigned_group_id),
+            (chat.contact_id, owner_group_id),
             (None, None),
         )
         payload["card_owner_user_id"] = owner_user_id
         payload["card_owner_name"] = owner_name
         payload["card_owner_full_name"] = owner_name
-        payload["card_owner_group_id"] = chat.assigned_group_id
+        payload["card_owner_group_id"] = owner_group_id
         return payload
 
     async def create_chat(self, actor: User, body: ChatCreateRequest) -> ChatMutationResult:

@@ -13,7 +13,7 @@ from app.modules.auth.schemas import (
     MeResponse,
     TokenPairResponse,
 )
-from app.modules.db.models.enums import UserRole, UserStatus
+from app.modules.db.models.enums import UserPresence, UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac import ROLE_PERMISSIONS
 from app.shared.exceptions import AppError, AuthenticationRequired
@@ -95,6 +95,9 @@ class AuthService:
                 message=_INVALID_CREDENTIALS_MESSAGE,
                 status=401,
             )
+
+        user.presence = UserPresence.ONLINE
+        user.last_seen_at = datetime.now(UTC)
 
         access, refresh, _jti = await self._issue_tokens(user)
         await self._session.commit()

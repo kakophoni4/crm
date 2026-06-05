@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.timeutil import utc_now
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
-from app.modules.db.models.enums import UserAvailability, UserPresence, UserStatus
+from app.modules.db.models.enums import UserAvailability, UserStatus
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
+from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
 from app.shared.settings import settings
 
 ASSIGNMENT_AUTO_ROUND_ROBIN = "auto_round_robin"
@@ -56,13 +57,38 @@ async def get_owner(
 
 
 async def _available_user_ids(session: AsyncSession, group_id: int) -> list[int]:
+    """Operators eligible for new card assignment (round-robin).
+
+    For a real group — users in that group. For department inbox synthetic group —
+    all available operators in the department's real groups.
+    """
+    inbox_dept = await session.execute(
+        select(Group.department_id).where(
+            Group.id == group_id,
+            Group.name == DEPT_INBOX_GROUP_NAME,
+        ),
+    )
+    department_id = inbox_dept.scalar_one_or_none()
+    if department_id is not None:
+        result = await session.execute(
+            select(User.id)
+            .join(Group, Group.id == User.group_id)
+            .where(
+                Group.department_id == department_id,
+                Group.name != DEPT_INBOX_GROUP_NAME,
+                User.status == UserStatus.ACTIVE,
+                User.availability == UserAvailability.AVAILABLE,
+            )
+            .order_by(User.id),
+        )
+        return [int(uid) for uid in result.scalars().all()]
+
     result = await session.execute(
         select(User.id)
         .where(
             User.group_id == group_id,
             User.status == UserStatus.ACTIVE,
             User.availability == UserAvailability.AVAILABLE,
-            User.presence != UserPresence.OFFLINE,
         )
         .order_by(User.id),
     )

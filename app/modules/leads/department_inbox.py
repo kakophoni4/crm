@@ -48,3 +48,22 @@ async def get_or_create_department_inbox_group(
         msg = f"department inbox group missing for department_id={department_id}"
         raise RuntimeError(msg)
     return int(row_id)
+
+
+async def get_department_inbox_group_id(
+    session: AsyncSession,
+    department_id: int,
+) -> int | None:
+    """Return existing inbox group id for a department (read-only)."""
+    result = await session.execute(
+        text(
+            """
+            SELECT id FROM groups
+            WHERE department_id = :dept_id AND name = :name
+            LIMIT 1
+            """
+        ),
+        {"dept_id": department_id, "name": DEPT_INBOX_GROUP_NAME},
+    )
+    row_id = result.scalar_one_or_none()
+    return int(row_id) if row_id is not None else None
