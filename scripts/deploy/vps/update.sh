@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/deploy/vps/compose.sh"
 
-"$ROOT/scripts/deploy/vps/check-env.sh"
+bash "$ROOT/scripts/deploy/vps/check-env.sh"
 
 echo "Building api, worker, frontend..."
 compose build api worker frontend
