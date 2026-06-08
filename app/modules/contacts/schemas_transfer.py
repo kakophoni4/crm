@@ -14,10 +14,15 @@ class ContactTransferRequestBody(BaseModel):
 class ContactTransferResponse(BaseModel):
     id: int
     contact_id: int
+    contact_name: str | None = None
     group_id: int
+    group_name: str | None = None
     from_user_id: int
+    from_user_name: str | None = None
     to_user_id: int
+    to_user_name: str | None = None
     requested_by: int
+    requested_by_name: str | None = None
     state: str
     senior_user_id: int | None = None
     senior_decided_at: datetime | None = None

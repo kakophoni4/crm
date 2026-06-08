@@ -40,8 +40,9 @@ async def list_contact_transfers(
     group_id: int | None = None,
 ) -> ContactTransferListResponse:
     rows = await service.list_transfers(actor, state=state, group_id=group_id)
+    payloads = await service.to_responses(rows)
     return ContactTransferListResponse(
-        items=[ContactTransferResponse(**service.to_response(row)) for row in rows],
+        items=[ContactTransferResponse(**payload) for payload in payloads],
     )
 
 
@@ -61,7 +62,7 @@ async def approve_contact_transfer(
         expected_version=expected_version,
     )
     return AuditedResult(
-        data=ContactTransferResponse(**service.to_response(transfer)),
+        data=ContactTransferResponse(**await service.to_response(transfer)),
         entity_id=transfer.id,
         payload=payload,
     )
@@ -78,7 +79,7 @@ async def decline_contact_transfer(
 ) -> AuditedResult[ContactTransferResponse]:
     transfer, payload = await service.decline(actor, transfer_id)
     return AuditedResult(
-        data=ContactTransferResponse(**service.to_response(transfer)),
+        data=ContactTransferResponse(**await service.to_response(transfer)),
         entity_id=transfer.id,
         payload=payload,
     )
@@ -100,7 +101,7 @@ async def accept_contact_transfer(
         expected_version=expected_version,
     )
     return AuditedResult(
-        data=ContactTransferResponse(**service.to_response(transfer)),
+        data=ContactTransferResponse(**await service.to_response(transfer)),
         entity_id=transfer.id,
         payload=payload,
     )
@@ -117,7 +118,7 @@ async def reject_contact_transfer(
 ) -> AuditedResult[ContactTransferResponse]:
     transfer, payload = await service.reject(actor, transfer_id)
     return AuditedResult(
-        data=ContactTransferResponse(**service.to_response(transfer)),
+        data=ContactTransferResponse(**await service.to_response(transfer)),
         entity_id=transfer.id,
         payload=payload,
     )
@@ -134,7 +135,7 @@ async def cancel_contact_transfer(
 ) -> AuditedResult[ContactTransferResponse]:
     transfer, payload = await service.cancel(actor, transfer_id)
     return AuditedResult(
-        data=ContactTransferResponse(**service.to_response(transfer)),
+        data=ContactTransferResponse(**await service.to_response(transfer)),
         entity_id=transfer.id,
         payload=payload,
     )

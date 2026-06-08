@@ -188,7 +188,9 @@ onUnmounted(() => {
             <NSpace justify="space-between" align="center">
               <strong>
                 {{ row.contact_name ?? `Контакт #${row.contact_id}` }}
-                <NText depth="3" style="font-size: 0.8rem"> · группа #{{ row.group_id }}</NText>
+                <NText depth="3" style="font-size: 0.8rem">
+                  · {{ row.group_name ?? `группа #${row.group_id}` }}
+                </NText>
               </strong>
               <NTag :type="stateTagType(row.state)" :bordered="false">
                 {{ stateLabel(row.state) }}
@@ -197,6 +199,9 @@ onUnmounted(() => {
             <div class="transfer-inbox__meta">
               <span>От: {{ row.from_user_name ?? `#${row.from_user_id}` }}</span>
               <span>Кому: {{ row.to_user_name ?? `#${row.to_user_id}` }}</span>
+              <span v-if="row.requested_by !== row.from_user_id">
+                Инициатор: {{ row.requested_by_name ?? `#${row.requested_by}` }}
+              </span>
             </div>
             <div v-if="row.comment" class="transfer-inbox__comment">{{ row.comment }}</div>
             <NSpace>

@@ -222,7 +222,13 @@ async def test_list_contact_transfers_by_state(
         params={"state": "pending_senior", "group_id": group_id},
     )
     assert senior_inbox.status_code == 200, senior_inbox.text
-    assert any(item["contact_id"] == contact_id for item in senior_inbox.json()["items"])
+    items = senior_inbox.json()["items"]
+    assert any(item["contact_id"] == contact_id for item in items)
+    matched = next(item for item in items if item["contact_id"] == contact_id)
+    assert matched.get("contact_name")
+    assert matched.get("group_name")
+    assert matched.get("from_user_name")
+    assert matched.get("to_user_name")
 
 
 @pytest.mark.asyncio

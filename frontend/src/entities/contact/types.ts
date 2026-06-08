@@ -251,9 +251,13 @@ export interface ContactTransferRecord {
 
   contact_name?: string | null
 
+  group_name?: string | null
+
   from_user_name?: string | null
 
   to_user_name?: string | null
+
+  requested_by_name?: string | null
 
 }
 

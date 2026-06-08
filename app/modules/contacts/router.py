@@ -190,7 +190,7 @@ async def request_contact_group_transfer(
         force=body.force,
     )
     return AuditedResult(
-        data=ContactTransferResponse(**service.to_response(transfer)),
+        data=ContactTransferResponse(**await service.to_response(transfer)),
         entity_id=transfer.id,
         payload=payload,
     )

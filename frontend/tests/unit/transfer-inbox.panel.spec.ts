@@ -48,6 +48,10 @@ const pendingSeniorRow: ContactTransferRecord = {
   version: 4,
   updated_at: '2026-05-17T10:00:00Z',
   created_at: '2026-05-17T09:00:00Z',
+  contact_name: 'Марина Тест',
+  group_name: 'Продажи',
+  from_user_name: 'Оператор А',
+  to_user_name: 'Оператор Б',
 }
 
 function mountPanel() {
@@ -84,6 +88,18 @@ describe('TransferInboxPanel', () => {
     approveMock.mockReset()
     acceptMock.mockReset()
     listTransfersMock.mockResolvedValue({ items: [pendingSeniorRow] })
+  })
+
+  it('shows human-readable names instead of raw ids', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Марина Тест')
+    expect(wrapper.text()).toContain('Продажи')
+    expect(wrapper.text()).toContain('Оператор А')
+    expect(wrapper.text()).toContain('Оператор Б')
+    expect(wrapper.text()).not.toContain('Контакт #7')
+    expect(wrapper.text()).not.toContain('группа #3')
   })
 
   it('passes expected_version on approve and reloads inbox after 409', async () => {

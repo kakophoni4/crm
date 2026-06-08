@@ -17,6 +17,7 @@ from app.modules.contacts.ownership import (
 from app.modules.contacts.realtime_payloads import contact_group_context, user_full_name
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.db.models.contact import Contact
 from app.modules.db.models.contact_group_transfer import ContactGroupTransfer
 from app.modules.db.models.enums import (
     CONTACT_TRANSFER_ACTIVE_STATES,
@@ -523,20 +524,28 @@ class ContactGroupTransfersService:
         )
         return transfer, {"transfer_id": transfer.id, "state": transfer.state.value}
 
-    def to_response(self, transfer: ContactGroupTransfer) -> dict[str, Any]:
+    def _transfer_state_value(self, transfer: ContactGroupTransfer) -> str:
         state = (
             transfer.state
             if isinstance(transfer.state, TransferStatus)
             else TransferStatus(str(transfer.state))
         )
+        return state.value
+
+    def _base_response(self, transfer: ContactGroupTransfer) -> dict[str, Any]:
         return {
             "id": transfer.id,
             "contact_id": transfer.contact_id,
+            "contact_name": None,
             "group_id": transfer.group_id,
+            "group_name": None,
             "from_user_id": transfer.from_user_id,
+            "from_user_name": None,
             "to_user_id": transfer.to_user_id,
+            "to_user_name": None,
             "requested_by": transfer.requested_by,
-            "state": state.value,
+            "requested_by_name": None,
+            "state": self._transfer_state_value(transfer),
             "senior_user_id": transfer.senior_user_id,
             "senior_decided_at": transfer.senior_decided_at,
             "recipient_decided_at": transfer.recipient_decided_at,
@@ -547,3 +556,79 @@ class ContactGroupTransfersService:
             "created_at": transfer.created_at,
             "updated_at": transfer.updated_at,
         }
+
+    async def _load_display_names(
+        self,
+        transfers: list[ContactGroupTransfer],
+    ) -> tuple[
+        dict[int, str],
+        dict[int, str],
+        dict[int, str],
+    ]:
+        if not transfers:
+            return {}, {}, {}
+
+        contact_ids = {transfer.contact_id for transfer in transfers}
+        group_ids = {transfer.group_id for transfer in transfers}
+        user_ids: set[int] = set()
+        for transfer in transfers:
+            user_ids.add(transfer.from_user_id)
+            user_ids.add(transfer.to_user_id)
+            user_ids.add(transfer.requested_by)
+            if transfer.senior_user_id is not None:
+                user_ids.add(transfer.senior_user_id)
+
+        contact_names: dict[int, str] = {}
+        if contact_ids:
+            contact_rows = await self._session.execute(
+                select(Contact.id, Contact.full_name).where(Contact.id.in_(contact_ids)),
+            )
+            contact_names = {
+                int(row.id): row.full_name.strip()
+                for row in contact_rows.all()
+                if row.full_name and row.full_name.strip()
+            }
+
+        group_names: dict[int, str] = {}
+        if group_ids:
+            group_rows = await self._session.execute(
+                select(Group.id, Group.name).where(Group.id.in_(group_ids)),
+            )
+            group_names = {
+                int(row.id): row.name.strip()
+                for row in group_rows.all()
+                if row.name and row.name.strip()
+            }
+
+        user_names: dict[int, str] = {}
+        if user_ids:
+            user_rows = await self._session.execute(
+                select(User.id, User.full_name).where(User.id.in_(user_ids)),
+            )
+            user_names = {
+                int(row.id): row.full_name.strip()
+                for row in user_rows.all()
+                if row.full_name and row.full_name.strip()
+            }
+
+        return contact_names, group_names, user_names
+
+    async def to_responses(
+        self,
+        transfers: list[ContactGroupTransfer],
+    ) -> list[dict[str, Any]]:
+        contact_names, group_names, user_names = await self._load_display_names(transfers)
+        items: list[dict[str, Any]] = []
+        for transfer in transfers:
+            payload = self._base_response(transfer)
+            payload["contact_name"] = contact_names.get(transfer.contact_id)
+            payload["group_name"] = group_names.get(transfer.group_id)
+            payload["from_user_name"] = user_names.get(transfer.from_user_id)
+            payload["to_user_name"] = user_names.get(transfer.to_user_id)
+            payload["requested_by_name"] = user_names.get(transfer.requested_by)
+            items.append(payload)
+        return items
+
+    async def to_response(self, transfer: ContactGroupTransfer) -> dict[str, Any]:
+        rows = await self.to_responses([transfer])
+        return rows[0]
