@@ -12,6 +12,7 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.enums import AuditAction, StatusKind, UserRole
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.user import User
+from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.crm_cache import (
     contact_crm_cache_key,
     dashboard_crm_cache_key,
@@ -101,11 +102,14 @@ class LeadApiService:
     async def _require_lead_access(self, ctx: ScopeContext, lead: Lead | None) -> Lead:
         if lead is None:
             raise NotFound(message="Lead not found")
-        if not await self._contacts.is_visible(ctx, lead.contact_id):
-            raise NotFound(message="Lead not found")
-        if not self._group_in_scope(ctx, lead.group_id):
-            raise NotFound(message="Lead not found")
-        return lead
+        if await actor_can_access_lead(self._session, ctx, lead):
+            return lead
+        if await self._contacts.is_visible(ctx, lead.contact_id) and self._group_in_scope(
+            ctx,
+            lead.group_id,
+        ):
+            return lead
+        raise NotFound(message="Lead not found")
 
     def _can_create_in_group(self, actor: User, ctx: ScopeContext, group_id: int) -> bool:
         role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
@@ -143,14 +147,16 @@ class LeadApiService:
         )
         lead_ids = [row.id for row in rows]
         comments_map = await self._repo.list_comments_by_lead_ids(lead_ids)
-        items = [
-            to_lead_list_item(
-                row,
-                in_scope=self._group_in_scope(ctx, row.group_id),
-                comments=comments_map.get(row.id, []),
+        items = []
+        for row in rows:
+            in_scope = await actor_can_access_lead(self._session, ctx, row)
+            items.append(
+                to_lead_list_item(
+                    row,
+                    in_scope=in_scope,
+                    comments=comments_map.get(row.id, []),
+                ),
             )
-            for row in rows
-        ]
         return LeadListResponse(items=items, next_cursor=next_cursor)
 
     async def get_lead(self, actor: User, lead_id: int) -> LeadDetailResponse:

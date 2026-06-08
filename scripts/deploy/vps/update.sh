@@ -29,4 +29,4 @@ done
 echo ""
 compose ps
 echo ""
-"$ROOT/scripts/deploy/vps/status.sh"
+bash "$ROOT/scripts/deploy/vps/status.sh"

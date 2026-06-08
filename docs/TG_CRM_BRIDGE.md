@@ -1,5 +1,7 @@
 # Telegram ↔ CRM bridge
 
+> **Полная актуальная документация:** [`TELEGRAM_INTEGRATION.md`](TELEGRAM_INTEGRATION.md)
+
 Двусторонняя связь: сообщения из Telegram → CRM, ответ оператора из CRM → Telegram.
 
 ## Быстрый старт (VPS)

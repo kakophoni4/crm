@@ -16,6 +16,7 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import ChatStatus, StatusKind
 from app.modules.db.models.user import User
+from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.department_inbox import get_department_inbox_group_id
 from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids, visible_user_ids
 from app.modules.statuses.validation import ensure_status_kind
@@ -104,11 +105,12 @@ class ChatService:
             [chat.id for chat, _, _ in rows],
             actor.id,
         )
-        scope_groups = visible_group_ids(ctx)
         items = []
         for chat, owner_user_id, owner_full_name in rows:
-            lead_in_scope = chat.current_lead is None or scope_groups == SCOPE_ALL or (
-                isinstance(scope_groups, set) and chat.current_lead.group_id in scope_groups
+            lead_in_scope = chat.current_lead is None or await actor_can_access_lead(
+                self._session,
+                ctx,
+                chat.current_lead,
             )
             item = to_chat_list_item(
                 chat,
@@ -135,13 +137,10 @@ class ChatService:
         chat = await self._repo.get_by_id_scoped(chat_id, ctx, read_perm)
         if chat is None:
             raise NotFound(message="Chat not found")
-        scope_groups = visible_group_ids(ctx)
-        lead_in_scope = scope_groups == SCOPE_ALL or (
-            chat.current_lead is None
-            or (
-                isinstance(scope_groups, set)
-                and chat.current_lead.group_id in scope_groups
-            )
+        lead_in_scope = chat.current_lead is None or await actor_can_access_lead(
+            self._session,
+            ctx,
+            chat.current_lead,
         )
         payload = to_chat_detail(chat, lead_in_scope=lead_in_scope)
         owner_group_id = chat.assigned_group_id
