@@ -2,11 +2,12 @@
 import { NButton, NUpload, useMessage } from 'naive-ui'
 import type { UploadFileInfo } from 'naive-ui'
 import { Paperclip, Send, X } from 'lucide-vue-next'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 
 import { uploadFile } from '@/features/chats/api'
 import { formatFileSize, MAX_UPLOAD_BYTES } from '@/shared/config/uploads'
 import { isMessageSendShortcut } from '@/widgets/chat/message-input-hotkeys'
+import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
 
 const props = defineProps<{
   disabled?: boolean
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 
 const message = useMessage()
 const text = ref('')
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const pendingFiles = ref<{ file_id: number; name: string; mime?: string }[]>([])
 const sending = ref(false)
 const dragOver = ref(false)
@@ -129,6 +131,22 @@ async function onDrop(e: DragEvent): Promise<void> {
 function removePending(fileId: number): void {
   pendingFiles.value = pendingFiles.value.filter((f) => f.file_id !== fileId)
 }
+
+function insertEmoji(emoji: string): void {
+  const el = textareaRef.value
+  if (el) {
+    const start = el.selectionStart ?? text.value.length
+    const end = el.selectionEnd ?? start
+    text.value = text.value.slice(0, start) + emoji + text.value.slice(end)
+    void nextTick(() => {
+      el.focus()
+      const pos = start + emoji.length
+      el.setSelectionRange(pos, pos)
+    })
+    return
+  }
+  text.value += emoji
+}
 </script>
 
 <template>
@@ -158,6 +176,7 @@ function removePending(fileId: number): void {
 
     <div class="message-input__row">
       <div class="message-input__attach">
+        <EmojiPicker :disabled="disabled" @pick="insertEmoji" />
         <NUpload :show-file-list="false" @before-upload="onBeforeUpload">
           <NButton quaternary :disabled="disabled" aria-label="Прикрепить файл">
             <template #icon><Paperclip :size="18" /></template>
@@ -166,6 +185,7 @@ function removePending(fileId: number): void {
       </div>
 
       <textarea
+        ref="textareaRef"
         v-model="text"
         class="message-input__textarea"
         rows="2"
@@ -251,6 +271,9 @@ function removePending(fileId: number): void {
 
 .message-input__attach {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .message-input__send {
@@ -270,6 +293,7 @@ function removePending(fileId: number): void {
   background: var(--app-surface-elevated, #f4f4f5);
   color: var(--app-text);
   font: inherit;
+  font-family: inherit, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   line-height: 1.5;
   resize: vertical;
   box-sizing: border-box;

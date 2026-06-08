@@ -57,6 +57,7 @@ import {
   filterChatWorkflowStatuses,
   filterLeadPipelineStatuses,
   filterOpenLeadPipelineStatuses,
+  formatContactClientLabel,
   resolveTerminalStatusId,
 } from '@/features/leads/mapping'
 import type { StatusOption } from '@/features/leads/types'
@@ -129,8 +130,8 @@ const chatWorkflowStatusOptions = computed(() =>
 
 const chatWorkflowLabel = computed(() => store.currentChat?.chat_label?.label?.trim() || null)
 
-const contactClientLabel = computed(
-  () => store.currentChat?.contact_client_label?.trim() || null,
+const contactClientLabel = computed(() =>
+  formatContactClientLabel(store.currentChat?.contact_client_label),
 )
 
 const currentLeadStatusId = computed({

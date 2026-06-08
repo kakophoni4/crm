@@ -23,7 +23,7 @@ from app.modules.db.models.enums import AuditAction, MessageDirection, MessageKi
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.user import User
 from app.modules.leads.repository import LeadRepository
-from app.modules.leads.service import LeadService
+from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.workers.bots.dispatch_outbound import enqueue_outbound
@@ -185,15 +185,15 @@ class ChatMessagesService:
 
         lead_id: int | None = chat.current_lead_id
         group_id_for_lead = chat.assigned_group_id
-        if lead_id is None and group_id_for_lead is not None and chat.bot_id is not None:
-            lead = await LeadService(self._session).ensure_open_lead(
-                contact_id=chat.contact_id,
-                group_id=group_id_for_lead,
-                bot_id=chat.bot_id,
-                chat_id=chat_id,
+        if lead_id is None and group_id_for_lead is not None:
+            open_lead = await LeadRepository(self._session).get_open(
+                chat.contact_id,
+                group_id_for_lead,
             )
-            lead_id = lead.id
-            chat.current_lead_id = lead_id
+            if open_lead is not None:
+                lead_id = open_lead.id
+                chat.current_lead_id = lead_id
+        # New deals are opened on inbound from the client only — not when operator sends files/text.
 
         attachments = await _materialize_attachments(self._session, body.attachments)
         has_text = bool(body.text and body.text.strip())

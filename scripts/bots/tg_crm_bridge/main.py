@@ -152,6 +152,17 @@ async def _build_attachments(
             size_bytes=audio.get("file_size"),
         )
 
+    sticker = tg_message.get("sticker")
+    if isinstance(sticker, dict) and sticker.get("file_id"):
+        is_animated = bool(sticker.get("is_animated") or sticker.get("is_video"))
+        await add(
+            att_type="document" if is_animated else "photo",
+            file_id=str(sticker["file_id"]),
+            mime="video/webm" if sticker.get("is_video") else "image/webp",
+            filename="sticker.webp",
+            size_bytes=sticker.get("file_size"),
+        )
+
     return attachments
 
 
@@ -167,6 +178,8 @@ def _message_text(tg_message: dict[str, Any], attachments: list[dict[str, Any]])
         return "Фото"
     if att_type == "voice":
         return "Голосовое сообщение"
+    if att_type == "document" and (first.get("filename") or "").startswith("sticker"):
+        return "Стикер"
     return ""
 
 

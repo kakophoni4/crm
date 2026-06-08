@@ -87,6 +87,14 @@ export function filterChatWorkflowStatuses(items: StatusOption[]): StatusOption[
     .sort((a, b) => a.sort_order - b.sort_order)
 }
 
+export function formatContactClientLabel(code: string | null | undefined): string | null {
+  if (!code) return null
+  const normalized = code.trim().toLowerCase()
+  if (normalized === 'new' || normalized === 'client_new') return 'Новый клиент'
+  if (normalized === 'returning' || normalized === 'client_returning') return 'Повторный клиент'
+  return code
+}
+
 export function filterClientLabelStatuses(items: StatusOption[]): StatusOption[] {
   return items
     .filter((row) => row.is_active && matchesClientLabel(row))

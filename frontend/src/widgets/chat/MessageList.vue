@@ -275,6 +275,7 @@ watch(
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+  font-family: inherit, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
 }
 
 .message-list__meta {
