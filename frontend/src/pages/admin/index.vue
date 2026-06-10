@@ -6,7 +6,7 @@ const links = [
   { name: 'admin-departments', label: 'Отделы', desc: 'Создание и редактирование отделов' },
   { name: 'admin-groups', label: 'Группы', desc: 'Группы внутри отделов' },
   { name: 'admin-users', label: 'Пользователи', desc: 'Учётные записи, роли, группы' },
-  { name: 'admin-bots', label: 'Боты', desc: 'Интеграции и ротация секретов' },
+  { name: 'admin-bots', label: 'Боты', desc: 'Интеграции, группы и ротация секретов' },
   { name: 'admin-statuses', label: 'Воронка сделок', desc: 'Этапы открытых сделок (лидов)' },
 ] as const
 </script>

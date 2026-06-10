@@ -15,20 +15,25 @@ import {
 } from 'naive-ui'
 import { computed, h, onMounted, ref } from 'vue'
 
-import type { BotItem, Department } from '@/features/admin/api'
+import type { BotItem, Department, Group } from '@/features/admin/api'
 import {
   createBot,
   listBots,
   listDepartments,
+  listGroups,
   rotateBotSecret,
+  setBotGroupAssignments,
   updateBot,
 } from '@/features/admin/api'
 import { AppError } from '@/shared/api/http'
 
 const message = useMessage()
 const loading = ref(false)
+const savingId = ref<number | null>(null)
 const rows = ref<BotItem[]>([])
 const departments = ref<Department[]>([])
+const groups = ref<Group[]>([])
+const draftGroupIds = ref<Record<number, number[]>>({})
 const showModal = ref(false)
 const showEditModal = ref(false)
 const secretsModal = ref(false)
@@ -58,6 +63,12 @@ const departmentOptions = computed<SelectOption[]>(() =>
   departments.value.map((d) => ({ label: d.name, value: d.id })),
 )
 
+function groupOptionsForBot(row: BotItem): SelectOption[] {
+  return groups.value
+    .filter((g) => g.department_id === row.department_id)
+    .map((g) => ({ label: g.name, value: g.id }))
+}
+
 const columns = computed<DataTableColumns<BotItem>>(() => [
   { title: 'Код', key: 'code', width: 140 },
   { title: 'Название', key: 'name' },
@@ -68,10 +79,20 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
     render: (row) => row.department_name ?? `#${row.department_id}`,
   },
   {
-    title: 'Распределение',
-    key: 'owner_label',
-    minWidth: 220,
-    render: (row) => row.owner_label,
+    title: 'Группы',
+    key: 'assigned_group_ids',
+    minWidth: 280,
+    render: (row) =>
+      h(NSelect, {
+        multiple: true,
+        filterable: true,
+        value: draftGroupIds.value[row.id] ?? row.assigned_group_ids,
+        options: groupOptionsForBot(row),
+        placeholder: 'Не распределён (ящик отдела)',
+        onUpdateValue: (value: number[]) => {
+          draftGroupIds.value[row.id] = value
+        },
+      }),
   },
   {
     title: 'Активен',
@@ -82,9 +103,19 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
   {
     title: '',
     key: 'actions',
-    width: 420,
+    width: 520,
     render: (row) =>
       h(NSpace, null, () => [
+        h(
+          NButton,
+          {
+            size: 'small',
+            type: 'primary',
+            loading: savingId.value === row.id,
+            onClick: () => onSaveGroups(row),
+          },
+          { default: () => 'Группы' },
+        ),
         h(
           NButton,
           { size: 'small', onClick: () => openEdit(row) },
@@ -129,12 +160,36 @@ function openEdit(row: BotItem): void {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    departments.value = await listDepartments()
-    rows.value = await listBots()
+    const [deptItems, groupItems, botItems] = await Promise.all([
+      listDepartments(),
+      listGroups(),
+      listBots(),
+    ])
+    departments.value = deptItems
+    groups.value = groupItems
+    rows.value = botItems
+    draftGroupIds.value = Object.fromEntries(
+      botItems.map((row) => [row.id, [...row.assigned_group_ids]]),
+    )
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить ботов')
   } finally {
     loading.value = false
+  }
+}
+
+async function onSaveGroups(row: BotItem): Promise<void> {
+  savingId.value = row.id
+  try {
+    const groupIds = draftGroupIds.value[row.id] ?? row.assigned_group_ids
+    const updated = await setBotGroupAssignments(row.id, groupIds)
+    rows.value = rows.value.map((item) => (item.id === updated.id ? updated : item))
+    draftGroupIds.value[row.id] = [...updated.assigned_group_ids]
+    message.success('Распределение сохранено')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Ошибка сохранения групп')
+  } finally {
+    savingId.value = null
   }
 }
 
@@ -220,7 +275,8 @@ onMounted(() => {
       <div>
         <h1 class="admin-page__title">Боты</h1>
         <p class="admin-page__hint">
-          Админ привязывает бота к отделу. Старший распределяет бота по группам внутри отдела.
+          Привяжите бота к отделу и назначьте одну группу — тогда чаты и передача карточек идут
+          в рамках этой группы. Без группы чаты попадают в общий ящик отдела, передача недоступна.
         </p>
       </div>
       <NButton type="primary" @click="openCreate">Создать бота</NButton>

@@ -118,13 +118,19 @@ class ChatService:
                 lead_in_scope=lead_in_scope,
             )
             owner_group_id = chat.assigned_group_id
+            if owner_group_id is None and chat.assigned_department_id is not None:
+                owner_group_id = await get_department_inbox_group_id(
+                    self._session,
+                    chat.assigned_department_id,
+                )
             if owner_group_id is None and chat.current_lead is not None:
                 owner_group_id = chat.current_lead.group_id
+            if owner_group_id is not None:
+                item.card_owner_group_id = owner_group_id
             if owner_user_id is not None and owner_group_id is not None:
                 item.card_owner_user_id = owner_user_id
                 item.card_owner_name = owner_full_name
                 item.card_owner_full_name = owner_full_name
-                item.card_owner_group_id = owner_group_id
             items.append(item)
         return ChatListResponse(
             items=items,

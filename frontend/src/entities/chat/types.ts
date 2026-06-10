@@ -32,6 +32,8 @@ export interface ChatListItem {
   /** Card owner in the chat's group (ownership model). */
   card_owner_user_id?: number | null
   card_owner_full_name?: string | null
+  /** Group scope for ownership / transfer (inbox group when chat has no assigned_group_id). */
+  card_owner_group_id?: number | null
   pending_inbound_at?: string | null
   escalated_at?: string | null
   needs_response?: boolean
