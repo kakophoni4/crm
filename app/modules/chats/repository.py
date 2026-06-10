@@ -147,6 +147,8 @@ class ChatRepository:
             .limit(limit + 1)
         )
         stmt = self._scoped(stmt, ctx, read_perm)
+        if status is None:
+            stmt = stmt.where(Chat.status != ChatStatus.ARCHIVED)
         needs_latest_msg = unread_only or (
             sort == ChatListSort.UNREAD_FIRST and use_actor_unread
         )

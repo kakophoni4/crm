@@ -92,6 +92,7 @@ class ChatListItemResponse(BaseModel):
     status_id: int | None
     chat_label: ChatLabelSnippet | None = None
     contact_client_label: str | None = None
+    contact_illiquid: bool = False
     current_lead: CurrentLeadSnippet | None = None
     last_message_at: datetime | None
     last_message_preview: str | None

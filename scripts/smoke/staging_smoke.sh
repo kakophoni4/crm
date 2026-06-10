@@ -143,7 +143,7 @@ fi
 echo "==> POST ${API}/auth/login"
 login_resp="$(smoke_curl -sfS --max-time 30 -X POST "${API}/auth/login" \
   -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${SMOKE_EMAIL}\",\"password\":\"${SMOKE_PASSWORD}\"}" 2>/dev/null || true)"
+  -d "{\"username\":\"${SMOKE_EMAIL}\",\"password\":\"${SMOKE_PASSWORD}\"}" 2>/dev/null || true)"
 ACCESS_TOKEN="$(printf '%s' "$login_resp" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
 if [[ -n "$ACCESS_TOKEN" ]]; then
   log_ok "auth login returned access_token"

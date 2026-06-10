@@ -15,8 +15,10 @@ import type {
 } from '@/entities/chat/types'
 import {
   closeLead as closeLeadApi,
+  createContactLead,
   patchLead as patchLeadApi,
 } from '@/features/leads/api'
+import { currentLeadIsOpen } from '@/features/leads/mapping'
 import type { GroupOwnershipItem } from '@/entities/contact/types'
 import * as chatsApi from '@/features/chats/api'
 import {
@@ -41,6 +43,7 @@ export const useChatsStore = defineStore('chats', () => {
   const currentChat = ref<ChatDetail | null>(null)
   const messages = ref<ChatMessage[]>([])
   const messagesLoading = ref(false)
+  const loadingOlderMessages = ref(false)
   const messagesNextCursor = ref<string | null>(null)
   const messageScope = ref<MessageScope>('all')
   const leadClosedBanner = ref(false)
@@ -64,6 +67,8 @@ export const useChatsStore = defineStore('chats', () => {
 
   const closingLead = ref(false)
   const updatingLeadStatus = ref(false)
+  const creatingLead = ref(false)
+  const updatingLeadFields = ref(false)
 
   /** Bumps on each openChat(); stale async results are ignored. */
   let openChatSeq = 0
@@ -267,6 +272,51 @@ export const useChatsStore = defineStore('chats', () => {
     }
     if (currentChatId.value != null) {
       patchChatLead(currentChatId.value, snippet)
+    }
+  }
+
+  async function updateCurrentLeadCustomFields(
+    customFields: Record<string, unknown>,
+  ): Promise<void> {
+    const lead = currentChat.value?.current_lead
+    if (!lead || lead.closed_at != null || updatingLeadFields.value) return
+    updatingLeadFields.value = true
+    try {
+      await patchLeadApi(lead.id, { custom_fields: customFields })
+    } finally {
+      updatingLeadFields.value = false
+    }
+  }
+
+  async function createManualLead(): Promise<void> {
+    const chat = currentChat.value
+    if (!chat || currentLeadIsOpen(chat.current_lead) || creatingLead.value) return
+    const groupId = chat.assigned_group_id
+    if (groupId == null) {
+      throw new Error('Назначьте боту группу, чтобы открыть сделку')
+    }
+    creatingLead.value = true
+    try {
+      const created = await createContactLead(chat.contact_id, {
+        group_id: groupId,
+        bot_id: chat.bot_id,
+      })
+      const snippet: CurrentLeadSnippet = {
+        id: created.id,
+        status_id: created.status_id ?? 0,
+        label: created.status_label ?? '',
+        comment: created.comment ?? null,
+        closed_at: created.closed_at,
+      }
+      if (currentChatId.value != null) {
+        patchChatLead(currentChatId.value, snippet)
+        await refreshChatLead(currentChatId.value)
+      }
+      leadClosedBanner.value = false
+      messageScope.value = 'current_lead'
+      await reloadMessages()
+    } finally {
+      creatingLead.value = false
     }
   }
 
@@ -522,23 +572,37 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   async function loadOlderMessages(): Promise<void> {
-    if (!currentChatId.value || !messagesNextCursor.value || !currentChat.value) return
+    if (
+      !currentChatId.value ||
+      !messagesNextCursor.value ||
+      !currentChat.value ||
+      loadingOlderMessages.value
+    ) {
+      return
+    }
     const chatId = currentChatId.value
     const seq = openChatSeq
-    const data = await chatsApi.listMessages(chatId, {
-      cursor: messagesNextCursor.value,
-      limit: 50,
-      lead_id: resolveMessagesLeadId(),
-    })
-    if (!isActiveChat(chatId, seq) || !currentChat.value) return
-    const older = await enrichMessagesWithReplyAudit(
-      currentChat.value.contact_id,
-      currentChat.value.assigned_group_id,
-      data.items,
-    )
-    if (!isActiveChat(chatId, seq)) return
-    messages.value = [...older, ...messages.value]
-    messagesNextCursor.value = data.next_cursor
+    loadingOlderMessages.value = true
+    try {
+      const data = await chatsApi.listMessages(chatId, {
+        cursor: messagesNextCursor.value,
+        limit: 50,
+        lead_id: resolveMessagesLeadId(),
+      })
+      if (!isActiveChat(chatId, seq) || !currentChat.value) return
+      const older = await enrichMessagesWithReplyAudit(
+        currentChat.value.contact_id,
+        currentChat.value.assigned_group_id,
+        data.items,
+      )
+      if (!isActiveChat(chatId, seq)) return
+      messages.value = [...older, ...messages.value]
+      messagesNextCursor.value = data.next_cursor
+    } finally {
+      if (isActiveChat(chatId, seq)) {
+        loadingOlderMessages.value = false
+      }
+    }
   }
 
   async function sendMessage(
@@ -617,6 +681,8 @@ export const useChatsStore = defineStore('chats', () => {
 
     if (currentChatId.value === chatId) {
       await refreshOpenChatMessages(chatId, messageId)
+    } else {
+      void fetchList()
     }
   }
 
@@ -759,6 +825,7 @@ export const useChatsStore = defineStore('chats', () => {
     currentChat,
     messages,
     messagesLoading,
+    loadingOlderMessages,
     messagesNextCursor,
     messageScope,
     leadClosedBanner,
@@ -768,7 +835,9 @@ export const useChatsStore = defineStore('chats', () => {
     takeoverByChatId,
     filters,
     closingLead,
+    creatingLead,
     updatingLeadStatus,
+    updatingLeadFields,
     listTab,
     needsResponseChatIds,
     displayListItems,
@@ -797,6 +866,8 @@ export const useChatsStore = defineStore('chats', () => {
     closeCurrentLead,
     updateCurrentLeadStatus,
     updateCurrentLeadComment,
+    updateCurrentLeadCustomFields,
+    createManualLead,
     updateChatLabel,
     patchChatLead,
   }

@@ -12,6 +12,8 @@ import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
 const props = defineProps<{
   messages: ChatMessage[]
   loading?: boolean
+  loadingOlder?: boolean
+  hasMore?: boolean
   chatId?: number | null
   contactId?: number | null
   contactName?: string | null
@@ -23,6 +25,8 @@ const emit = defineEmits<{
 
 const viewportRef = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
+const loadingOlderGuard = ref(false)
+const anchorHeight = ref<number | null>(null)
 
 const sorted = computed(() =>
   [...props.messages].sort(
@@ -65,17 +69,40 @@ function onViewportScroll(): void {
   if (!el) return
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
   stickToBottom.value = distance < 72
+
+  if (
+    el.scrollTop < 96 &&
+    props.hasMore &&
+    !props.loadingOlder &&
+    !loadingOlderGuard.value
+  ) {
+    loadingOlderGuard.value = true
+    stickToBottom.value = false
+    anchorHeight.value = el.scrollHeight
+    emit('loadOlder')
+  }
 }
 
-function onLoadOlderClick(): void {
-  stickToBottom.value = false
-  emit('loadOlder')
-}
+watch(
+  () => props.loadingOlder,
+  async (loading, wasLoading) => {
+    if (wasLoading && !loading && anchorHeight.value != null) {
+      await nextTick()
+      const el = viewportRef.value
+      if (el) {
+        el.scrollTop += el.scrollHeight - anchorHeight.value
+      }
+      anchorHeight.value = null
+      loadingOlderGuard.value = false
+    }
+  },
+)
 
 watch(
   () => props.chatId,
   () => {
     stickToBottom.value = true
+    loadingOlderGuard.value = false
     void nextTick(() => scrollToBottom(false))
   },
 )
@@ -115,9 +142,7 @@ watch(
   <div class="message-list">
     <div ref="viewportRef" class="message-list__viewport" @scroll="onViewportScroll">
       <NSpin :show="loading">
-        <button type="button" class="message-list__older" @click="onLoadOlderClick">
-          Загрузить ранее
-        </button>
+        <div v-if="loadingOlder" class="message-list__older-hint">Загрузка…</div>
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />
         </div>
@@ -209,14 +234,11 @@ watch(
   margin-bottom: 10px;
 }
 
-.message-list__older {
+.message-list__older-hint {
   align-self: center;
   margin-bottom: 8px;
-  background: none;
-  border: none;
-  color: var(--app-accent, #2080f0);
-  cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
 }
 
 .message-list__row {

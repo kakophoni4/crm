@@ -100,4 +100,4 @@ async def test_attachment_download_updates_message(
         engine.dispose()
 
     assert stored[0]["status"] == "ready"
-    assert "minio.test" in stored[0]["url"]
+    assert stored[0]["storage_key"].startswith("bot-inbound/")

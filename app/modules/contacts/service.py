@@ -23,6 +23,7 @@ from app.modules.contacts.schemas import (
 )
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.contacts.serialization import to_contact_response
+from app.modules.chats.illiquid import archive_contact_chats
 from app.modules.contacts.status_automation import (
     apply_auto_contact_status,
     validate_manual_status_change,
@@ -171,7 +172,10 @@ class ContactService:
             if resolved is None:
                 await apply_auto_contact_status(self._session, contact)
             else:
+                was_disabled = contact.status == ContactStatus.DISABLED
                 contact.status = resolved
+                if resolved == ContactStatus.DISABLED and not was_disabled:
+                    await archive_contact_chats(self._session, contact.id)
         for field, value in updates.items():
             setattr(contact, field, value)
         if custom_patch is not None:

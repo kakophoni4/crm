@@ -22,16 +22,13 @@ function mountInput() {
 }
 
 describe('MessageInput send hotkeys', () => {
-  it('emits send on Ctrl+Enter', async () => {
+  it('emits send on Enter', async () => {
     const wrapper = mountInput()
     const input = wrapper.findComponent(MessageInput)
     const textarea = wrapper.find('textarea')
 
     await textarea.setValue('Привет')
-    await textarea.trigger('keydown', {
-      key: 'Enter',
-      ctrlKey: true,
-    })
+    await textarea.trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
     expect(input.emitted('send')?.[0]).toEqual(['Привет', []])
@@ -39,30 +36,27 @@ describe('MessageInput send hotkeys', () => {
     document.body.innerHTML = ''
   })
 
-  it('emits send on Meta+Enter', async () => {
-    const wrapper = mountInput()
-    const input = wrapper.findComponent(MessageInput)
-    const textarea = wrapper.find('textarea')
-
-    await textarea.setValue('Hello')
-    await textarea.trigger('keydown', {
-      key: 'Enter',
-      metaKey: true,
-    })
-    await flushPromises()
-
-    expect(input.emitted('send')?.[0]).toEqual(['Hello', []])
-    wrapper.unmount()
-    document.body.innerHTML = ''
-  })
-
-  it('does not emit send on Enter alone', async () => {
+  it('does not emit send on Shift+Enter', async () => {
     const wrapper = mountInput()
     const input = wrapper.findComponent(MessageInput)
     const textarea = wrapper.find('textarea')
 
     await textarea.setValue('Line break')
-    await textarea.trigger('keydown', { key: 'Enter' })
+    await textarea.trigger('keydown', { key: 'Enter', shiftKey: true })
+    await flushPromises()
+
+    expect(input.emitted('send')).toBeUndefined()
+    wrapper.unmount()
+    document.body.innerHTML = ''
+  })
+
+  it('does not emit send on Ctrl+Enter', async () => {
+    const wrapper = mountInput()
+    const input = wrapper.findComponent(MessageInput)
+    const textarea = wrapper.find('textarea')
+
+    await textarea.setValue('Hello')
+    await textarea.trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
 
     expect(input.emitted('send')).toBeUndefined()

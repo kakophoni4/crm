@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.chats_bridge import (
     IngestResult,
+    get_chat_current_lead_id,
     insert_inbound_message,
+    insert_outbound_message,
+    is_outbound_bot_message,
     update_contact_telegram_fields,
     update_inbound_message_edited,
     upsert_chat_for_bot,
@@ -17,6 +20,7 @@ from app.modules.bots.chats_bridge import (
 from app.modules.bots.ownership_bridge import handle_inbound_ownership
 from app.modules.bots.routing import resolve_bot_routing
 from app.modules.bots.repository import BotEventInboxRepository, BotRepository
+from app.modules.chats.workflow_status import on_outbound_reply_to_client
 from app.modules.contacts.status_automation import apply_auto_contact_status
 from app.modules.db.models.bot import Bot
 from app.modules.db.models.contact import Contact
@@ -64,11 +68,12 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
 
             if event_type == "message.received":
                 result = await _handle_message_received(session, bot, envelope, inner)
-                for idx in result.attachment_indices:
-                    await enqueue(
-                        "download_attachment",
-                        {"message_id": result.message_id, "attachment_index": idx},
-                    )
+                if not result.duplicate:
+                    for idx in result.attachment_indices:
+                        await enqueue(
+                            "download_attachment",
+                            {"message_id": result.message_id, "attachment_index": idx},
+                        )
                 await publish(
                     "chat.message.inbound",
                     {
@@ -141,6 +146,9 @@ async def _handle_message_received(
 ) -> IngestResult:
     contact_data = inner["contact"]
     message_data = inner["message"]
+    if is_outbound_bot_message(message_data):
+        return await _handle_bot_outbound_message(session, bot, envelope, inner)
+
     created_by = await _resolve_created_by(session, bot)
 
     contact_id = await upsert_contact_from_telegram(
@@ -195,6 +203,48 @@ async def _handle_message_received(
         attachments=list(message_data.get("attachments") or []),
         reply_to_external_id=message_data.get("reply_to_external_id"),
     )
+
+
+async def _handle_bot_outbound_message(
+    session: Any,
+    bot: Bot,
+    envelope: dict[str, Any],
+    inner: dict[str, Any],
+) -> IngestResult:
+    contact_data = inner["contact"]
+    message_data = inner["message"]
+    created_by = await _resolve_created_by(session, bot)
+
+    contact_id = await upsert_contact_from_telegram(
+        session,
+        telegram_user_id=int(contact_data["telegram_user_id"]),
+        telegram_username=contact_data.get("telegram_username"),
+        first_name=contact_data.get("first_name"),
+        last_name=contact_data.get("last_name"),
+        created_by=created_by,
+    )
+    routing = await resolve_bot_routing(session, bot)
+    chat_id = await upsert_chat_for_bot(
+        session,
+        contact_id=contact_id,
+        bot_id=bot.id,
+        owner_type=routing.owner_type,
+        owner_id=routing.owner_id,
+    )
+    lead_id = await get_chat_current_lead_id(session, chat_id)
+    result = await insert_outbound_message(
+        session,
+        chat_id=chat_id,
+        lead_id=lead_id,
+        text_body=message_data.get("text"),
+        external_message_id=str(message_data["external_id"]),
+        external_event_id=str(envelope.get("event_id", "")),
+        attachments=list(message_data.get("attachments") or []),
+        reply_to_external_id=message_data.get("reply_to_external_id"),
+    )
+    if not result.duplicate:
+        await on_outbound_reply_to_client(session, chat_id)
+    return result
 
 
 async def _handle_message_edited(session: Any, bot: Bot, inner: dict[str, Any]) -> None:

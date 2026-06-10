@@ -82,6 +82,14 @@ const crmSummaryBadge = computed(() =>
   formatCrmSummaryBadge(contact.value?.crm_summary as ContactCrmSummary | undefined),
 )
 
+function openLeadInChats(row: LeadListItem): void {
+  if (row.chat_id == null) return
+  void router.push({
+    name: 'chats',
+    query: { chatId: String(row.chat_id), leadId: String(row.id) },
+  })
+}
+
 function renderLeadComments(row: LeadListItem) {
   const items = leadCommentItems(row)
   if (!items.length) {
@@ -158,6 +166,22 @@ const leadsColumns: DataTableColumns<LeadListItem> = [
     key: 'comments',
     minWidth: 220,
     render: (row) => renderLeadComments(row),
+  },
+  {
+    title: '',
+    key: 'actions',
+    width: 100,
+    render: (row) =>
+      h(
+        NButton,
+        {
+          size: 'small',
+          quaternary: true,
+          disabled: row.chat_id == null,
+          onClick: () => openLeadInChats(row),
+        },
+        { default: () => 'Открыть' },
+      ),
   },
 ]
 

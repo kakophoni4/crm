@@ -104,7 +104,7 @@ if (Test-MetricsEnabled) {
 Write-Host "==> POST $Api/auth/login"
 $accessToken = $null
 try {
-    $loginBody = (@{ email = $SmokeEmail; password = $SmokePassword } | ConvertTo-Json -Compress)
+    $loginBody = (@{ username = $SmokeEmail; password = $SmokePassword } | ConvertTo-Json -Compress)
     $login = Invoke-SmokeRequest -Method POST -Uri "$Api/auth/login" -Body $loginBody
     $loginJson = $login.Content | ConvertFrom-Json
     $accessToken = $loginJson.access_token

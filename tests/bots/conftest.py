@@ -261,7 +261,19 @@ def build_inbound_payload(
     *,
     event_id: str = "01J5BOTEVENT0001",
     bot_code: str = "test_bot_a",
+    direction: str | None = None,
+    external_id: str = "msg_bot_001",
+    text: str = "Hello from bot",
+    telegram_user_id: int = 999001,
 ) -> tuple[bytes, dict[str, str]]:
+    message: dict[str, object] = {
+        "external_id": external_id,
+        "text": text,
+        "attachments": [],
+        "sent_at": "2026-05-16T12:34:55Z",
+    }
+    if direction is not None:
+        message["direction"] = direction
     envelope = {
         "event": "message.received",
         "event_id": event_id,
@@ -269,17 +281,12 @@ def build_inbound_payload(
         "bot_code": bot_code,
         "payload": {
             "contact": {
-                "telegram_user_id": 999001,
+                "telegram_user_id": telegram_user_id,
                 "telegram_username": "bot_test_user",
                 "first_name": "Bot",
                 "last_name": "Tester",
             },
-            "message": {
-                "external_id": "msg_bot_001",
-                "text": "Hello from bot",
-                "attachments": [],
-                "sent_at": "2026-05-16T12:34:55Z",
-            },
+            "message": message,
         },
     }
     body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")

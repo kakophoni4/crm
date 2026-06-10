@@ -36,10 +36,10 @@ import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
 
 import { useWindowSize } from '@vueuse/core'
-import { ArrowLeft, ChevronDown, MessageSquare } from 'lucide-vue-next'
+import { ArrowLeft, MessageSquare } from 'lucide-vue-next'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 
 
@@ -64,15 +64,15 @@ import type { StatusOption } from '@/features/leads/types'
 import { useStatusesStore } from '@/features/statuses/store'
 
 import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDialog.vue'
+import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
+import LeadDealModal from '@/widgets/chat/LeadDealModal.vue'
 
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
 
 import { onChatsInvalidate } from '@/shared/lib/query-invalidation'
-import { storage } from '@/shared/lib/storage'
-
 import { connectChatsRealtime } from '@/shared/realtime/chats-ws'
 import { connectLeadsRealtime } from '@/shared/realtime/leads-ws'
 
@@ -91,6 +91,7 @@ const CHATS_NARROW_BREAKPOINT = 1024
 const store = useChatsStore()
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const { width } = useWindowSize()
 const isNarrow = computed(() => width.value < CHATS_NARROW_BREAKPOINT)
 const narrowPane = ref<'list' | 'chat'>('list')
@@ -148,35 +149,31 @@ const showLeadPipelineSelect = computed(
   () => hasOpenLead.value && leadStatusOptions.value.length > 0,
 )
 
-const leadCommentDraft = ref('')
-const savingLeadComment = ref(false)
+const leadDealModalVisible = ref(false)
+const leadDealModalLeadId = ref<number | null>(null)
 
-watch(
-  () => store.currentChat?.current_lead?.id,
-  () => {
-    leadCommentDraft.value = ''
-  },
-)
+type RightPaneTab = 'deal' | 'notifications'
+const rightPaneTab = ref<RightPaneTab>('notifications')
 
-const showCloseLeadButton = computed(() => hasOpenLead.value)
-
-const showLeadEditor = computed(() => hasOpenLead.value)
-
-const LEAD_PANEL_COLLAPSED_KEY = 'crm.chats.leadPanelCollapsed'
-const leadPanelCollapsed = ref(storage.get(LEAD_PANEL_COLLAPSED_KEY) === '1')
-
-const currentLeadStatusLabel = computed(() => {
-  const lead = store.currentChat?.current_lead
-  if (!lead) return null
-  const fromLead = lead.label?.trim()
-  if (fromLead) return fromLead
-  const match = leadStatusOptions.value.find((row) => row.value === lead.status_id)
-  return match?.label ?? null
+const listTabsForPane = computed(() => {
+  const compact = Boolean(store.currentChat) && !isNarrow.value
+  if (!compact) return listTabs
+  return [
+    { name: 'mine' as const, label: 'Мои' },
+    { name: 'group' as const, label: 'Группа' },
+    { name: 'needs_response' as const, label: 'Ответ' },
+  ]
 })
 
-function toggleLeadPanel(): void {
-  leadPanelCollapsed.value = !leadPanelCollapsed.value
-  storage.set(LEAD_PANEL_COLLAPSED_KEY, leadPanelCollapsed.value ? '1' : '0')
+function goToContact(): void {
+  const contactId = store.currentChat?.contact_id
+  if (contactId == null) return
+  void router.push({ name: 'contact-detail', params: { id: contactId } })
+}
+
+function openLeadDealModal(leadId: number): void {
+  leadDealModalLeadId.value = leadId
+  leadDealModalVisible.value = true
 }
 
 const messageScopeTab = computed({
@@ -325,24 +322,6 @@ async function loadChatWorkflowStatuses(): Promise<void> {
   }
 }
 
-async function saveLeadComment(): Promise<void> {
-  const lead = store.currentChat?.current_lead
-  if (!lead || lead.closed_at != null || savingLeadComment.value) return
-  const next = leadCommentDraft.value.trim()
-  if (!next) return
-  savingLeadComment.value = true
-  try {
-    await store.updateCurrentLeadComment(next)
-    leadCommentDraft.value = ''
-    message.success('Комментарий к сделке сохранён')
-  } catch (err) {
-    const text = err instanceof AppError ? err.message : 'Не удалось сохранить комментарий'
-    message.error(text)
-  } finally {
-    savingLeadComment.value = false
-  }
-}
-
 async function updateLeadStatus(statusId: number): Promise<void> {
   try {
     await store.updateCurrentLeadStatus(statusId)
@@ -353,23 +332,19 @@ async function updateLeadStatus(statusId: number): Promise<void> {
   }
 }
 
-async function onCloseLead(outcomeStatusId: number | null): Promise<void> {
-  if (outcomeStatusId == null) return
-  try {
-    await store.closeCurrentLead(outcomeStatusId)
-    message.success('Сделка закрыта')
-  } catch (err) {
-    const text = err instanceof AppError ? err.message : 'Не удалось закрыть сделку'
-    message.error(text)
-  }
-}
-
 function openChatFromQuery(): void {
-  const raw = route.query.chatId
-  const chatId = typeof raw === 'string' ? Number(raw) : NaN
-  if (Number.isFinite(chatId) && chatId > 0) {
-    void openChatMobile(chatId)
-  }
+  const rawChat = route.query.chatId
+  const rawLead = route.query.leadId
+  const chatId = typeof rawChat === 'string' ? Number(rawChat) : NaN
+  const leadId = typeof rawLead === 'string' ? Number(rawLead) : NaN
+  if (!Number.isFinite(chatId) || chatId <= 0) return
+  void store.openChat(chatId).then(async () => {
+    if (isNarrow.value) narrowPane.value = 'chat'
+    if (Number.isFinite(leadId) && leadId > 0) {
+      await store.setMessageScope('current_lead')
+      openLeadDealModal(leadId)
+    }
+  })
 }
 
 function openChatMobile(chatId: number): void {
@@ -389,7 +364,12 @@ watch(isNarrow, (narrow) => {
 watch(
   () => store.currentChatId,
   (chatId) => {
-    if (chatId != null && isNarrow.value) narrowPane.value = 'chat'
+    if (chatId != null) {
+      if (isNarrow.value) narrowPane.value = 'chat'
+      rightPaneTab.value = 'deal'
+    } else {
+      rightPaneTab.value = 'notifications'
+    }
   },
 )
 
@@ -437,10 +417,10 @@ onUnmounted(() => {
       <h1 class="chats-page__title">Чаты</h1>
 
       <NButton
-        v-if="isNarrow"
+        v-if="isNarrow || store.currentChat"
         quaternary
         size="small"
-        @click="transferInboxOpen = true"
+        @click="isNarrow ? (transferInboxOpen = true) : (rightPaneTab = 'notifications')"
       >
         Уведомления
       </NButton>
@@ -455,6 +435,7 @@ onUnmounted(() => {
         'chats-page__split--narrow': isNarrow,
         'chats-page__split--show-list': isNarrow && narrowPane === 'list',
         'chats-page__split--show-chat': isNarrow && narrowPane === 'chat',
+        'chats-page__split--deal-open': Boolean(store.currentChat) && !isNarrow,
       }"
     >
 
@@ -472,7 +453,7 @@ onUnmounted(() => {
 
         >
 
-          <NTab v-for="tab in listTabs" :key="tab.name" :name="tab.name" :tab="tab.label" />
+          <NTab v-for="tab in listTabsForPane" :key="tab.name" :name="tab.name" :tab="tab.label" />
 
         </NTabs>
 
@@ -627,15 +608,23 @@ onUnmounted(() => {
                 <ArrowLeft :size="18" />
               </NButton>
 
-              <ContactAvatar
-                :contact-id="store.currentChat.contact_id"
-                :full-name="store.currentChat.contact_name"
-                :size="40"
-              />
+              <button
+                type="button"
+                class="chats-page__contact-link"
+                @click="goToContact"
+              >
+                <ContactAvatar
+                  :contact-id="store.currentChat.contact_id"
+                  :full-name="store.currentChat.contact_name"
+                  :size="40"
+                />
+              </button>
 
               <div class="chats-page__chat-identity">
 
-                <h2>{{ store.currentChat.contact_name }}</h2>
+                <button type="button" class="chats-page__contact-name" @click="goToContact">
+                  <h2>{{ store.currentChat.contact_name }}</h2>
+                </button>
 
                 <div class="chats-page__chat-meta">
                   <ContactOwnerBadge
@@ -644,12 +633,28 @@ onUnmounted(() => {
                     :escalated="Boolean(store.currentChat.escalated_at)"
                     :pending="Boolean(store.currentChat.pending_inbound_at)"
                   />
+                  <NTag v-if="store.currentChat.contact_illiquid" size="small" type="warning" :bordered="false">
+                    Неликвидный
+                  </NTag>
                   <NTag v-if="chatWorkflowLabel" size="small" :bordered="false">
                     {{ chatWorkflowLabel }}
                   </NTag>
                   <NTag v-if="contactClientLabel" size="small" type="info" :bordered="false">
                     {{ contactClientLabel }}
                   </NTag>
+                </div>
+
+                <div v-if="showLeadPipelineSelect" class="chats-page__lead-status-row">
+                  <span class="chats-page__lead-label">Статус сделки</span>
+                  <NSelect
+                    v-model:value="currentLeadStatusId"
+                    class="chats-page__lead-status"
+                    size="small"
+                    :options="leadStatusOptions"
+                    :consistent-menu-width="false"
+                    :loading="store.updatingLeadStatus"
+                    placeholder="Статус"
+                  />
                 </div>
 
               </div>
@@ -666,97 +671,6 @@ onUnmounted(() => {
               </NButton>
             </NSpace>
 
-            </div>
-
-            <div
-              v-if="showLeadEditor"
-              class="chats-page__lead-panel"
-              :class="{ 'chats-page__lead-panel--collapsed': leadPanelCollapsed }"
-            >
-              <button
-                type="button"
-                class="chats-page__lead-panel-toggle"
-                :aria-expanded="!leadPanelCollapsed"
-                @click="toggleLeadPanel"
-              >
-                <span class="chats-page__lead-panel-toggle-title">Сделка</span>
-                <NTag
-                  v-if="currentLeadStatusLabel"
-                  size="small"
-                  :bordered="false"
-                  class="chats-page__lead-panel-toggle-tag"
-                >
-                  {{ currentLeadStatusLabel }}
-                </NTag>
-                <ChevronDown
-                  class="chats-page__lead-panel-chevron"
-                  :class="{ 'chats-page__lead-panel-chevron--collapsed': leadPanelCollapsed }"
-                  :size="16"
-                />
-              </button>
-
-              <div v-show="!leadPanelCollapsed" class="chats-page__lead-panel-body">
-              <div class="chats-page__lead-panel-toolbar">
-                <div v-if="showLeadPipelineSelect" class="chats-page__lead-field chats-page__lead-field--status">
-                  <span class="chats-page__lead-label">Статус сделки</span>
-                  <NSelect
-                    v-model:value="currentLeadStatusId"
-                    class="chats-page__lead-status"
-                    size="small"
-                    :options="leadStatusOptions"
-                    :consistent-menu-width="false"
-                    :menu-props="{ class: 'chats-page__status-menu' }"
-                    :loading="store.updatingLeadStatus"
-                    placeholder="Выберите статус"
-                  />
-                </div>
-                <div v-if="showCloseLeadButton" class="chats-page__lead-close-block">
-                  <span class="chats-page__lead-label">Завершить сделку</span>
-                  <div class="chats-page__lead-close-row">
-                    <NButton
-                      size="small"
-                      type="success"
-                      class="chats-page__lead-close-btn"
-                      :disabled="wonStatusId == null"
-                      :loading="store.closingLead"
-                      @click="onCloseLead(wonStatusId)"
-                    >
-                      Успешная продажа
-                    </NButton>
-                    <NButton
-                      size="small"
-                      type="error"
-                      class="chats-page__lead-close-btn"
-                      :disabled="lostStatusId == null"
-                      :loading="store.closingLead"
-                      @click="onCloseLead(lostStatusId)"
-                    >
-                      Неуспешная продажа
-                    </NButton>
-                  </div>
-                </div>
-              </div>
-              <div class="chats-page__lead-field chats-page__lead-field--comment">
-                <span class="chats-page__lead-label">Комментарий к сделке</span>
-                <NInput
-                  v-model:value="leadCommentDraft"
-                  type="textarea"
-                  :autosize="{ minRows: 2, maxRows: 4 }"
-                  placeholder="Новый комментарий…"
-                  :disabled="savingLeadComment"
-                  @keydown.ctrl.enter.prevent="saveLeadComment"
-                />
-                <NButton
-                  size="small"
-                  quaternary
-                  class="chats-page__lead-save"
-                  :loading="savingLeadComment"
-                  @click="saveLeadComment"
-                >
-                  Добавить комментарий
-                </NButton>
-              </div>
-              </div>
             </div>
 
           </header>
@@ -793,19 +707,14 @@ onUnmounted(() => {
           </NTabs>
 
           <MessageList
-
             :messages="store.messages"
-
             :loading="store.messagesLoading"
-
+            :loading-older="store.loadingOlderMessages"
+            :has-more="Boolean(store.messagesNextCursor)"
             :chat-id="store.currentChatId"
-
             :contact-id="store.currentChat.contact_id"
-
             :contact-name="store.currentChat.contact_name"
-
             @load-older="store.loadOlderMessages()"
-
           />
 
 
@@ -827,7 +736,24 @@ onUnmounted(() => {
       </main>
 
       <aside v-if="!isNarrow" class="chats-page__inbox-pane">
-        <ChatsNotificationsPane />
+        <NTabs
+          v-if="store.currentChat"
+          v-model:value="rightPaneTab"
+          type="line"
+          size="small"
+          class="chats-page__right-tabs"
+        >
+          <NTab name="deal" tab="Сделка" />
+          <NTab name="notifications" tab="Уведомления" />
+        </NTabs>
+        <ChatDealSidePanel
+          v-if="store.currentChat && rightPaneTab === 'deal'"
+          :chat="store.currentChat"
+          :lead-status-options="leadStatusOptions"
+          :won-status-id="wonStatusId"
+          :lost-status-id="lostStatusId"
+        />
+        <ChatsNotificationsPane v-else />
       </aside>
 
     </div>
@@ -848,6 +774,14 @@ onUnmounted(() => {
     </div>
 
 
+
+    <LeadDealModal
+      v-model:show="leadDealModalVisible"
+      :lead-id="leadDealModalLeadId"
+      :chat-id="store.currentChatId"
+      :contact-id="store.currentChat?.contact_id ?? null"
+      :contact-name="store.currentChat?.contact_name ?? null"
+    />
 
     <TransferCardDialog
 
@@ -935,7 +869,49 @@ onUnmounted(() => {
 
 }
 
+.chats-page__split--deal-open {
+  grid-template-columns: minmax(240px, 280px) 1fr minmax(340px, 400px);
+}
 
+.chats-page__split--deal-open .chats-page__tabs :deep(.n-tabs-tab) {
+  font-size: 0.75rem;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.chats-page__contact-link,
+.chats-page__contact-name {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.chats-page__contact-name h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.chats-page__contact-link:hover,
+.chats-page__contact-name:hover {
+  opacity: 0.85;
+}
+
+.chats-page__lead-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  max-width: 320px;
+}
+
+.chats-page__lead-status-row .chats-page__lead-status {
+  flex: 1;
+  min-width: 0;
+}
 
 .chats-page__list-pane {
 
@@ -1125,12 +1101,30 @@ onUnmounted(() => {
 
   border-left: 1px solid var(--app-border);
 
-  padding: 12px;
+  padding: 0;
 
-  overflow-y: auto;
+  overflow: hidden;
+
+  display: flex;
+
+  flex-direction: column;
+
+  min-height: 0;
 
   background: var(--app-surface);
 
+}
+
+.chats-page__right-tabs {
+  flex-shrink: 0;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.chats-page__inbox-pane > :not(.chats-page__right-tabs) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 

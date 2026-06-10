@@ -66,6 +66,7 @@ describe('chats message scope', () => {
   it('switches to all chat without lead_id', async () => {
     const store = useChatsStore()
     await store.openChat(1)
+    await store.setMessageScope('current_lead')
     listMessagesMock.mockClear()
     listMessagesMock.mockResolvedValue({ items: [{ id: 1 }, { id: 2 }], next_cursor: null })
     await store.setMessageScope('all')

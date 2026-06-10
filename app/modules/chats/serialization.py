@@ -13,7 +13,7 @@ from app.modules.chats.workflow_status import read_contact_client_label_code
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.chat_takeover import ChatTakeover
-from app.modules.db.models.enums import ChatStatus, MessageDirection, MessageKind
+from app.modules.db.models.enums import ChatStatus, ContactStatus, MessageDirection, MessageKind
 
 
 def _sanitize_attachments(message: ChatMessage) -> list[dict[str, Any]]:
@@ -54,6 +54,15 @@ def _contact_client_label(chat: Chat) -> str | None:
     if code is None:
         return None
     return _CLIENT_LABEL_DISPLAY.get(code)
+
+
+def _contact_illiquid(chat: Chat) -> bool:
+    if chat.contact is None:
+        return False
+    status = chat.contact.status
+    if isinstance(status, ContactStatus):
+        return status == ContactStatus.DISABLED
+    return str(status) == ContactStatus.DISABLED.value
 
 
 def _chat_label_snippet(chat: Chat) -> ChatLabelSnippet | None:
@@ -115,6 +124,7 @@ def to_chat_list_item(
         status_id=chat.status_id,
         chat_label=_chat_label_snippet(chat),
         contact_client_label=_contact_client_label(chat),
+        contact_illiquid=_contact_illiquid(chat),
         current_lead=_current_lead_snippet(chat, lead_in_scope=lead_in_scope),
         last_message_at=chat.last_message_at,
         last_message_preview=chat.last_message_preview,

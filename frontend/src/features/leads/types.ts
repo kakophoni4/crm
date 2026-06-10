@@ -34,10 +34,18 @@ export interface LeadListResponse {
   next_cursor: string | null
 }
 
+export interface LeadCreateBody {
+  group_id: number
+  bot_id?: number | null
+  title?: string | null
+  status_id?: number | null
+}
+
 export interface LeadPatchBody {
   status_id?: number
   title?: string
   comment?: string | null
+  custom_fields?: Record<string, unknown> | null
 }
 
 export interface LeadListParams {

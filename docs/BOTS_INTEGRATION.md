@@ -115,14 +115,42 @@ signature = "sha256=" + HMAC_SHA256(outbound_secret, canonical)
 - `payload.message.external_id` (обязательно),
 - `payload.message.text` (опционально),
 - `payload.message.attachments` (опционально),
-- `payload.message.reply_to_external_id` (опционально).
+- `payload.message.reply_to_external_id` (опционально),
+- `payload.message.direction` (опционально): `"inbound"` (по умолчанию) или `"outbound"`.
 
-Эффект:
+Эффект при `direction` = `"inbound"` или поле отсутствует:
 - upsert контакта,
 - upsert чата,
 - создание/поддержка открытого лида,
 - сохранение входящего сообщения,
 - enqueue загрузки вложений (если есть).
+
+Эффект при `direction` = `"outbound"`:
+- `contact.telegram_user_id` — **клиент** (получатель ответа в Telegram),
+- запись **исходящего** сообщения в чат этого клиента (`sender_user_id` не задаётся),
+- обновление preview чата и статуса «отвечено»,
+- **без** эскалации ownership и **без** создания нового лида,
+- идемпотентность по `external_id` в рамках чата (повтор не дублирует сообщение).
+
+Пример ответа оператора из Telegram (тот же `event`, опциональное поле):
+
+```json
+{
+  "event": "message.received",
+  "event_id": "01JOUTBOUND001",
+  "occurred_at": "2026-05-16T12:35:00Z",
+  "bot_code": "support_a",
+  "payload": {
+    "contact": { "telegram_user_id": 123456789 },
+    "message": {
+      "external_id": "tg-msg-999",
+      "text": "Добрый день, помогу с заказом",
+      "direction": "outbound",
+      "attachments": []
+    }
+  }
+}
+```
 
 #### `message.edited`
 

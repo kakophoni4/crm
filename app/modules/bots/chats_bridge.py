@@ -16,6 +16,18 @@ class IngestResult:
     chat_id: int
     message_id: int
     attachment_indices: list[int]
+    duplicate: bool = False
+
+
+def parse_bot_message_direction(message_data: dict[str, Any]) -> MessageDirection:
+    raw = message_data.get("direction")
+    if isinstance(raw, str) and raw.strip().lower() == MessageDirection.OUTBOUND.value:
+        return MessageDirection.OUTBOUND
+    return MessageDirection.INBOUND
+
+
+def is_outbound_bot_message(message_data: dict[str, Any]) -> bool:
+    return parse_bot_message_direction(message_data) == MessageDirection.OUTBOUND
 
 
 def _message_kind_from_attachment(att_type: str) -> MessageKind:
@@ -88,32 +100,37 @@ async def upsert_chat_for_bot(
     existing = await session.execute(
         text(
             """
-            SELECT id FROM chats
-            WHERE contact_id = :cid AND bot_id = :bid AND status != 'archived'
+            SELECT id, status FROM chats
+            WHERE contact_id = :cid AND bot_id = :bid
+            ORDER BY
+              CASE WHEN status = 'archived' THEN 1 ELSE 0 END,
+              id DESC
             LIMIT 1
             """
         ),
         {"cid": contact_id, "bid": bot_id},
     )
-    found = existing.scalar_one_or_none()
-    if found is not None:
+    row = existing.one_or_none()
+    if row is not None:
+        chat_id = int(row[0])
         await session.execute(
             text(
                 """
                 UPDATE chats
                 SET assigned_group_id = :gid,
                     assigned_department_id = :did,
+                    status = CASE WHEN status = 'archived' THEN 'open' ELSE status END,
                     updated_at = now()
                 WHERE id = :chat_id
                 """
             ),
             {
-                "chat_id": int(found),
+                "chat_id": chat_id,
                 "gid": assigned_group_id,
                 "did": assigned_department_id,
             },
         )
-        return int(found)
+        return chat_id
 
     insert = await session.execute(
         text(
@@ -136,31 +153,12 @@ async def upsert_chat_for_bot(
     return int(insert.scalar_one())
 
 
-async def insert_inbound_message(
-    session: AsyncSession,
-    *,
-    chat_id: int,
-    lead_id: int | None,
-    text_body: str | None,
-    external_message_id: str,
-    external_event_id: str,
-    attachments: list[dict[str, Any]],
-    reply_to_external_id: str | None,
-) -> IngestResult:
-    reply_to_id: int | None = None
-    if reply_to_external_id:
-        reply_row = await session.execute(
-            text(
-                """
-                SELECT id FROM messages
-                WHERE chat_id = :cid AND external_message_id = :ext
-                LIMIT 1
-                """
-            ),
-            {"cid": chat_id, "ext": reply_to_external_id},
-        )
-        reply_to_id = reply_row.scalar_one_or_none()
+    return int(insert.scalar_one())
 
+
+def _prepare_message_attachments(
+    attachments: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[int], MessageKind]:
     stored_attachments: list[dict[str, Any]] = []
     pending_indices: list[int] = []
     for idx, att in enumerate(attachments):
@@ -179,17 +177,98 @@ async def insert_inbound_message(
     kind = MessageKind.TEXT
     if stored_attachments:
         kind = _message_kind_from_attachment(str(stored_attachments[0].get("type", "document")))
+    return stored_attachments, pending_indices, kind
+
+
+async def _find_message_by_external_id(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    external_message_id: str,
+) -> int | None:
+    row = await session.execute(
+        text(
+            """
+            SELECT id FROM messages
+            WHERE chat_id = :cid AND external_message_id = :ext
+            LIMIT 1
+            """
+        ),
+        {"cid": chat_id, "ext": external_message_id},
+    )
+    found = row.scalar_one_or_none()
+    return int(found) if found is not None else None
+
+
+async def _ingest_result_for_message(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    message_id: int,
+    attachment_indices: list[int],
+    duplicate: bool = False,
+) -> IngestResult:
+    contact_row = await session.execute(
+        text("SELECT contact_id FROM chats WHERE id = :cid"),
+        {"cid": chat_id},
+    )
+    contact_id = int(contact_row.scalar_one())
+    return IngestResult(
+        contact_id=contact_id,
+        chat_id=chat_id,
+        message_id=message_id,
+        attachment_indices=attachment_indices,
+        duplicate=duplicate,
+    )
+
+
+async def insert_bot_message(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    lead_id: int | None,
+    direction: MessageDirection,
+    text_body: str | None,
+    external_message_id: str,
+    external_event_id: str,
+    attachments: list[dict[str, Any]],
+    reply_to_external_id: str | None,
+    sender_user_id: int | None = None,
+) -> IngestResult:
+    existing_id = await _find_message_by_external_id(
+        session,
+        chat_id=chat_id,
+        external_message_id=external_message_id,
+    )
+    if existing_id is not None:
+        return await _ingest_result_for_message(
+            session,
+            chat_id=chat_id,
+            message_id=existing_id,
+            attachment_indices=[],
+            duplicate=True,
+        )
+
+    reply_to_id: int | None = None
+    if reply_to_external_id:
+        reply_to_id = await _find_message_by_external_id(
+            session,
+            chat_id=chat_id,
+            external_message_id=reply_to_external_id,
+        )
+
+    stored_attachments, pending_indices, kind = _prepare_message_attachments(attachments)
 
     result = await session.execute(
         text(
             """
             INSERT INTO messages (
                 chat_id, lead_id, direction, kind, text, attachments,
-                external_message_id, external_event_id, reply_to_message_id
+                sender_user_id, external_message_id, external_event_id, reply_to_message_id
             )
             VALUES (
                 :chat_id, :lead_id, :direction, :kind, :text, CAST(:attachments AS jsonb),
-                :ext_msg, :ext_evt, :reply_to
+                :sender_user_id, :ext_msg, :ext_evt, :reply_to
             )
             RETURNING id
             """
@@ -197,10 +276,11 @@ async def insert_inbound_message(
         {
             "chat_id": chat_id,
             "lead_id": lead_id,
-            "direction": MessageDirection.INBOUND.value,
+            "direction": direction.value,
             "kind": kind.value,
             "text": text_body,
             "attachments": json.dumps(stored_attachments),
+            "sender_user_id": sender_user_id,
             "ext_msg": external_message_id,
             "ext_evt": external_event_id,
             "reply_to": reply_to_id,
@@ -222,18 +302,71 @@ async def insert_inbound_message(
         {"preview": preview, "cid": chat_id},
     )
 
-    contact_row = await session.execute(
-        text("SELECT contact_id FROM chats WHERE id = :cid"),
-        {"cid": chat_id},
-    )
-    contact_id = int(contact_row.scalar_one())
-
-    return IngestResult(
-        contact_id=contact_id,
+    return await _ingest_result_for_message(
+        session,
         chat_id=chat_id,
         message_id=message_id,
         attachment_indices=pending_indices,
     )
+
+
+async def insert_inbound_message(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    lead_id: int | None,
+    text_body: str | None,
+    external_message_id: str,
+    external_event_id: str,
+    attachments: list[dict[str, Any]],
+    reply_to_external_id: str | None,
+) -> IngestResult:
+    return await insert_bot_message(
+        session,
+        chat_id=chat_id,
+        lead_id=lead_id,
+        direction=MessageDirection.INBOUND,
+        text_body=text_body,
+        external_message_id=external_message_id,
+        external_event_id=external_event_id,
+        attachments=attachments,
+        reply_to_external_id=reply_to_external_id,
+        sender_user_id=None,
+    )
+
+
+async def insert_outbound_message(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    lead_id: int | None,
+    text_body: str | None,
+    external_message_id: str,
+    external_event_id: str,
+    attachments: list[dict[str, Any]],
+    reply_to_external_id: str | None,
+) -> IngestResult:
+    return await insert_bot_message(
+        session,
+        chat_id=chat_id,
+        lead_id=lead_id,
+        direction=MessageDirection.OUTBOUND,
+        text_body=text_body,
+        external_message_id=external_message_id,
+        external_event_id=external_event_id,
+        attachments=attachments,
+        reply_to_external_id=reply_to_external_id,
+        sender_user_id=None,
+    )
+
+
+async def get_chat_current_lead_id(session: AsyncSession, chat_id: int) -> int | None:
+    row = await session.execute(
+        text("SELECT current_lead_id FROM chats WHERE id = :cid"),
+        {"cid": chat_id},
+    )
+    lead_id = row.scalar_one_or_none()
+    return int(lead_id) if lead_id is not None else None
 
 
 async def update_contact_telegram_fields(

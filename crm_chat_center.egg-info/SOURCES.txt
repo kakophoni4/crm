@@ -27,11 +27,13 @@ app/modules/bots/ip_allowlist.py
 app/modules/bots/ownership_bridge.py
 app/modules/bots/repository.py
 app/modules/bots/router.py
+app/modules/bots/routing.py
 app/modules/bots/schemas.py
 app/modules/bots/service.py
 app/modules/chats/__init__.py
 app/modules/chats/cursor.py
 app/modules/chats/filters.py
+app/modules/chats/illiquid.py
 app/modules/chats/messages.py
 app/modules/chats/rate_limit.py
 app/modules/chats/read_state.py
@@ -76,6 +78,7 @@ app/modules/db/models/audit_log_entry.py
 app/modules/db/models/base.py
 app/modules/db/models/bot.py
 app/modules/db/models/bot_event_inbox.py
+app/modules/db/models/bot_group_assignment.py
 app/modules/db/models/bot_outbound_log.py
 app/modules/db/models/chat.py
 app/modules/db/models/chat_message.py
@@ -94,6 +97,7 @@ app/modules/db/models/lead_comment.py
 app/modules/db/models/message_reply_audit.py
 app/modules/db/models/refresh_token.py
 app/modules/db/models/status.py
+app/modules/db/models/uploaded_file.py
 app/modules/db/models/user.py
 app/modules/db/models/user_deletion_request.py
 app/modules/departments/__init__.py
@@ -102,11 +106,13 @@ app/modules/departments/router.py
 app/modules/departments/schemas.py
 app/modules/departments/service.py
 app/modules/files/router.py
+app/modules/files/service.py
 app/modules/groups/__init__.py
 app/modules/groups/router.py
 app/modules/groups/schemas.py
 app/modules/groups/service.py
 app/modules/leads/__init__.py
+app/modules/leads/access.py
 app/modules/leads/api_service.py
 app/modules/leads/crm_cache.py
 app/modules/leads/cursor.py

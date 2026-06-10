@@ -1,5 +1,6 @@
 import type {
   CrmDashboardSummary,
+  LeadCreateBody,
   LeadDetail,
   LeadListParams,
   LeadListResponse,
@@ -36,6 +37,14 @@ export async function listContactLeads(
 
 export async function getLead(leadId: number): Promise<LeadDetail> {
   const { data } = await http.get<LeadDetail>(`/leads/${leadId}`)
+  return data
+}
+
+export async function createContactLead(
+  contactId: number,
+  body: LeadCreateBody,
+): Promise<LeadDetail> {
+  const { data } = await http.post<LeadDetail>(`/contacts/${contactId}/leads`, body)
   return data
 }
 

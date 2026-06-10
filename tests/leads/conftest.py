@@ -213,18 +213,20 @@ async def leads_org(
                 text(
                     """
                     INSERT INTO bots (
-                        code, name, owner_type, owner_id,
+                        code, name, owner_type, owner_id, department_id,
                         inbound_secret_encrypted, outbound_secret_encrypted, outbound_url
                     )
                     VALUES (
-                        'leads_test_bot', 'Leads Test Bot', 'group', :group_id,
+                        'leads_test_bot', 'Leads Test Bot', 'group', :group_id, :dept_id,
                         '\\x00', '\\x00', 'https://example.test/outbound'
                     )
-                    ON CONFLICT (code) DO UPDATE SET owner_id = EXCLUDED.owner_id
+                    ON CONFLICT (code) DO UPDATE SET
+                        owner_id = EXCLUDED.owner_id,
+                        department_id = EXCLUDED.department_id
                     RETURNING id
                     """
                 ),
-                {"group_id": group_id},
+                {"group_id": group_id, "dept_id": dept_id},
             ).scalar_one()
 
             chat_id = connection.execute(
@@ -384,12 +386,12 @@ async def leads_cycle_org(
             text(
                 """
                 INSERT INTO bots (
-                    code, name, owner_type, owner_id,
+                    code, name, owner_type, owner_id, department_id,
                     inbound_secret_encrypted, outbound_secret_encrypted,
                     outbound_url, health_url, is_active
                 )
                 VALUES (
-                    :code, 'Leads Cycle Bot', 'group', :group_id,
+                    :code, 'Leads Cycle Bot', 'group', :group_id, :dept_id,
                     pgp_sym_encrypt(:secret, :key),
                     pgp_sym_encrypt(:secret, :key),
                     'https://example.test/outbound',
@@ -801,12 +803,12 @@ async def leads_dept_bot_org(
                 text(
                     """
                     INSERT INTO bots (
-                        code, name, owner_type, owner_id,
+                        code, name, owner_type, owner_id, department_id,
                         inbound_secret_encrypted, outbound_secret_encrypted,
                         outbound_url, health_url, is_active
                     )
                     VALUES (
-                        :code, 'Dept-only Bot', 'department', :owner_id,
+                        :code, 'Dept-only Bot', 'department', :owner_id, :owner_id,
                         pgp_sym_encrypt(:secret, :key),
                         pgp_sym_encrypt(:secret, :key),
                         'https://example.test/outbound',

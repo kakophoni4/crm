@@ -236,7 +236,22 @@ signature  = HMAC_SHA256(inbound_secret, canonical)
 }
 ```
 
-**Эффект:** upsert контакта → чат → открытый лид → назначение владельца (round-robin) → сохранение сообщения → загрузка вложений по URL (async).
+**Входящее от клиента** (по умолчанию): поле `direction` не передаётся или `"inbound"`.
+
+**Ответ клиенту из Telegram** (оператор ответил не через CRM UI): тот же `message.received`, в `message` добавить `"direction": "outbound"`. `contact.telegram_user_id` — **клиент** (получатель). CRM сохранит **исходящее** сообщение в чат без указания менеджера.
+
+```json
+"message": {
+  "external_id": "99",
+  "text": "Добрый день, помогу с заказом",
+  "direction": "outbound",
+  "attachments": []
+}
+```
+
+**Эффект inbound:** upsert контакта → чат → открытый лид → назначение владельца (round-robin) → сохранение сообщения → загрузка вложений по URL (async).
+
+**Эффект outbound:** сообщение в существующий чат клиента как исходящее, обновление preview, без эскалации ownership.
 
 #### `message.edited`
 

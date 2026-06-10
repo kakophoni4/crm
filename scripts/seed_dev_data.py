@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.crypto import encrypt_secret
 from app.modules.db.models.bot import Bot
+from app.modules.db.models.bot_group_assignment import BotGroupAssignment
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.contact import Contact
@@ -336,7 +337,7 @@ _LEAD_SPECS: dict[str, dict[str, Any]] = {
         "group": "grp_managers",
         "bot": True,
         "chat": "chat1",
-        "status_code": "qualified",
+        "status_code": "in_progress",
         "title": "Сделка №12345",
         "closed": False,
     },
@@ -363,7 +364,7 @@ _LEAD_SPECS: dict[str, dict[str, Any]] = {
         "group": "grp_support_a",
         "bot": True,
         "chat": "chat4",
-        "status_code": "qualified",
+        "status_code": "in_progress",
         "title": "Техподдержка #4401",
         "closed": False,
     },
@@ -556,11 +557,30 @@ async def _get_or_create_escalation(
     return settings
 
 
+async def _ensure_bot_group_assignment(
+    session: AsyncSession,
+    *,
+    bot_id: int,
+    group_id: int,
+) -> None:
+    result = await session.execute(
+        select(BotGroupAssignment).where(
+            BotGroupAssignment.bot_id == bot_id,
+            BotGroupAssignment.group_id == group_id,
+        )
+    )
+    if result.scalar_one_or_none() is not None:
+        return
+    session.add(BotGroupAssignment(bot_id=bot_id, group_id=group_id))
+    await session.flush()
+
+
 async def _get_or_create_bot(
     session: AsyncSession,
     *,
     code: str,
     name: str,
+    department_id: int,
     owner_type: BotOwnerType,
     owner_id: int,
     outbound_url: str,
@@ -570,6 +590,14 @@ async def _get_or_create_bot(
     result = await session.execute(select(Bot).where(Bot.code == code))
     existing = result.scalar_one_or_none()
     if existing is not None:
+        if existing.department_id != department_id:
+            existing.department_id = department_id
+        if owner_type == BotOwnerType.GROUP:
+            await _ensure_bot_group_assignment(
+                session,
+                bot_id=existing.id,
+                group_id=owner_id,
+            )
         return existing
     inbound_enc = await encrypt_secret(session, inbound_secret)
     outbound_enc = await encrypt_secret(session, outbound_secret)
@@ -578,6 +606,7 @@ async def _get_or_create_bot(
         name=name,
         owner_type=owner_type,
         owner_id=owner_id,
+        department_id=department_id,
         inbound_secret_encrypted=inbound_enc,
         outbound_secret_encrypted=outbound_enc,
         outbound_url=outbound_url,
@@ -586,6 +615,8 @@ async def _get_or_create_bot(
     )
     session.add(bot)
     await session.flush()
+    if owner_type == BotOwnerType.GROUP:
+        await _ensure_bot_group_assignment(session, bot_id=bot.id, group_id=owner_id)
     return bot
 
 
@@ -897,6 +928,7 @@ async def seed(session: AsyncSession) -> None:
         session,
         code=_BOT_CODE,
         name="Основной бот",
+        department_id=departments["dept_sales"].id,
         owner_type=BotOwnerType.GROUP,
         owner_id=groups["grp_managers"].id,
         outbound_url="https://webhook.site/test-seed-bot",

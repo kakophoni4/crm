@@ -34,13 +34,13 @@ async def test_send_outbound_message_publishes_event(
                 text(
                     """
                     INSERT INTO bots (
-                        code, name, owner_type, owner_id,
+                        code, name, owner_type, owner_id, department_id,
                         inbound_secret_encrypted, outbound_secret_encrypted,
                         outbound_url, health_url, is_active
                     )
                     VALUES (
                         :code, 'Chats Outbound Bot',
-                        'department', :dept_id,
+                        'department', :dept_id, :dept_id,
                         pgp_sym_encrypt(:in_secret, :key),
                         pgp_sym_encrypt(:out_secret, :key),
                         'https://bot.example.com/crm/cmd',

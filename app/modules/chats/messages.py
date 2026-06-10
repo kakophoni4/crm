@@ -127,7 +127,11 @@ class ChatMessagesService:
             raise NotFound(message="Chat not found")
         if lead_id is not None:
             lead = await LeadRepository(self._session).get_by_id(lead_id)
-            if lead is None or lead.contact_id != chat.contact_id:
+            if (
+                lead is None
+                or lead.contact_id != chat.contact_id
+                or lead.group_id != chat.assigned_group_id
+            ):
                 raise NotFound(message="Lead not found")
         rows, next_cursor = await self._repo.list_messages(
             chat_id,

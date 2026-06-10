@@ -50,6 +50,7 @@ const rules: FormRules = {
 }
 
 async function onSubmit(): Promise<void> {
+  if (loading.value) return
   await formRef.value?.validate()
   loading.value = true
   try {
@@ -78,7 +79,6 @@ async function onSubmit(): Promise<void> {
             autocomplete="username"
             placeholder="Логин или email"
             :disabled="loading"
-            @keyup.enter="onSubmit"
           />
         </NFormItem>
         <NFormItem label="Пароль" path="password">
@@ -88,11 +88,10 @@ async function onSubmit(): Promise<void> {
             show-password-on="click"
             autocomplete="current-password"
             :disabled="loading"
-            @keyup.enter="onSubmit"
           />
         </NFormItem>
         <NSpace justify="end">
-          <NButton type="primary" attr-type="submit" :loading="loading" @click="onSubmit">
+          <NButton type="primary" attr-type="submit" :loading="loading">
             Войти
           </NButton>
         </NSpace>

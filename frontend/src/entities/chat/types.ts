@@ -40,6 +40,7 @@ export interface ChatListItem {
   needs_reply?: boolean
   chat_label?: ChatLabelSnippet | null
   contact_client_label?: string | null
+  contact_illiquid?: boolean
   current_lead?: CurrentLeadSnippet | null
 }
 

@@ -190,17 +190,17 @@ async def chats_filters_org(
                     text(
                         """
                         INSERT INTO bots (
-                            code, name, owner_type, owner_id,
+                            code, name, owner_type, owner_id, department_id,
                             inbound_secret_encrypted, outbound_secret_encrypted, outbound_url
                         )
                         VALUES (
-                            :code, :name, 'group', :owner_id,
+                            :code, :name, 'group', :owner_id, :dept_id,
                             '\\x00', '\\x00', 'https://example.test/outbound'
                         )
                         RETURNING id
                         """
                     ),
-                    {"code": code, "name": code, "owner_id": owner_id},
+                    {"code": code, "name": code, "owner_id": owner_id, "dept_id": dept_id},
                 ).scalar_one()
 
             contact_ids: dict[str, int] = {}
