@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.modules.db.models.department import Department
 from app.modules.db.models.enums import UserRole, UserStatus
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
+from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.groups.schemas import (
     GroupCreateRequest,
     GroupListResponse,
@@ -126,9 +127,16 @@ class GroupOrgService:
         self._ensure_senior_department(actor, group.department_id)
 
         active_users = await self._session.execute(
-            select(func.count())
+            select(func.count(func.distinct(User.id)))
             .select_from(User)
-            .where(User.group_id == group_id, User.status == UserStatus.ACTIVE),
+            .outerjoin(UserGroupMembership, UserGroupMembership.user_id == User.id)
+            .where(
+                User.status == UserStatus.ACTIVE,
+                or_(
+                    User.group_id == group_id,
+                    UserGroupMembership.group_id == group_id,
+                ),
+            ),
         )
         if int(active_users.scalar_one()) > 0:
             raise Conflict(message="Group has active users", details={"id": group_id})

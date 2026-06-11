@@ -207,6 +207,18 @@ async def chats_org(
                     {"email": email},
                 ).scalar_one()
 
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO user_group_memberships (user_id, group_id)
+                    SELECT id, group_id FROM users
+                    WHERE email = ANY(:emails) AND group_id IS NOT NULL
+                    ON CONFLICT (user_id, group_id) DO NOTHING
+                    """
+                ),
+                {"emails": list(_TEST_EMAILS)},
+            )
+
             senior_a = user_ids["senior.chats@crm.local"]
             connection.execute(
                 text("UPDATE departments SET head_user_id = :sid WHERE id = :dept_id"),
@@ -323,7 +335,7 @@ async def operator_b_headers(
 
 
 @pytest_asyncio.fixture
-async def senior_headers(
+async def chats_senior_headers(
     client: AsyncClient,
     db_ready: None,
     chats_org: dict[str, object],
@@ -335,7 +347,12 @@ async def senior_headers(
 
 
 @pytest_asyncio.fixture
-async def senior_other_headers(
+async def senior_headers(chats_senior_headers: dict[str, str]) -> dict[str, str]:
+    return chats_senior_headers
+
+
+@pytest_asyncio.fixture
+async def chats_senior_other_headers(
     client: AsyncClient,
     db_ready: None,
     chats_org: dict[str, object],
@@ -344,6 +361,11 @@ async def senior_other_headers(
     assert isinstance(emails, dict)
     token = await login(client, str(emails["senior_other"]), str(chats_org["password"]))
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def senior_other_headers(chats_senior_other_headers: dict[str, str]) -> dict[str, str]:
+    return chats_senior_other_headers
 
 
 @pytest_asyncio.fixture

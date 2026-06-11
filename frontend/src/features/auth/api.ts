@@ -33,6 +33,7 @@ export interface MeResponse {
   role: UserRole
   department_id: number | null
   group_id: number | null
+  group_ids: number[]
   presence: UserPresence
   permissions: string[]
 }

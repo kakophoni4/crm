@@ -130,8 +130,10 @@ function onMenuUpdate(key: string): void {
     return
   }
   if (key === 'group-escalation') {
+    const escalationGroupId =
+      auth.user?.group_ids?.[0] ?? auth.user?.group_id ?? undefined
     const query =
-      auth.user?.group_id != null ? { group_id: String(auth.user.group_id) } : undefined
+      escalationGroupId != null ? { group_id: String(escalationGroupId) } : undefined
     void router.push({ name: 'group-escalation', query })
     emit('closeDrawer')
     return

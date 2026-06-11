@@ -118,7 +118,10 @@ class LeadApiService:
         if role == UserRole.SENIOR:
             return self._group_in_scope(ctx, group_id)
         if role == UserRole.USER:
-            return actor.group_id == group_id
+            groups = visible_group_ids(ctx)
+            if groups == SCOPE_ALL:
+                return True
+            return isinstance(groups, set) and group_id in groups
         return False
 
     async def list_contact_leads(

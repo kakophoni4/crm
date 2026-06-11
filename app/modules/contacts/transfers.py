@@ -27,6 +27,7 @@ from app.modules.db.models.enums import (
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, can_act_on_user, visible_group_ids
+from app.modules.users.memberships import user_in_group
 from app.realtime.events import publish
 from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 
@@ -189,7 +190,7 @@ class ContactGroupTransfersService:
     ) -> None:
         if to_user.id == from_user_id:
             raise ValidationError(message="Cannot transfer to the current owner")
-        if to_user.group_id != group_id:
+        if not await user_in_group(self._session, to_user.id, group_id):
             raise ValidationError(message="Target user must belong to the group")
         if not can_act_on_user(ctx, to_user):
             raise PermissionDenied(message="Target user is outside your scope")

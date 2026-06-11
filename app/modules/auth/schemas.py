@@ -74,5 +74,6 @@ class MeResponse(BaseModel):
     role: UserRole
     department_id: int | None
     group_id: int | None
+    group_ids: list[int] = Field(default_factory=list)
     presence: UserPresence
     permissions: list[str]

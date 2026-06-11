@@ -37,6 +37,7 @@ from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.refresh_token import RefreshToken
 from app.modules.db.models.status import Status
 from app.modules.db.models.user import User
+from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.db.models.uploaded_file import UploadedFile
 
 __all__ = [
@@ -73,6 +74,7 @@ __all__ = [
     "TransferStatus",
     "UploadedFile",
     "User",
+    "UserGroupMembership",
     "UserAvailability",
     "UserDeletionRequest",
     "UserPresence",

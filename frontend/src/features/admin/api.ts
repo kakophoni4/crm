@@ -24,6 +24,7 @@ export interface AdminUser {
   role: 'user' | 'senior' | 'admin'
   department_id: number | null
   group_id: number | null
+  group_ids: number[]
   status: 'active' | 'disabled'
   presence: string
   availability: string
@@ -140,6 +141,7 @@ export async function createUser(body: {
   password: string
   role: 'user' | 'senior' | 'admin'
   group_id?: number | null
+  group_ids?: number[]
   department_id?: number | null
   set_as_department_head?: boolean
 }): Promise<AdminUser> {
@@ -150,7 +152,7 @@ export async function createUser(body: {
 export async function updateUser(
   id: number,
   body: Partial<
-    Pick<AdminUser, 'full_name' | 'group_id' | 'department_id' | 'role' | 'status'> & {
+    Pick<AdminUser, 'full_name' | 'group_id' | 'group_ids' | 'department_id' | 'role' | 'status'> & {
       set_as_department_head?: boolean
     }
   >,

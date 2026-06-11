@@ -15,6 +15,7 @@ class ScopeContext:
     """Pure scope input: actor plus preloaded membership (no I/O)."""
 
     actor: User
+    actor_group_ids: frozenset[int] = field(default_factory=frozenset)
     group_member_ids: frozenset[int] = field(default_factory=frozenset)
     department_user_ids: frozenset[int] = field(default_factory=frozenset)
     department_senior_id: int | None = None
@@ -52,6 +53,9 @@ def visible_group_ids(ctx: ScopeContext) -> ScopeResult:
         if actor.department_id is None:
             return set()
         return set(ctx.department_group_ids)
+
+    if ctx.actor_group_ids:
+        return set(ctx.actor_group_ids)
 
     if actor.group_id is not None:
         return {actor.group_id}

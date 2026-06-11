@@ -12,6 +12,10 @@ from app.modules.db.models.department import Department
 from app.modules.db.models.enums import UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, can_act_on_user, visible_user_ids
+from app.modules.users.memberships import (
+    resolve_group_department_ids,
+    set_user_group_memberships,
+)
 from app.modules.users.repository import UserRepository
 from app.modules.users.schemas import (
     ForceLogoutResponse,
@@ -20,7 +24,9 @@ from app.modules.users.schemas import (
     UserListResponse,
     UserOut,
     UserUpdateRequest,
+    _normalize_group_ids,
 )
+from app.modules.users.serialization import user_to_out
 from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 from app.shared.security.passwords import hash_password
 
@@ -75,6 +81,35 @@ class UserService:
             raise PermissionDenied(message="Senior can only assign groups in own department")
         return group.id, group.department_id
 
+    async def _resolve_group_ids(
+        self,
+        actor: User,
+        group_ids: list[int],
+    ) -> tuple[list[int], int]:
+        if not group_ids:
+            raise ValidationError(
+                message="At least one group is required",
+                details={"field": "group_ids"},
+            )
+        dept_map = await resolve_group_department_ids(self._session, group_ids)
+        missing = [gid for gid in group_ids if gid not in dept_map]
+        if missing:
+            raise ValidationError(
+                message="group_id does not exist",
+                details={"group_ids": missing},
+            )
+        departments = set(dept_map.values())
+        if len(departments) != 1:
+            raise ValidationError(
+                message="All groups must belong to the same department",
+                details={"group_ids": group_ids},
+            )
+        department_id = next(iter(departments))
+        actor_role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        if actor_role == UserRole.SENIOR and actor.department_id != department_id:
+            raise PermissionDenied(message="Senior can only assign groups in own department")
+        return group_ids, department_id
+
     async def _resolve_department(self, actor: User, department_id: int) -> int:
         department = await self._session.get(Department, department_id)
         if department is None:
@@ -101,22 +136,23 @@ class UserService:
         self,
         actor: User,
         body: UserCreateRequest,
-    ) -> tuple[int | None, int | None]:
+    ) -> tuple[list[int], int | None]:
         role = body.role if isinstance(body.role, UserRole) else UserRole(str(body.role))
+        normalized = _normalize_group_ids(body.group_id, body.group_ids)
         if role == UserRole.ADMIN:
-            if body.group_id is not None or body.department_id is not None:
+            if normalized or body.department_id is not None:
                 raise ValidationError(
                     message="Admin must not be assigned to a group or department",
                 )
-            return None, None
+            return [], None
         if role == UserRole.USER:
-            if body.group_id is None:
+            if not normalized:
                 raise ValidationError(
-                    message="group_id is required for user role",
-                    details={"field": "group_id"},
+                    message="group_ids is required for user role",
+                    details={"field": "group_ids"},
                 )
-            group_id, department_id = await self._resolve_group(actor, body.group_id)
-            return group_id, department_id
+            group_ids, department_id = await self._resolve_group_ids(actor, normalized)
+            return group_ids, department_id
         if role == UserRole.SENIOR:
             if body.department_id is None:
                 raise ValidationError(
@@ -124,15 +160,18 @@ class UserService:
                     details={"field": "department_id"},
                 )
             department_id = await self._resolve_department(actor, body.department_id)
-            group_id: int | None = None
-            if body.group_id is not None:
-                group_id, group_department_id = await self._resolve_group(actor, body.group_id)
+            senior_groups: list[int] = []
+            if normalized:
+                senior_groups, group_department_id = await self._resolve_group_ids(
+                    actor,
+                    normalized,
+                )
                 if group_department_id != department_id:
                     raise ValidationError(
                         message="group must belong to the selected department",
-                        details={"group_id": group_id, "department_id": department_id},
+                        details={"group_ids": senior_groups, "department_id": department_id},
                     )
-            return group_id, department_id
+            return senior_groups, department_id
         raise PermissionDenied()
 
     async def list_users(
@@ -153,18 +192,19 @@ class UserService:
             limit=limit,
         )
         visible_rows = await self._filter_visible(actor, rows)
-        return UserListResponse(items=[UserOut.model_validate(row) for row in visible_rows])
+        items = [await user_to_out(self._session, row) for row in visible_rows]
+        return UserListResponse(items=items)
 
     async def get_user(self, actor: User, user_id: int) -> UserOut:
         target = await self._repo.get_by_id(user_id)
         if target is None:
             raise NotFound(message="User not found", details={"id": user_id})
         await self._ensure_can_view(actor, target)
-        return UserOut.model_validate(target)
+        return await user_to_out(self._session, target)
 
     async def create_user(self, actor: User, body: UserCreateRequest) -> UserOut:
         self._ensure_can_create_role(actor, body.role)
-        group_id, department_id = await self._resolve_create_assignment(actor, body)
+        group_ids, department_id = await self._resolve_create_assignment(actor, body)
 
         email = (body.email.strip().lower() if body.email else f"{body.username}@crm.local")
         user = User(
@@ -173,13 +213,15 @@ class UserService:
             password_hash=hash_password(body.password),
             full_name=body.full_name.strip(),
             role=body.role,
-            group_id=group_id,
+            group_id=group_ids[0] if len(group_ids) == 1 else None,
             department_id=department_id,
             status=UserStatus.ACTIVE,
             created_by=actor.id,
         )
         try:
             created = await self._repo.add(user)
+            if group_ids:
+                await set_user_group_memberships(self._session, created.id, group_ids)
             if body.set_as_department_head:
                 if department_id is None:
                     raise ValidationError(
@@ -197,7 +239,7 @@ class UserService:
         except IntegrityError as exc:
             await self._repo.rollback()
             raise Conflict(message="User email or username already exists") from exc
-        return UserOut.model_validate(created)
+        return await user_to_out(self._session, created)
 
     async def update_user(
         self,
@@ -211,9 +253,10 @@ class UserService:
         await self._ensure_can_view(actor, target)
 
         actor_role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        normalized_groups = _normalize_group_ids(body.group_id, body.group_ids)
         if actor_role != UserRole.ADMIN:
             if body.role is not None or (
-                body.group_id is not None
+                normalized_groups is not None
                 and target.department_id != actor.department_id
             ):
                 raise PermissionDenied()
@@ -235,7 +278,8 @@ class UserService:
             if body.role == UserRole.ADMIN:
                 target.group_id = None
                 target.department_id = None
-            elif body.role == UserRole.SENIOR and body.department_id is None and body.group_id is None:
+                await set_user_group_memberships(self._session, target.id, [])
+            elif body.role == UserRole.SENIOR and body.department_id is None and normalized_groups is None:
                 if target.department_id is None:
                     raise ValidationError(
                         message="department_id is required when role is senior",
@@ -255,19 +299,31 @@ class UserService:
                     details={"field": "department_id"},
                 )
             target.department_id = await self._resolve_department(actor, body.department_id)
-            if body.group_id is None:
+            if normalized_groups is None and body.group_id is None and body.group_ids is None:
                 target.group_id = None
+                await set_user_group_memberships(self._session, target.id, [])
 
-        if body.group_id is not None:
-            group_id, department_id = await self._resolve_group(actor, body.group_id)
-            if effective_role == UserRole.SENIOR and target.department_id is not None:
-                if department_id != target.department_id:
-                    raise ValidationError(
-                        message="group must belong to the selected department",
-                    )
-            target.group_id = group_id
-            if actor_role == UserRole.ADMIN and effective_role == UserRole.USER:
+        if normalized_groups is not None:
+            if effective_role == UserRole.USER:
+                group_ids, department_id = await self._resolve_group_ids(actor, normalized_groups)
                 target.department_id = department_id
+                await set_user_group_memberships(self._session, target.id, group_ids)
+            elif effective_role == UserRole.SENIOR:
+                if not normalized_groups:
+                    target.group_id = None
+                    await set_user_group_memberships(self._session, target.id, [])
+                else:
+                    group_ids, group_department_id = await self._resolve_group_ids(
+                        actor,
+                        normalized_groups,
+                    )
+                    if target.department_id is not None and group_department_id != target.department_id:
+                        raise ValidationError(
+                            message="group must belong to the selected department",
+                        )
+                    await set_user_group_memberships(self._session, target.id, group_ids)
+            else:
+                await set_user_group_memberships(self._session, target.id, [])
 
         if body.set_as_department_head:
             if effective_role != UserRole.SENIOR or target.department_id is None:
@@ -279,7 +335,7 @@ class UserService:
         await self._session.flush()
         await self._repo.commit()
         await self._session.refresh(target)
-        return UserOut.model_validate(target)
+        return await user_to_out(self._session, target)
 
     async def reset_password(self, actor: User, user_id: int) -> ResetPasswordResponse:
         target = await self._repo.get_by_id(user_id)

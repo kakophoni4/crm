@@ -29,6 +29,7 @@ from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.db.models.user_deletion_request import UserDeletionRequest
 from app.modules.rbac.scope import can_act_on_user
+from app.modules.users.memberships import active_user_ids_in_group, list_user_group_ids
 from app.modules.users.repository import UserRepository
 from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 
@@ -39,17 +40,12 @@ async def _active_group_member_ids(
     *,
     exclude_user_id: int,
 ) -> list[int]:
-    result = await session.execute(
-        select(User.id)
-        .where(
-            User.group_id == group_id,
-            User.id != exclude_user_id,
-            User.status == UserStatus.ACTIVE,
-            User.role.in_((UserRole.USER, UserRole.SENIOR)),
-        )
-        .order_by(User.id),
+    ids = await active_user_ids_in_group(
+        session,
+        group_id,
+        roles=(UserRole.USER, UserRole.SENIOR),
     )
-    return [int(x) for x in result.scalars().all()]
+    return [uid for uid in ids if uid != exclude_user_id]
 
 
 async def _assert_rebalance_possible(session: AsyncSession, target_user_id: int) -> None:
@@ -183,25 +179,29 @@ class UserDeletionRequestService:
             raise ValidationError(message="User is not active")
             raise PermissionDenied(message="Target user is outside your department")
 
-        if target.group_id is None:
+        if target.group_id is None and not await list_user_group_ids(self._session, target.id):
             raise ValidationError(message="Target user has no group; reassign manually first")
 
-        group = await self._session.get(Group, target.group_id)
-        if group is None or group.department_id != actor.department_id:
-            raise PermissionDenied(message="Target group is outside your department")
+        target_group_ids = await list_user_group_ids(self._session, target.id)
+        for gid in target_group_ids:
+            group = await self._session.get(Group, gid)
+            if group is None or group.department_id != actor.department_id:
+                raise PermissionDenied(message="Target group is outside your department")
 
-        peers = await _active_group_member_ids(
-            self._session,
-            int(target.group_id),
-            exclude_user_id=target_user_id,
-        )
-        if not peers:
-            raise ValidationError(
-                message=(
-                    "No other active operators in the group to receive cards; "
-                    "add a colleague first"
-                ),
+        for gid in target_group_ids:
+            peers = await _active_group_member_ids(
+                self._session,
+                gid,
+                exclude_user_id=target_user_id,
             )
+            if not peers:
+                raise ValidationError(
+                    message=(
+                        "No other active operators in one of the user's groups to receive cards; "
+                        "add a colleague first"
+                    ),
+                    details={"group_id": gid},
+                )
 
         req = UserDeletionRequest(
             target_user_id=target_user_id,

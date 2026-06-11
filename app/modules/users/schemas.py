@@ -27,6 +27,7 @@ class UserOut(BaseModel):
     role: UserRole
     department_id: int | None
     group_id: int | None
+    group_ids: list[int] = Field(default_factory=list)
     status: UserStatus
     presence: UserPresence
     availability: UserAvailability
@@ -38,6 +39,17 @@ class UserListResponse(BaseModel):
     items: list[UserOut]
 
 
+def _normalize_group_ids(
+    group_id: int | None,
+    group_ids: list[int] | None,
+) -> list[int] | None:
+    if group_ids is not None:
+        return sorted({int(gid) for gid in group_ids if gid > 0})
+    if group_id is not None:
+        return [int(group_id)]
+    return None
+
+
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
     email: RelaxedEmail | None = None
@@ -45,6 +57,7 @@ class UserCreateRequest(BaseModel):
     password: PasswordField
     role: UserRole = UserRole.USER
     group_id: int | None = Field(default=None, gt=0)
+    group_ids: list[int] | None = None
     department_id: int | None = Field(default=None, gt=0)
     set_as_department_head: bool = False
 
@@ -52,6 +65,7 @@ class UserCreateRequest(BaseModel):
 class UserUpdateRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=256)
     group_id: int | None = Field(default=None, gt=0)
+    group_ids: list[int] | None = None
     department_id: int | None = Field(default=None, gt=0)
     role: UserRole | None = None
     status: UserStatus | None = None

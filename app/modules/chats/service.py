@@ -185,11 +185,17 @@ class ChatService:
         if existing.scalar_one_or_none() is not None:
             raise Conflict(message="Active chat already exists for this contact and bot")
 
+        default_group_id: int | None = body.assigned_group_id
+        if default_group_id is None:
+            scope_groups = visible_group_ids(ctx)
+            if isinstance(scope_groups, set) and len(scope_groups) == 1:
+                default_group_id = next(iter(scope_groups))
+
         chat = Chat(
             contact_id=body.contact_id,
             bot_id=body.bot_id,
             assigned_user_id=body.assigned_user_id or actor.id,
-            assigned_group_id=body.assigned_group_id or actor.group_id,
+            assigned_group_id=default_group_id,
             assigned_department_id=body.assigned_department_id or actor.department_id,
             status=ChatStatus.OPEN,
             status_id=body.status_id,

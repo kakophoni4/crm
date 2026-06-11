@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.timeutil import utc_now
@@ -11,6 +11,7 @@ from app.modules.db.models.contact_group_assignment import ContactGroupAssignmen
 from app.modules.db.models.enums import UserAvailability, UserStatus
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
+from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
 from app.shared.settings import settings
 
@@ -70,26 +71,42 @@ async def _available_user_ids(session: AsyncSession, group_id: int) -> list[int]
     )
     department_id = inbox_dept.scalar_one_or_none()
     if department_id is not None:
+        real_groups_subq = select(Group.id).where(
+            Group.department_id == department_id,
+            Group.name != DEPT_INBOX_GROUP_NAME,
+        )
+        membership_subq = select(UserGroupMembership.user_id).where(
+            UserGroupMembership.group_id.in_(real_groups_subq),
+        )
         result = await session.execute(
             select(User.id)
-            .join(Group, Group.id == User.group_id)
             .where(
-                Group.department_id == department_id,
-                Group.name != DEPT_INBOX_GROUP_NAME,
                 User.status == UserStatus.ACTIVE,
                 User.availability == UserAvailability.AVAILABLE,
+                or_(
+                    User.group_id.in_(real_groups_subq),
+                    User.id.in_(membership_subq),
+                ),
             )
+            .distinct()
             .order_by(User.id),
         )
         return [int(uid) for uid in result.scalars().all()]
 
+    membership_subq = select(UserGroupMembership.user_id).where(
+        UserGroupMembership.group_id == group_id,
+    )
     result = await session.execute(
         select(User.id)
         .where(
-            User.group_id == group_id,
             User.status == UserStatus.ACTIVE,
             User.availability == UserAvailability.AVAILABLE,
+            or_(
+                User.group_id == group_id,
+                User.id.in_(membership_subq),
+            ),
         )
+        .distinct()
         .order_by(User.id),
     )
     return [int(uid) for uid in result.scalars().all()]

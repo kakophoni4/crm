@@ -19,11 +19,18 @@ def operator() -> ScopeContext:
     actor = make_user(user_id=10, role=UserRole.USER, department_id=1, group_id=100)
     return ScopeContext(
         actor=actor,
+        actor_group_ids=frozenset({100}),
         group_member_ids=frozenset({10, 11, 12}),
         department_senior_id=50,
         department_user_ids=frozenset({10, 11, 12, 20, 50}),
         department_group_ids=frozenset({100, 101}),
     )
+
+
+def test_visible_group_ids_multiple_groups() -> None:
+    actor = make_user(user_id=10, role=UserRole.USER, department_id=1, group_id=None)
+    ctx = ScopeContext(actor=actor, actor_group_ids=frozenset({100, 101}))
+    assert visible_group_ids(ctx) == {100, 101}
 
 
 def test_visible_user_ids_includes_self_group_and_senior(operator: ScopeContext) -> None:

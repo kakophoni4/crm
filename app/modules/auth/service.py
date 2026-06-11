@@ -17,6 +17,7 @@ from app.modules.chats.timeutil import utc_now
 from app.modules.db.models.enums import UserPresence, UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac import ROLE_PERMISSIONS
+from app.modules.users.memberships import list_user_group_ids
 from app.shared.exceptions import AppError, AuthenticationRequired
 from app.shared.security.jwt import decode_token, encode_access, encode_refresh
 from app.shared.security.passwords import verify_password
@@ -171,13 +172,18 @@ class AuthService:
 
         role = user.role if isinstance(user.role, UserRole) else UserRole(str(user.role))
         permissions = sorted(p.value for p in ROLE_PERMISSIONS[role])
+        group_ids = await list_user_group_ids(self._session, user.id)
+        legacy_group_id = user.group_id
+        if legacy_group_id is not None and legacy_group_id not in group_ids:
+            group_ids = sorted(set(group_ids) | {int(legacy_group_id)})
         return MeResponse(
             id=user.id,
             email=str(user.email),
             full_name=user.full_name,
             role=role,
             department_id=user.department_id,
-            group_id=user.group_id,
+            group_id=group_ids[0] if len(group_ids) == 1 else None,
+            group_ids=group_ids,
             presence=user.presence,
             permissions=permissions,
         )

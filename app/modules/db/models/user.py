@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.modules.db.models.department import Department
     from app.modules.db.models.group import Group
     from app.modules.db.models.refresh_token import RefreshToken
+    from app.modules.db.models.user_group_membership import UserGroupMembership
 
 
 class User(Base):
@@ -87,3 +88,7 @@ class User(Base):
         foreign_keys=[group_id],
     )
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(back_populates="user")
+    group_memberships: Mapped[list[UserGroupMembership]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

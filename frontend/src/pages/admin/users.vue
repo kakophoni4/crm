@@ -54,7 +54,7 @@ const form = ref({
   full_name: '',
   password: '',
   role: 'user' as 'user' | 'senior' | 'admin',
-  group_id: null as number | null,
+  group_ids: [] as number[],
   department_id: null as number | null,
   set_as_department_head: false,
 })
@@ -128,10 +128,16 @@ const columns = computed<DataTableColumns<AdminUser>>(() => [
     render: (row) => departmentName(row.department_id),
   },
   {
-    title: 'Группа',
-    key: 'group_id',
-    width: 140,
-    render: (row) => groups.value.find((g) => g.id === row.group_id)?.name ?? '—',
+    title: 'Группы',
+    key: 'group_ids',
+    width: 180,
+    render: (row) => {
+      const ids = row.group_ids?.length ? row.group_ids : row.group_id != null ? [row.group_id] : []
+      if (!ids.length) return '—'
+      return ids
+        .map((id) => groups.value.find((g) => g.id === id)?.name ?? `#${id}`)
+        .join(', ')
+    },
   },
   {
     title: 'Статус',
@@ -239,7 +245,7 @@ function openCreate(): void {
     full_name: '',
     password: '',
     role: 'user',
-    group_id: groups.value[0]?.id ?? null,
+    group_ids: groups.value[0] ? [groups.value[0].id] : [],
     department_id: departments.value[0]?.id ?? null,
     set_as_department_head: false,
   }
@@ -256,7 +262,12 @@ function openEdit(row: AdminUser): void {
     full_name: row.full_name,
     password: '',
     role: row.role,
-    group_id: row.group_id,
+    group_ids:
+      row.group_ids?.length > 0
+        ? [...row.group_ids]
+        : row.group_id != null
+          ? [row.group_id]
+          : [],
     department_id: row.department_id,
     set_as_department_head: isDeptHead,
   }
@@ -267,19 +278,19 @@ watch(
   () => form.value.role,
   (role) => {
     if (role === 'admin') {
-      form.value.group_id = null
+      form.value.group_ids = []
       form.value.department_id = null
       form.value.set_as_department_head = false
     } else if (role === 'senior') {
-      form.value.group_id = null
+      form.value.group_ids = []
       if (form.value.department_id == null) {
         form.value.department_id = departments.value[0]?.id ?? null
       }
     } else {
       form.value.department_id = null
       form.value.set_as_department_head = false
-      if (form.value.group_id == null) {
-        form.value.group_id = groups.value[0]?.id ?? null
+      if (form.value.group_ids.length === 0) {
+        form.value.group_ids = groups.value[0] ? [groups.value[0].id] : []
       }
     }
   },
@@ -330,8 +341,8 @@ function validateForm(role: 'user' | 'senior' | 'admin'): string | null {
   if (!form.value.full_name.trim()) {
     return 'Укажите имя'
   }
-  if (role === 'user' && form.value.group_id == null) {
-    return 'Выберите группу для оператора'
+  if (role === 'user' && form.value.group_ids.length === 0) {
+    return 'Выберите хотя бы одну группу для оператора'
   }
   if (role === 'senior' && form.value.department_id == null) {
     return 'Выберите отдел для старшего'
@@ -353,7 +364,7 @@ async function onSave(): Promise<void> {
       await updateUser(editing.value.id, {
         full_name: form.value.full_name.trim(),
         ...(patchRole !== undefined ? { role: patchRole } : {}),
-        group_id: form.value.role === 'user' ? form.value.group_id : null,
+        group_ids: form.value.role === 'user' ? form.value.group_ids : [],
         department_id: form.value.role === 'senior' ? form.value.department_id : null,
         ...(form.value.role === 'senior' && form.value.set_as_department_head
           ? { set_as_department_head: true }
@@ -366,7 +377,7 @@ async function onSave(): Promise<void> {
         full_name: form.value.full_name.trim(),
         password: form.value.password,
         role,
-        group_id: role === 'user' ? form.value.group_id : null,
+        group_ids: role === 'user' ? form.value.group_ids : [],
         department_id: role === 'senior' ? form.value.department_id : null,
         set_as_department_head: role === 'senior' && form.value.set_as_department_head,
       })
@@ -461,8 +472,13 @@ onMounted(() => void load())
         <NFormItem v-if="!isSenior" label="Роль">
           <NSelect v-model:value="form.role" :options="roleOptions" />
         </NFormItem>
-        <NFormItem v-if="showGroupField" label="Группа">
-          <NSelect v-model:value="form.group_id" :options="groupOptions" placeholder="Выбрать" />
+        <NFormItem v-if="showGroupField" label="Группы">
+          <NSelect
+            v-model:value="form.group_ids"
+            :options="groupOptions"
+            multiple
+            placeholder="Выбрать одну или несколько"
+          />
         </NFormItem>
         <NFormItem v-if="showDepartmentField" label="Отдел">
           <NSelect

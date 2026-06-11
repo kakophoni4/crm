@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.db.models.enums import UserRole
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
+from app.modules.db.models.user_group_membership import UserGroupMembership
 
 
 class UserRepository:
@@ -25,7 +26,15 @@ class UserRepository:
         if role is not None:
             stmt = stmt.where(User.role == role.value)
         if group_id is not None:
-            stmt = stmt.where(User.group_id == group_id)
+            membership_subq = select(UserGroupMembership.user_id).where(
+                UserGroupMembership.group_id == group_id,
+            )
+            stmt = stmt.where(
+                or_(
+                    User.group_id == group_id,
+                    User.id.in_(membership_subq),
+                ),
+            )
         if department_id is not None:
             stmt = stmt.where(User.department_id == department_id)
         if q:

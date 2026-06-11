@@ -46,7 +46,7 @@ async def test_senior_other_department_gets_404_for_deletion_request(
 @pytest.mark.asyncio
 async def test_admin_approve_reassigns_cards_and_disables_user(
     client: AsyncClient,
-    senior_headers: dict[str, str],
+    chats_senior_headers: dict[str, str],
     admin_headers: dict[str, str],
     chats_org: dict[str, object],
     test_settings: object,
@@ -92,14 +92,14 @@ async def test_admin_approve_reassigns_cards_and_disables_user(
 
         create = await client.post(
             f"/api/v1/users/{op_a}/deletion-request",
-            headers=senior_headers,
+            headers=chats_senior_headers,
             json={"comment": "leave queue"},
         )
         assert create.status_code == 201, create.text
         request_id = int(create.json()["id"])
         assert create.json()["state"] == "pending"
 
-        senior_list = await client.get("/api/v1/user-deletion-requests", headers=senior_headers)
+        senior_list = await client.get("/api/v1/user-deletion-requests", headers=chats_senior_headers)
         assert senior_list.status_code == 200
         senior_ids = {int(x["id"]) for x in senior_list.json()["items"]}
         assert request_id in senior_ids
@@ -168,7 +168,7 @@ async def test_admin_approve_reassigns_cards_and_disables_user(
 @pytest.mark.asyncio
 async def test_admin_reject_deletion_request(
     client: AsyncClient,
-    senior_headers: dict[str, str],
+    chats_senior_headers: dict[str, str],
     admin_headers: dict[str, str],
     chats_org: dict[str, object],
     test_settings: object,
@@ -192,7 +192,7 @@ async def test_admin_reject_deletion_request(
 
         create = await client.post(
             f"/api/v1/users/{op_b}/deletion-request",
-            headers=senior_headers,
+            headers=chats_senior_headers,
             json={},
         )
         assert create.status_code == 201, create.text
@@ -226,7 +226,7 @@ async def test_admin_reject_deletion_request(
 @pytest.mark.asyncio
 async def test_duplicate_pending_returns_409(
     client: AsyncClient,
-    senior_headers: dict[str, str],
+    chats_senior_headers: dict[str, str],
     chats_org: dict[str, object],
     test_settings: object,
     db_ready: None,
@@ -248,7 +248,7 @@ async def test_duplicate_pending_returns_409(
 
     first = await client.post(
         f"/api/v1/users/{op_b}/deletion-request",
-        headers=senior_headers,
+        headers=chats_senior_headers,
         json={},
     )
     assert first.status_code == 201, first.text
@@ -256,7 +256,7 @@ async def test_duplicate_pending_returns_409(
 
     second = await client.post(
         f"/api/v1/users/{op_b}/deletion-request",
-        headers=senior_headers,
+        headers=chats_senior_headers,
         json={},
     )
     assert second.status_code == 409

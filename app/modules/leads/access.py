@@ -41,6 +41,9 @@ async def actor_can_access_lead(
                 return True
         if actor.group_id is not None and lead.group_id == actor.group_id:
             return True
+        actor_groups = ctx.actor_group_ids
+        if actor_groups and lead.group_id in actor_groups:
+            return True
 
     if lead.chat_id is not None:
         chat = await session.get(Chat, lead.chat_id)

@@ -68,7 +68,8 @@ def search_scope_clause(
         return or_(*clauses)
 
     if scope == ChatSearchScope.MINE:
-        if settings.ownership_v2 and actor.group_id is not None:
+        group_ids = visible_group_ids(ctx)
+        if settings.ownership_v2 and isinstance(group_ids, set) and group_ids:
             assignment_exists = exists(
                 select(1).where(
                     ContactGroupAssignment.contact_id == Chat.contact_id,
@@ -77,7 +78,7 @@ def search_scope_clause(
                 ),
             )
             return and_(
-                Chat.assigned_group_id == actor.group_id,
+                Chat.assigned_group_id.in_(group_ids),
                 assignment_exists,
             )
         return Chat.assigned_user_id == actor.id
