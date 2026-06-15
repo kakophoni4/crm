@@ -5,7 +5,7 @@ import { Paperclip, Send, X } from 'lucide-vue-next'
 import { ref, nextTick } from 'vue'
 
 import { uploadFile } from '@/features/chats/api'
-import { formatFileSize, MAX_UPLOAD_BYTES } from '@/shared/config/uploads'
+import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { isMessageSendShortcut } from '@/widgets/chat/message-input-hotkeys'
 import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
 
@@ -26,9 +26,10 @@ const sending = ref(false)
 const dragOver = ref(false)
 
 function validateFileSize(file: File): boolean {
-  if (file.size <= MAX_UPLOAD_BYTES) return true
+  const limit = maxUploadBytesFor(file)
+  if (file.size <= limit) return true
   message.error(
-    `Файл «${file.name}» слишком большой (макс. ${formatFileSize(MAX_UPLOAD_BYTES)})`,
+    `Файл «${file.name}» слишком большой (макс. ${uploadLimitLabel(file)}, сейчас ${formatFileSize(file.size)})`,
   )
   return false
 }

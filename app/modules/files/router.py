@@ -14,6 +14,7 @@ from app.shared.db import get_db
 from app.shared.exceptions import AppError, AuthenticationRequired, NotFound
 from app.shared.security.permissions import requires_permission
 from app.shared.settings import get_settings
+from app.shared.upload_limits import max_upload_bytes_for
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
@@ -31,14 +32,19 @@ async def upload_file(
 ) -> dict[str, int | str]:
     settings = get_settings()
     content = await file.read()
-    if len(content) > settings.max_upload_bytes:
+    mime = file.content_type or "application/octet-stream"
+    max_bytes = max_upload_bytes_for(
+        mime=mime,
+        max_photo_bytes=settings.max_upload_photo_bytes,
+        max_file_bytes=settings.max_upload_file_bytes,
+    )
+    if len(content) > max_bytes:
         raise AppError(
             code="payload_too_large",
             message="File too large",
             status=413,
-            details={"max_bytes": settings.max_upload_bytes},
+            details={"max_bytes": max_bytes},
         )
-    mime = file.content_type or "application/octet-stream"
     name = file.filename or "file"
     row = await service.create_upload(
         uploaded_by=actor.id,

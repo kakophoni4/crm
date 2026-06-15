@@ -9,7 +9,9 @@ import structlog
 from sqlalchemy import text
 
 from app.shared.db import get_session_factory
+from app.shared.settings import get_settings
 from app.shared.storage import get_file_storage
+from app.shared.upload_limits import max_upload_bytes_for
 from app.realtime.events import publish
 from app.realtime.topics import CHAT_MESSAGE_ATTACHMENT_READY
 from app.workers.bots.queue import enqueue
@@ -50,6 +52,16 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
                 data = response.content
                 default_mime = att.get("mime", "application/octet-stream")
                 content_type = response.headers.get("content-type", default_mime)
+
+            settings = get_settings()
+            max_bytes = max_upload_bytes_for(
+                mime=str(content_type),
+                att_type=str(att.get("type")) if att.get("type") else None,
+                max_photo_bytes=settings.max_upload_photo_bytes,
+                max_file_bytes=settings.max_upload_file_bytes,
+            )
+            if len(data) > max_bytes:
+                raise ValueError(f"attachment exceeds max size ({max_bytes} bytes)")
 
             key = f"bot-inbound/{message_id}/{attachment_index}/{uuid4().hex}"
             storage = get_file_storage()

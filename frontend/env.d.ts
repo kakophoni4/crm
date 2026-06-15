@@ -6,7 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_SENTRY_DSN: string
   readonly VITE_SENTRY_ENVIRONMENT?: string
   readonly VITE_LOG_DEBUG: string
-  readonly VITE_MAX_UPLOAD_BYTES?: string
+  readonly VITE_MAX_UPLOAD_PHOTO_BYTES?: string
+  readonly VITE_MAX_UPLOAD_FILE_BYTES?: string
 }
 
 interface ImportMeta {
