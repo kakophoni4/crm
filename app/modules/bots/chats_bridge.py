@@ -48,9 +48,10 @@ async def upsert_contact_from_telegram(
     last_name: str | None,
     created_by: int,
 ) -> int:
-    full_name = " ".join(part for part in (first_name, last_name) if part) or (
-        telegram_username or f"TG {telegram_user_id}"
+    resolved_name = " ".join(part for part in (first_name, last_name) if part) or (
+        telegram_username if telegram_username else None
     )
+    full_name = resolved_name or f"TG {telegram_user_id}"
     result = await session.execute(
         text(
             """
@@ -62,7 +63,7 @@ async def upsert_contact_from_telegram(
                 telegram_username = COALESCE(
                     EXCLUDED.telegram_username, contacts.telegram_username
                 ),
-                full_name = EXCLUDED.full_name,
+                full_name = COALESCE(:resolved_name, contacts.full_name),
                 updated_at = now()
             RETURNING id
             """
@@ -71,6 +72,7 @@ async def upsert_contact_from_telegram(
             "tg_id": telegram_user_id,
             "username": telegram_username,
             "full_name": full_name,
+            "resolved_name": resolved_name,
             "created_by": created_by,
         },
     )
