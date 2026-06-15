@@ -1,6 +1,7 @@
 .env
 deploy/.env.staging
 deploy/.env.prod
+deploy/bitwarden/.env
 .secrets/
 docker/alertmanager/alertmanager.yml
 .venv/

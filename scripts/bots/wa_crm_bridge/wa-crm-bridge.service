@@ -1,0 +1,14 @@
+[Unit]
+Description=CRM WhatsApp bridge (GREEN API <-> CRM)
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/crm-wa-bots
+EnvironmentFile=/root/crm-wa-bots/.env
+ExecStart=/root/crm-wa-bots/venv/bin/python /root/crm-wa-bots/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -19,5 +19,14 @@ curl -sf https://api.crmkanasha.org/healthz && echo "" || echo "api.crmkanasha.o
 curl -sf -o /dev/null -w "app.crmkanasha.org HTTPS %{http_code}\n" https://app.crmkanasha.org/ || echo "app.crmkanasha.org (HTTPS): FAIL"
 
 echo ""
+echo "=== Vaultwarden (Bitwarden) ==="
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vaultwarden; then
+  curl -sf http://127.0.0.1:19180/alive && echo "" || echo "vaultwarden local: FAIL"
+  curl -sf https://huitawarden.bttsrvvrs.org/alive && echo "" || echo "huitawarden.bttsrvvrs.org (HTTPS): FAIL"
+else
+  echo "vaultwarden: not running (install: bash scripts/deploy/vps/install-bitwarden.sh)"
+fi
+
+echo ""
 echo "=== Port 443 listeners (SNI split) ==="
 ss -tlnp 2>/dev/null | grep ':443' || echo "nothing on :443"

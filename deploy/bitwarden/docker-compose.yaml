@@ -1,0 +1,40 @@
+# Self-hosted Bitwarden-compatible vault (Vaultwarden).
+# VPS: bind localhost only — nginx terminates TLS on :8443 (SNI split).
+#
+#   cp deploy/bitwarden/env.example deploy/bitwarden/.env
+#   # edit DOMAIN, ADMIN_TOKEN
+#   docker compose -f deploy/bitwarden/docker-compose.yaml --env-file deploy/bitwarden/.env up -d
+#
+# Full install: bash scripts/deploy/vps/install-bitwarden.sh
+
+name: vaultwarden
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:1.34.3-alpine
+    container_name: vaultwarden
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required, e.g. https://huitawarden.bttsrvvrs.org}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
+      SIGNUPS_ALLOWED: ${SIGNUPS_ALLOWED:-false}
+      INVITATIONS_ALLOWED: ${INVITATIONS_ALLOWED:-true}
+      SHOW_PASSWORD_HINT: ${SHOW_PASSWORD_HINT:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      EXTENDED_LOGGING: ${EXTENDED_LOGGING:-false}
+      ROCKET_PORT: 80
+    volumes:
+      - vaultwarden-data:/data
+    ports:
+      - "127.0.0.1:${VAULTWARDEN_PORT:-19180}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80/alive"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  vaultwarden-data:
