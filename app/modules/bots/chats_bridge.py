@@ -97,14 +97,47 @@ async def upsert_chat_for_bot(
     else:
         assigned_department_id = owner_id
 
+    # One non-archived chat per contact (uq_chats_contact_active) — reuse regardless of bot_id.
+    active = await session.execute(
+        text(
+            """
+            SELECT id FROM chats
+            WHERE contact_id = :cid AND status != 'archived'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ),
+        {"cid": contact_id},
+    )
+    active_row = active.one_or_none()
+    if active_row is not None:
+        chat_id = int(active_row[0])
+        await session.execute(
+            text(
+                """
+                UPDATE chats
+                SET bot_id = :bid,
+                    assigned_group_id = :gid,
+                    assigned_department_id = :did,
+                    updated_at = now()
+                WHERE id = :chat_id
+                """
+            ),
+            {
+                "chat_id": chat_id,
+                "bid": bot_id,
+                "gid": assigned_group_id,
+                "did": assigned_department_id,
+            },
+        )
+        return chat_id
+
     existing = await session.execute(
         text(
             """
-            SELECT id, status FROM chats
-            WHERE contact_id = :cid AND bot_id = :bid
-            ORDER BY
-              CASE WHEN status = 'archived' THEN 1 ELSE 0 END,
-              id DESC
+            SELECT id FROM chats
+            WHERE contact_id = :cid AND bot_id = :bid AND status = 'archived'
+            ORDER BY id DESC
             LIMIT 1
             """
         ),
@@ -119,7 +152,7 @@ async def upsert_chat_for_bot(
                 UPDATE chats
                 SET assigned_group_id = :gid,
                     assigned_department_id = :did,
-                    status = CASE WHEN status = 'archived' THEN 'open' ELSE status END,
+                    status = 'open',
                     updated_at = now()
                 WHERE id = :chat_id
                 """
@@ -150,9 +183,6 @@ async def upsert_chat_for_bot(
             "status": ChatStatus.OPEN.value,
         },
     )
-    return int(insert.scalar_one())
-
-
     return int(insert.scalar_one())
 
 
