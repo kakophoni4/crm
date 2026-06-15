@@ -70,6 +70,76 @@ def ws_connection_closed() -> None:
     WS_DISCONNECT_TOTAL.inc()
 
 
+def _patch_instrumentator_routing_for_included_router() -> None:
+    """Work around FastAPI 0.137+ _IncludedRouter missing `.path` (instrumentator #370)."""
+    from typing import List, Optional
+
+    from prometheus_fastapi_instrumentator import routing as instrumentator_routing
+    from starlette.routing import Match, Mount
+    from starlette.types import Scope
+
+    if getattr(instrumentator_routing, "_included_router_patch_applied", False):
+        return
+
+    def _get_route_name(
+        scope: Scope,
+        routes: List[object],
+        route_name: Optional[str] = None,
+    ) -> Optional[str]:
+        for route in routes:
+            if hasattr(route, "effective_candidates"):
+                match, child_scope, matched_route, route_context = route._match(scope)
+                if match == Match.FULL:
+                    route_name = (
+                        route_context.path
+                        if route_context is not None
+                        else getattr(matched_route, "path", None)
+                    )
+                    if route_name is not None:
+                        child_scope = {**scope, **child_scope}
+                        target_route = (
+                            route_context.starlette_route
+                            if route_context is not None
+                            else matched_route
+                        )
+                        if isinstance(target_route, Mount) and target_route.routes:
+                            child_route_name = _get_route_name(
+                                child_scope, target_route.routes, route_name
+                            )
+                            if child_route_name is None:
+                                route_name = None
+                            else:
+                                route_name += child_route_name
+                    return route_name
+                if match == Match.PARTIAL and route_name is None:
+                    route_name = (
+                        route_context.path
+                        if route_context is not None
+                        else getattr(matched_route, "path", None)
+                    )
+                    continue
+
+            match, child_scope = route.matches(scope)
+            if match == Match.FULL:
+                route_name = getattr(route, "path", None)
+                child_scope = {**scope, **child_scope}
+                if isinstance(route, Mount) and route.routes:
+                    child_route_name = _get_route_name(
+                        child_scope, route.routes, route_name
+                    )
+                    if child_route_name is None:
+                        route_name = None
+                    else:
+                        route_name += child_route_name
+                return route_name
+            if match == Match.PARTIAL and route_name is None:
+                route_name = getattr(route, "path", None)
+        return None
+
+    instrumentator_routing._get_route_name = _get_route_name
+    instrumentator_routing._included_router_patch_applied = True
+
+
 async def refresh_redis_stream_gauges() -> None:
     from app.shared.redis import get_redis
 
@@ -94,6 +164,8 @@ def setup_prometheus_instrumentation(app: FastAPI) -> None:
 
     if not settings.metrics_enabled:
         return
+
+    _patch_instrumentator_routing_for_included_router()
 
     Instrumentator(
         should_group_status_codes=False,

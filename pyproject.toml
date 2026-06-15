@@ -9,7 +9,7 @@ description = "CRM Chat Center backend"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.111",
+    "fastapi>=0.111,<0.137",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
