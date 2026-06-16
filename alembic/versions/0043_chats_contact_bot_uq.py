@@ -1,6 +1,6 @@
 """One open chat per (contact, bot) instead of per contact only.
 
-Revision ID: 0043_chats_unique_contact_bot_active
+Revision ID: 0043_chats_contact_bot_uq
 Revises: 0042_user_group_memberships
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0043_chats_unique_contact_bot_active"
+revision = "0043_chats_contact_bot_uq"
 down_revision = "0042_user_group_memberships"
 branch_labels = None
 depends_on = None
