@@ -15,13 +15,17 @@ set -a
 set +a
 
 CRM_API_BASE="${CRM_API_BASE:-http://127.0.0.1:19001}"
-WA_BRIDGE_SYNC_SECRET="${WA_BRIDGE_SYNC_SECRET:-${WA_BRIDGE_SYNC_SECRET:-}}"
 
-if [[ -z "$WA_BRIDGE_SYNC_SECRET" ]]; then
+if [[ -z "${WA_BRIDGE_SYNC_SECRET:-}" ]]; then
   WA_BRIDGE_SYNC_SECRET=$(openssl rand -hex 24)
-  echo "Generated WA_BRIDGE_SYNC_SECRET=$WA_BRIDGE_SYNC_SECRET"
-  echo "Add to $ENV_FILE :"
-  echo "  WA_BRIDGE_SYNC_SECRET=$WA_BRIDGE_SYNC_SECRET"
+  echo "Generated WA_BRIDGE_SYNC_SECRET"
+  if [[ -f "$ENV_FILE" ]] && ! grep -q '^WA_BRIDGE_SYNC_SECRET=' "$ENV_FILE"; then
+    echo "WA_BRIDGE_SYNC_SECRET=$WA_BRIDGE_SYNC_SECRET" >> "$ENV_FILE"
+    echo "Appended WA_BRIDGE_SYNC_SECRET to $ENV_FILE"
+  else
+    echo "Add to $ENV_FILE and restart api+worker:"
+    echo "  WA_BRIDGE_SYNC_SECRET=$WA_BRIDGE_SYNC_SECRET"
+  fi
 fi
 
 echo "=== Install dir $INSTALL_DIR ==="

@@ -458,7 +458,11 @@ class Bridge:
         return web.Response(text="ok")
 
     async def run(self) -> None:
-        await self.reload_config()
+        try:
+            await self.reload_config()
+        except Exception:
+            log.exception("Initial config sync failed, will retry every 30s")
+
         asyncio.create_task(self.config_loop())
 
         app = web.Application()
