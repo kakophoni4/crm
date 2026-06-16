@@ -175,10 +175,11 @@ export function formatLeadDate(iso: string): string {
 
 
 export function formatBotLabel(item: {
-  bot_id: number
+  bot_id?: number | null
   bot_name?: string | null
   bot_code?: string | null
 }): string {
+  if (item.bot_id == null) return '—'
   const botName = item.bot_name ?? lookupBotName(item.bot_id)
   const botCode = item.bot_code ?? lookupBotCode(item.bot_id)
 
