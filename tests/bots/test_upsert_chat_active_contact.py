@@ -8,17 +8,17 @@ from sqlalchemy import create_engine, text
 
 from app.workers.bots.process_event import process_bot_event
 from tests.auth.conftest import _sync_database_url
-from tests.bots.conftest import INBOUND_SECRET, build_inbound_payload, sign_event
+from tests.bots.conftest import INBOUND_SECRET, build_inbound_payload
 
 
 @pytest.mark.asyncio
-async def test_inbound_reuses_active_chat_when_bot_id_differs(
+async def test_inbound_creates_separate_chat_per_bot(
     client: AsyncClient,
     db_ready: None,
     test_settings,
     bots_org: dict[str, object],
 ) -> None:
-    """uq_chats_contact_active allows one open chat per contact — reuse it on ingest."""
+    """Each bot gets its own open chat for the same contact."""
     engine = create_engine(_sync_database_url(test_settings.database_url))
     dept_id = int(bots_org["dept_id"])
     group_id = int(bots_org["group_id"])
@@ -27,10 +27,17 @@ async def test_inbound_reuses_active_chat_when_bot_id_differs(
 
     try:
         with engine.begin() as connection:
-            connection.execute(text("DELETE FROM messages WHERE external_event_id LIKE 'bot-upsert-%'"))
-            connection.execute(text("DELETE FROM bot_events_inbox WHERE event_id LIKE 'bot-upsert-%'"))
-            connection.execute(text("DELETE FROM chats WHERE contact_id IN (SELECT id FROM contacts WHERE telegram_user_id = 999002)"))
-            connection.execute(text("DELETE FROM contacts WHERE telegram_user_id = 999002"))
+            connection.execute(text("DELETE FROM messages WHERE external_event_id LIKE 'bot-per-bot-%'"))
+            connection.execute(text("DELETE FROM bot_events_inbox WHERE event_id LIKE 'bot-per-bot-%'"))
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM chats
+                    WHERE contact_id IN (SELECT id FROM contacts WHERE telegram_user_id = 999003)
+                    """
+                ),
+            )
+            connection.execute(text("DELETE FROM contacts WHERE telegram_user_id = 999003"))
             connection.execute(text("DELETE FROM bots WHERE code = 'test_bot_b'"))
 
             connection.execute(
@@ -70,13 +77,13 @@ async def test_inbound_reuses_active_chat_when_bot_id_differs(
                 text(
                     """
                     INSERT INTO contacts (telegram_user_id, full_name, created_by)
-                    VALUES (999002, 'Upsert Test', :uid)
+                    VALUES (999003, 'Per Bot Test', :uid)
                     RETURNING id
                     """
                 ),
                 {"uid": admin_id},
             ).scalar_one()
-            existing_chat_id = connection.execute(
+            chat_a_id = connection.execute(
                 text(
                     """
                     INSERT INTO chats (
@@ -96,12 +103,12 @@ async def test_inbound_reuses_active_chat_when_bot_id_differs(
     finally:
         engine.dispose()
 
-    event_id = "bot-upsert-001"
+    event_id = "bot-per-bot-001"
     body, headers = build_inbound_payload(
         event_id=event_id,
-        external_id="msg_upsert_001",
-        text="hello after conflict fix",
-        telegram_user_id=999002,
+        external_id="msg_per_bot_001",
+        text="hello on bot b",
+        telegram_user_id=999003,
         bot_code="test_bot_b",
     )
 
@@ -122,18 +129,25 @@ async def test_inbound_reuses_active_chat_when_bot_id_differs(
                 text(
                     """
                     SELECT chat_id, text FROM messages
-                    WHERE external_message_id = 'msg_upsert_001'
+                    WHERE external_message_id = 'msg_per_bot_001'
                     """
                 ),
             ).one()
-            chat = connection.execute(
-                text("SELECT bot_id FROM chats WHERE id = :cid"),
-                {"cid": message[0]},
-            ).one()
+            open_chats = connection.execute(
+                text(
+                    """
+                    SELECT id, bot_id FROM chats
+                    WHERE contact_id = :cid AND status != 'archived'
+                    ORDER BY id
+                    """
+                ),
+                {"cid": contact_id},
+            ).all()
     finally:
         engine.dispose()
 
     assert inbox[0] == "done"
-    assert int(message[0]) == int(existing_chat_id)
-    assert message[1] == "hello after conflict fix"
-    assert int(chat[0]) == bot_b_id
+    assert int(message[0]) != int(chat_a_id)
+    assert message[1] == "hello on bot b"
+    assert len(open_chats) == 2
+    assert {int(row[1]) for row in open_chats} == {bot_a_id, bot_b_id}

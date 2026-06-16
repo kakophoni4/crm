@@ -99,17 +99,17 @@ async def upsert_chat_for_bot(
     else:
         assigned_department_id = owner_id
 
-    # One non-archived chat per contact (uq_chats_contact_active) — reuse regardless of bot_id.
+    # One non-archived chat per (contact_id, bot_id) — uq_chats_contact_bot_active.
     active = await session.execute(
         text(
             """
             SELECT id FROM chats
-            WHERE contact_id = :cid AND status != 'archived'
+            WHERE contact_id = :cid AND bot_id = :bid AND status != 'archived'
             ORDER BY id DESC
             LIMIT 1
             """
         ),
-        {"cid": contact_id},
+        {"cid": contact_id, "bid": bot_id},
     )
     active_row = active.one_or_none()
     if active_row is not None:
@@ -118,8 +118,7 @@ async def upsert_chat_for_bot(
             text(
                 """
                 UPDATE chats
-                SET bot_id = :bid,
-                    assigned_group_id = :gid,
+                SET assigned_group_id = :gid,
                     assigned_department_id = :did,
                     updated_at = now()
                 WHERE id = :chat_id
@@ -127,7 +126,6 @@ async def upsert_chat_for_bot(
             ),
             {
                 "chat_id": chat_id,
-                "bid": bot_id,
                 "gid": assigned_group_id,
                 "did": assigned_department_id,
             },
