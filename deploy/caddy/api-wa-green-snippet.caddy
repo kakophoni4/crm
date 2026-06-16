@@ -1,4 +1,4 @@
-# Insert inside the api.crmkanasha.org { ... } block, BEFORE the general reverse_proxy.
+# Insert inside the API site block (e.g. api.example.com), BEFORE the general reverse_proxy.
 # wa-crm-bridge green webhooks
 handle /green/* {
     reverse_proxy host.docker.internal:8766

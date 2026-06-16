@@ -3,12 +3,22 @@
 #
 # Usage (on VPS as root):
 #   bash scripts/deploy/vps/patch-caddy-wa-green.sh
-#   API_DOMAIN=api.crmkanasha.org APP_DOMAIN=app.crmkanasha.org bash scripts/deploy/vps/patch-caddy-wa-green.sh
+#   DOMAIN=bttsrvvrs.org bash scripts/deploy/vps/patch-caddy-wa-green.sh
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ENV_FILE="${ENV_FILE:-$ROOT/deploy/.env.staging}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 CADDY_CONTAINER="${CADDY_CONTAINER:-matrix-caddy}"
-API_DOMAIN="${API_DOMAIN:-api.crmkanasha.org}"
-APP_DOMAIN="${APP_DOMAIN:-app.crmkanasha.org}"
+DOMAIN="${DOMAIN:-bttsrvvrs.org}"
+API_DOMAIN="${API_DOMAIN:-api.${DOMAIN}}"
+APP_DOMAIN="${APP_DOMAIN:-app.${DOMAIN}}"
 MARKER="# wa-crm-bridge green webhooks"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
