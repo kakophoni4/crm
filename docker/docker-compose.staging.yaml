@@ -46,6 +46,10 @@ x-api-env: &api-env
   SMTP_FROM: ${SMTP_FROM:-no-reply@${DOMAIN}}
   SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
   SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+  WA_BRIDGE_SYNC_SECRET: ${WA_BRIDGE_SYNC_SECRET:-changeme_wa_bridge_sync_secret_min32}
+  WA_BRIDGE_WEBHOOK_PUBLIC_BASE: ${WA_BRIDGE_WEBHOOK_PUBLIC_BASE:-https://api.${DOMAIN}/green/webhook}
+  WA_BRIDGE_OUTBOUND_URL: ${WA_BRIDGE_OUTBOUND_URL:-http://host.docker.internal:8766/crm/cmd}
+  WA_BRIDGE_HEALTH_URL: ${WA_BRIDGE_HEALTH_URL:-http://host.docker.internal:8766/crm/health}
 
 services:
   traefik:
