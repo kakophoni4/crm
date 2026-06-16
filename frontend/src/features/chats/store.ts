@@ -420,9 +420,9 @@ export const useChatsStore = defineStore('chats', () => {
     try {
       await ensureGroupDirectory()
       const data = await chatsApi.listChats(buildListQuery(append))
-      const items = enrichWithGroupNames(data.items)
+      const items = enrichWithGroupNames(data?.items ?? [])
       listItems.value = enrichListWithOwnership(append ? [...listItems.value, ...items] : items)
-      listNextCursor.value = data.next_cursor
+      listNextCursor.value = data?.next_cursor ?? null
     } catch (err) {
       if (!append) {
         listItems.value = []

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WhatsApp (GREEN API) <-> CRM bridge."""
+"""WhatsApp (GREEN API) <-> CRM bridge — loads bot configs from CRM."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -135,35 +136,76 @@ def _default_attachment_label(att_type: str) -> str:
     return "Файл"
 
 
+@dataclass(frozen=True)
+class BotConfig:
+    bot_code: str
+    inbound_secret: str
+    outbound_secret: str
+    green_api_url: str
+    green_media_url: str
+    green_instance_id: str
+    green_api_token: str
+
+    @property
+    def green_base(self) -> str:
+        return f"{self.green_api_url.rstrip('/')}/waInstance{self.green_instance_id}"
+
+    @property
+    def green_media_base(self) -> str:
+        return f"{self.green_media_url.rstrip('/')}/waInstance{self.green_instance_id}"
+
+
 class Bridge:
     def __init__(self) -> None:
-        self.green_api_url = _env("GREEN_API_URL", "https://api.green-api.com").rstrip("/")
-        self.green_media_url = _env("GREEN_MEDIA_URL", "https://media.green-api.com").rstrip("/")
-        self.green_instance_id = _env("GREEN_INSTANCE_ID")
-        self.green_api_token = _env("GREEN_API_TOKEN")
-        self.crm_api = _env("CRM_API_BASE", "https://api.crmkanasha.org").rstrip("/")
-        self.bot_code = _env("BOT_CODE", "whatsapp_support_1")
-        self.inbound_secret = _env("INBOUND_SECRET")
-        self.outbound_secret = _env("OUTBOUND_SECRET")
+        self.crm_api = _env("CRM_API_BASE", "http://127.0.0.1:19001").rstrip("/")
+        self.sync_secret = _env("WA_BRIDGE_SYNC_SECRET")
         self.listen_host = _env("LISTEN_HOST", "0.0.0.0")
         self.listen_port = int(_env("LISTEN_PORT", "8766") or "8766")
         self.webhook_token = _env("WEBHOOK_TOKEN")
+        self.bots: dict[str, BotConfig] = {}
+        self._bots_lock = asyncio.Lock()
 
-        if not self.green_instance_id or not self.green_api_token:
-            raise SystemExit("GREEN_INSTANCE_ID and GREEN_API_TOKEN are required")
-        if not self.inbound_secret or not self.outbound_secret:
-            raise SystemExit("INBOUND_SECRET and OUTBOUND_SECRET are required")
+        if not self.sync_secret:
+            raise SystemExit("WA_BRIDGE_SYNC_SECRET is required")
 
-    @property
-    def _green_base(self) -> str:
-        return f"{self.green_api_url}/waInstance{self.green_instance_id}"
+    async def reload_config(self) -> None:
+        url = f"{self.crm_api}/api/v1/internal/wa-bridge/config"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers={"X-Wa-Bridge-Secret": self.sync_secret})
+        if resp.status_code >= 400:
+            raise RuntimeError(f"CRM config sync failed HTTP {resp.status_code}: {resp.text[:200]}")
+        payload = resp.json()
+        loaded: dict[str, BotConfig] = {}
+        for item in payload.get("items") or []:
+            cfg = BotConfig(
+                bot_code=str(item["bot_code"]),
+                inbound_secret=str(item["inbound_secret"]),
+                outbound_secret=str(item["outbound_secret"]),
+                green_api_url=str(item["green_api_url"]),
+                green_media_url=str(item["green_media_url"]),
+                green_instance_id=str(item["green_instance_id"]),
+                green_api_token=str(item["green_api_token"]),
+            )
+            loaded[cfg.bot_code] = cfg
+        async with self._bots_lock:
+            self.bots = loaded
+        log.info("Loaded %d WhatsApp bot(s): %s", len(loaded), ", ".join(sorted(loaded)) or "—")
 
-    @property
-    def _green_media_base(self) -> str:
-        return f"{self.green_media_url}/waInstance{self.green_instance_id}"
+    async def config_loop(self) -> None:
+        while True:
+            try:
+                await self.reload_config()
+            except Exception:
+                log.exception("Config sync failed")
+            await asyncio.sleep(30)
+
+    async def _get_bot(self, bot_code: str) -> BotConfig | None:
+        async with self._bots_lock:
+            return self.bots.get(bot_code)
 
     async def send_to_crm(
         self,
+        cfg: BotConfig,
         *,
         phone: int,
         external_id: str,
@@ -181,7 +223,7 @@ class Bridge:
             "event": "message.received",
             "event_id": event_id,
             "occurred_at": occurred_at,
-            "bot_code": self.bot_code,
+            "bot_code": cfg.bot_code,
             "payload": {
                 "contact": {
                     "telegram_user_id": phone,
@@ -197,7 +239,7 @@ class Bridge:
         }
         body = json.dumps(envelope, separators=(",", ":")).encode()
         unix_ts = str(int(time.time()))
-        signature = sign_inbound(event_id, unix_ts, body, self.inbound_secret)
+        signature = sign_inbound(event_id, unix_ts, body, cfg.inbound_secret)
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -205,7 +247,7 @@ class Bridge:
                 content=body,
                 headers={
                     "Content-Type": "application/json",
-                    "X-Bot-Code": self.bot_code,
+                    "X-Bot-Code": cfg.bot_code,
                     "X-Event-Id": event_id,
                     "X-Timestamp": unix_ts,
                     "X-Signature": f"sha256={signature}",
@@ -215,7 +257,8 @@ class Bridge:
             log.error("CRM inbound failed %s: %s", resp.status_code, resp.text)
         else:
             log.info(
-                "CRM accepted phone=%s text=%r attachments=%d",
+                "CRM accepted bot=%s phone=%s text=%r attachments=%d",
+                cfg.bot_code,
                 phone,
                 text[:80],
                 len(attachments),
@@ -226,6 +269,12 @@ class Bridge:
             token = request.headers.get("X-Webhook-Token", "")
             if not hmac.compare_digest(token, self.webhook_token):
                 return web.Response(status=401, text="invalid webhook token")
+
+        bot_code = request.match_info.get("bot_code", "").strip()
+        cfg = await self._get_bot(bot_code)
+        if cfg is None:
+            log.warning("Unknown WhatsApp bot webhook: %s", bot_code)
+            return web.Response(status=404, text="unknown bot")
 
         try:
             webhook = await request.json()
@@ -238,7 +287,6 @@ class Bridge:
         sender = webhook.get("senderData") or {}
         chat_id = str(sender.get("chatId") or "")
         if chat_id.endswith("@g.us"):
-            log.debug("Skip group message chat_id=%s", chat_id)
             return web.Response(text="ok")
 
         phone = chat_id_to_phone(chat_id)
@@ -256,6 +304,7 @@ class Bridge:
         first_name, last_name = _split_name(str(contact_name) if contact_name else None)
 
         await self.send_to_crm(
+            cfg,
             phone=phone,
             external_id=external_id,
             text=text,
@@ -265,28 +314,25 @@ class Bridge:
         )
         return web.Response(text="ok")
 
-    async def send_whatsapp_text(self, chat_id: str, text: str) -> dict[str, Any]:
-        url = f"{self._green_base}/sendMessage/{self.green_api_token}"
+    async def send_whatsapp_text(self, cfg: BotConfig, chat_id: str, text: str) -> dict[str, Any]:
+        url = f"{cfg.green_base}/sendMessage/{cfg.green_api_token}"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json={"chatId": chat_id, "message": text})
         data = resp.json()
         if resp.status_code >= 400:
             raise RuntimeError(f"GREEN sendMessage failed: {data}")
-        return {
-            "status": "ok",
-            "external_id": str(data.get("idMessage") or ""),
-        }
+        return {"status": "ok", "external_id": str(data.get("idMessage") or "")}
 
-    async def fetch_crm_file(self, file_id: int) -> tuple[bytes, str, str]:
+    async def fetch_crm_file(self, cfg: BotConfig, file_id: int) -> tuple[bytes, str, str]:
         path = f"/api/v1/bot-outbound/files/{file_id}"
         url = f"{self.crm_api}{path}"
         timestamp = str(int(time.time()))
-        signature = sign_outbound("GET", path, timestamp, b"", self.outbound_secret)
+        signature = sign_outbound("GET", path, timestamp, b"", cfg.outbound_secret)
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.get(
                 url,
                 headers={
-                    "X-Bot-Code": self.bot_code,
+                    "X-Bot-Code": cfg.bot_code,
                     "X-CRM-Timestamp": timestamp,
                     "X-CRM-Signature": signature,
                 },
@@ -306,6 +352,7 @@ class Bridge:
 
     async def send_whatsapp_file(
         self,
+        cfg: BotConfig,
         chat_id: str,
         *,
         data: bytes,
@@ -313,7 +360,7 @@ class Bridge:
         mime: str,
         caption: str | None,
     ) -> dict[str, Any]:
-        url = f"{self._green_media_base}/sendFileByUpload/{self.green_api_token}"
+        url = f"{cfg.green_media_base}/sendFileByUpload/{cfg.green_api_token}"
         form: dict[str, Any] = {"chatId": chat_id}
         if caption:
             form["caption"] = caption
@@ -325,35 +372,29 @@ class Bridge:
         payload = resp.json()
         if resp.status_code >= 400:
             raise RuntimeError(f"GREEN sendFileByUpload failed: {payload}")
-        return {
-            "status": "ok",
-            "external_id": str(payload.get("idMessage") or ""),
-        }
+        return {"status": "ok", "external_id": str(payload.get("idMessage") or "")}
 
     async def handle_outbound(self, request: web.Request) -> web.Response:
         body = await request.read()
         timestamp = request.headers.get("X-CRM-Timestamp", "")
         signature = request.headers.get("X-CRM-Signature", "")
-        if not verify_outbound(
-            "POST",
-            request.path,
-            timestamp,
-            body,
-            self.outbound_secret,
-            signature,
-        ):
-            log.warning("Invalid outbound signature")
-            return web.json_response({"status": "error", "message": "invalid signature"}, status=401)
 
         try:
             envelope = json.loads(body.decode())
         except json.JSONDecodeError:
             return web.json_response({"status": "error", "message": "invalid json"}, status=400)
 
+        bot_code = str(envelope.get("bot_code") or "")
+        cfg = await self._get_bot(bot_code)
+        if cfg is None:
+            return web.json_response({"status": "error", "message": "unknown bot"}, status=404)
+
+        if not verify_outbound("POST", request.path, timestamp, body, cfg.outbound_secret, signature):
+            log.warning("Invalid outbound signature for bot=%s", bot_code)
+            return web.json_response({"status": "error", "message": "invalid signature"}, status=401)
+
         command = envelope.get("command")
         payload = envelope.get("payload") or {}
-        log.info("Outbound command=%s payload_keys=%s", command, list(payload.keys()))
-
         if command != "send_message":
             return web.json_response({"status": "ok", "skipped": True})
 
@@ -376,57 +417,52 @@ class Bridge:
         chat_id = phone_to_chat_id(phone)
         try:
             last_result: dict[str, Any] | None = None
-
             if attachments:
                 for index, att in enumerate(attachments):
                     file_id = att.get("file_id")
                     if file_id is None:
                         continue
-                    file_bytes, mime, filename = await self.fetch_crm_file(int(file_id))
+                    file_bytes, mime, filename = await self.fetch_crm_file(cfg, int(file_id))
                     att_filename = att.get("filename") or filename
                     att_mime = att.get("mime") or mime
                     caption = text if index == 0 and text else None
                     last_result = await self.send_whatsapp_file(
+                        cfg,
                         chat_id,
                         data=file_bytes,
                         filename=str(att_filename),
                         mime=str(att_mime),
                         caption=caption,
                     )
-                    log.info("Sent media to WA phone=%s file_id=%s", phone, file_id)
                 if last_result is not None:
                     return web.json_response(last_result)
-
             if text:
-                result = await self.send_whatsapp_text(chat_id, text)
-                log.info("Sent to WA phone=%s: %r", phone, text[:80])
+                result = await self.send_whatsapp_text(cfg, chat_id, text)
                 return web.json_response(result)
-
-            return web.json_response(
-                {"status": "error", "message": "nothing sent"},
-                status=422,
-            )
+            return web.json_response({"status": "error", "message": "nothing sent"}, status=422)
         except Exception as exc:
-            log.exception("WhatsApp send failed")
+            log.exception("WhatsApp send failed bot=%s", bot_code)
             return web.json_response({"status": "error", "message": str(exc)}, status=500)
 
     async def handle_health(self, request: web.Request) -> web.Response:
         timestamp = request.headers.get("X-CRM-Timestamp", "")
         signature = request.headers.get("X-CRM-Signature", "")
-        if signature and not verify_outbound(
-            "GET",
-            request.path,
-            timestamp,
-            b"",
-            self.outbound_secret,
-            signature,
-        ):
-            return web.Response(status=401, text="invalid signature")
+        if signature:
+            async with self._bots_lock:
+                configs = list(self.bots.values())
+            if not any(
+                verify_outbound("GET", request.path, timestamp, b"", cfg.outbound_secret, signature)
+                for cfg in configs
+            ):
+                return web.Response(status=401, text="invalid signature")
         return web.Response(text="ok")
 
     async def run(self) -> None:
+        await self.reload_config()
+        asyncio.create_task(self.config_loop())
+
         app = web.Application()
-        app.router.add_post("/green/webhook", self.handle_green_webhook)
+        app.router.add_post("/green/webhook/{bot_code}", self.handle_green_webhook)
         app.router.add_post("/crm/cmd", self.handle_outbound)
         app.router.add_get("/crm/health", self.handle_health)
 
@@ -435,8 +471,7 @@ class Bridge:
         site = web.TCPSite(runner, self.listen_host, self.listen_port)
         await site.start()
         log.info("WA bridge listening on http://%s:%s", self.listen_host, self.listen_port)
-        log.info("GREEN webhook URL: http://<public-host>:%s/green/webhook", self.listen_port)
-        log.info("CRM outbound URL: http://<host>:%s/crm/cmd", self.listen_port)
+        log.info("Webhook pattern: /green/webhook/{bot_code}")
 
         try:
             await asyncio.Event().wait()

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.contacts.activity_timeline import build_contact_activity
 from app.modules.contacts.diff import audit_diff_payload, diff_snapshots, snapshot_contact, to_jsonb
 from app.modules.contacts.group_ownership import load_group_ownership
+from app.modules.contacts.linked_bots import load_contact_linked_bots
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.schemas import (
     AuditEntryResponse,
@@ -102,6 +103,8 @@ class ContactService:
         payload = to_contact_response(contact, actor=actor)
         ownership = await load_group_ownership(self._session, contact_id)
         payload["group_ownership"] = [item.model_dump(mode="json") for item in ownership]
+        linked_bots = await load_contact_linked_bots(self._session, contact_id)
+        payload["linked_bots"] = [item.model_dump(mode="json") for item in linked_bots]
         leads_api = LeadApiService(self._session)
         payload["crm_summary"] = (
             await leads_api.get_crm_summary(actor, contact_id)

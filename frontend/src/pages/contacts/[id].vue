@@ -24,6 +24,7 @@ import { leadCommentItems } from '@/features/leads/comments'
 import type {
   Contact,
   ContactActivityItem,
+  ContactBotLink,
   ContactCrmSummary,
   GroupOwnershipItem,
 } from '@/entities/contact/types'
@@ -31,6 +32,7 @@ import type { LeadListItem } from '@/features/leads/types'
 import { ensureBotDirectory } from '@/features/bots/directory'
 import { listContactLeads } from '@/features/leads/api'
 import {
+  formatBotLabel,
   formatCrmSummaryBadge,
   formatLeadBotLabel,
   formatLeadDate,
@@ -88,6 +90,18 @@ function openLeadInChats(row: LeadListItem): void {
     name: 'chats',
     query: { chatId: String(row.chat_id), leadId: String(row.id) },
   })
+}
+
+function openBotChat(row: ContactBotLink): void {
+  void router.push({
+    name: 'chats',
+    query: { chatId: String(row.chat_id) },
+  })
+}
+
+function contactBotLabel(row: ContactBotLink): string {
+  const label = formatBotLabel(row)
+  return row.chat_status === 'archived' ? `${label} · архив` : label
 }
 
 function renderLeadComments(row: LeadListItem) {
@@ -192,6 +206,7 @@ const showTelegramUserId = computed(() => auth.isAdmin)
 const groupOwnership = computed<GroupOwnershipItem[]>(
   () => contact.value?.group_ownership ?? [],
 )
+const linkedBots = computed<ContactBotLink[]>(() => contact.value?.linked_bots ?? [])
 
 const historyTableKey = computed(() =>
   canViewHistoryActor.value ? 'history-with-actor' : 'history-basic',
@@ -369,6 +384,22 @@ watch(
     <NSpin :show="loading">
       <NTabs v-model:value="activeTab" type="line" animated>
         <NTabPane name="main" tab="Карточка">
+          <div v-if="linkedBots.length" class="contact-detail__bots">
+            <h3>Боты</h3>
+            <NSpace>
+              <NTag
+                v-for="row in linkedBots"
+                :key="row.bot_id"
+                type="info"
+                size="medium"
+                round
+                class="contact-detail__bot-tag"
+                @click="openBotChat(row)"
+              >
+                {{ contactBotLabel(row) }}
+              </NTag>
+            </NSpace>
+          </div>
           <div v-if="groupOwnership.length" class="contact-detail__ownership">
             <h3>Владение по группам</h3>
             <div
@@ -476,9 +507,19 @@ watch(
   max-width: 560px;
 }
 
+.contact-detail__bots {
+  margin-bottom: 20px;
+  max-width: 560px;
+}
+
+.contact-detail__bots h3,
 .contact-detail__ownership h3 {
   margin: 0 0 8px;
   font-size: 1rem;
+}
+
+.contact-detail__bot-tag {
+  cursor: pointer;
 }
 
 .contact-detail__ownership-row {

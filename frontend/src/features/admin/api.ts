@@ -46,6 +46,7 @@ export interface BotItem {
   id: number
   code: string
   name: string
+  channel?: 'telegram' | 'whatsapp'
   department_id: number
   department_name: string | null
   assigned_group_ids: number[]
@@ -56,16 +57,26 @@ export interface BotItem {
   outbound_url: string
   health_url: string | null
   is_active: boolean
+  green_api_url?: string | null
+  green_media_url?: string | null
+  green_instance_id?: string | null
+  has_green_api_token?: boolean
+  whatsapp_webhook_url?: string | null
 }
 
 export interface BotCreateBody {
   code: string
   name: string
+  channel?: 'telegram' | 'whatsapp'
   department_id: number
-  outbound_url: string
-  inbound_secret: string
-  outbound_secret: string
+  outbound_url?: string
+  inbound_secret?: string
+  outbound_secret?: string
   health_url?: string | null
+  green_api_url?: string | null
+  green_media_url?: string | null
+  green_instance_id?: string | null
+  green_api_token?: string | null
 }
 
 export interface BotCreateResponse extends BotItem {
@@ -186,6 +197,10 @@ export async function updateBot(
     outbound_url?: string
     health_url?: string | null
     is_active?: boolean
+    green_api_url?: string | null
+    green_media_url?: string | null
+    green_instance_id?: string | null
+    green_api_token?: string | null
   },
 ): Promise<BotItem> {
   const { data } = await http.patch<BotItem>(`/bots/${id}`, body)

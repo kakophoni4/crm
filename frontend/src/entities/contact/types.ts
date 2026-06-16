@@ -30,6 +30,22 @@ export interface GroupOwnershipItem {
 
 
 
+export interface ContactBotLink {
+
+  bot_id: number
+
+  bot_code: string
+
+  bot_name: string
+
+  chat_id: number
+
+  chat_status: 'open' | 'in_progress' | 'closed' | 'archived'
+
+}
+
+
+
 export interface Contact {
 
   id: number
@@ -63,6 +79,8 @@ export interface Contact {
   updated_at: string
 
   group_ownership?: GroupOwnershipItem[]
+
+  linked_bots?: ContactBotLink[]
 
   crm_summary?: ContactCrmSummary
 

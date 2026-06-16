@@ -68,6 +68,11 @@ class MessageKind(StrEnum):
     SYSTEM = "system"
 
 
+class BotChannel(StrEnum):
+    TELEGRAM = "telegram"
+    WHATSAPP = "whatsapp"
+
+
 class BotOwnerType(StrEnum):
     DEPARTMENT = "department"
     GROUP = "group"

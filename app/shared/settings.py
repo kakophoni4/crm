@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     bot_job_reclaim_idle_ms: int = 300_000
     bot_health_check_interval_seconds: int = 21_600
 
+    wa_bridge_outbound_url: str = "http://host.docker.internal:8766/crm/cmd"
+    wa_bridge_health_url: str = "http://host.docker.internal:8766/crm/health"
+    wa_bridge_webhook_public_base: str = "https://api.crmkanasha.org/green/webhook"
+    wa_bridge_sync_secret: str = "changeme_wa_bridge_sync_secret_min32"
+
     search_rate_limit_per_minute: int = 60
     search_rate_limit_use_redis: bool = True
 

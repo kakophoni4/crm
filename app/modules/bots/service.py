@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import hmac
 from datetime import UTC, datetime
 from typing import Any
 
@@ -8,6 +9,12 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.bots.green_api import (
+    default_green_api_url,
+    default_green_media_url,
+    sync_green_webhook,
+    whatsapp_webhook_url,
+)
 from app.modules.bots.hmac_util import sign_health_get, verify_inbound
 from app.modules.bots.ip_allowlist import ip_allowed
 from app.modules.bots.repository import BotEventInboxRepository, BotListRow, BotRepository
@@ -21,10 +28,12 @@ from app.modules.bots.schemas import (
     BotSecretsResponse,
     BotUpdateRequest,
     RotateSecretResponse,
+    WaBridgeBotConfig,
+    WaBridgeConfigResponse,
 )
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.bot import Bot
-from app.modules.db.models.enums import BotOwnerType, UserRole
+from app.modules.db.models.enums import BotChannel, BotOwnerType, UserRole
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids
 from app.realtime.events import publish
@@ -35,6 +44,7 @@ from app.shared.exceptions import (
     NotFound,
     ValidationError,
 )
+from app.shared.settings import get_settings
 from app.workers.bots.queue import enqueue
 
 logger = structlog.get_logger(__name__)
@@ -62,17 +72,31 @@ def _build_owner_label(
     return f"Отдел: {dept_part} → {groups}"
 
 
+def _bot_channel(bot: Bot) -> BotChannel:
+    raw = bot.channel if isinstance(bot.channel, BotChannel) else str(bot.channel)
+    try:
+        return BotChannel(raw)
+    except ValueError:
+        return BotChannel.TELEGRAM
+
+
 def _to_response(row: BotListRow) -> BotResponse:
     bot = row.bot
+    settings = get_settings()
+    channel = _bot_channel(bot)
     allowlist = [str(item) for item in bot.ip_allowlist] if bot.ip_allowlist else None
     owner_label = _build_owner_label(
         department_name=row.department_name,
         assigned_group_names=row.assigned_group_names,
     )
+    webhook_url = None
+    if channel == BotChannel.WHATSAPP and bot.green_instance_id:
+        webhook_url = whatsapp_webhook_url(settings.wa_bridge_webhook_public_base, bot.code)
     return BotResponse(
         id=bot.id,
         code=bot.code,
         name=bot.name,
+        channel=channel,
         department_id=bot.department_id,
         department_name=row.department_name,
         assigned_group_ids=row.assigned_group_ids,
@@ -84,6 +108,11 @@ def _to_response(row: BotListRow) -> BotResponse:
         health_url=bot.health_url,
         ip_allowlist=allowlist,
         is_active=bot.is_active,
+        green_api_url=bot.green_api_url,
+        green_media_url=bot.green_media_url,
+        green_instance_id=bot.green_instance_id,
+        has_green_api_token=bot.green_api_token_encrypted is not None,
+        whatsapp_webhook_url=webhook_url,
         last_seen_at=_iso(bot.last_seen_at),
         last_health_status=bot.last_health_status,
         last_health_checked_at=_iso(bot.last_health_checked_at),
@@ -148,28 +177,65 @@ class BotService:
         if existing is not None:
             raise Conflict(message="Bot code already exists")
 
+        settings = get_settings()
+        inbound_secret = body.inbound_secret
+        outbound_secret = body.outbound_secret
+        outbound_url = body.outbound_url
+        health_url = body.health_url
+        green_api_url = body.green_api_url
+        green_media_url = body.green_media_url
+        green_instance_id = body.green_instance_id
+        green_token_enc: bytes | None = None
+
+        if body.channel == BotChannel.WHATSAPP:
+            assert green_instance_id and body.green_api_token
+            inbound_secret = secrets.token_urlsafe(32)
+            outbound_secret = secrets.token_urlsafe(32)
+            outbound_url = settings.wa_bridge_outbound_url
+            health_url = settings.wa_bridge_health_url
+            green_api_url = green_api_url or default_green_api_url(green_instance_id)
+            green_media_url = green_media_url or default_green_media_url(green_instance_id)
+            green_token_enc = await self._repo.encrypt_green_api_token(body.green_api_token)
+
+        assert inbound_secret and outbound_secret and outbound_url
+
         bot = await self._repo.create(
             code=body.code,
             name=body.name,
             department_id=department_id,
             owner_type=BotOwnerType.DEPARTMENT,
             owner_id=department_id,
-            outbound_url=body.outbound_url,
-            health_url=body.health_url,
+            outbound_url=outbound_url,
+            health_url=health_url,
             ip_allowlist=body.ip_allowlist,
-            inbound_secret=body.inbound_secret,
-            outbound_secret=body.outbound_secret,
+            inbound_secret=inbound_secret,
+            outbound_secret=outbound_secret,
+            channel=body.channel,
+            green_api_url=green_api_url,
+            green_media_url=green_media_url,
+            green_instance_id=green_instance_id,
+            green_api_token_encrypted=green_token_enc,
         )
         await self._session.commit()
+
+        if body.channel == BotChannel.WHATSAPP:
+            await self._sync_whatsapp_webhook(bot, api_token=body.green_api_token)
+
         row = await self._repo.get_list_row(bot.id)
         assert row is not None
         response = _to_response(row)
+        secrets_response = BotSecretsResponse(
+            inbound_secret=inbound_secret,
+            outbound_secret=outbound_secret,
+            warning=(
+                "WhatsApp: секреты хранятся в CRM, bridge подхватит автоматически."
+                if body.channel == BotChannel.WHATSAPP
+                else "Это единственный раз, когда секреты видны. Сохраните их в хранилище бота."
+            ),
+        )
         return BotCreateResponse(
             **response.model_dump(),
-            secrets=BotSecretsResponse(
-                inbound_secret=body.inbound_secret,
-                outbound_secret=body.outbound_secret,
-            ),
+            secrets=secrets_response,
         )
 
     async def update_bot(self, bot_id: int, body: BotUpdateRequest, actor: User) -> BotResponse:
@@ -207,8 +273,30 @@ class BotService:
         if body.is_active is not None:
             bot.is_active = body.is_active
 
+        green_token_for_sync: str | None = None
+        if _bot_channel(bot) == BotChannel.WHATSAPP:
+            if body.green_api_url is not None:
+                bot.green_api_url = body.green_api_url.strip() or None
+            if body.green_media_url is not None:
+                bot.green_media_url = body.green_media_url.strip() or None
+            if body.green_instance_id is not None:
+                bot.green_instance_id = body.green_instance_id.strip() or None
+            if body.green_api_token is not None:
+                bot.green_api_token_encrypted = await self._repo.encrypt_green_api_token(
+                    body.green_api_token,
+                )
+                green_token_for_sync = body.green_api_token
+            if bot.green_instance_id:
+                if not bot.green_api_url:
+                    bot.green_api_url = default_green_api_url(bot.green_instance_id)
+                if not bot.green_media_url:
+                    bot.green_media_url = default_green_media_url(bot.green_instance_id)
+
         await self._repo.save(bot)
         await self._session.commit()
+
+        if _bot_channel(bot) == BotChannel.WHATSAPP and bot.green_instance_id:
+            await self._sync_whatsapp_webhook(bot, api_token=green_token_for_sync)
         row = await self._repo.get_list_row(bot.id)
         assert row is not None
         return _to_response(row)
@@ -322,6 +410,55 @@ class BotService:
             checked_at=checked_at.isoformat(),
             http_status=http_status,
         )
+
+    async def get_wa_bridge_config(self, sync_secret: str) -> WaBridgeConfigResponse:
+        settings = get_settings()
+        if not sync_secret or not hmac.compare_digest(sync_secret, settings.wa_bridge_sync_secret):
+            raise AuthenticationRequired(message="Unauthorized")
+        items: list[WaBridgeBotConfig] = []
+        for bot in await self._repo.list_active_whatsapp_bots():
+            api_url = bot.green_api_url or default_green_api_url(bot.green_instance_id or "")
+            media_url = bot.green_media_url or default_green_media_url(bot.green_instance_id or "")
+            items.append(
+                WaBridgeBotConfig(
+                    bot_code=bot.code,
+                    inbound_secret=await self._repo.decrypt_inbound_secret(bot),
+                    outbound_secret=await self._repo.decrypt_outbound_secret(bot),
+                    green_api_url=api_url,
+                    green_media_url=media_url,
+                    green_instance_id=str(bot.green_instance_id),
+                    green_api_token=await self._repo.decrypt_green_api_token(bot),
+                ),
+            )
+        return WaBridgeConfigResponse(items=items)
+
+    async def _sync_whatsapp_webhook(self, bot: Bot, *, api_token: str | None) -> None:
+        if not bot.green_instance_id:
+            return
+        settings = get_settings()
+        token = api_token
+        if token is None:
+            if bot.green_api_token_encrypted is None:
+                return
+            token = await self._repo.decrypt_green_api_token(bot)
+        api_url = bot.green_api_url or default_green_api_url(bot.green_instance_id)
+        webhook = whatsapp_webhook_url(settings.wa_bridge_webhook_public_base, bot.code)
+        try:
+            await sync_green_webhook(
+                api_url=api_url,
+                instance_id=bot.green_instance_id,
+                api_token=token,
+                webhook_url=webhook,
+            )
+            logger.info("whatsapp_webhook_synced", bot_code=bot.code, webhook_url=webhook)
+        except Exception as exc:
+            logger.warning("whatsapp_webhook_sync_failed", bot_code=bot.code, error=str(exc))
+            if get_settings().app_env == "dev":
+                logger.info("whatsapp_webhook_sync_ignored_in_dev", bot_code=bot.code)
+                return
+            raise ValidationError(
+                message=f"Бот сохранён, но GREEN API webhook не настроен: {exc}",
+            ) from exc
 
     async def ingest_event(
         self,

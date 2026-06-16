@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.modules.db.models.enums import ChatStatus
+
 
 class ContactTransferRequestBody(BaseModel):
     to_user_id: int
@@ -46,6 +48,14 @@ class GroupOwnershipItem(BaseModel):
     owner_full_name: str | None
     pending_inbound_at: datetime | None
     escalated_at: datetime | None
+
+
+class ContactBotLink(BaseModel):
+    bot_id: int
+    bot_code: str
+    bot_name: str
+    chat_id: int
+    chat_status: ChatStatus
 
 
 class ReplyAuditItem(BaseModel):

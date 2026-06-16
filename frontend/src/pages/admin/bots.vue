@@ -40,23 +40,46 @@ const secretsModal = ref(false)
 const lastSecrets = ref('')
 const editingBot = ref<BotItem | null>(null)
 const form = ref({
+  channel: 'telegram' as 'telegram' | 'whatsapp',
   code: '',
   name: '',
   department_id: null as number | null,
   outbound_url: 'https://example.com/outbound',
   inbound_secret: '',
   outbound_secret: '',
+  green_api_url: '',
+  green_media_url: '',
+  green_instance_id: '',
+  green_api_token: '',
 })
 const editForm = ref({
   name: '',
   department_id: null as number | null,
   is_active: true,
+  green_api_url: '',
+  green_media_url: '',
+  green_instance_id: '',
+  green_api_token: '',
 })
+
+const isWhatsAppForm = computed(() => form.value.channel === 'whatsapp')
+const isWhatsAppEdit = computed(() => editingBot.value?.channel === 'whatsapp')
 
 function randomSecret(): string {
   const bytes = new Uint8Array(24)
   crypto.getRandomValues(bytes)
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').slice(0, 32)
+}
+
+function onGreenInstanceIdInput(value: string): void {
+  form.value.green_instance_id = value
+  const id = value.trim()
+  if (!id || form.value.green_api_url.trim() || form.value.green_media_url.trim()) return
+  const shard = id.slice(0, 4)
+  if (/^\d{4}$/.test(shard)) {
+    form.value.green_api_url = `https://${shard}.api.green-api.com`
+    form.value.green_media_url = `https://${shard}.api.green-api.com`
+  }
 }
 
 const departmentOptions = computed<SelectOption[]>(() =>
@@ -71,6 +94,12 @@ function groupOptionsForBot(row: BotItem): SelectOption[] {
 
 const columns = computed<DataTableColumns<BotItem>>(() => [
   { title: 'Код', key: 'code', width: 140 },
+  {
+    title: 'Канал',
+    key: 'channel',
+    width: 110,
+    render: (row) => (row.channel === 'whatsapp' ? 'WhatsApp' : 'Telegram'),
+  },
   { title: 'Название', key: 'name' },
   {
     title: 'Отдел',
@@ -137,14 +166,24 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
 
 function openCreate(): void {
   form.value = {
+    channel: 'telegram',
     code: '',
     name: '',
     department_id: departments.value[0]?.id ?? null,
     outbound_url: 'https://example.com/outbound',
     inbound_secret: randomSecret(),
     outbound_secret: randomSecret(),
+    green_api_url: '',
+    green_media_url: '',
+    green_instance_id: '',
+    green_api_token: '',
   }
   showModal.value = true
+}
+
+function openCreateWhatsApp(): void {
+  openCreate()
+  form.value.channel = 'whatsapp'
 }
 
 function openEdit(row: BotItem): void {
@@ -153,6 +192,10 @@ function openEdit(row: BotItem): void {
     name: row.name,
     department_id: row.department_id,
     is_active: row.is_active,
+    green_api_url: row.green_api_url ?? '',
+    green_media_url: row.green_media_url ?? '',
+    green_instance_id: row.green_instance_id ?? '',
+    green_api_token: '',
   }
   showEditModal.value = true
 }
@@ -202,25 +245,39 @@ async function onSave(): Promise<void> {
     message.warning('Выберите отдел')
     return
   }
-  if (form.value.inbound_secret.length < 16 || form.value.outbound_secret.length < 16) {
-    message.warning('Секреты должны быть не короче 16 символов')
+  if (form.value.channel === 'telegram') {
+    if (form.value.inbound_secret.length < 16 || form.value.outbound_secret.length < 16) {
+      message.warning('Секреты должны быть не короче 16 символов')
+      return
+    }
+  } else if (!form.value.green_instance_id.trim() || !form.value.green_api_token.trim()) {
+    message.warning('Укажите GREEN API idInstance и apiTokenInstance')
     return
   }
   try {
-    const created = await createBot({
+    const body: Parameters<typeof createBot>[0] = {
       code: form.value.code.trim(),
       name: form.value.name.trim(),
+      channel: form.value.channel,
       department_id: form.value.department_id,
-      outbound_url: form.value.outbound_url.trim(),
-      inbound_secret: form.value.inbound_secret,
-      outbound_secret: form.value.outbound_secret,
-    })
+    }
+    if (form.value.channel === 'telegram') {
+      body.outbound_url = form.value.outbound_url.trim()
+      body.inbound_secret = form.value.inbound_secret
+      body.outbound_secret = form.value.outbound_secret
+    } else {
+      body.green_instance_id = form.value.green_instance_id.trim()
+      body.green_api_token = form.value.green_api_token.trim()
+      if (form.value.green_api_url.trim()) body.green_api_url = form.value.green_api_url.trim()
+      if (form.value.green_media_url.trim()) body.green_media_url = form.value.green_media_url.trim()
+    }
+    const created = await createBot(body)
     showModal.value = false
     if (created.secrets) {
       lastSecrets.value = `inbound: ${created.secrets.inbound_secret}\noutbound: ${created.secrets.outbound_secret}\n\n${created.secrets.warning}`
       secretsModal.value = true
     }
-    message.success('Бот создан')
+    message.success(form.value.channel === 'whatsapp' ? 'WhatsApp бот создан и webhook настроен' : 'Бот создан')
     await load()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Ошибка создания')
@@ -239,11 +296,20 @@ async function onSaveEdit(): Promise<void> {
     return
   }
   try {
-    await updateBot(bot.id, {
+    const payload: Parameters<typeof updateBot>[1] = {
       name: editForm.value.name.trim(),
       department_id: editForm.value.department_id,
       is_active: editForm.value.is_active,
-    })
+    }
+    if (bot.channel === 'whatsapp') {
+      payload.green_instance_id = editForm.value.green_instance_id.trim() || null
+      payload.green_api_url = editForm.value.green_api_url.trim() || null
+      payload.green_media_url = editForm.value.green_media_url.trim() || null
+      if (editForm.value.green_api_token.trim()) {
+        payload.green_api_token = editForm.value.green_api_token.trim()
+      }
+    }
+    await updateBot(bot.id, payload)
     showEditModal.value = false
     editingBot.value = null
     message.success('Бот обновлён')
@@ -280,6 +346,7 @@ onMounted(() => {
         </p>
       </div>
       <NButton type="primary" @click="openCreate">Создать бота</NButton>
+      <NButton @click="openCreateWhatsApp">+ WhatsApp</NButton>
     </header>
     <NSpin :show="loading">
       <NDataTable :columns="columns" :data="rows" :row-key="(r: BotItem) => r.id" />
@@ -288,12 +355,21 @@ onMounted(() => {
     <NModal
       v-model:show="showModal"
       preset="card"
-      title="Новый бот"
+      :title="isWhatsAppForm ? 'Новый WhatsApp бот' : 'Новый бот'"
       style="max-width: 520px"
     >
       <NForm label-placement="top">
+        <NFormItem v-if="!isWhatsAppForm" label="Канал">
+          <NSelect
+            v-model:value="form.channel"
+            :options="[
+              { label: 'Telegram', value: 'telegram' },
+              { label: 'WhatsApp (GREEN API)', value: 'whatsapp' },
+            ]"
+          />
+        </NFormItem>
         <NFormItem label="Код">
-          <NInput v-model:value="form.code" />
+          <NInput v-model:value="form.code" placeholder="whatsapp_support_1" />
         </NFormItem>
         <NFormItem label="Название">
           <NInput v-model:value="form.name" />
@@ -305,15 +381,42 @@ onMounted(() => {
             placeholder="Выберите отдел…"
           />
         </NFormItem>
-        <NFormItem label="URL исходящих событий">
-          <NInput v-model:value="form.outbound_url" />
-        </NFormItem>
-        <NFormItem label="Входящий секрет (inbound)">
-          <NInput v-model:value="form.inbound_secret" type="password" show-password-on="click" />
-        </NFormItem>
-        <NFormItem label="Исходящий секрет (outbound)">
-          <NInput v-model:value="form.outbound_secret" type="password" show-password-on="click" />
-        </NFormItem>
+        <template v-if="isWhatsAppForm">
+          <p class="admin-page__wa-hint">
+            Вставьте данные из консоли GREEN API. Секреты CRM и webhook настроятся автоматически.
+          </p>
+          <NFormItem label="idInstance">
+            <NInput
+              :value="form.green_instance_id"
+              placeholder="1105653814"
+              @update:value="onGreenInstanceIdInput"
+            />
+          </NFormItem>
+          <NFormItem label="apiTokenInstance">
+            <NInput
+              v-model:value="form.green_api_token"
+              type="password"
+              show-password-on="click"
+            />
+          </NFormItem>
+          <NFormItem label="apiUrl (необязательно)">
+            <NInput v-model:value="form.green_api_url" placeholder="https://1105.api.green-api.com" />
+          </NFormItem>
+          <NFormItem label="mediaUrl (необязательно)">
+            <NInput v-model:value="form.green_media_url" placeholder="https://1105.api.green-api.com" />
+          </NFormItem>
+        </template>
+        <template v-else>
+          <NFormItem label="URL исходящих событий">
+            <NInput v-model:value="form.outbound_url" />
+          </NFormItem>
+          <NFormItem label="Входящий секрет (inbound)">
+            <NInput v-model:value="form.inbound_secret" type="password" show-password-on="click" />
+          </NFormItem>
+          <NFormItem label="Исходящий секрет (outbound)">
+            <NInput v-model:value="form.outbound_secret" type="password" show-password-on="click" />
+          </NFormItem>
+        </template>
       </NForm>
       <template #footer>
         <NSpace justify="end">
@@ -346,6 +449,28 @@ onMounted(() => {
         <NFormItem label="Активен">
           <NSwitch v-model:value="editForm.is_active" />
         </NFormItem>
+        <template v-if="isWhatsAppEdit">
+          <p v-if="editingBot?.whatsapp_webhook_url" class="admin-page__wa-hint">
+            Webhook: {{ editingBot.whatsapp_webhook_url }}
+          </p>
+          <NFormItem label="idInstance">
+            <NInput v-model:value="editForm.green_instance_id" />
+          </NFormItem>
+          <NFormItem label="apiTokenInstance">
+            <NInput
+              v-model:value="editForm.green_api_token"
+              type="password"
+              show-password-on="click"
+              :placeholder="editingBot?.has_green_api_token ? '•••••••• (оставьте пустым, чтобы не менять)' : ''"
+            />
+          </NFormItem>
+          <NFormItem label="apiUrl">
+            <NInput v-model:value="editForm.green_api_url" />
+          </NFormItem>
+          <NFormItem label="mediaUrl">
+            <NInput v-model:value="editForm.green_media_url" />
+          </NFormItem>
+        </template>
       </NForm>
       <template #footer>
         <NSpace justify="end">
@@ -386,5 +511,12 @@ onMounted(() => {
   white-space: pre-wrap;
   font-size: 0.85rem;
   margin: 0;
+}
+
+.admin-page__wa-hint {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: var(--app-text-muted);
+  line-height: 1.4;
 }
 </style>

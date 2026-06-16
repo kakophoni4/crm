@@ -174,14 +174,24 @@ export function formatLeadDate(iso: string): string {
 
 
 
-export function formatLeadBotLabel(lead: LeadListItem): string {
-  const botName = lead.bot_name ?? lookupBotName(lead.bot_id)
-  const botCode = lead.bot_code ?? lookupBotCode(lead.bot_id)
+export function formatBotLabel(item: {
+  bot_id: number
+  bot_name?: string | null
+  bot_code?: string | null
+}): string {
+  const botName = item.bot_name ?? lookupBotName(item.bot_id)
+  const botCode = item.bot_code ?? lookupBotCode(item.bot_id)
 
   if (botName && botCode) return `${botName} (${botCode})`
   if (botName) return botName
   if (botCode) return botCode
-  return lead.bot_id != null ? `#${lead.bot_id}` : '—'
+  return `#${item.bot_id}`
+}
+
+
+
+export function formatLeadBotLabel(lead: LeadListItem): string {
+  return formatBotLabel(lead)
 }
 
 

@@ -11,7 +11,7 @@ from app.modules.bots.crypto import decrypt_secret, encrypt_secret
 from app.modules.db.models.bot import Bot
 from app.modules.db.models.bot_event_inbox import BotEventInbox
 from app.modules.db.models.bot_outbound_log import BotOutboundLog
-from app.modules.db.models.enums import BotOutboundStatus, BotOwnerType
+from app.modules.db.models.enums import BotChannel, BotOutboundStatus, BotOwnerType
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,17 @@ class BotRepository:
         result = await self._session.execute(select(Bot).order_by(Bot.code))
         return list(result.scalars().all())
 
+    async def list_active_whatsapp_bots(self) -> list[Bot]:
+        result = await self._session.execute(
+            select(Bot).where(
+                Bot.channel == BotChannel.WHATSAPP,
+                Bot.is_active.is_(True),
+                Bot.green_instance_id.isnot(None),
+                Bot.green_api_token_encrypted.isnot(None),
+            ).order_by(Bot.code),
+        )
+        return list(result.scalars().all())
+
     async def get_by_id(self, bot_id: int) -> Bot | None:
         return await self._session.get(Bot, bot_id)
 
@@ -111,12 +122,18 @@ class BotRepository:
         ip_allowlist: list[str] | None,
         inbound_secret: str,
         outbound_secret: str,
+        channel: BotChannel = BotChannel.TELEGRAM,
+        green_api_url: str | None = None,
+        green_media_url: str | None = None,
+        green_instance_id: str | None = None,
+        green_api_token_encrypted: bytes | None = None,
     ) -> Bot:
         inbound_enc = await encrypt_secret(self._session, inbound_secret)
         outbound_enc = await encrypt_secret(self._session, outbound_secret)
         bot = Bot(
             code=code,
             name=name,
+            channel=channel,
             department_id=department_id,
             owner_type=owner_type,
             owner_id=owner_id,
@@ -125,6 +142,10 @@ class BotRepository:
             ip_allowlist=ip_allowlist,
             inbound_secret_encrypted=inbound_enc,
             outbound_secret_encrypted=outbound_enc,
+            green_api_url=green_api_url,
+            green_media_url=green_media_url,
+            green_instance_id=green_instance_id,
+            green_api_token_encrypted=green_api_token_encrypted,
         )
         self._session.add(bot)
         await self._session.flush()
@@ -139,6 +160,14 @@ class BotRepository:
 
     async def decrypt_outbound_secret(self, bot: Bot) -> str:
         return await decrypt_secret(self._session, bot.outbound_secret_encrypted)
+
+    async def decrypt_green_api_token(self, bot: Bot) -> str:
+        if bot.green_api_token_encrypted is None:
+            raise ValueError("green api token is not configured")
+        return await decrypt_secret(self._session, bot.green_api_token_encrypted)
+
+    async def encrypt_green_api_token(self, token: str) -> bytes:
+        return await encrypt_secret(self._session, token)
 
     async def rotate_secret(self, bot: Bot, kind: str, new_secret: str) -> None:
         encrypted = await encrypt_secret(self._session, new_secret)

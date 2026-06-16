@@ -17,6 +17,7 @@ from app.modules.bots.schemas import (
     BotUpdateRequest,
     RotateSecretRequest,
     RotateSecretResponse,
+    WaBridgeConfigResponse,
 )
 from app.modules.bots.service import BotService
 from app.modules.db.models.user import User
@@ -114,6 +115,15 @@ async def bot_health(
     service: Annotated[BotService, Depends(_service)],
 ) -> BotHealthResponse:
     return await service.check_health(bot_id)
+
+
+@router.get("/api/v1/internal/wa-bridge/config", response_model=WaBridgeConfigResponse)
+async def wa_bridge_config(
+    request: Request,
+    service: Annotated[BotService, Depends(_service)],
+) -> WaBridgeConfigResponse:
+    sync_secret = request.headers.get("x-wa-bridge-secret", "")
+    return await service.get_wa_bridge_config(sync_secret)
 
 
 @router.post(
