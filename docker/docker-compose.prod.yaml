@@ -59,6 +59,10 @@ services:
     restart: always
     mem_limit: 128m
 
+  wa-bridge-proxy:
+    restart: always
+    mem_limit: 64m
+
 volumes:
   staging-pgdata:
     name: crm-prod-pgdata

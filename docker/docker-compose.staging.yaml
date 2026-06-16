@@ -191,6 +191,27 @@ services:
       - traefik.http.routers.crm-api.tls.certresolver=letsencrypt
       - traefik.http.services.crm-api.loadbalancer.server.port=8000
 
+  # GREEN API inbound webhooks — bridge runs on host (systemd), not in this compose stack.
+  wa-bridge-proxy:
+    image: nginx:1.27-alpine
+    container_name: crm-staging-wa-bridge-proxy
+    profiles: [with-proxy, local-staging]
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../deploy/traefik/wa-bridge-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - crm-staging-net
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=crm-staging-net
+      - traefik.http.routers.crm-wa-green.rule=Host(`api.${DOMAIN:?DOMAIN is required}`) && PathPrefix(`/green`)
+      - traefik.http.routers.crm-wa-green.entrypoints=websecure
+      - traefik.http.routers.crm-wa-green.tls.certresolver=letsencrypt
+      - traefik.http.routers.crm-wa-green.priority=100
+      - traefik.http.services.crm-wa-green.loadbalancer.server.port=80
+
   worker:
     image: ${CRM_WORKER_IMAGE:-crm-worker:local}
     build:
