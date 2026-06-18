@@ -25,24 +25,40 @@ curl -sf http://127.0.0.1:8766/crm/health && echo " OK" || echo "FAIL"
 
 section "HTTPS webhook route"
 code="$(curl -sS -o /dev/null -w '%{http_code}' \
-  -X POST "https://api.${DOMAIN}/green/webhook/PLACEHOLDER" \
+  -X POST "https://api.${DOMAIN}/green/webhook/whatsapp_supp" \
   -H 'Content-Type: application/json' \
   -d '{"typeWebhook":"incomingMessageReceived"}' || true)"
-echo "POST https://api.${DOMAIN}/green/webhook/... → HTTP $code (404=route ok, unknown bot)"
+echo "POST https://api.${DOMAIN}/green/webhook/whatsapp_supp → HTTP $code (200=route+bridge ok)"
 
 section "CRM wa-bridge config"
 CFG="$(curl -sf -H "X-Wa-Bridge-Secret: $SECRET" "http://127.0.0.1:19001/api/v1/internal/wa-bridge/config")"
 echo "$CFG" | python3 -m json.tool
 
 section "GREEN API (webhook URL + instance state)"
-python3 - "$CFG" "$WEBHOOK_BASE" << 'PY'
+echo "$CFG" | python3 - "$WEBHOOK_BASE" << 'PY'
 import json
+import subprocess
 import sys
 
-import httpx
 
-cfg = json.loads(sys.argv[1])
-expected_base = sys.argv[2].rstrip("/")
+def curl_get(url: str) -> tuple[int, str]:
+    proc = subprocess.run(
+        ["curl", "-sS", "-m", "20", "-w", "\n%{http_code}", url],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return 0, proc.stderr.strip() or "curl failed"
+    body, _, status = proc.stdout.rpartition("\n")
+    try:
+        code = int(status)
+    except ValueError:
+        return 0, proc.stdout[:300]
+    return code, body
+
+
+cfg = json.load(sys.stdin)
+expected_base = sys.argv[1].rstrip("/")
 items = cfg.get("items") or []
 if not items:
     print("ERROR: no WhatsApp bots in CRM")
@@ -57,26 +73,34 @@ for b in items:
     print(f"bot_code={code}")
     print(f"  expected webhook: {expected}")
 
-    state_url = f"{api}/waInstance{iid}/getStateInstance/{token}"
-    r = httpx.get(state_url, timeout=20)
-    print(f"  getStateInstance: {r.status_code} {r.text[:200]}")
-    if r.status_code == 200:
-        print(f"  stateInstance={r.json().get('stateInstance')}")
+    state_code, state_body = curl_get(f"{api}/waInstance{iid}/getStateInstance/{token}")
+    print(f"  getStateInstance: HTTP {state_code} {state_body[:200]}")
+    if state_code == 200:
+        try:
+            print(f"  stateInstance={json.loads(state_body).get('stateInstance')}")
+        except json.JSONDecodeError:
+            pass
 
-    settings_url = f"{api}/waInstance{iid}/getSettings/{token}"
-    r2 = httpx.get(settings_url, timeout=20)
-    print(f"  getSettings: {r2.status_code}")
-    if r2.status_code == 200:
-        s = r2.json()
+    settings_code, settings_body = curl_get(f"{api}/waInstance{iid}/getSettings/{token}")
+    print(f"  getSettings: HTTP {settings_code}")
+    if settings_code == 200:
+        try:
+            s = json.loads(settings_body)
+        except json.JSONDecodeError:
+            print(f"  raw: {settings_body[:300]}")
+            continue
         wh = s.get("webhookUrl") or s.get("webhookUrlToken") or "(empty)"
         inc = s.get("incomingWebhook")
         print(f"  webhookUrl={wh}")
         print(f"  incomingWebhook={inc}")
         if wh != expected:
-            print(f"  *** MISMATCH — fix with setSettings or re-save bot in admin ***")
+            print("  *** MISMATCH — fix with setSettings or re-save bot in admin ***")
             print(f"  curl -X POST '{api}/waInstance{iid}/setSettings/{token}' \\")
             print("    -H 'Content-Type: application/json' \\")
-            print(f"    -d '{{\"webhookUrl\":\"{expected}\",\"incomingWebhook\":\"yes\"}}'")
+            print(
+                f"    -d '{{\"webhookUrl\":\"{expected}\","
+                f"\"incomingWebhook\":\"yes\",\"outgoingWebhook\":\"yes\"}}'"
+            )
 PY
 
 section "Bridge logs (last 30 min, webhook hits)"
