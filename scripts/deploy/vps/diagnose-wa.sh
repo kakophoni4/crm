@@ -35,7 +35,7 @@ CFG="$(curl -sf -H "X-Wa-Bridge-Secret: $SECRET" "http://127.0.0.1:19001/api/v1/
 echo "$CFG" | python3 -m json.tool
 
 section "GREEN API (webhook URL + instance state)"
-echo "$CFG" | python3 - "$WEBHOOK_BASE" << 'PY'
+python3 - "$WEBHOOK_BASE" "$CFG" << 'PY'
 import json
 import subprocess
 import sys
@@ -57,7 +57,7 @@ def curl_get(url: str) -> tuple[int, str]:
     return code, body
 
 
-cfg = json.load(sys.stdin)
+cfg = json.loads(sys.argv[2])
 expected_base = sys.argv[1].rstrip("/")
 items = cfg.get("items") or []
 if not items:
