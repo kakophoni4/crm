@@ -281,11 +281,14 @@ class Bridge:
         except json.JSONDecodeError:
             return web.Response(status=400, text="invalid json")
 
-        if webhook.get("typeWebhook") != "incomingMessageReceived":
+        wh_type = webhook.get("typeWebhook")
+        log.info("GREEN webhook bot=%s type=%s", bot_code, wh_type)
+
+        if wh_type != "incomingMessageReceived":
             return web.Response(text="ok")
 
         sender = webhook.get("senderData") or {}
-        chat_id = str(sender.get("chatId") or "")
+        chat_id = str(sender.get("chatId") or sender.get("sender") or "")
         if chat_id.endswith("@g.us"):
             return web.Response(text="ok")
 
