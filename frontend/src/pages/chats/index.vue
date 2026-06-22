@@ -82,6 +82,8 @@ import MessageInput from '@/widgets/chat/MessageInput.vue'
 
 import MessageList from '@/widgets/chat/MessageList.vue'
 
+import NewWhatsappChatDialog from '@/widgets/chat/NewWhatsappChatDialog.vue'
+
 import TakeoverBadge from '@/widgets/chat/TakeoverBadge.vue'
 
 
@@ -101,6 +103,7 @@ const chatListSearchRef = ref<InstanceType<typeof NInput> | null>(null)
 
 const transferCardVisible = ref(false)
 const transferInboxOpen = ref(false)
+const newWhatsappChatVisible = ref(false)
 const bots = ref<BotListItem[]>([])
 const botsLoading = ref(false)
 const pipelineStatuses = ref<StatusOption[]>([])
@@ -352,6 +355,14 @@ function openChatMobile(chatId: number): void {
   if (isNarrow.value) narrowPane.value = 'chat'
 }
 
+function onWhatsappChatStarted(chatId: number): void {
+  void store.fetchList()
+  void store.openChat(chatId).then(() => {
+    if (isNarrow.value) narrowPane.value = 'chat'
+    void router.replace({ name: 'chats', query: { chatId: String(chatId) } })
+  })
+}
+
 function backToChatList(): void {
   narrowPane.value = 'list'
   store.closeChat()
@@ -416,14 +427,19 @@ onUnmounted(() => {
 
       <h1 class="chats-page__title">Чаты</h1>
 
-      <NButton
-        v-if="isNarrow || store.currentChat"
-        quaternary
-        size="small"
-        @click="isNarrow ? (transferInboxOpen = true) : (rightPaneTab = 'notifications')"
-      >
-        Уведомления
-      </NButton>
+      <NSpace :size="8">
+        <NButton type="primary" size="small" @click="newWhatsappChatVisible = true">
+          WhatsApp
+        </NButton>
+        <NButton
+          v-if="isNarrow || store.currentChat"
+          quaternary
+          size="small"
+          @click="isNarrow ? (transferInboxOpen = true) : (rightPaneTab = 'notifications')"
+        >
+          Уведомления
+        </NButton>
+      </NSpace>
 
     </header>
 
@@ -781,6 +797,12 @@ onUnmounted(() => {
       :chat-id="store.currentChatId"
       :contact-id="store.currentChat?.contact_id ?? null"
       :contact-name="store.currentChat?.contact_name ?? null"
+    />
+
+    <NewWhatsappChatDialog
+      v-model:show="newWhatsappChatVisible"
+      :bots="bots"
+      @started="onWhatsappChatStarted"
     />
 
     <TransferCardDialog

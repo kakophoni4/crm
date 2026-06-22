@@ -25,6 +25,20 @@ class ChatCreateRequest(BaseModel):
     status_id: int | None = None
 
 
+class WhatsappOutreachRequest(BaseModel):
+    """Start (or reopen) a WhatsApp chat by phone — for first outbound message from CRM."""
+
+    phone: str = Field(min_length=8, max_length=32)
+    full_name: str = Field(min_length=1, max_length=256)
+    bot_id: int = Field(gt=0)
+
+
+class WhatsappOutreachResponse(BaseModel):
+    chat_id: int
+    contact_id: int
+    created_chat: bool
+
+
 class ChatStatusPatchRequest(BaseModel):
     status: Literal["open", "in_progress", "closed", "archived"]
 

@@ -19,6 +19,8 @@ from app.modules.chats.schemas import (
     ChatMessageSearchResponse,
     ChatStatusIdPatchRequest,
     ChatStatusPatchRequest,
+    WhatsappOutreachRequest,
+    WhatsappOutreachResponse,
     MessageListResponse,
     MessageResponse,
     OutboundMessageRequest,
@@ -201,6 +203,15 @@ async def create_chat(
         entity_id=result.chat.id,
         payload=result.audit_payload,
     )
+
+
+@router.post("/whatsapp-outreach", response_model=WhatsappOutreachResponse)
+async def start_whatsapp_outreach(
+    body: WhatsappOutreachRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[ChatService, Depends(_chat_service)],
+) -> WhatsappOutreachResponse:
+    return await service.start_whatsapp_outreach(actor, body)
 
 
 @router.patch("/{chat_id}/status")

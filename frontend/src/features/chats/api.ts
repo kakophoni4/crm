@@ -28,6 +28,25 @@ function buildListParams(params: ChatListParams): Record<string, string | number
   return query
 }
 
+export interface WhatsappOutreachBody {
+  phone: string
+  full_name: string
+  bot_id: number
+}
+
+export interface WhatsappOutreachResult {
+  chat_id: number
+  contact_id: number
+  created_chat: boolean
+}
+
+export async function startWhatsappOutreach(
+  body: WhatsappOutreachBody,
+): Promise<WhatsappOutreachResult> {
+  const { data } = await http.post<WhatsappOutreachResult>('/chats/whatsapp-outreach', body)
+  return data
+}
+
 export async function patchChatStatusId(chatId: number, statusId: number): Promise<ChatDetail> {
   const { data } = await http.patch<ChatDetail>(`/chats/${chatId}/status_id`, {
     status_id: statusId,

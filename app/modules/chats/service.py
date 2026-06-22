@@ -8,20 +8,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.filters import ChatListSort
 from app.modules.chats.repository import ChatRepository
-from app.modules.chats.schemas import ChatCreateRequest, ChatListResponse, ChatStatusPatchRequest
+from app.modules.chats.schemas import (
+    ChatCreateRequest,
+    ChatListResponse,
+    ChatStatusPatchRequest,
+    WhatsappOutreachRequest,
+    WhatsappOutreachResponse,
+)
 from app.modules.chats.scope import can_view_chat_async, resolve_chats_read_permission
 from app.modules.chats.serialization import to_chat_detail, to_chat_list_item
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.bots.chats_bridge import upsert_chat_for_bot, upsert_contact_from_telegram
+from app.modules.bots.repository import BotRepository
+from app.modules.bots.routing import resolve_bot_routing
 from app.modules.db.models.chat import Chat
-from app.modules.db.models.enums import ChatStatus, StatusKind
+from app.modules.db.models.enums import BotChannel, BotOwnerType, ChatStatus, StatusKind
 from app.modules.db.models.user import User
 from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.department_inbox import get_department_inbox_group_id
-from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids, visible_user_ids
+from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids, visible_group_ids, visible_user_ids
 from app.modules.statuses.validation import ensure_status_kind
 from app.realtime.events import publish
-from app.shared.exceptions import Conflict, NotFound, PermissionDenied
+from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 
 
 @dataclass(frozen=True)
@@ -207,6 +216,102 @@ class ChatService:
         return ChatMutationResult(
             chat=chat,
             audit_payload={"contact_id": body.contact_id, "chat_id": chat.id},
+        )
+
+    async def start_whatsapp_outreach(
+        self,
+        actor: User,
+        body: WhatsappOutreachRequest,
+    ) -> WhatsappOutreachResponse:
+        from app.modules.db.models.contact import Contact
+
+        ctx = await self._scope_loader.load(actor)
+        digits = "".join(ch for ch in body.phone if ch.isdigit())
+        if len(digits) < 10:
+            raise ValidationError(
+                message="Укажите номер WhatsApp в международном формате (только цифры, с кодом страны)",
+            )
+        phone_int = int(digits)
+
+        bot_repo = BotRepository(self._session)
+        bot = await bot_repo.get_by_id(body.bot_id)
+        if bot is None or not bot.is_active:
+            raise NotFound(message="Bot not found")
+        channel = bot.channel if isinstance(bot.channel, BotChannel) else BotChannel(str(bot.channel))
+        if channel != BotChannel.WHATSAPP:
+            raise ValidationError(message="Выбранный бот не является WhatsApp")
+
+        scope_depts = visible_department_ids(ctx)
+        if scope_depts != SCOPE_ALL and bot.department_id not in set(scope_depts):
+            raise NotFound(message="Bot not found")
+
+        routing = await resolve_bot_routing(self._session, bot)
+        if routing.owner_type == BotOwnerType.GROUP:
+            scope_groups = visible_group_ids(ctx)
+            if scope_groups != SCOPE_ALL and routing.owner_id not in set(scope_groups):
+                raise PermissionDenied(message="Нет доступа к группе этого бота")
+        elif routing.lead_group_id is not None:
+            scope_groups = visible_group_ids(ctx)
+            if scope_groups != SCOPE_ALL and routing.lead_group_id not in set(scope_groups):
+                raise PermissionDenied(message="Нет доступа к группе этого бота")
+
+        contact_existing = (
+            await self._session.execute(select(Contact).where(Contact.telegram_user_id == phone_int))
+        ).scalar_one_or_none()
+
+        created_chat = False
+        if contact_existing is not None:
+            contact_id = contact_existing.id
+            if not contact_existing.phone:
+                contact_existing.phone = f"+{digits}"
+            name = body.full_name.strip()
+            if name and (
+                contact_existing.full_name.startswith("TG ")
+                or contact_existing.full_name.startswith("WA ")
+            ):
+                contact_existing.full_name = name
+        else:
+            contact_id = await upsert_contact_from_telegram(
+                self._session,
+                telegram_user_id=phone_int,
+                telegram_username=None,
+                first_name=body.full_name.strip(),
+                last_name=None,
+                created_by=actor.id,
+            )
+            contact = await self._contacts.get_by_id(contact_id)
+            if contact is not None and not contact.phone:
+                contact.phone = f"+{digits}"
+
+        active = await self._session.execute(
+            select(Chat).where(
+                Chat.contact_id == contact_id,
+                Chat.bot_id == bot.id,
+                Chat.status != ChatStatus.ARCHIVED,
+            ),
+        )
+        chat = active.scalar_one_or_none()
+        if chat is None:
+            chat_id = await upsert_chat_for_bot(
+                self._session,
+                contact_id=contact_id,
+                bot_id=bot.id,
+                owner_type=routing.owner_type,
+                owner_id=routing.owner_id,
+            )
+            chat = await self._repo.get_by_id(chat_id)
+            created_chat = True
+        else:
+            chat_id = int(chat.id)
+
+        if chat is None or not await can_view_chat_async(self._session, ctx, chat):
+            raise NotFound(message="Chat not found")
+
+        await self._session.commit()
+        return WhatsappOutreachResponse(
+            chat_id=chat_id,
+            contact_id=contact_id,
+            created_chat=created_chat,
         )
 
     async def _ensure_status(self, status_id: int) -> None:
