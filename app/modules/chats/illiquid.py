@@ -18,7 +18,7 @@ async def archive_contact_chats(session: AsyncSession, contact_id: int) -> int:
         )
         .values(status=ChatStatus.ARCHIVED)
     )
-    return int(result.rowcount or 0)
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def restore_chat_on_inbound(session: AsyncSession, chat_id: int) -> bool:

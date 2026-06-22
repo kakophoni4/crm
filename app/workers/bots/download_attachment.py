@@ -8,12 +8,12 @@ import httpx
 import structlog
 from sqlalchemy import text
 
+from app.realtime.events import publish
+from app.realtime.topics import CHAT_MESSAGE_ATTACHMENT_READY
 from app.shared.db import get_session_factory
 from app.shared.settings import get_settings
 from app.shared.storage import get_file_storage
 from app.shared.upload_limits import max_upload_bytes_for
-from app.realtime.events import publish
-from app.realtime.topics import CHAT_MESSAGE_ATTACHMENT_READY
 from app.workers.bots.queue import enqueue
 
 logger = structlog.get_logger(__name__)

@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.chats.illiquid import archive_contact_chats
 from app.modules.contacts.activity_timeline import build_contact_activity
 from app.modules.contacts.diff import audit_diff_payload, diff_snapshots, snapshot_contact, to_jsonb
 from app.modules.contacts.group_ownership import load_group_ownership
@@ -24,7 +25,6 @@ from app.modules.contacts.schemas import (
 )
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.contacts.serialization import to_contact_response
-from app.modules.chats.illiquid import archive_contact_chats
 from app.modules.contacts.status_automation import (
     apply_auto_contact_status,
     validate_manual_status_change,

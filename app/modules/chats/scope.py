@@ -74,7 +74,7 @@ def chat_visibility_clause(ctx: ScopeContext, perm: Permission) -> ColumnElement
             return Chat.id == -1
         dept_user_ids = set(ctx.department_user_ids) | {actor.id}
         dept_group_ids = set(ctx.department_group_ids)
-        clauses = [
+        clauses: list[ColumnElement[bool]] = [
             Chat.assigned_department_id.in_(dept_ids),
             Chat.assigned_user_id.in_(dept_user_ids),
         ]
@@ -116,9 +116,7 @@ def can_view_chat(ctx: ScopeContext, chat: Chat) -> bool:
                 return True
             if not isinstance(group_ids, set):
                 return False
-            if chat.assigned_group_id in group_ids if chat.assigned_group_id else False:
-                return True
-            return False
+            return bool(chat.assigned_group_id and chat.assigned_group_id in group_ids)
         return chat.assigned_user_id == ctx.actor.id
     if perm == Permission.CHATS_READ_GROUP:
         group_ids = visible_group_ids(ctx)
@@ -126,9 +124,7 @@ def can_view_chat(ctx: ScopeContext, chat: Chat) -> bool:
             return True
         if not isinstance(group_ids, set):
             return False
-        if chat.assigned_group_id in group_ids if chat.assigned_group_id else False:
-            return True
-        return False
+        return bool(chat.assigned_group_id and chat.assigned_group_id in group_ids)
     if perm == Permission.CHATS_READ_DEPARTMENT:
         dept_ids = visible_department_ids(ctx)
         if dept_ids == SCOPE_ALL:

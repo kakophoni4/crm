@@ -79,6 +79,62 @@ async def upsert_contact_from_telegram(
     return int(result.scalar_one())
 
 
+async def upsert_contact_from_phone(
+    session: AsyncSession,
+    *,
+    phone: str,
+    full_name: str | None,
+    created_by: int,
+) -> int:
+    normalized_phone = phone.strip()
+    resolved_name = (full_name or "").strip() or normalized_phone
+    existing = await session.execute(
+        text(
+            """
+            SELECT id FROM contacts
+            WHERE phone = :phone
+            ORDER BY id
+            LIMIT 1
+            """
+        ),
+        {"phone": normalized_phone},
+    )
+    contact_id = existing.scalar_one_or_none()
+    if contact_id is not None:
+        await session.execute(
+            text(
+                """
+                UPDATE contacts
+                SET full_name = COALESCE(NULLIF(:full_name, ''), full_name),
+                    source = COALESCE(source, 'bitcall'),
+                    updated_at = now()
+                WHERE id = :contact_id
+                """
+            ),
+            {
+                "contact_id": contact_id,
+                "full_name": resolved_name,
+            },
+        )
+        return int(contact_id)
+
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO contacts (phone, full_name, source, created_by)
+            VALUES (:phone, :full_name, 'bitcall', :created_by)
+            RETURNING id
+            """
+        ),
+        {
+            "phone": normalized_phone,
+            "full_name": resolved_name,
+            "created_by": created_by,
+        },
+    )
+    return int(result.scalar_one())
+
+
 async def upsert_chat_for_bot(
     session: AsyncSession,
     *,

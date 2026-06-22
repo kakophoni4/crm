@@ -15,7 +15,7 @@ async def test_whatsapp_outreach_creates_chat(
     admin_headers: dict[str, str],
 ) -> None:
     group_id = int(chats_org["group_a"])
-    dept_id = int(chats_org["department_a"])
+    dept_id = int(chats_org["dept_a"])
 
     with patch("app.modules.bots.service.sync_green_webhook", new_callable=AsyncMock):
         bot_resp = await client.post(
@@ -35,11 +35,12 @@ async def test_whatsapp_outreach_creates_chat(
     assert bot_resp.status_code == 201, bot_resp.text
     bot_id = bot_resp.json()["id"]
 
-    await client.put(
-        f"/api/v1/bots/{bot_id}/groups",
+    assign_resp = await client.put(
+        f"/api/v1/bots/{bot_id}/group-assignments",
         headers=admin_headers,
         json={"group_ids": [group_id]},
     )
+    assert assign_resp.status_code == 200, assign_resp.text
 
     outreach = await client.post(
         "/api/v1/chats/whatsapp-outreach",

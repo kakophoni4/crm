@@ -6,9 +6,8 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.service import AuditService
-from app.modules.chats.repository import ChatRepository
 from app.modules.chats.read_state import upsert_read_state
-from app.modules.files.service import FilesService
+from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import AttachmentInput, OutboundMessageRequest
 from app.modules.chats.scope import can_view_chat_async
 from app.modules.chats.serialization import to_message_response
@@ -22,7 +21,7 @@ from app.modules.db.models.contact import Contact
 from app.modules.db.models.enums import AuditAction, MessageDirection, MessageKind
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.user import User
-from app.modules.leads.repository import LeadRepository
+from app.modules.files.service import FilesService
 from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError

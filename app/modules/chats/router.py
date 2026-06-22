@@ -19,13 +19,13 @@ from app.modules.chats.schemas import (
     ChatMessageSearchResponse,
     ChatStatusIdPatchRequest,
     ChatStatusPatchRequest,
-    WhatsappOutreachRequest,
-    WhatsappOutreachResponse,
     MessageListResponse,
     MessageResponse,
     OutboundMessageRequest,
     TakeoverRequestBody,
     TakeoverResponse,
+    WhatsappOutreachRequest,
+    WhatsappOutreachResponse,
 )
 from app.modules.chats.search import ChatSearchService
 from app.modules.chats.search_scope import ChatSearchScope

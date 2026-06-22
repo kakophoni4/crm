@@ -46,7 +46,7 @@ export interface BotItem {
   id: number
   code: string
   name: string
-  channel?: 'telegram' | 'whatsapp'
+  channel?: 'telegram' | 'whatsapp' | 'bitcall'
   department_id: number
   department_name: string | null
   assigned_group_ids: number[]
@@ -67,7 +67,7 @@ export interface BotItem {
 export interface BotCreateBody {
   code: string
   name: string
-  channel?: 'telegram' | 'whatsapp'
+  channel?: 'telegram' | 'whatsapp' | 'bitcall'
   department_id: number
   outbound_url?: string
   inbound_secret?: string

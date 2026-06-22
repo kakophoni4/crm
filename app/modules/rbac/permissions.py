@@ -82,6 +82,11 @@ class Permission(StrEnum):
     BOTS_SECRET_ROTATE = "bots.secret.rotate"
     BOTS_DELETE = "bots.delete"
 
+    # Telephony
+    TELEPHONY_READ = "telephony.read"
+    TELEPHONY_CALL = "telephony.call"
+    TELEPHONY_MANAGE = "telephony.manage"
+
     # Statuses
     STATUSES_READ = "statuses.read"
     STATUSES_MANAGE = "statuses.manage"

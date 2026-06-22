@@ -6,6 +6,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.bots.chats_bridge import upsert_chat_for_bot, upsert_contact_from_telegram
+from app.modules.bots.repository import BotRepository
+from app.modules.bots.routing import resolve_bot_routing
 from app.modules.chats.filters import ChatListSort
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import (
@@ -19,15 +22,17 @@ from app.modules.chats.scope import can_view_chat_async, resolve_chats_read_perm
 from app.modules.chats.serialization import to_chat_detail, to_chat_list_item
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
-from app.modules.bots.chats_bridge import upsert_chat_for_bot, upsert_contact_from_telegram
-from app.modules.bots.repository import BotRepository
-from app.modules.bots.routing import resolve_bot_routing
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import BotChannel, BotOwnerType, ChatStatus, StatusKind
 from app.modules.db.models.user import User
 from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.department_inbox import get_department_inbox_group_id
-from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids, visible_group_ids, visible_user_ids
+from app.modules.rbac.scope import (
+    SCOPE_ALL,
+    visible_department_ids,
+    visible_group_ids,
+    visible_user_ids,
+)
 from app.modules.statuses.validation import ensure_status_kind
 from app.realtime.events import publish
 from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
@@ -229,7 +234,10 @@ class ChatService:
         digits = "".join(ch for ch in body.phone if ch.isdigit())
         if len(digits) < 10:
             raise ValidationError(
-                message="Укажите номер WhatsApp в международном формате (только цифры, с кодом страны)",
+                message=(
+                    "Укажите номер WhatsApp в международном формате "
+                    "(только цифры, с кодом страны)"  # noqa: RUF001
+                ),
             )
         phone_int = int(digits)
 
@@ -237,7 +245,11 @@ class ChatService:
         bot = await bot_repo.get_by_id(body.bot_id)
         if bot is None or not bot.is_active:
             raise NotFound(message="Bot not found")
-        channel = bot.channel if isinstance(bot.channel, BotChannel) else BotChannel(str(bot.channel))
+        channel = (
+            bot.channel
+            if isinstance(bot.channel, BotChannel)
+            else BotChannel(str(bot.channel))
+        )
         if channel != BotChannel.WHATSAPP:
             raise ValidationError(message="Выбранный бот не является WhatsApp")
 
@@ -256,7 +268,9 @@ class ChatService:
                 raise PermissionDenied(message="Нет доступа к группе этого бота")
 
         contact_existing = (
-            await self._session.execute(select(Contact).where(Contact.telegram_user_id == phone_int))
+            await self._session.execute(
+                select(Contact).where(Contact.telegram_user_id == phone_int),
+            )
         ).scalar_one_or_none()
 
         created_chat = False

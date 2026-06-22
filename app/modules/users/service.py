@@ -279,7 +279,11 @@ class UserService:
                 target.group_id = None
                 target.department_id = None
                 await set_user_group_memberships(self._session, target.id, [])
-            elif body.role == UserRole.SENIOR and body.department_id is None and normalized_groups is None:
+            elif (
+                body.role == UserRole.SENIOR
+                and body.department_id is None
+                and normalized_groups is None
+            ):
                 if target.department_id is None:
                     raise ValidationError(
                         message="department_id is required when role is senior",
@@ -317,7 +321,10 @@ class UserService:
                         actor,
                         normalized_groups,
                     )
-                    if target.department_id is not None and group_department_id != target.department_id:
+                    if (
+                        target.department_id is not None
+                        and group_department_id != target.department_id
+                    ):
                         raise ValidationError(
                             message="group must belong to the selected department",
                         )

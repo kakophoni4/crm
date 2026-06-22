@@ -71,6 +71,7 @@ class MessageKind(StrEnum):
 class BotChannel(StrEnum):
     TELEGRAM = "telegram"
     WHATSAPP = "whatsapp"
+    BITCALL = "bitcall"
 
 
 class BotOwnerType(StrEnum):

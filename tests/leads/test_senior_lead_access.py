@@ -59,7 +59,7 @@ async def test_senior_can_patch_lead_when_not_card_owner(
         engine.dispose()
 
     chat_resp = await client.get(
-        f"/api/v1/chats",
+        "/api/v1/chats",
         headers={"Authorization": f"Bearer {senior_token}"},
         params={"contact_id": contact_id, "limit": 10},
     )

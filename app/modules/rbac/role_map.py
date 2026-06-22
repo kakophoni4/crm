@@ -33,6 +33,8 @@ _USER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.CONTACTS_AUDIT_READ,
         # §3.7 Bots
         Permission.BOTS_READ,
+        Permission.TELEPHONY_READ,
+        Permission.TELEPHONY_CALL,
         # §3.8 Statuses
         Permission.STATUSES_READ,
         # §3.9 Audit
@@ -69,6 +71,7 @@ _SENIOR_EXTRA: frozenset[Permission] = frozenset(
         # §3.7 Bots
         Permission.BOTS_DEACTIVATE_DEPT,
         Permission.BOTS_REASSIGN,
+        Permission.TELEPHONY_MANAGE,
         # §3.9 Audit
         Permission.AUDIT_READ_DEPARTMENT,
         # Analytics

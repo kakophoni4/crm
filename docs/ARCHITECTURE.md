@@ -266,7 +266,7 @@ ChatScope(
 |---|---|
 | Пароли пользователей | `bcrypt` в БД |
 | JWT signing key | env / Vault, ротация раз в год |
-| Refresh tokens | Redis, ключи `refresh:{user_id}:{jti}` с TTL |
+| Refresh tokens | PostgreSQL `refresh_tokens`: хранится SHA-256 хэш токена, `jti`, срок жизни и `revoked_at`; logout/force-logout выставляют отзыв |
 | Bot inbound/outbound HMAC secrets | БД с шифрованием (`pgcrypto` + ключ в env), выдаются через UI один раз при создании/ротации |
 | Telegram user_id (клиента) | БД plain. Маскируется в API/логах. (При требовании — `pgcrypto`.) |
 
@@ -321,4 +321,4 @@ ChatScope(
 3. **Outbound HTTP к ботам** — синхронный HTTP с retry. Если несколько ботов разом «упали», очередь outbound может разрастись и стать узким местом. Митигация: bulkhead-isolation per bot (отдельная семафор-квота), алёрты на queue depth per bot.
 4. **Round-robin assignment без учёта компетенций** — простой, но неоптимальный. На втором этапе добавить теги/навыки операторов и матчинг.
 5. **WebSocket за Traefik** — нужна правильная настройка таймаутов и keepalive, иначе будут «молчаливые» дисконнекты. Добавить heartbeat.
-6. **Refresh-токен в Redis без репликации** — при падении Redis пользователи разлогинятся. Использовать Redis Sentinel в проде или принять как штатное.
+6. **Refresh-токены завязаны на Postgres.** При недоступности БД refresh/logout/force-logout деградируют вместе с основным API; Redis всё ещё нужен для WS tickets, realtime Pub/Sub, rate limits, очередей и кэшей.

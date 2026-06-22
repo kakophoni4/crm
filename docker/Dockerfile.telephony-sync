@@ -1,0 +1,7 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache bash docker-cli
+
+WORKDIR /app
+
+CMD ["bash", "scripts/deploy/vps/telephony-sync-loop.sh"]

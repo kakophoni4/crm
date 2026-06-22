@@ -27,13 +27,29 @@ async def test_inbound_creates_separate_chat_per_bot(
 
     try:
         with engine.begin() as connection:
-            connection.execute(text("DELETE FROM messages WHERE external_event_id LIKE 'bot-per-bot-%'"))
-            connection.execute(text("DELETE FROM bot_events_inbox WHERE event_id LIKE 'bot-per-bot-%'"))
+            connection.execute(
+                text("DELETE FROM messages WHERE external_event_id LIKE 'bot-per-bot-%'"),
+            )
+            connection.execute(
+                text("DELETE FROM bot_events_inbox WHERE event_id LIKE 'bot-per-bot-%'"),
+            )
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM leads
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE telegram_user_id = 999003
+                    )
+                    """
+                ),
+            )
             connection.execute(
                 text(
                     """
                     DELETE FROM chats
-                    WHERE contact_id IN (SELECT id FROM contacts WHERE telegram_user_id = 999003)
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE telegram_user_id = 999003
+                    )
                     """
                 ),
             )
@@ -143,6 +159,51 @@ async def test_inbound_creates_separate_chat_per_bot(
                 ),
                 {"cid": contact_id},
             ).all()
+    finally:
+        engine.dispose()
+
+    engine = create_engine(_sync_database_url(test_settings.database_url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM messages
+                    WHERE chat_id IN (
+                        SELECT id FROM chats
+                        WHERE contact_id IN (
+                            SELECT id FROM contacts WHERE telegram_user_id = 999003
+                        )
+                    )
+                    """
+                ),
+            )
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM leads
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE telegram_user_id = 999003
+                    )
+                    """
+                ),
+            )
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM chats
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE telegram_user_id = 999003
+                    )
+                    """
+                ),
+            )
+            connection.execute(text("DELETE FROM contacts WHERE telegram_user_id = 999003"))
+            connection.execute(text("DELETE FROM bots WHERE code = 'test_bot_b'"))
+            connection.execute(
+                text("DELETE FROM bot_events_inbox WHERE event_id = :event_id"),
+                {"event_id": event_id},
+            )
     finally:
         engine.dispose()
 

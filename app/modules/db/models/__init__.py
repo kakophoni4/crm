@@ -36,9 +36,11 @@ from app.modules.db.models.lead_comment import LeadComment
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.refresh_token import RefreshToken
 from app.modules.db.models.status import Status
+from app.modules.db.models.telephony_account import TelephonyAccount
+from app.modules.db.models.telephony_extension import TelephonyExtension
+from app.modules.db.models.uploaded_file import UploadedFile
 from app.modules.db.models.user import User
 from app.modules.db.models.user_group_membership import UserGroupMembership
-from app.modules.db.models.uploaded_file import UploadedFile
 
 __all__ = [
     "AuditAction",
@@ -71,12 +73,14 @@ __all__ = [
     "RefreshToken",
     "Status",
     "StatusKind",
+    "TelephonyAccount",
+    "TelephonyExtension",
     "TransferStatus",
     "UploadedFile",
     "User",
-    "UserGroupMembership",
     "UserAvailability",
     "UserDeletionRequest",
+    "UserGroupMembership",
     "UserPresence",
     "UserRole",
     "UserStatus",

@@ -99,7 +99,10 @@ async def test_admin_approve_reassigns_cards_and_disables_user(
         request_id = int(create.json()["id"])
         assert create.json()["state"] == "pending"
 
-        senior_list = await client.get("/api/v1/user-deletion-requests", headers=chats_senior_headers)
+        senior_list = await client.get(
+            "/api/v1/user-deletion-requests",
+            headers=chats_senior_headers,
+        )
         assert senior_list.status_code == 200
         senior_ids = {int(x["id"]) for x in senior_list.json()["items"]}
         assert request_id in senior_ids

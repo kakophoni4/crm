@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
@@ -72,7 +72,6 @@ def ws_connection_closed() -> None:
 
 def _patch_instrumentator_routing_for_included_router() -> None:
     """Work around FastAPI 0.137+ _IncludedRouter missing `.path` (instrumentator #370)."""
-    from typing import List, Optional
 
     from prometheus_fastapi_instrumentator import routing as instrumentator_routing
     from starlette.routing import Match, Mount
@@ -83,9 +82,9 @@ def _patch_instrumentator_routing_for_included_router() -> None:
 
     def _get_route_name(
         scope: Scope,
-        routes: List[object],
-        route_name: Optional[str] = None,
-    ) -> Optional[str]:
+        routes: list[Any],
+        route_name: str | None = None,
+    ) -> str | None:
         for route in routes:
             if hasattr(route, "effective_candidates"):
                 match, child_scope, matched_route, route_context = route._match(scope)
@@ -109,7 +108,11 @@ def _patch_instrumentator_routing_for_included_router() -> None:
                             if child_route_name is None:
                                 route_name = None
                             else:
-                                route_name += child_route_name
+                                route_name = (
+                                    child_route_name
+                                    if route_name is None
+                                    else route_name + child_route_name
+                                )
                     return route_name
                 if match == Match.PARTIAL and route_name is None:
                     route_name = (
@@ -130,14 +133,18 @@ def _patch_instrumentator_routing_for_included_router() -> None:
                     if child_route_name is None:
                         route_name = None
                     else:
-                        route_name += child_route_name
+                        route_name = (
+                            child_route_name
+                            if route_name is None
+                            else route_name + child_route_name
+                        )
                 return route_name
             if match == Match.PARTIAL and route_name is None:
                 route_name = getattr(route, "path", None)
         return None
 
     instrumentator_routing._get_route_name = _get_route_name
-    instrumentator_routing._included_router_patch_applied = True
+    instrumentator_routing._included_router_patch_applied = True  # type: ignore[attr-defined]
 
 
 async def refresh_redis_stream_gauges() -> None:

@@ -24,7 +24,16 @@ async def test_contact_detail_lists_linked_bots(
 
     try:
         with engine.begin() as connection:
-            connection.execute(text("DELETE FROM chats WHERE contact_id IN (SELECT id FROM contacts WHERE telegram_user_id = 999004)"))
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM chats
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE telegram_user_id = 999004
+                    )
+                    """,
+                ),
+            )
             connection.execute(text("DELETE FROM contacts WHERE telegram_user_id = 999004"))
             connection.execute(text("DELETE FROM bots WHERE code = 'test_bot_linked_b'"))
 
@@ -75,7 +84,13 @@ async def test_contact_detail_lists_linked_bots(
             connection.execute(
                 text(
                     """
-                    INSERT INTO chats (contact_id, bot_id, assigned_group_id, assigned_department_id, status)
+                    INSERT INTO chats (
+                        contact_id,
+                        bot_id,
+                        assigned_group_id,
+                        assigned_department_id,
+                        status
+                    )
                     VALUES
                         (:cid, :bot_a, :gid, :dept, 'open'),
                         (:cid, :bot_b, :gid, :dept, 'open')

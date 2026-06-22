@@ -54,11 +54,12 @@
 
 ## 2. Аутентификация
 
-### Сессии (Redis, не в БД)
-- `refresh:{user_id}:{jti}` → JSON `{ip, ua, created_at, expires_at}`, TTL = срок жизни refresh.
-- Logout = `DEL` ключа.
-- Force-logout user = `SCAN refresh:{user_id}:*` + `DEL`.
-- Лист отзыва не нужен — отсутствие ключа = отозван.
+### Refresh-сессии (`refresh_tokens`)
+- `refresh_tokens.refresh_token_hash` хранит SHA-256 от refresh-token; сырой токен не сохраняется.
+- `jti` уникален и используется для ротации: при refresh старый токен помечается `revoked_at`, затем создаётся новый.
+- Logout = отзыв конкретного `jti` через `revoked_at`.
+- Force-logout user = отзыв всех активных refresh-токенов пользователя.
+- Срок жизни контролируется `expires_at`; отсутствие активной строки или заполненный `revoked_at` = токен отозван.
 
 ### `password_reset_tokens` (опционально)
 | id | user_id | token_hash | expires_at | used_at |

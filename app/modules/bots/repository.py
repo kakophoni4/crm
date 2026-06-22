@@ -103,7 +103,12 @@ class BotRepository:
         for row in rows:
             if row.bot.id == bot_id:
                 return row
-        return BotListRow(bot=bot, department_name=None, assigned_group_ids=[], assigned_group_names=[])
+        return BotListRow(
+            bot=bot,
+            department_name=None,
+            assigned_group_ids=[],
+            assigned_group_names=[],
+        )
 
     async def get_by_code(self, code: str) -> Bot | None:
         result = await self._session.execute(select(Bot).where(Bot.code == code))

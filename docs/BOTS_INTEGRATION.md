@@ -170,6 +170,55 @@ signature = "sha256=" + HMAC_SHA256(outbound_secret, canonical)
 Эффект:
 - обновление профиля контакта.
 
+#### `call.received` (Bitcall / telephony)
+
+This event is used by `channel = "bitcall"` bots. Bitcall-specific webhooks should be
+normalized by a bridge/adaptor into this CRM envelope.
+
+Required fields:
+- `payload.contact.phone`
+- `payload.call.external_id`
+
+Optional fields:
+- `payload.contact.full_name`, `first_name`, `last_name`
+- `payload.call.direction` (`"inbound"` by default)
+- `payload.call.status`
+- `payload.call.duration_seconds`
+- `payload.call.recording_url`
+- `payload.call.recording_mime`
+- `payload.call.recording_filename`
+
+Effect:
+- upsert contact by `phone`;
+- upsert chat for the Bitcall bot;
+- create/keep an open lead in the bot group/department inbox;
+- save the call as an inbound chat message;
+- attach `recording_url` as a `voice` attachment when present.
+
+Example:
+
+```json
+{
+  "event": "call.received",
+  "event_id": "bitcall-call-001",
+  "occurred_at": "2026-06-22T12:00:00Z",
+  "bot_code": "bitcall_sales",
+  "payload": {
+    "contact": {
+      "phone": "+79005550123",
+      "full_name": "Bitcall Client"
+    },
+    "call": {
+      "external_id": "call-001",
+      "direction": "inbound",
+      "status": "completed",
+      "duration_seconds": 42,
+      "recording_url": "https://example.test/recordings/call-001.mp3"
+    }
+  }
+}
+```
+
 ### 4.2 Что сейчас НЕ обрабатывается
 
 Если придут события вроде:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import secrets
 import hmac
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,8 +40,8 @@ from app.realtime.events import publish
 from app.shared.exceptions import (
     AuthenticationRequired,
     Conflict,
-    PermissionDenied,
     NotFound,
+    PermissionDenied,
     ValidationError,
 )
 from app.shared.settings import get_settings
@@ -246,7 +246,11 @@ class BotService:
             bot.name = body.name
 
         new_department_id = body.department_id
-        if new_department_id is None and body.owner_type == BotOwnerType.DEPARTMENT and body.owner_id:
+        if (
+            new_department_id is None
+            and body.owner_type == BotOwnerType.DEPARTMENT
+            and body.owner_id
+        ):
             new_department_id = body.owner_id
 
         if new_department_id is not None:
@@ -297,9 +301,9 @@ class BotService:
 
         if _bot_channel(bot) == BotChannel.WHATSAPP and bot.green_instance_id:
             await self._sync_whatsapp_webhook(bot, api_token=green_token_for_sync)
-        row = await self._repo.get_list_row(bot.id)
-        assert row is not None
-        return _to_response(row)
+        refreshed_row = await self._repo.get_list_row(bot.id)
+        assert refreshed_row is not None
+        return _to_response(refreshed_row)
 
     async def set_group_assignments(
         self,
@@ -331,9 +335,9 @@ class BotService:
         )
         await self._repo.save(bot)
         await self._session.commit()
-        row = await self._repo.get_list_row(bot.id)
-        assert row is not None
-        return _to_response(row)
+        refreshed_row = await self._repo.get_list_row(bot.id)
+        assert refreshed_row is not None
+        return _to_response(refreshed_row)
 
     async def soft_delete(self, bot_id: int, actor: User) -> BotResponse:
         row = await self._get_row_for_actor(actor, bot_id)
@@ -341,9 +345,9 @@ class BotService:
         bot.is_active = False
         await self._repo.save(bot)
         await self._session.commit()
-        row = await self._repo.get_list_row(bot.id)
-        assert row is not None
-        return _to_response(row)
+        refreshed_row = await self._repo.get_list_row(bot.id)
+        assert refreshed_row is not None
+        return _to_response(refreshed_row)
 
     async def rotate_secret(self, bot_id: int, kind: str) -> RotateSecretResponse:
         bot = await self._repo.get_by_id(bot_id)

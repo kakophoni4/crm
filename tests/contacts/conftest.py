@@ -127,10 +127,12 @@ async def contacts_org(
                         text(
                             """
                             INSERT INTO users (
-                                email, username, password_hash, full_name, role, group_id
+                                email, username, password_hash, full_name,
+                                role, group_id, department_id
                             )
                             VALUES (
-                                :email, :username, :password_hash, :full_name, 'user', :group_id
+                                :email, :username, :password_hash, :full_name,
+                                'user', :group_id, :dept_id
                             )
                             """
                         ),
@@ -140,6 +142,7 @@ async def contacts_org(
                             "password_hash": password_hash,
                             "full_name": email.split("@")[0],
                             "group_id": group_id,
+                            "dept_id": dept_id,
                         },
                     )
                 user_ids[email] = connection.execute(

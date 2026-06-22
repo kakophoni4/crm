@@ -106,6 +106,22 @@ services:
     networks:
       - crm-net
 
+  asterisk:
+    build:
+      context: .
+      dockerfile: asterisk/Dockerfile
+    container_name: crm-asterisk
+    restart: unless-stopped
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "8088:8088"
+      - "10000-10100:10000-10100/udp"
+    volumes:
+      - ./asterisk:/etc/asterisk:ro
+    networks:
+      - crm-net
+
   # Run from repo root with deps installed: pip install -e ".[dev]"
   crm-worker:
     image: python:3.12-slim

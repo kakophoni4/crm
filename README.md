@@ -94,7 +94,7 @@ docker compose -f docker/docker-compose.dev.yaml up -d
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic v2
 - **DB:** PostgreSQL 16
-- **Cache / PubSub / Refresh-token store:** Redis 7
+- **Cache / PubSub / queues / WS tickets:** Redis 7
 - **Очереди задач:** ARQ (Redis-based)
 - **Realtime:** WebSocket (FastAPI) + Redis Pub/Sub
 - **Telegram:** aiogram 3 (webhook-режим, multi-bot)

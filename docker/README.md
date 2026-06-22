@@ -84,3 +84,16 @@ docker compose -f docker/docker-compose.dev.yaml -f docker/docker-compose.monito
 ```
 
 Подробности, URL, алерты и бэкапы — [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md).
+## Telephony Dev PBX
+
+`crm-asterisk` is included in `docker-compose.dev.yaml` as a local PBX for SIP/WebRTC
+development.
+
+- SIP over WebSocket: `ws://localhost:8088/ws`
+- SIP UDP/TCP: `localhost:5060`
+- RTP media: `10000-10100/udp`
+- Static smoke-test extension: `7001` / `dev-webrtc-7001`
+
+Browser operators must use internal WebRTC extensions issued by the CRM API, not the
+Bitcall trunk password. The checked-in `extensions.conf` currently returns `501` for
+outbound calls until a real Bitcall trunk is configured on the PBX side.

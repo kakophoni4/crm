@@ -3,6 +3,7 @@ import {
   Bot,
   LayoutDashboard,
   MessageSquare,
+  Phone,
   Settings,
   Shield,
   Tags,
@@ -52,6 +53,11 @@ const menuOptions = computed(() => {
     icon: () => h(NIcon, null, { default: () => h(Users) }),
   },
   {
+    label: 'Телефония',
+    key: 'telephony',
+    icon: () => h(NIcon, null, { default: () => h(Phone) }),
+  },
+  {
     label: 'Dashboard',
     key: 'dashboard',
     icon: () => h(NIcon, null, { default: () => h(LayoutDashboard) }),
@@ -87,6 +93,11 @@ const menuOptions = computed(() => {
       key: 'settings-bots',
       icon: () => h(NIcon, null, { default: () => h(Bot) }),
     })
+    items.push({
+      label: 'Настройки телефонии',
+      key: 'settings-telephony',
+      icon: () => h(NIcon, null, { default: () => h(Phone) }),
+    })
   }
 
   if (auth.isAdmin) {
@@ -103,12 +114,14 @@ const menuOptions = computed(() => {
 const activeKey = computed(() => {
   if (route.name === 'chats') return 'chats'
   if (route.name === 'contacts' || route.name === 'contact-detail') return 'contacts'
+  if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
   if (route.name === 'group-escalation') return 'group-escalation'
   if (route.name === 'admin-statuses') return 'admin-statuses'
   if (route.name === 'settings-users') return 'settings-users'
   if (route.name === 'settings-groups') return 'settings-groups'
   if (route.name === 'settings-bots') return 'settings-bots'
+  if (route.name === 'settings-telephony') return 'settings-telephony'
   if (typeof route.name === 'string' && route.name.startsWith('admin')) return 'admin'
   return null
 })
@@ -121,6 +134,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'contacts') {
     void router.push({ name: 'contacts' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'telephony') {
+    void router.push({ name: 'telephony' })
     emit('closeDrawer')
     return
   }
@@ -155,6 +173,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'settings-bots') {
     void router.push({ name: 'settings-bots' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'settings-telephony') {
+    void router.push({ name: 'settings-telephony' })
     emit('closeDrawer')
     return
   }

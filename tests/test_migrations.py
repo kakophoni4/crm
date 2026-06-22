@@ -30,6 +30,17 @@ def _sync_database_url(database_url: str) -> str:
     return database_url
 
 
+def _reset_public_schema(alembic_config: Config) -> None:
+    engine = create_engine(_sync_database_url(alembic_config.get_main_option("sqlalchemy.url")))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO public"))
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture
 def alembic_config(test_settings) -> Config:
     cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
@@ -39,12 +50,14 @@ def alembic_config(test_settings) -> Config:
 
 
 def test_upgrade_head_then_downgrade_to_base(alembic_config: Config) -> None:
+    _reset_public_schema(alembic_config)
     command.upgrade(alembic_config, "head")
     command.downgrade(alembic_config, "base")
     command.upgrade(alembic_config, "head")
 
 
 def test_seed_admin_present(alembic_config: Config) -> None:
+    _reset_public_schema(alembic_config)
     command.upgrade(alembic_config, "head")
 
     engine = create_engine(_sync_database_url(alembic_config.get_main_option("sqlalchemy.url")))
@@ -77,6 +90,7 @@ def test_ownership_migrations_upgrade_downgrade(
     revision: str,
     down_revision: str | None,
 ) -> None:
+    _reset_public_schema(alembic_config)
     command.upgrade(alembic_config, down_revision or "base")
     command.upgrade(alembic_config, revision)
     _assert_ownership_revision_schema(alembic_config, revision)

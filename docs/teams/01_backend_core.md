@@ -8,7 +8,7 @@
 
 - Скелет FastAPI: фабрика приложения, конфиг, lifecycle, middleware, DI.
 - Подключение БД: SQLAlchemy 2 async, sessions, unit-of-work, Alembic.
-- Аутентификация: login, refresh-tokens (Redis), logout, force-logout, ws-ticket.
+- Аутентификация: login, refresh-tokens (PostgreSQL), logout, force-logout, ws-ticket (Redis).
 - Авторизация: реестр permissions, маппинг ролей, scope-резолвер.
 - Оргструктура: users, departments, groups (CRUD + бизнес-правила).
 - Общий audit_log + outbox + event-bus + redis-bridge.
@@ -67,7 +67,7 @@ pytest ^8.2 + pytest-asyncio + httpx
 
 ### Epic 3. Auth
 - [ ] Хеширование паролей (passlib).
-- [ ] JWT access (15 мин, HS256), refresh (UUID jti, хранится в Redis с TTL).
+- [ ] JWT access (15 мин, HS256), refresh (UUID jti, SHA-256 хэш хранится в `refresh_tokens`).
 - [ ] `POST /auth/login` (rate-limit 10/мин по IP).
 - [ ] `POST /auth/refresh`, `POST /auth/logout`.
 - [ ] `GET /auth/me` (с расчётом permissions).
@@ -137,6 +137,6 @@ pytest ^8.2 + pytest-asyncio + httpx
 
 1. **JWT secret и прочие — в env.** Если не подключить Vault/Doppler, секреты будут расползаться по `.env` файлам разработчиков. Зафиксировать «никаких prod-секретов в .env».
 2. **Scope-функции — горячая зона.** Любая ошибка → утечка данных. Не мерджить scope-изменения без peer review + тестов.
-3. **Force-logout user в распределённой среде** требует консистентного Redis. Пока один Redis-инстанс — ок; при кластере проверить, что все ноды видят `DEL`.
+3. **Force-logout user в распределённой среде** опирается на консистентность PostgreSQL: все API-инстансы должны проверять `refresh_tokens.revoked_at` и `expires_at` перед выдачей новой пары токенов.
 4. **Outbox-воркер — единая точка.** Если он остановлен, события копятся в БД, аудит и WS пуши встают. Алёрт на `events_outbox WHERE processed_at IS NULL AND created_at < now() - 30 sec`.
 5. **JWT с длинным TTL access-token** — частая ошибка. Держим 15 мин, ни в коем случае не «1 день для удобства».

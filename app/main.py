@@ -15,11 +15,13 @@ from app.modules.chats.router import router as chats_router
 from app.modules.contacts.contact_transfers_router import router as contact_transfers_router
 from app.modules.contacts.router import router as contacts_router
 from app.modules.departments.router import router as departments_router
-from app.modules.files.router import bot_outbound_router, router as files_router
+from app.modules.files.router import bot_outbound_router
+from app.modules.files.router import router as files_router
 from app.modules.groups.router import router as groups_router
 from app.modules.leads.router import router as leads_router
 from app.modules.search.router import router as search_router
 from app.modules.statuses.router import router as statuses_router
+from app.modules.telephony.router import router as telephony_router
 from app.modules.users.router import router as users_router
 from app.modules.users.user_deletion_router import router as user_deletion_requests_router
 from app.realtime.auth import router as realtime_auth_router
@@ -109,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router)
     app.include_router(statuses_router)
     app.include_router(bots_router)
+    app.include_router(telephony_router)
     app.include_router(files_router)
     app.include_router(bot_outbound_router)
     app.include_router(analytics_router)

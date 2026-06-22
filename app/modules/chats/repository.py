@@ -28,9 +28,9 @@ from app.modules.db.models.group import Group
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.user import User
+from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
 from app.modules.rbac.permissions import Permission
 from app.modules.rbac.scope import ScopeContext
-from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
 from app.modules.search.trgm import trgm_or_ilike, trgm_search_indexes_available
 
 _HEADLINE_OPTS = "StartSel=<mark>, StopSel=</mark>, MaxWords=25, MinWords=3"

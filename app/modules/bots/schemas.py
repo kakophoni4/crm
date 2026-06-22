@@ -33,9 +33,11 @@ class BotCreateRequest(BaseModel):
                 raise ValueError("green_instance_id and green_api_token are required for WhatsApp")
             return self
         if not self.outbound_url:
-            raise ValueError("outbound_url is required for Telegram bots")
+            raise ValueError("outbound_url is required for Telegram/Bitcall bots")
         if not self.inbound_secret or not self.outbound_secret:
-            raise ValueError("inbound_secret and outbound_secret are required for Telegram bots")
+            raise ValueError(
+                "inbound_secret and outbound_secret are required for Telegram/Bitcall bots",
+            )
         return self
 
 

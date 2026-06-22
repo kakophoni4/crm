@@ -104,6 +104,16 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'telephony',
+
+        name: 'telephony',
+
+        component: () => import('@/pages/telephony/index.vue'),
+
+      },
+
+      {
+
         path: 'contacts/:id',
 
         name: 'contact-detail',
@@ -177,6 +187,18 @@ const routes: RouteRecordRaw[] = [
         name: 'settings-bots',
 
         component: () => import('@/pages/settings/bots.vue'),
+
+        meta: { requiresSeniorOrAdmin: true },
+
+      },
+
+      {
+
+        path: 'settings/telephony',
+
+        name: 'settings-telephony',
+
+        component: () => import('@/pages/settings/telephony.vue'),
 
         meta: { requiresSeniorOrAdmin: true },
 

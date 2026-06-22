@@ -8,7 +8,12 @@ from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import UserRole
 from app.modules.db.models.group import Group
 from app.modules.db.models.lead import Lead
-from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_department_ids, visible_group_ids
+from app.modules.rbac.scope import (
+    SCOPE_ALL,
+    ScopeContext,
+    visible_department_ids,
+    visible_group_ids,
+)
 
 
 async def get_group_department_id(session: AsyncSession, group_id: int) -> int | None:
@@ -47,8 +52,11 @@ async def actor_can_access_lead(
 
     if lead.chat_id is not None:
         chat = await session.get(Chat, lead.chat_id)
-        if chat is not None and chat.current_lead_id == lead.id:
-            if await can_view_chat_async(session, ctx, chat):
-                return True
+        if (
+            chat is not None
+            and chat.current_lead_id == lead.id
+            and await can_view_chat_async(session, ctx, chat)
+        ):
+            return True
 
     return False

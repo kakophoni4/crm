@@ -363,7 +363,7 @@ async def leads_cycle_org(
             {"dept_id": dept_id},
         ).scalar_one()
 
-        conn.execute(
+        user_id = conn.execute(
             text(
                 """
                 INSERT INTO users (
@@ -373,6 +373,7 @@ async def leads_cycle_org(
                     'leads.cycle.op@crm.local', 'leads.cycle.op', :password_hash,
                     'Leads Cycle Operator', 'user', :group_id, :dept_id
                 )
+                RETURNING id
                 """
             ),
             {
@@ -380,9 +381,20 @@ async def leads_cycle_org(
                 "group_id": group_id,
                 "dept_id": dept_id,
             },
-        )
+        ).scalar_one()
 
         conn.execute(
+            text(
+                """
+                INSERT INTO user_group_memberships (user_id, group_id)
+                VALUES (:user_id, :group_id)
+                ON CONFLICT (user_id, group_id) DO NOTHING
+                """
+            ),
+            {"user_id": user_id, "group_id": group_id},
+        )
+
+        bot_id = conn.execute(
             text(
                 """
                 INSERT INTO bots (
@@ -398,14 +410,26 @@ async def leads_cycle_org(
                     'https://example.test/health',
                     TRUE
                 )
+                RETURNING id
                 """
             ),
             {
                 "code": LEADS_CYCLE_BOT_CODE,
                 "group_id": group_id,
+                "dept_id": dept_id,
                 "secret": LEADS_CYCLE_INBOUND_SECRET,
                 "key": key,
             },
+        ).scalar_one()
+        conn.execute(
+            text(
+                """
+                INSERT INTO bot_group_assignments (bot_id, group_id)
+                VALUES (:bot_id, :group_id)
+                ON CONFLICT (bot_id, group_id) DO NOTHING
+                """
+            ),
+            {"bot_id": bot_id, "group_id": group_id},
         )
         return int(group_id), int(dept_id)
 

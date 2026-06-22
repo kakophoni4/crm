@@ -44,7 +44,9 @@ async def sync_green_webhook(
             status=response.status_code,
             body=response.text[:500],
         )
-        raise RuntimeError(f"GREEN setSettings failed HTTP {response.status_code}: {response.text[:200]}")
+        raise RuntimeError(
+            f"GREEN setSettings failed HTTP {response.status_code}: {response.text[:200]}",
+        )
     data = response.json()
     if not data.get("saveSettings"):
         raise RuntimeError(f"GREEN setSettings rejected: {data}")

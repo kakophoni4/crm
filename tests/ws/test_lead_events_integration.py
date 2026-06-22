@@ -45,7 +45,13 @@ async def _ws_receive_lead_created(
             assert post.status_code == 202, post.text
             await process_bot_event("process_bot_event", {"event_id": event_id})
 
-            return await receive_domain_event(ws, timeout=5.0)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                message = await receive_domain_event(ws, timeout=deadline - time.monotonic())
+                if message.get("type") == "lead.created":
+                    return message
+            msg = "Timed out waiting for lead.created WebSocket event"
+            raise TimeoutError(msg)
 
 
 async def test_lead_created_after_bot_event(

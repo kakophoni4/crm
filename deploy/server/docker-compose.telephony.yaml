@@ -1,0 +1,51 @@
+# VPS telephony overlay: Asterisk PBX behind matrix-caddy.
+#
+# Usage from repo root on the server:
+#   docker compose -f docker/docker-compose.staging.yaml \
+#     -f deploy/server/docker-compose.vps.yaml \
+#     -f deploy/server/docker-compose.telephony.yaml \
+#     --env-file deploy/.env.staging up -d --build asterisk
+
+services:
+  asterisk:
+    build:
+      context: ..
+      dockerfile: docker/asterisk/Dockerfile
+    container_name: crm-asterisk
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+    ports:
+      # Caddy terminates TLS and proxies wss://pbx.../ws to this local HTTP/WebSocket port.
+      - "127.0.0.1:${ASTERISK_HTTP_PORT:-18088}:8088"
+      # Keep RTP away from Jitsi, which already uses UDP/10000 on this server.
+      - "${ASTERISK_RTP_START:-12000}-${ASTERISK_RTP_END:-12100}:${ASTERISK_RTP_START:-12000}-${ASTERISK_RTP_END:-12100}/udp"
+    volumes:
+      - ../deploy/server/asterisk:/etc/asterisk:ro
+    networks:
+      - crm-staging-net
+
+  telephony-sync:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.telephony-sync
+    container_name: crm-telephony-sync
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      ENV_FILE: ${ENV_FILE:-deploy/.env.staging}
+      TELEPHONY_SYNC_INTERVAL_SECONDS: ${TELEPHONY_SYNC_INTERVAL_SECONDS:-5}
+    volumes:
+      - ..:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      asterisk:
+        condition: service_started
+    networks:
+      - crm-staging-net
+
+networks:
+  crm-staging-net:
+    external: true
