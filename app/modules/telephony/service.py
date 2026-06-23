@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +58,14 @@ def _to_response(row: TelephonyAccountRow) -> TelephonyAccountResponse:
 
 def _sip_domain(account_host: str) -> str:
     return account_host.split(":", 1)[0]
+
+
+def _webrtc_domain(account_host: str, ws_url: str | None) -> str:
+    if ws_url:
+        parsed = urlparse(ws_url)
+        if parsed.hostname:
+            return parsed.hostname
+    return _sip_domain(account_host)
 
 
 class TelephonyService:
@@ -265,7 +274,7 @@ class TelephonyService:
         else:
             extension_password = await self._repo.decrypt_extension_password(extension)
 
-        domain = _sip_domain(account.sip_host)
+        domain = _webrtc_domain(account.sip_host, account.webrtc_ws_url)
         return TelephonyWebrtcConfigResponse(
             account_id=account.id,
             account_name=account.name,

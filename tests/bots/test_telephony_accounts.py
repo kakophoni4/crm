@@ -235,7 +235,7 @@ async def test_operator_gets_internal_webrtc_extension_not_bitcall_password(
     assert body["extension_password"]
     assert body["extension_password"] != sip_password
     assert sip_password not in first.text
-    assert body["sip_uri"].startswith(f"sip:{body['extension']}@")
+    assert body["sip_uri"] == f"sip:{body['extension']}@127.0.0.1"
     assert body["ws_url"] == "ws://127.0.0.1:8088/ws"
 
     second = await client.post(
