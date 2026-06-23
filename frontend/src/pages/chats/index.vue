@@ -764,7 +764,7 @@ onUnmounted(() => {
           size="small"
           class="chats-page__right-tabs"
         >
-          <NTab name="deal" tab="Сделка" />
+          <NTab name="deal" tab="Сделки" />
           <NTab name="notifications" tab="Уведомления" />
         </NTabs>
         <ChatDealSidePanel
@@ -1426,5 +1426,4 @@ onUnmounted(() => {
 }
 
 </style>
-
 

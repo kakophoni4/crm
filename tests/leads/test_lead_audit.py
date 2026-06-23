@@ -116,10 +116,7 @@ async def test_manual_create_lead_writes_single_lead_create_audit(
     response = await client.post(
         f"/api/v1/contacts/{contact_id}/leads",
         headers={"Authorization": f"Bearer {token}"},
-        json={
-            "group_id": leads_api_org["group_a"],
-            "title": "Audit manual lead",
-        },
+        json={"group_id": leads_api_org["group_a"]},
     )
     assert response.status_code == 201, response.text
     lead_id = response.json()["id"]
@@ -128,7 +125,7 @@ async def test_manual_create_lead_writes_single_lead_create_audit(
 
 
 @pytest.mark.asyncio
-async def test_patch_title_only_uses_lead_update_not_status_update(
+async def test_patch_fields_only_uses_lead_update_not_status_update(
     client: AsyncClient,
     leads_api_org: dict[str, object],
     test_settings: Settings,
@@ -157,9 +154,9 @@ async def test_patch_title_only_uses_lead_update_not_status_update(
                 text(
                     """
                     INSERT INTO leads (
-                        contact_id, group_id, chat_id, status_id, title
+                        contact_id, group_id, chat_id, status_id
                     )
-                    SELECT :cid, :gid, c.id, :status_id, 'Patch audit title'
+                    SELECT :cid, :gid, c.id, :status_id
                     FROM chats c
                     WHERE c.contact_id = :cid AND c.assigned_group_id = :gid
                     LIMIT 1
@@ -178,9 +175,9 @@ async def test_patch_title_only_uses_lead_update_not_status_update(
     response = await client.patch(
         f"/api/v1/leads/{int(lead_id)}",
         headers={"Authorization": f"Bearer {token}"},
-        json={"title": "Renamed for audit"},
+        json={"custom_fields": {"order": {"service": "Audit service"}}},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["title"] == "Renamed for audit"
+    assert response.json()["custom_fields"]["order"]["service"] == "Audit service"
     assert _latest_lead_audit_action(db_url, lead_id=int(lead_id)) == "lead.update"
     assert _count_lead_audit(db_url, lead_id=int(lead_id), action="lead.status.update") == 0

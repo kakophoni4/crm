@@ -18,7 +18,6 @@ import {
   createContactLead,
   patchLead as patchLeadApi,
 } from '@/features/leads/api'
-import { currentLeadIsOpen } from '@/features/leads/mapping'
 import type { GroupOwnershipItem } from '@/entities/contact/types'
 import * as chatsApi from '@/features/chats/api'
 import {
@@ -41,6 +40,7 @@ export const useChatsStore = defineStore('chats', () => {
 
   const currentChatId = ref<number | null>(null)
   const currentChat = ref<ChatDetail | null>(null)
+  const selectedLeadId = ref<number | null>(null)
   const messages = ref<ChatMessage[]>([])
   const messagesLoading = ref(false)
   const loadingOlderMessages = ref(false)
@@ -209,16 +209,23 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
-  async function closeCurrentLead(statusId: number): Promise<void> {
-    const lead = currentChat.value?.current_lead
+  async function closeCurrentLead(statusId: number, leadId?: number): Promise<void> {
+    const lead =
+      leadId != null
+        ? { id: leadId, closed_at: null }
+        : currentChat.value?.current_lead
     if (!lead || lead.closed_at != null || closingLead.value) return
     closingLead.value = true
     try {
       await closeLeadApi(lead.id, statusId)
-      if (currentChatId.value != null) {
+      if (currentChatId.value != null && currentChat.value?.current_lead?.id === lead.id) {
         patchChatLead(currentChatId.value, null)
         await refreshChatLead(currentChatId.value)
         leadClosedBanner.value = true
+        messageScope.value = 'all'
+        await reloadMessages()
+      } else if (selectedLeadId.value === lead.id) {
+        selectedLeadId.value = null
         messageScope.value = 'all'
         await reloadMessages()
       }
@@ -288,9 +295,9 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
-  async function createManualLead(): Promise<void> {
+  async function createManualLead(): Promise<CurrentLeadSnippet | null> {
     const chat = currentChat.value
-    if (!chat || currentLeadIsOpen(chat.current_lead) || creatingLead.value) return
+    if (!chat || creatingLead.value) return null
     const groupId = chat.assigned_group_id
     if (groupId == null) {
       throw new Error('Назначьте боту группу, чтобы открыть сделку')
@@ -310,11 +317,13 @@ export const useChatsStore = defineStore('chats', () => {
       }
       if (currentChatId.value != null) {
         patchChatLead(currentChatId.value, snippet)
+        selectedLeadId.value = snippet.id
         await refreshChatLead(currentChatId.value)
       }
       leadClosedBanner.value = false
       messageScope.value = 'current_lead'
       await reloadMessages()
+      return snippet
     } finally {
       creatingLead.value = false
     }
@@ -498,7 +507,14 @@ export const useChatsStore = defineStore('chats', () => {
 
   function resolveMessagesLeadId(): number | undefined {
     if (messageScope.value !== 'current_lead') return undefined
-    return currentChat.value?.current_lead?.id
+    return selectedLeadId.value ?? currentChat.value?.current_lead?.id
+  }
+
+  async function selectLead(leadId: number | null): Promise<void> {
+    selectedLeadId.value = leadId
+    if (messageScope.value === 'current_lead') {
+      await reloadMessages()
+    }
   }
 
   async function reloadMessages(): Promise<void> {
@@ -545,6 +561,7 @@ export const useChatsStore = defineStore('chats', () => {
     const seq = ++openChatSeq
     leadClosedBanner.value = false
     currentChatId.value = chatId
+    selectedLeadId.value = null
     clearHighlight(chatId)
     messageScope.value = 'all'
 
@@ -603,6 +620,7 @@ export const useChatsStore = defineStore('chats', () => {
     openChatSeq += 1
     currentChatId.value = null
     currentChat.value = null
+    selectedLeadId.value = null
     messages.value = []
     messagesNextCursor.value = null
     messageScope.value = 'all'
@@ -877,6 +895,7 @@ export const useChatsStore = defineStore('chats', () => {
     highlightedChatIds,
     currentChatId,
     currentChat,
+    selectedLeadId,
     messages,
     messagesLoading,
     loadingOlderMessages,
@@ -884,6 +903,7 @@ export const useChatsStore = defineStore('chats', () => {
     messageScope,
     leadClosedBanner,
     setMessageScope,
+    selectLead,
     reloadMessages,
     typingByChatId,
     takeoverByChatId,

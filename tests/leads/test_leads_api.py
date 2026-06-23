@@ -94,20 +94,25 @@ async def test_create_manual_lead_and_close(
     create_resp = await client.post(
         f"/api/v1/contacts/{contact_id}/leads",
         headers={"Authorization": f"Bearer {token}"},
-        json={
-            "group_id": leads_api_org["group_a"],
-            "title": "Manual cycle",
-        },
+        json={"group_id": leads_api_org["group_a"]},
     )
     assert create_resp.status_code == 201, create_resp.text
-    assert create_resp.json()["title"] == "Manual cycle"
+    created_id = create_resp.json()["id"]
 
-    dup_resp = await client.post(
+    repeat_resp = await client.post(
         f"/api/v1/contacts/{contact_id}/leads",
         headers={"Authorization": f"Bearer {token}"},
         json={"group_id": leads_api_org["group_a"]},
     )
-    assert dup_resp.status_code == 409
+    assert repeat_resp.status_code == 201, repeat_resp.text
+    assert repeat_resp.json()["id"] != created_id
+
+    title_resp = await client.post(
+        f"/api/v1/contacts/{contact_id}/leads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"group_id": leads_api_org["group_a"], "title": "Manual cycle"},
+    )
+    assert title_resp.status_code == 422
 
 
 @pytest.mark.asyncio

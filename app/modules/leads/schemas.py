@@ -7,21 +7,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.shared.validators.jsonb_limits import (
     MAX_LEAD_COMMENT_LEN,
-    MAX_TITLE_LEN,
     validate_custom_fields_map,
 )
 
 
 class LeadCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     group_id: int
     bot_id: int | None = None
-    title: str | None = Field(default=None, max_length=MAX_TITLE_LEN)
     status_id: int | None = None
 
 
 class LeadPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status_id: int | None = None
-    title: str | None = Field(default=None, max_length=MAX_TITLE_LEN)
     comment: str | None = Field(default=None, max_length=MAX_LEAD_COMMENT_LEN)
     custom_fields: dict[str, Any] | None = None
 

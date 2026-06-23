@@ -296,6 +296,7 @@ async def chats_filters_org(
                 ),
             ).scalar_one()
             op_a_id = user_ids["filter.op.a@crm.local"]
+            lead_ids: dict[str, int] = {}
             for key, contact_id, group_id, bot_id, _unread, preview in chat_specs:
                 chat_ids[key] = connection.execute(
                     text(
@@ -341,6 +342,7 @@ async def chats_filters_org(
                         "title": preview,
                     },
                 ).scalar_one()
+                lead_ids[key] = int(lead_id)
                 connection.execute(
                     text("UPDATE chats SET current_lead_id = :lid WHERE id = :cid"),
                     {"lid": lead_id, "cid": chat_ids[key]},
@@ -383,6 +385,7 @@ async def chats_filters_org(
         "user_ids": user_ids,
         "bot_ids": bot_ids,
         "chat_ids": chat_ids,
+        "lead_ids": lead_ids,
         "emails": {
             "op_a": "filter.op.a@crm.local",
             "op_b": "filter.op.b@crm.local",
@@ -444,6 +447,38 @@ async def test_list_chats_filter_bot_id(
     assert chat_ids["a_unread"] in ids
     assert chat_ids["a_read"] in ids
     assert chat_ids["b_other"] not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_chats_search_by_lead_id(
+    client: AsyncClient,
+    db_ready: None,
+    chats_filters_org: dict[str, object],
+    filter_op_a_headers: dict[str, str],
+) -> None:
+    lead_ids = chats_filters_org["lead_ids"]
+    chat_ids = chats_filters_org["chat_ids"]
+    assert isinstance(lead_ids, dict)
+    assert isinstance(chat_ids, dict)
+
+    response = await client.get(
+        "/api/v1/chats",
+        headers=filter_op_a_headers,
+        params={"q": f"№{lead_ids['a_unread']}"},
+    )
+    assert response.status_code == 200, response.text
+    ids = {item["id"] for item in response.json()["items"]}
+    assert chat_ids["a_unread"] in ids
+    assert chat_ids["a_read"] not in ids
+
+    hidden_response = await client.get(
+        "/api/v1/chats",
+        headers=filter_op_a_headers,
+        params={"q": str(lead_ids["b_other"])},
+    )
+    assert hidden_response.status_code == 200, hidden_response.text
+    hidden_ids = {item["id"] for item in hidden_response.json()["items"]}
+    assert chat_ids["b_other"] not in hidden_ids
 
 
 @pytest.mark.asyncio

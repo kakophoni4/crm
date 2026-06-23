@@ -56,7 +56,7 @@ def _resolve_patch_audit_action(updates: dict[str, Any]) -> AuditAction | None:
     if "comment" in updates:
         return AuditAction.LEAD_UPDATE
     has_status = "status_id" in updates
-    has_fields = "title" in updates or "custom_fields" in updates
+    has_fields = "custom_fields" in updates
     if not has_status and not has_fields:
         return None
     if has_status and not has_fields:
@@ -324,10 +324,6 @@ class LeadApiService:
         if not self._can_create_in_group(actor, ctx, body.group_id):
             raise PermissionDenied(message="Cannot create lead in this group")
 
-        existing = await self._repo.get_open(contact_id, body.group_id)
-        if existing is not None:
-            raise Conflict(message="Open lead already exists for this contact and group")
-
         if body.status_id is not None:
             await ensure_status_kind(self._session, body.status_id, StatusKind.LEAD_PIPELINE)
             resolved_status_id: int = body.status_id
@@ -357,16 +353,7 @@ class LeadApiService:
                 status_id=resolved_status_id,
             )
         except IntegrityError as exc:
-            raise Conflict(message="Open lead already exists for this contact and group") from exc
-
-        if body.title:
-            updated = await self._repo.update_lead_fields(
-                lead.id,
-                title=body.title,
-                only_open=True,
-            )
-            if updated is not None:
-                lead = updated
+            raise Conflict(message="Could not create lead") from exc
 
         await self._repo.set_chat_current_lead(chat_id, lead.id)
 
@@ -412,7 +399,6 @@ class LeadApiService:
 
         updates = body.model_dump(exclude_unset=True)
         status_id = updates.pop("status_id", None)
-        title = updates.pop("title", None)
         comment_set = "comment" in updates
         comment = updates.pop("comment", None)
         custom_fields = updates.pop("custom_fields", None)
@@ -429,8 +415,6 @@ class LeadApiService:
         if custom_fields is not None:
             merged_fields.update(custom_fields)
         field_updates: dict[str, Any] = {}
-        if title is not None:
-            field_updates["title"] = title
         if comment_set:
             if isinstance(comment, str):
                 stripped = comment.strip()

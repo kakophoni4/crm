@@ -58,7 +58,7 @@ async function load(leadId: number, chatId: number): Promise<void> {
   <NModal
     :show="show"
     preset="card"
-    :title="lead ? `Сделка № ${orderFields.deal_number || lead.id}` : 'Сделка'"
+    :title="lead ? `Сделка № ${lead.id}` : 'Сделка'"
     style="width: min(720px, 96vw); max-height: 90vh"
     @update:show="emit('update:show', $event)"
   >

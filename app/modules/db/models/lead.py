@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Text, desc, func, text
+from sqlalchemy import BigInteger, ForeignKey, Index, Text, desc, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,13 +21,6 @@ if TYPE_CHECKING:
 class Lead(Base):
     __tablename__ = "leads"
     __table_args__ = (
-        Index(
-            "uq_leads_open_contact_group",
-            "contact_id",
-            "group_id",
-            unique=True,
-            postgresql_where=text("closed_at IS NULL"),
-        ),
         Index("idx_leads_contact_closed", "contact_id", "closed_at"),
         Index("idx_leads_group_created", "group_id", desc("created_at")),
     )

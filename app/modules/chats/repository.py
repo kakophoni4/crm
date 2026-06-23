@@ -226,13 +226,26 @@ class ChatRepository:
             stmt = stmt.where(card_owner_cga.owner_user_id == card_owner_user_id)
         if q:
             pattern = f"%{q}%"
-            stmt = stmt.where(
+            normalized_lead_id = q.strip().lstrip("#№").strip()
+            search_clauses = [
                 select(Contact.id)
                 .where(
                     Contact.id == Chat.contact_id,
                     Contact.full_name.ilike(pattern),
                 )
                 .exists(),
+            ]
+            if normalized_lead_id.isdigit():
+                search_clauses.append(
+                    select(Lead.id)
+                    .where(
+                        Lead.chat_id == Chat.id,
+                        Lead.id == int(normalized_lead_id),
+                    )
+                    .exists(),
+                )
+            stmt = stmt.where(
+                or_(*search_clauses),
             )
         if cursor is not None and sort == ChatListSort.LAST_MESSAGE_AT_DESC:
             try:

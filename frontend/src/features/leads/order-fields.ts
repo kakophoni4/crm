@@ -6,7 +6,6 @@ export interface LeadOrderFields {
 }
 
 export interface LeadDealCustomFields {
-  deal_number?: string | null
   order?: LeadOrderFields | null
   service_suggestions?: string[]
 }
@@ -24,8 +23,6 @@ export function readLeadDealFields(
       : null
   const suggestions = customFields.service_suggestions
   return {
-    deal_number:
-      typeof customFields.deal_number === 'string' ? customFields.deal_number : null,
     order,
     service_suggestions: Array.isArray(suggestions)
       ? suggestions.filter((v): v is string => typeof v === 'string')
@@ -38,11 +35,7 @@ export function buildLeadDealPatch(
   patch: LeadDealCustomFields,
 ): Record<string, unknown> {
   const base = { ...(current ?? {}) }
-  if (patch.deal_number !== undefined) {
-    const trimmed = patch.deal_number?.trim()
-    if (trimmed) base.deal_number = trimmed
-    else delete base.deal_number
-  }
+  delete base.deal_number
   if (patch.order !== undefined) {
     if (patch.order == null) {
       delete base.order
