@@ -143,6 +143,9 @@ class ChatListItemResponse(BaseModel):
     last_message_at: datetime | None
     last_message_preview: str | None
     unread_for_me: bool = False
+    pending_inbound_at: datetime | None = None
+    escalated_at: datetime | None = None
+    needs_reply: bool = False
 
 
 class ChatListResponse(BaseModel):

@@ -13,7 +13,12 @@ from app.modules.chats.scope import can_view_chat_async
 from app.modules.chats.serialization import to_message_response
 from app.modules.chats.timeutil import utc_now
 from app.modules.chats.workflow_status import on_outbound_reply_to_client
-from app.modules.contacts.ownership import get_owner, ownership_v2_enabled, record_owner_outbound
+from app.modules.contacts.ownership import (
+    clear_pending_inbound,
+    get_owner,
+    ownership_v2_enabled,
+    record_owner_outbound,
+)
 from app.modules.contacts.realtime_payloads import contact_group_context
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.chat_message import ChatMessage
@@ -240,6 +245,7 @@ class ChatMessagesService:
         card_owner_id = actor.id
         is_on_behalf = False
         if ownership_v2_enabled() and group_id is not None:
+            await clear_pending_inbound(self._session, chat.contact_id, group_id)
             owner_id = await get_owner(self._session, chat.contact_id, group_id)
             if owner_id is not None:
                 card_owner_id = owner_id

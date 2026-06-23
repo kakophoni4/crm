@@ -246,6 +246,26 @@ export function chatListItemStatusLabel(chat: ChatListItem): string | null {
   return legacy ?? null
 }
 
+const CHAT_WORKFLOW_FALLBACK_LABELS: Record<string, string> = {
+  new: 'Новый',
+  waiting: 'Ожидает ответа',
+  answered: 'Отвечен',
+  done: 'Завершён',
+}
+
+/** Optimistic list patch when realtime event has no full chat_label payload. */
+export function chatWorkflowLabelPatch(
+  code: 'waiting' | 'answered',
+): Pick<ChatListItem, 'chat_label'> {
+  return {
+    chat_label: {
+      status_id: null,
+      code,
+      label: CHAT_WORKFLOW_FALLBACK_LABELS[code] ?? code,
+    },
+  }
+}
+
 
 
 export function chatLabelStatusId(label: ChatLabelSnippet | null | undefined): number | null {

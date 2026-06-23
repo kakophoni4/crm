@@ -21,7 +21,7 @@ from app.modules.bots.chats_bridge import (
 from app.modules.bots.ownership_bridge import handle_inbound_ownership
 from app.modules.bots.repository import BotEventInboxRepository, BotRepository
 from app.modules.bots.routing import resolve_bot_routing
-from app.modules.chats.workflow_status import on_outbound_reply_to_client
+from app.modules.contacts.ownership import clear_pending_inbound, ownership_v2_enabled
 from app.modules.contacts.status_automation import apply_auto_contact_status
 from app.modules.db.models.bot import Bot
 from app.modules.db.models.contact import Contact
@@ -342,6 +342,14 @@ async def _handle_bot_outbound_message(
         owner_type=routing.owner_type,
         owner_id=routing.owner_id,
     )
+    if routing.lead_group_id is not None:
+        group_id = routing.lead_group_id
+    else:
+        group_id = await get_or_create_department_inbox_group(
+            session,
+            routing.department_id,
+            created_by=created_by,
+        )
     lead_id = await get_chat_current_lead_id(session, chat_id)
     result = await insert_outbound_message(
         session,
@@ -353,8 +361,8 @@ async def _handle_bot_outbound_message(
         attachments=list(message_data.get("attachments") or []),
         reply_to_external_id=message_data.get("reply_to_external_id"),
     )
-    if not result.duplicate:
-        await on_outbound_reply_to_client(session, chat_id)
+    if not result.duplicate and ownership_v2_enabled():
+        await clear_pending_inbound(session, contact_id, group_id)
     return result
 
 

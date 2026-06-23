@@ -42,11 +42,23 @@ export function applyOwnershipToChat(
 
     card_owner_full_name: ownerFullName,
 
-    pending_inbound_at: ownership.pending_inbound_at,
+    pending_inbound_at: ownership.pending_inbound_at ?? chat.pending_inbound_at ?? null,
 
-    escalated_at: ownership.escalated_at,
+    escalated_at: ownership.escalated_at ?? chat.escalated_at ?? null,
 
-    needs_response: Boolean(ownership.escalated_at || ownership.pending_inbound_at),
+    needs_response: Boolean(
+      ownership.escalated_at
+        || ownership.pending_inbound_at
+        || chat.escalated_at
+        || chat.pending_inbound_at,
+    ),
+
+    needs_reply: Boolean(
+      ownership.escalated_at
+        || ownership.pending_inbound_at
+        || chat.escalated_at
+        || chat.pending_inbound_at,
+    ),
 
   }
 

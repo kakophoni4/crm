@@ -7,6 +7,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.chats.workflow_status import (
+    on_inbound_from_client,
+    on_outbound_reply_to_client,
+)
 from app.modules.db.models.enums import BotOwnerType, ChatStatus, MessageDirection, MessageKind
 
 
@@ -387,6 +391,11 @@ async def insert_bot_message(
         ),
         {"preview": preview, "cid": chat_id},
     )
+
+    if direction == MessageDirection.INBOUND:
+        await on_inbound_from_client(session, chat_id)
+    else:
+        await on_outbound_reply_to_client(session, chat_id)
 
     return await _ingest_result_for_message(
         session,

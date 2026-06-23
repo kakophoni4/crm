@@ -25,6 +25,7 @@ import {
   enrichMessagesWithReplyAudit,
   ownershipKey,
 } from '@/features/chats/ownership-enrich'
+import { chatWorkflowLabelPatch } from '@/features/leads/mapping'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -467,7 +468,12 @@ export const useChatsStore = defineStore('chats', () => {
       await ensureGroupDirectory()
       const data = await chatsApi.listChats(buildListQuery(append))
       const items = enrichWithGroupNames(data?.items ?? [])
-      listItems.value = enrichListWithOwnership(append ? [...listItems.value, ...items] : items)
+      listItems.value = enrichListWithOwnership(append ? [...listItems.value, ...items] : items).map(
+        (chat) => ({
+          ...chat,
+          needs_response: chat.needs_response ?? Boolean(chat.needs_reply),
+        }),
+      )
       listNextCursor.value = data?.next_cursor ?? null
     } catch (err) {
       if (!append) {
@@ -708,12 +714,17 @@ export const useChatsStore = defineStore('chats', () => {
       }
       void chatsApi.markChatRead(chatId, { last_read_message_id: saved.id }).catch(() => undefined)
       clearNeedsResponseForChat(chatId)
+      const answeredPatch = chatWorkflowLabelPatch('answered')
       const listIdx = listItems.value.findIndex((c) => c.id === chatId)
       if (listIdx >= 0) {
         listItems.value[listIdx] = {
           ...listItems.value[listIdx],
           unread_for_me: false,
+          ...answeredPatch,
         }
+      }
+      if (currentChatId.value === chatId && currentChat.value) {
+        currentChat.value = { ...currentChat.value, ...answeredPatch }
       }
     } catch (err) {
       const idx = messages.value.findIndex((m) => m._clientKey === clientKey)
@@ -727,18 +738,67 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
+  function patchChatResponseState(
+    chatId: number,
+    patch: Partial<ChatListItem>,
+  ): void {
+    bumpChatInList(chatId, patch, true)
+
+    if (currentChatId.value === chatId && currentChat.value) {
+      currentChat.value = { ...currentChat.value, ...patch }
+    }
+
+    const chat = listItems.value.find((row) => row.id === chatId)
+    if (chat?.assigned_group_id == null) return
+
+    const key = ownershipKey(chat.contact_id, chat.assigned_group_id)
+    const prev = ownershipByKey.value[key]
+    ownershipByKey.value = {
+      ...ownershipByKey.value,
+      [key]: {
+        group_id: chat.assigned_group_id,
+        group_name: prev?.group_name ?? lookupGroupName(chat.assigned_group_id) ?? '',
+        owner_user_id: prev?.owner_user_id ?? chat.card_owner_user_id ?? null,
+        owner_full_name: prev?.owner_full_name ?? chat.card_owner_full_name ?? null,
+        pending_inbound_at:
+          patch.pending_inbound_at !== undefined
+            ? patch.pending_inbound_at
+            : (prev?.pending_inbound_at ?? chat.pending_inbound_at ?? null),
+        escalated_at:
+          patch.escalated_at !== undefined
+            ? patch.escalated_at
+            : (prev?.escalated_at ?? chat.escalated_at ?? null),
+      },
+    }
+  }
+
   async function handleInboundMessage(payload: Record<string, unknown>): Promise<void> {
     const chatId = Number(payload.chat_id)
-    const messageId = Number(payload.message_id)
     if (!Number.isFinite(chatId)) return
 
-    bumpChatInList(chatId, {
+    const now = new Date().toISOString()
+    const preview =
+      typeof payload.text_preview === 'string' ? payload.text_preview.slice(0, 200) : undefined
+
+    patchChatResponseState(chatId, {
       unread_for_me: currentChatId.value !== chatId,
-      last_message_at: new Date().toISOString(),
+      last_message_at: now,
+      ...(preview ? { last_message_preview: preview } : {}),
+      ...chatWorkflowLabelPatch('waiting'),
+      pending_inbound_at: now,
+      needs_response: true,
+      needs_reply: true,
     })
 
+    const nextNeedsResponse = new Set(needsResponseChatIds.value)
+    nextNeedsResponse.add(chatId)
+    needsResponseChatIds.value = nextNeedsResponse
+
+    const messageId = Number(payload.message_id)
     if (currentChatId.value === chatId) {
-      await refreshOpenChatMessages(chatId, messageId)
+      if (Number.isFinite(messageId)) {
+        await refreshOpenChatMessages(chatId, messageId)
+      }
     } else {
       void fetchList()
     }
@@ -749,11 +809,30 @@ export const useChatsStore = defineStore('chats', () => {
     const messageId = Number(payload.message_id)
     if (!Number.isFinite(chatId)) return
 
-    bumpChatInList(chatId, {
-      unread_for_me: false,
-      last_message_at: new Date().toISOString(),
-    }, false)
+    const now = new Date().toISOString()
+    const preview =
+      typeof payload.text_preview === 'string' ? payload.text_preview.slice(0, 200) : undefined
+
+    bumpChatInList(
+      chatId,
+      {
+        unread_for_me: false,
+        last_message_at: now,
+        ...(preview ? { last_message_preview: preview } : {}),
+        ...chatWorkflowLabelPatch('answered'),
+      },
+      false,
+    )
     clearNeedsResponseForChat(chatId)
+
+    if (currentChatId.value === chatId && currentChat.value) {
+      currentChat.value = {
+        ...currentChat.value,
+        ...chatWorkflowLabelPatch('answered'),
+        last_message_at: now,
+        ...(preview ? { last_message_preview: preview } : {}),
+      }
+    }
 
     if (currentChatId.value === chatId && Number.isFinite(messageId)) {
       await refreshOpenChatMessages(chatId, messageId)

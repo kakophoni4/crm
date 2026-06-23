@@ -98,7 +98,10 @@ class ChatRepository:
         sort: ChatListSort,
         cursor: str | None,
         limit: int,
-    ) -> tuple[list[tuple[Chat, int | None, str | None]], str | None]:
+    ) -> tuple[
+        list[tuple[Chat, int | None, str | None, datetime | None, datetime | None]],
+        str | None,
+    ]:
         from app.modules.chats.cursor import encode_chat_cursor
 
         latest_msg = latest_message_subquery()
@@ -124,6 +127,8 @@ class ChatRepository:
                 Chat,
                 card_owner_cga.owner_user_id,
                 card_owner_user.full_name,
+                card_owner_cga.pending_inbound_at,
+                card_owner_cga.escalated_to_group_at,
             )
             .outerjoin(
                 inbox_group,
@@ -278,7 +283,7 @@ class ChatRepository:
             )
 
         result = await self._session.execute(stmt)
-        rows = [(row[0], row[1], row[2]) for row in result.all()]
+        rows = [(row[0], row[1], row[2], row[3], row[4]) for row in result.all()]
         next_cursor: str | None = None
         if len(rows) > limit:
             rows = rows[:limit]

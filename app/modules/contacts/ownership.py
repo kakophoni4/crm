@@ -211,6 +211,19 @@ async def set_pending_inbound(
     await session.flush()
 
 
+async def clear_pending_inbound(
+    session: AsyncSession,
+    contact_id: int,
+    group_id: int,
+) -> None:
+    assignment = await get_assignment(session, contact_id, group_id)
+    if assignment is None:
+        return
+    assignment.pending_inbound_at = None
+    assignment.escalated_to_group_at = None
+    await session.flush()
+
+
 async def record_owner_outbound(
     session: AsyncSession,
     contact_id: int,

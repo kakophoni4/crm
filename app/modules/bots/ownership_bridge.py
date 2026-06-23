@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.chats.workflow_status import on_inbound_from_client
 from app.modules.contacts.escalation import get_group_settings
 from app.modules.contacts.ownership import (
     ensure_assignment,
@@ -25,7 +24,6 @@ async def handle_inbound_ownership(
 
     result = await ensure_assignment(session, contact_id, group_id)
     await set_pending_inbound(session, contact_id, group_id)
-    await on_inbound_from_client(session, chat_id)
 
     owner_id = result.owner_user_id
     if owner_id is None:

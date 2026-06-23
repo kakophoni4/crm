@@ -120,7 +120,7 @@ class ChatService:
             actor.id,
         )
         items = []
-        for chat, owner_user_id, owner_full_name in rows:
+        for chat, owner_user_id, owner_full_name, pending_inbound_at, escalated_at in rows:
             lead_in_scope = chat.current_lead is None or await actor_can_access_lead(
                 self._session,
                 ctx,
@@ -131,6 +131,9 @@ class ChatService:
                 unread_for_me=unread_map.get(chat.id, False),
                 lead_in_scope=lead_in_scope,
             )
+            item.pending_inbound_at = pending_inbound_at
+            item.escalated_at = escalated_at
+            item.needs_reply = bool(pending_inbound_at or escalated_at)
             owner_group_id = chat.assigned_group_id
             if owner_group_id is None and chat.assigned_department_id is not None:
                 owner_group_id = await get_department_inbox_group_id(
