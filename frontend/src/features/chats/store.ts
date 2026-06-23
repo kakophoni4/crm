@@ -407,6 +407,8 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   function clearNeedsResponseForChat(chatId: number): void {
+    clearHighlight(chatId)
+
     const nextNeedsResponse = new Set(needsResponseChatIds.value)
     nextNeedsResponse.delete(chatId)
     needsResponseChatIds.value = nextNeedsResponse
