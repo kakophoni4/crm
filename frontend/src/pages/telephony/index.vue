@@ -330,8 +330,17 @@ function toggleMute(): void {
   }
 }
 
+function bindRemoteAudio(): void {
+  if (!remoteAudio.value) return
+  const stream = softphone.getRemoteMediaStream()
+  if (stream && remoteAudio.value.srcObject !== stream) {
+    remoteAudio.value.srcObject = stream
+  }
+}
+
 function enableRemoteAudio(): void {
   if (!remoteAudio.value) return
+  bindRemoteAudio()
   remoteAudio.value.muted = false
   remoteAudio.value.volume = 1
   void remoteAudio.value.play().catch(() => {
@@ -372,9 +381,7 @@ onBeforeUnmount(() => {
 watch(status, (value) => {
   if (value === 'in-call') {
     activeCallAnswered.value = true
-    void remoteAudio.value?.play().catch(() => {
-      message.warning('Нажмите на страницу, чтобы браузер включил звук')
-    })
+    enableRemoteAudio()
     void updateActiveCall('answered')
   }
   if (value === 'ended') {

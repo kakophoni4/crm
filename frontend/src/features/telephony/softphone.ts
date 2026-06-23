@@ -77,6 +77,14 @@ export class CrmSoftphone {
     this.user?.unmute()
   }
 
+  getRemoteMediaStream(): MediaStream | undefined {
+    return this.user?.remoteMediaStream
+  }
+
+  getLocalMediaStream(): MediaStream | undefined {
+    return this.user?.localMediaStream
+  }
+
   async disconnect(): Promise<void> {
     if (!this.user) {
       return
