@@ -186,7 +186,7 @@ watch(
 <template>
   <div class="message-list">
     <div ref="viewportRef" class="message-list__viewport" @scroll="onViewportScroll">
-      <NSpin :show="loading">
+      <NSpin :show="loading && !sorted.length">
         <div v-if="loadingOlder" class="message-list__older-hint">Загрузка...</div>
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />

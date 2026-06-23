@@ -122,6 +122,12 @@ async function loadLeads(): Promise<void> {
     resetOrderForm()
     return
   }
+  if (chat.assigned_group_id == null) {
+    leadItems.value = []
+    leadDetail.value = null
+    resetOrderForm()
+    return
+  }
   loadingLeads.value = true
   try {
     const data = await listContactLeads(chat.contact_id, {

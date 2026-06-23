@@ -556,6 +556,7 @@ export const useChatsStore = defineStore('chats', () => {
     if (messageScope.value === 'current_lead' && leadId == null) {
       messages.value = []
       messagesNextCursor.value = null
+      finishMessagesLoad(seq)
       return
     }
     messagesLoading.value = true
@@ -565,13 +566,17 @@ export const useChatsStore = defineStore('chats', () => {
         lead_id: leadId,
       })
       if (!isActiveChat(chatId, seq)) return
+
+      messages.value = msgs.items
+      messagesNextCursor.value = msgs.next_cursor
+      finishMessagesLoad(seq)
+
       messages.value = await enrichMessagesWithReplyAudit(
         currentChat.value.contact_id,
         currentChat.value.assigned_group_id,
         msgs.items,
       )
       if (!isActiveChat(chatId, seq)) return
-      messagesNextCursor.value = msgs.next_cursor
     } finally {
       finishMessagesLoad(seq)
     }
@@ -622,13 +627,16 @@ export const useChatsStore = defineStore('chats', () => {
       })
       if (!isActiveChat(chatId, seq)) return
 
+      messages.value = msgs.items
+      messagesNextCursor.value = msgs.next_cursor
+      finishMessagesLoad(seq)
+
       messages.value = await enrichMessagesWithReplyAudit(
         detail.contact_id,
         detail.assigned_group_id,
         msgs.items,
       )
       if (!isActiveChat(chatId, seq)) return
-      messagesNextCursor.value = msgs.next_cursor
 
       void chatsApi.markChatRead(chatId).catch(() => undefined)
       const idx = listItems.value.findIndex((c) => c.id === chatId)
@@ -908,8 +916,6 @@ export const useChatsStore = defineStore('chats', () => {
       }
     } catch {
       /* list refresh is best-effort */
-    } finally {
-      finishMessagesLoad(seq)
     }
   }
 
