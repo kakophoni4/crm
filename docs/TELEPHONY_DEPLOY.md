@@ -7,6 +7,9 @@ published on localhost-like host ports:
 - Frontend: `127.0.0.1:19090`
 - Caddyfile: `/opt/matrix/data/caddy/Caddyfile`
 
+The actual Docker port bindings use `172.17.0.1` because Caddy runs in a
+container and reaches host services through `host.docker.internal`.
+
 ## DNS
 
 Create an `A` record:
@@ -27,7 +30,7 @@ PBX_DOMAIN=pbx.bttsrvvrs.org bash scripts/deploy/vps/install-telephony-caddy.sh
 ```
 
 Open firewall/security-group UDP ports `12000-12100` for RTP media. Port `18088`
-must stay local-only; Caddy exposes it as `wss://pbx.bttsrvvrs.org/ws`.
+must stay docker-gateway-only; Caddy exposes it as `wss://pbx.bttsrvvrs.org/ws`.
 
 ## CRM Setting
 
