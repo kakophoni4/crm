@@ -69,29 +69,19 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
 
             if event_type == "message.received":
                 result = await _handle_message_received(session, bot, envelope, inner)
-                if not result.duplicate:
-                    for idx in result.attachment_indices:
-                        await download_attachment(
-                            "download_attachment",
-                            {
-                                "message_id": result.message_id,
-                                "attachment_index": idx,
-                            },
-                        )
+                is_bot_outbound = is_outbound_bot_message(inner.get("message") or {})
                 event_name = (
-                    "chat.message.outbound.requested"
-                    if is_outbound_bot_message(inner.get("message") or {})
-                    else "chat.message.inbound"
+                    "chat.message.outbound.requested" if is_bot_outbound else "chat.message.inbound"
                 )
-                await publish(
-                    event_name,
-                    {
-                        "chat_id": result.chat_id,
-                        "message_id": result.message_id,
-                        "contact_id": result.contact_id,
-                        "bot_code": bot.code,
-                    },
+                attachment_indices = (
+                    list(result.attachment_indices) if not result.duplicate else []
                 )
+                publish_payload = {
+                    "chat_id": result.chat_id,
+                    "message_id": result.message_id,
+                    "contact_id": result.contact_id,
+                    "bot_code": bot.code,
+                }
             elif event_type == "call.received":
                 result = await _handle_call_received(session, bot, envelope, inner)
                 await publish(
@@ -119,6 +109,17 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
 
             await inbox_repo.mark_done(row)
             await session.commit()
+
+            if event_type == "message.received":
+                for idx in attachment_indices:
+                    await download_attachment(
+                        "download_attachment",
+                        {
+                            "message_id": publish_payload["message_id"],
+                            "attachment_index": idx,
+                        },
+                    )
+                await publish(event_name, publish_payload)
         except Exception as exc:
             await session.rollback()
             async with session_factory() as fail_session:

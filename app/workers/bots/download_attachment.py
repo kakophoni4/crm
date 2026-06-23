@@ -35,6 +35,28 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
         )
         fetched = row.one_or_none()
         if fetched is None:
+            if attempt + 1 < MAX_ATTEMPTS:
+                await enqueue(
+                    "download_attachment",
+                    {
+                        "message_id": message_id,
+                        "attachment_index": attachment_index,
+                        "attempt": attempt + 1,
+                    },
+                    delay_seconds=2,
+                )
+                logger.warning(
+                    "download_attachment_message_not_found",
+                    message_id=message_id,
+                    index=attachment_index,
+                    attempt=attempt + 1,
+                )
+            else:
+                logger.error(
+                    "download_attachment_message_missing",
+                    message_id=message_id,
+                    index=attachment_index,
+                )
             return
         attachments, chat_id = fetched[0], int(fetched[1])
         if not attachments or attachment_index >= len(attachments):
