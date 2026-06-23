@@ -84,6 +84,8 @@ export interface ChatMessage {
   text: string | null
   attachments: Record<string, unknown>[]
   sender_user_id: number | null
+  external_message_id?: string | null
+  external_event_id?: string | null
   reply_to_message_id: number | null
   created_at: string
   idempotency_key?: string | null
@@ -109,6 +111,7 @@ export interface SendMessageBody {
   text?: string
   attachments?: { file_id?: number; name?: string; mime?: string; size?: number; url?: string }[]
   idempotency_key?: string
+  reply_to_message_id?: number | null
 }
 
 export interface TakeoverState {

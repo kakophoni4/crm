@@ -161,6 +161,8 @@ def to_message_response(
         text=message.text,
         attachments=_sanitize_attachments(message),
         sender_user_id=message.sender_user_id,
+        external_message_id=message.external_message_id,
+        external_event_id=message.external_event_id,
         reply_to_message_id=message.reply_to_message_id,
         created_at=message.created_at,
         idempotency_key=message.idempotency_key,

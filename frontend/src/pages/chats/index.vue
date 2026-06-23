@@ -44,7 +44,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 
 import type { BotListItem } from '@/entities/bot/types'
-import type { ChatListItem, ChatListTab } from '@/entities/chat/types'
+import type { ChatListItem, ChatListTab, ChatMessage } from '@/entities/chat/types'
 import { CHAT_SORT_OPTIONS } from '@/entities/chat/types'
 import ContactOwnerBadge from '@/entities/contact/ContactOwnerBadge.vue'
 import { listBots } from '@/features/bots/api'
@@ -100,6 +100,7 @@ const narrowPane = ref<'list' | 'chat'>('list')
 
 const message = useMessage()
 const chatListSearchRef = ref<InstanceType<typeof NInput> | null>(null)
+const replyToMessage = ref<ChatMessage | null>(null)
 
 const transferCardVisible = ref(false)
 const transferInboxOpen = ref(false)
@@ -257,11 +258,16 @@ function chatMetaLine(chat: ChatListItem): string {
 
 
 
-async function onSend(text: string, attachments: { file_id: number }[]): Promise<void> {
+async function onSend(
+  text: string,
+  attachments: { file_id: number }[],
+  replyToMessageId: number | null,
+): Promise<void> {
 
   try {
 
-    await store.sendMessage(text, attachments)
+    await store.sendMessage(text, attachments, replyToMessageId)
+    replyToMessage.value = null
 
   } catch (err) {
 
@@ -271,6 +277,10 @@ async function onSend(text: string, attachments: { file_id: number }[]): Promise
 
   }
 
+}
+
+function onReplyToMessage(message: ChatMessage): void {
+  replyToMessage.value = message
 }
 
 
@@ -375,6 +385,7 @@ watch(isNarrow, (narrow) => {
 watch(
   () => store.currentChatId,
   (chatId) => {
+    replyToMessage.value = null
     if (chatId != null) {
       if (isNarrow.value) narrowPane.value = 'chat'
       rightPaneTab.value = 'deal'
@@ -731,6 +742,7 @@ onUnmounted(() => {
             :contact-id="store.currentChat.contact_id"
             :contact-name="store.currentChat.contact_name"
             @load-older="store.loadOlderMessages()"
+            @reply="onReplyToMessage"
           />
 
 
@@ -739,6 +751,8 @@ onUnmounted(() => {
             :disabled="store.isInputBlocked"
             :department-id="store.currentChat.assigned_department_id"
             :group-id="store.currentChat.assigned_group_id ?? store.currentChat.card_owner_group_id"
+            :reply-to="replyToMessage"
+            @cancel-reply="replyToMessage = null"
             @send="onSend"
           />
 
@@ -1426,4 +1440,3 @@ onUnmounted(() => {
 }
 
 </style>
-

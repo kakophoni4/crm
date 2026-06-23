@@ -12,6 +12,7 @@ import {
   uploadFile,
   type QuickReplyTemplate,
 } from '@/features/chats/api'
+import type { ChatMessage } from '@/entities/chat/types'
 import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { isMessageSendShortcut } from '@/widgets/chat/message-input-hotkeys'
 import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
@@ -21,10 +22,16 @@ const props = defineProps<{
   placeholder?: string
   departmentId?: number | null
   groupId?: number | null
+  replyTo?: ChatMessage | null
 }>()
 
 const emit = defineEmits<{
-  send: [text: string, attachments: { file_id: number; name?: string; mime?: string }[]]
+  send: [
+    text: string,
+    attachments: { file_id: number; name?: string; mime?: string }[],
+    replyToMessageId: number | null,
+  ]
+  cancelReply: []
 }>()
 
 const message = useMessage()
@@ -42,6 +49,15 @@ const newQuickReplyBody = ref('')
 let quickReplySearchTimer: number | null = null
 
 const quickReplyQuery = computed(() => text.value.trim())
+
+const replyPreview = computed(() => {
+  const msg = props.replyTo
+  if (!msg) return ''
+  const body = msg.text?.trim()
+  if (body) return body
+  if (msg.attachments?.length) return 'Вложение'
+  return `Сообщение №${msg.id}`
+})
 
 function validateFileSize(file: File): boolean {
   const limit = maxUploadBytesFor(file)
@@ -89,9 +105,11 @@ async function submit(): Promise<void> {
         name: f.name,
         mime: f.mime,
       })),
+      props.replyTo?.id ?? null,
     )
     text.value = ''
     pendingFiles.value = []
+    emit('cancelReply')
   } finally {
     sending.value = false
   }
@@ -268,6 +286,21 @@ watch(
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
+    <div v-if="replyTo" class="message-input__reply">
+      <div class="message-input__reply-body">
+        <strong>Ответ на сообщение</strong>
+        <span>{{ replyPreview }}</span>
+      </div>
+      <button
+        type="button"
+        class="message-input__reply-cancel"
+        aria-label="Отменить ответ"
+        @click="emit('cancelReply')"
+      >
+        <X :size="14" />
+      </button>
+    </div>
+
     <div v-if="pendingFiles.length" class="message-input__files">
       <span v-for="f in pendingFiles" :key="f.file_id" class="message-input__file-tag">
         {{ f.name }}
@@ -401,6 +434,52 @@ watch(
 .message-input--disabled {
   opacity: 0.65;
   pointer-events: none;
+}
+
+.message-input__reply {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border-left: 3px solid var(--app-accent, #2080f0);
+  border-radius: 8px;
+  background: var(--app-surface-elevated, #eee);
+}
+
+.message-input__reply-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8rem;
+}
+
+.message-input__reply-body span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--app-text-muted);
+}
+
+.message-input__reply-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.message-input__reply-cancel:hover {
+  background: rgba(127, 127, 127, 0.16);
 }
 
 .message-input__files {

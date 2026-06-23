@@ -2,6 +2,7 @@
 import { NEmpty, NSpin, NTag } from 'naive-ui'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
+import { Reply } from 'lucide-vue-next'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import type { ChatMessage } from '@/entities/chat/types'
@@ -21,6 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   loadOlder: []
+  reply: [message: ChatMessage]
 }>()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -42,8 +44,51 @@ function formatTime(iso: string): string {
   }
 }
 
+function formatFullDateTime(iso: string): string {
+  try {
+    return format(new Date(iso), 'dd.MM.yyyy HH:mm', { locale: ru })
+  } catch {
+    return iso
+  }
+}
+
+function formatDateSeparator(iso: string): string {
+  try {
+    return format(new Date(iso), 'd MMMM yyyy', { locale: ru })
+  } catch {
+    return ''
+  }
+}
+
+function isSameDay(a: string, b: string): boolean {
+  try {
+    return format(new Date(a), 'yyyy-MM-dd') === format(new Date(b), 'yyyy-MM-dd')
+  } catch {
+    return false
+  }
+}
+
+function shouldShowDateSeparator(index: number): boolean {
+  const current = sorted.value[index]
+  if (!current) return false
+  const prev = sorted.value[index - 1]
+  return !prev || !isSameDay(prev.created_at, current.created_at)
+}
+
 function onBehalfLabel(msg: ChatMessage): string | null {
   return formatOnBehalfLabel(msg)
+}
+
+function replyPreview(msg: ChatMessage): string {
+  const text = msg.text?.trim()
+  if (text) return text
+  if (msg.attachments?.length) return 'Вложение'
+  return `Сообщение №${msg.id}`
+}
+
+function quotedMessage(msg: ChatMessage): ChatMessage | null {
+  if (msg.reply_to_message_id == null) return null
+  return sorted.value.find((item) => item.id === msg.reply_to_message_id) ?? null
 }
 
 function shouldShowMessageText(msg: ChatMessage): boolean {
@@ -142,59 +187,76 @@ watch(
   <div class="message-list">
     <div ref="viewportRef" class="message-list__viewport" @scroll="onViewportScroll">
       <NSpin :show="loading">
-        <div v-if="loadingOlder" class="message-list__older-hint">Загрузка…</div>
+        <div v-if="loadingOlder" class="message-list__older-hint">Загрузка...</div>
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />
         </div>
         <div class="message-list__items">
-          <div
-            v-for="msg in sorted"
-            :key="msg._clientKey ?? msg.id"
-            class="message-list__row"
-            :class="{
-              'message-list__row--out': msg.direction === 'outbound',
-              'message-list__row--failed': msg._failed,
-            }"
-          >
-            <ContactAvatar
-              v-if="msg.direction === 'inbound' && contactId != null && contactName"
-              class="message-list__avatar"
-              :contact-id="contactId"
-              :full-name="contactName"
-              :size="28"
-            />
-            <div
-              class="message-list__bubble"
-              :class="
-                msg.direction === 'outbound'
-                  ? 'message-list__bubble--out'
-                  : 'message-list__bubble--in'
-              "
-            >
-              <NTag
-                v-if="msg.direction === 'outbound' && onBehalfLabel(msg)"
-                size="tiny"
-                type="info"
-                :bordered="false"
-                class="message-list__on-behalf"
-              >
-                {{ onBehalfLabel(msg) }}
-              </NTag>
-              <p v-if="shouldShowMessageText(msg)" class="message-list__text">{{ msg.text }}</p>
-              <div v-if="msg.attachments?.length" class="message-list__attachments">
-                <MessageAttachment
-                  v-for="(att, i) in msg.attachments"
-                  :key="i"
-                  :att="att"
-                />
-              </div>
-              <footer class="message-list__meta">
-                <span>{{ formatTime(msg.created_at) }}</span>
-                <NTag v-if="msg._optimistic" size="tiny" :bordered="false">отправка…</NTag>
-                <NTag v-if="msg._failed" size="tiny" type="error" :bordered="false">ошибка</NTag>
-              </footer>
+          <template v-for="(msg, index) in sorted" :key="msg._clientKey ?? msg.id">
+            <div v-if="shouldShowDateSeparator(index)" class="message-list__date-separator">
+              {{ formatDateSeparator(msg.created_at) }}
             </div>
-          </div>
+            <div
+              class="message-list__row"
+              :class="{
+                'message-list__row--out': msg.direction === 'outbound',
+                'message-list__row--failed': msg._failed,
+              }"
+            >
+              <ContactAvatar
+                v-if="msg.direction === 'inbound' && contactId != null && contactName"
+                class="message-list__avatar"
+                :contact-id="contactId"
+                :full-name="contactName"
+                :size="28"
+              />
+              <div
+                class="message-list__bubble"
+                :class="
+                  msg.direction === 'outbound'
+                    ? 'message-list__bubble--out'
+                    : 'message-list__bubble--in'
+                "
+              >
+                <NTag
+                  v-if="msg.direction === 'outbound' && onBehalfLabel(msg)"
+                  size="tiny"
+                  type="info"
+                  :bordered="false"
+                  class="message-list__on-behalf"
+                >
+                  {{ onBehalfLabel(msg) }}
+                </NTag>
+                <div v-if="quotedMessage(msg)" class="message-list__quote">
+                  {{ replyPreview(quotedMessage(msg)!) }}
+                </div>
+                <p v-if="shouldShowMessageText(msg)" class="message-list__text">{{ msg.text }}</p>
+                <div v-if="msg.attachments?.length" class="message-list__attachments">
+                  <MessageAttachment
+                    v-for="(att, i) in msg.attachments"
+                    :key="i"
+                    :att="att"
+                  />
+                </div>
+                <footer class="message-list__meta">
+                  <span :title="formatFullDateTime(msg.created_at)">
+                    {{ formatTime(msg.created_at) }}
+                  </span>
+                  <NTag v-if="msg._optimistic" size="tiny" :bordered="false">отправка...</NTag>
+                  <NTag v-if="msg._failed" size="tiny" type="error" :bordered="false">ошибка</NTag>
+                </footer>
+              </div>
+              <button
+                type="button"
+                class="message-list__reply"
+                title="Ответить"
+                aria-label="Ответить"
+                @click="emit('reply', msg)"
+              >
+                <Reply :size="14" />
+              </button>
+            </div>
+          </template>
         </div>
       </NSpin>
     </div>
@@ -241,6 +303,16 @@ watch(
   color: var(--app-text-muted);
 }
 
+.message-list__date-separator {
+  align-self: center;
+  margin: 10px 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--app-surface-elevated, #f4f4f5);
+  color: var(--app-text-muted);
+  font-size: 0.75rem;
+}
+
 .message-list__row {
   display: flex;
   flex-shrink: 0;
@@ -256,6 +328,10 @@ watch(
 
 .message-list__row--out .message-list__avatar {
   display: none;
+}
+
+.message-list__row--out .message-list__reply {
+  order: -1;
 }
 
 .message-list__avatar {
@@ -293,6 +369,21 @@ watch(
   height: auto;
 }
 
+.message-list__quote {
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-left: 3px solid var(--app-accent, #2080f0);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-accent, #2080f0) 10%, transparent);
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-list__text {
   margin: 0;
   white-space: pre-wrap;
@@ -307,6 +398,32 @@ watch(
   margin-top: 4px;
   font-size: 0.75rem;
   opacity: 0.7;
+}
+
+.message-list__reply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface);
+  color: var(--app-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.message-list__row:hover .message-list__reply,
+.message-list__reply:focus-visible {
+  opacity: 1;
+}
+
+.message-list__reply:hover {
+  color: var(--app-accent, #2080f0);
+  border-color: var(--app-accent, #2080f0);
 }
 
 .message-list__attachments {

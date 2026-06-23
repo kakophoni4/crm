@@ -663,6 +663,7 @@ export const useChatsStore = defineStore('chats', () => {
   async function sendMessage(
     text: string,
     attachments: { file_id: number; name?: string; mime?: string }[] = [],
+    replyToMessageId: number | null = null,
   ): Promise<void> {
     if (!currentChatId.value || isInputBlocked.value) return
 
@@ -676,7 +677,7 @@ export const useChatsStore = defineStore('chats', () => {
       text,
       attachments: attachments.map((a) => ({ file_id: a.file_id, status: 'queued' })),
       sender_user_id: auth.user?.id ?? null,
-      reply_to_message_id: null,
+      reply_to_message_id: replyToMessageId,
       created_at: new Date().toISOString(),
       idempotency_key: clientKey,
       _optimistic: true,
@@ -697,6 +698,7 @@ export const useChatsStore = defineStore('chats', () => {
           mime: a.mime,
         })),
         idempotency_key: clientKey,
+        reply_to_message_id: replyToMessageId,
       })
       const idx = messages.value.findIndex((m) => m._clientKey === clientKey)
       if (idx >= 0) {
