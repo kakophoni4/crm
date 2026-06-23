@@ -16,7 +16,7 @@ compose up -d
 
 echo "Waiting for API health..."
 for i in $(seq 1 90); do
-  if curl -sf http://127.0.0.1:19001/healthz >/dev/null 2>&1; then
+  if curl -sf "http://${VPS_API_HOST}:${VPS_API_PORT}/healthz" >/dev/null 2>&1; then
     echo "API healthy (${i}s)."
     break
   fi

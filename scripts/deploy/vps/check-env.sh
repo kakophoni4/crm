@@ -18,7 +18,7 @@ if grep -qE '^VITE_API_BASE_URL=http://localhost' "$ENV_FILE"; then
 fi
 
 if grep -qE '^CORS_ALLOWED_ORIGINS=http://localhost' "$ENV_FILE"; then
-  echo "ERROR: CORS_ALLOWED_ORIGINS is localhost-only — API rejects https://app.crmkanasha.org." >&2
+  echo "ERROR: CORS_ALLOWED_ORIGINS is localhost-only — API rejects https://chat.bttsrvvrs.org." >&2
   fail=1
 fi
 

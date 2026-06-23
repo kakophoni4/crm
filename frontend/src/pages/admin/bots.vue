@@ -386,7 +386,7 @@ onMounted(() => {
         </NFormItem>
         <template v-if="isWhatsAppForm">
           <p class="admin-page__wa-hint">
-            Вставьте данные из консоли GREEN API. Секреты CRM и webhook настроятся автоматически.
+            Вставьте данные из консоли GREEN API. Секреты ХУИтРИКС и webhook настроятся автоматически.
           </p>
           <NFormItem label="idInstance">
             <NInput

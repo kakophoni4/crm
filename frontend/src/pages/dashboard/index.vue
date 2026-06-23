@@ -124,7 +124,7 @@ onMounted(async () => {
   try {
     summary.value = await getCrmDashboardSummary()
   } catch {
-    error.value = 'Не удалось загрузить сводку CRM'
+    error.value = 'Не удалось загрузить сводку ХУИтРИКС'
   } finally {
     loading.value = false
   }

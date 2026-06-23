@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, Volume2, Wifi } from 'lucide-vue-next'
-import { NButton, NIcon, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, UserPlus, Volume2, Wifi } from 'lucide-vue-next'
+import { NButton, NForm, NFormItem, NIcon, NInput, NModal, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { createContact } from '@/features/contacts/api'
 import {
   createTelephonyCall,
   getTelephonyWebrtcConfig,
@@ -37,6 +38,15 @@ const activeElapsedSeconds = ref(0)
 const activeCallAnswered = ref(false)
 const muted = ref(false)
 const audioPrimed = ref(false)
+const contactModalVisible = ref(false)
+const contactCreating = ref(false)
+const contactDepartmentId = ref<number | null>(null)
+const contactForm = ref({
+  full_name: '',
+  phone: '',
+  email: '',
+  telegram_username: '',
+})
 let callTimer: number | null = null
 let ringbackContext: AudioContext | null = null
 let ringbackGain: GainNode | null = null
@@ -88,6 +98,7 @@ const activeCall = computed(
 const callPanelVisible = computed(
   () => activeCall.value != null && (status.value === 'calling' || status.value === 'in-call'),
 )
+const canCreateContactFromDial = computed(() => dialDigits.value.length === 10)
 
 const dialKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
 
@@ -120,6 +131,15 @@ function formatRussianNumber(digits: string): string {
     padded.slice(8, 10),
   ]
   return `+7 ${chunks[0]} ${chunks[1]}-${chunks[2]}-${chunks[3]}`
+}
+
+function normalizeRussianPhone(value: string): string | null {
+  const digits = value.replace(/\D/g, '')
+  if (digits.length === 10) return `+7${digits}`
+  if (digits.length === 11 && (digits.startsWith('7') || digits.startsWith('8'))) {
+    return `+7${digits.slice(1)}`
+  }
+  return null
 }
 
 function formatCallTime(value: string): string {
@@ -158,6 +178,56 @@ function callOwnerLabel(item: TelephonyCall): string {
   const parts = [item.account_name]
   if (item.user_name) parts.push(item.user_name)
   return parts.join(' - ')
+}
+
+function openContactModal(phone: string, departmentId?: number | null): void {
+  const normalizedPhone = normalizeRussianPhone(phone)
+  if (!normalizedPhone) {
+    message.warning('Введите полный номер: 10 цифр после +7')
+    return
+  }
+  contactForm.value = {
+    full_name: '',
+    phone: normalizedPhone,
+    email: '',
+    telegram_username: '',
+  }
+  contactDepartmentId.value = departmentId ?? selectedAccount.value?.department_id ?? null
+  contactModalVisible.value = true
+}
+
+async function submitContact(): Promise<void> {
+  const name = contactForm.value.full_name.trim()
+  const phone = normalizeRussianPhone(contactForm.value.phone)
+  if (!name) {
+    message.warning('Введите имя клиента')
+    return
+  }
+  if (!phone) {
+    message.warning('Введите номер в формате +7XXXXXXXXXX')
+    return
+  }
+  contactCreating.value = true
+  try {
+    const telegram = contactForm.value.telegram_username.trim().replace(/^@/, '')
+    await createContact({
+      full_name: name,
+      phone,
+      email: contactForm.value.email.trim() || null,
+      telegram_username: telegram || null,
+      assigned_department_id: contactDepartmentId.value,
+      source: 'telephony',
+      custom_fields: {
+        source: 'telephony',
+      },
+    })
+    message.success('Контакт создан')
+    contactModalVisible.value = false
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось создать контакт')
+  } finally {
+    contactCreating.value = false
+  }
 }
 
 async function load(): Promise<void> {
@@ -556,6 +626,7 @@ watch(status, (value) => {
               :key="key"
               size="large"
               class="telephony-dialer__key"
+              :class="{ 'telephony-dialer__key--zero': key === '0' }"
               @click="appendDigit(key)"
             >
               {{ key }}
@@ -593,6 +664,18 @@ watch(status, (value) => {
             </NButton>
           </div>
 
+          <NButton
+            secondary
+            size="large"
+            :disabled="!canCreateContactFromDial"
+            @click="openContactModal(fullNumber, selectedAccount?.department_id)"
+          >
+            <template #icon>
+              <NIcon><UserPlus /></NIcon>
+            </template>
+            Создать контакт
+          </NButton>
+
           <div class="telephony-dialer__connection">
             <span>{{ selectedAccount?.name ?? 'Линия не выбрана' }}</span>
             <NTag size="small" :type="connectionTagType">{{ statusLabel }}</NTag>
@@ -625,6 +708,17 @@ watch(status, (value) => {
                 <NButton circle quaternary size="small" aria-label="Повторить" @click="redial(item.phone_number)">
                   <template #icon>
                     <NIcon><RotateCcw /></NIcon>
+                  </template>
+                </NButton>
+                <NButton
+                  circle
+                  quaternary
+                  size="small"
+                  aria-label="Создать контакт"
+                  @click="openContactModal(item.phone_number, item.department_id)"
+                >
+                  <template #icon>
+                    <NIcon><UserPlus /></NIcon>
                   </template>
                 </NButton>
               </div>
@@ -670,6 +764,39 @@ watch(status, (value) => {
         </template>
       </NButton>
     </div>
+
+    <NModal
+      v-model:show="contactModalVisible"
+      preset="card"
+      class="telephony-contact-modal"
+      style="width: min(440px, calc(100vw - 24px))"
+      title="Создать контакт"
+      :bordered="false"
+    >
+      <NForm size="small" @submit.prevent="submitContact">
+        <NFormItem label="Имя">
+          <NInput
+            v-model:value="contactForm.full_name"
+            placeholder="Имя клиента"
+            autofocus
+            @keydown.enter.prevent="submitContact"
+          />
+        </NFormItem>
+        <NFormItem label="Телефон">
+          <NInput v-model:value="contactForm.phone" placeholder="+7XXXXXXXXXX" />
+        </NFormItem>
+        <NFormItem label="Email">
+          <NInput v-model:value="contactForm.email" placeholder="Необязательно" />
+        </NFormItem>
+        <NFormItem label="Telegram">
+          <NInput v-model:value="contactForm.telegram_username" placeholder="@username, если клиент дал" />
+        </NFormItem>
+        <div class="telephony-contact-modal__actions">
+          <NButton :disabled="contactCreating" @click="contactModalVisible = false">Отмена</NButton>
+          <NButton type="primary" :loading="contactCreating" @click="submitContact">Создать</NButton>
+        </div>
+      </NForm>
+    </NModal>
   </section>
 </template>
 
@@ -744,6 +871,10 @@ watch(status, (value) => {
 
 .telephony-dialer__key {
   min-height: 44px;
+}
+
+.telephony-dialer__key--zero {
+  grid-column: 2;
 }
 
 .telephony-active-call {
@@ -894,6 +1025,16 @@ watch(status, (value) => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.telephony-contact-modal {
+  max-width: min(440px, calc(100vw - 24px));
+}
+
+.telephony-contact-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 @media (max-width: 900px) {

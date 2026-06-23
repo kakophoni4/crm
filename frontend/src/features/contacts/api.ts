@@ -1,6 +1,7 @@
 import type {
   Contact,
   ContactAuditResponse,
+  ContactCreateBody,
   ContactListParams,
   ContactListResponse,
   ContactTransferListResponse,
@@ -37,6 +38,11 @@ export async function listContacts(params: ContactListParams): Promise<ContactLi
 
 export async function getContact(id: number): Promise<Contact> {
   const { data } = await http.get<Contact>(`/contacts/${id}`)
+  return data
+}
+
+export async function createContact(body: ContactCreateBody): Promise<Contact> {
+  const { data } = await http.post<Contact>('/contacts', body)
   return data
 }
 

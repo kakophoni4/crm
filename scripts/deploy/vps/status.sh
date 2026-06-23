@@ -5,18 +5,31 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/deploy/vps/compose.sh"
 
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+API_PUBLIC="${BASE_URL:-${SMOKE_API_URL:-https://api.bttsrvvrs.org}}"
+FRONTEND_PUBLIC="${FRONTEND_URL:-${SMOKE_APP_URL:-https://chat.bttsrvvrs.org}}"
+# Strip trailing /api/v1 if present in env
+API_PUBLIC="${API_PUBLIC%/api/v1}"
+API_PUBLIC="${API_PUBLIC%/}"
+
 echo "=== Docker ==="
 compose ps
 
 echo ""
-echo "=== Health (local) ==="
-curl -sf http://127.0.0.1:19001/healthz && echo "" || echo "API: FAIL"
-curl -sf -o /dev/null -w "Frontend HTTP %{http_code}\n" http://127.0.0.1:19090/
+echo "=== Health (docker bridge ${VPS_API_HOST}) ==="
+curl -sf "http://${VPS_API_HOST}:${VPS_API_PORT}/healthz" && echo "" || echo "API: FAIL"
+curl -sf -o /dev/null -w "Frontend HTTP %{http_code}\n" "http://${VPS_FRONTEND_HOST}:${VPS_FRONTEND_PORT}/"
 
 echo ""
-echo "=== Health (via nginx, HTTPS) ==="
-curl -sf https://api.crmkanasha.org/healthz && echo "" || echo "api.crmkanasha.org (HTTPS): FAIL"
-curl -sf -o /dev/null -w "app.crmkanasha.org HTTPS %{http_code}\n" https://app.crmkanasha.org/ || echo "app.crmkanasha.org (HTTPS): FAIL"
+echo "=== Health (via Caddy, HTTPS) ==="
+curl -sf "${API_PUBLIC}/healthz" && echo "" || echo "${API_PUBLIC}/healthz: FAIL"
+curl -sf -o /dev/null -w "${FRONTEND_PUBLIC} HTTPS %{http_code}\n" "${FRONTEND_PUBLIC}/" || echo "${FRONTEND_PUBLIC} (HTTPS): FAIL"
 
 echo ""
 echo "=== Vaultwarden (Bitwarden) ==="

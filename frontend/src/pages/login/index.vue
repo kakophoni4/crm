@@ -70,7 +70,7 @@ async function onSubmit(): Promise<void> {
 
 <template>
   <main class="login-page">
-    <NCard title="Вход в CRM" class="login-page__card">
+    <NCard title="Вход в ХУИтРИКС" class="login-page__card">
       <NForm ref="formRef" :model="model" :rules="rules" @submit.prevent="onSubmit">
         <NFormItem label="Логин" path="username">
           <NInput

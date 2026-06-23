@@ -239,7 +239,7 @@ watch(
   >
     <NDrawerContent body-content-style="padding: 0">
       <div class="app-sidebar app-sidebar--drawer">
-        <div class="app-sidebar__brand">CRM Chat</div>
+        <div class="app-sidebar__brand">ХУИтРИКС</div>
         <NMenu
           :value="activeKey"
           :options="menuOptions"
@@ -271,7 +271,7 @@ watch(
     @collapse="emit('toggle')"
     @expand="emit('toggle')"
   >
-    <div class="app-sidebar__brand">CRM Chat</div>
+    <div class="app-sidebar__brand">ХУИтРИКС</div>
     <NMenu :value="activeKey" :options="menuOptions" @update:value="onMenuUpdate" />
     <div class="app-sidebar__theme">
       <span class="app-sidebar__theme-label">Тема</span>

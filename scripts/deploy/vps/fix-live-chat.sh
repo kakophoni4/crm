@@ -22,10 +22,12 @@ patch_env() {
   fi
 }
 
-echo "=== Patch deploy/.env.staging ==="
-patch_env "CORS_ALLOWED_ORIGINS" "https://app.crmkanasha.org,http://app.crmkanasha.org"
-patch_env "VITE_API_BASE_URL" "https://api.crmkanasha.org/api/v1"
-patch_env "VITE_WS_URL" "wss://api.crmkanasha.org/api/v1/ws"
+echo "=== Patch deploy/.env.staging (bttsrvvrs.org + Caddy) ==="
+patch_env "CORS_ALLOWED_ORIGINS" "https://chat.bttsrvvrs.org"
+patch_env "VITE_API_BASE_URL" "https://api.bttsrvvrs.org/api/v1"
+patch_env "VITE_WS_URL" "wss://api.bttsrvvrs.org/api/v1/ws"
+patch_env "PBX_DOMAIN" "pbx.bttsrvvrs.org"
+patch_env "TURN_REALM" "pbx.bttsrvvrs.org"
 
 echo "=== Rebuild api, worker, frontend (WS /ws alias + correct VITE_WS_URL) ==="
 compose build api worker frontend
@@ -34,5 +36,5 @@ compose up -d api worker frontend
 echo ""
 "$ROOT/scripts/deploy/vps/status.sh"
 echo ""
-echo "Done. Hard-refresh app.crmkanasha.org (Ctrl+F5) and open a chat."
+echo "Done. Hard-refresh https://chat.bttsrvvrs.org (Ctrl+F5) and open a chat."
 echo "WebSocket should connect without 403 in api logs."

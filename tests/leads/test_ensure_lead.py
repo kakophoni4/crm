@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.chats_bridge import insert_inbound_message
@@ -131,9 +130,10 @@ async def test_close_then_inbound_creates_new_lead_and_messages_differ(
 
 
 @pytest.mark.asyncio
-async def test_two_open_leads_same_group_rejected(
+async def test_two_open_leads_same_group_allowed(
     leads_org: dict[str, int],
 ) -> None:
+    """Migration 0050 dropped uq_leads_open_contact_group — multiple open leads per group are OK."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         lead_id = await _ensure(session, leads_org)
@@ -143,18 +143,16 @@ async def test_two_open_leads_same_group_rejected(
         )
         assert pipeline_new is not None
 
-        with pytest.raises(IntegrityError):
-            async with session.begin_nested():
-                await LeadRepository(session).insert_lead(
-                    contact_id=leads_org["contact_id"],
-                    group_id=leads_org["group_id"],
-                    bot_id=leads_org["bot_id"],
-                    chat_id=leads_org["chat_id"],
-                    status_id=pipeline_new,
-                )
-                await session.flush()
+        second_id = await LeadRepository(session).insert_lead(
+            contact_id=leads_org["contact_id"],
+            group_id=leads_org["group_id"],
+            bot_id=leads_org["bot_id"],
+            chat_id=leads_org["chat_id"],
+            status_id=pipeline_new,
+        )
+        await session.commit()
 
-        still_open = await session.scalar(
+        open_count = await session.scalar(
             text(
                 """
                 SELECT COUNT(*) FROM leads
@@ -163,8 +161,9 @@ async def test_two_open_leads_same_group_rejected(
             ),
             {"cid": leads_org["contact_id"], "gid": leads_org["group_id"]},
         )
-    assert still_open == 1
     assert lead_id > 0
+    assert second_id != lead_id
+    assert open_count == 2
 
 
 @pytest.mark.asyncio

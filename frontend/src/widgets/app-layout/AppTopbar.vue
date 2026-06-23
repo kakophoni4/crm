@@ -42,7 +42,7 @@ async function onUserMenuSelect(key: string): Promise<void> {
         </template>
       </NButton>
       <slot name="left">
-        <span class="app-topbar__logo">CRM Chat Center</span>
+        <span class="app-topbar__logo">ХУИтРИКС</span>
       </slot>
     </div>
     <div class="app-topbar__right">

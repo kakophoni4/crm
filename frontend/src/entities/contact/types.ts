@@ -119,6 +119,28 @@ export interface ContactListParams {
 
 
 
+export interface ContactCreateBody {
+
+  full_name: string
+
+  phone?: string | null
+
+  email?: string | null
+
+  telegram_username?: string | null
+
+  status?: ContactStatus
+
+  custom_fields?: Record<string, unknown>
+
+  assigned_department_id?: number | null
+
+  source?: string | null
+
+}
+
+
+
 export interface ContactUpdateBody {
 
   full_name?: string
@@ -414,5 +436,4 @@ export const REASSIGN_STRATEGY_OPTIONS: { label: string; value: ReassignStrategy
   { label: 'Случайный доступный', value: 'random_available' },
 
 ]
-
 
