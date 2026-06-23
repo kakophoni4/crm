@@ -23,7 +23,7 @@ from app.modules.db.models.chat_read_state import ChatReadState
 from app.modules.db.models.chat_takeover import ChatTakeover
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
-from app.modules.db.models.enums import ChatStatus
+from app.modules.db.models.enums import ChatStatus, MessageDirection
 from app.modules.db.models.group import Group
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
@@ -99,7 +99,16 @@ class ChatRepository:
         cursor: str | None,
         limit: int,
     ) -> tuple[
-        list[tuple[Chat, int | None, str | None, datetime | None, datetime | None]],
+        list[
+            tuple[
+                Chat,
+                int | None,
+                str | None,
+                datetime | None,
+                datetime | None,
+                MessageDirection | None,
+            ]
+        ],
         str | None,
     ]:
         from app.modules.chats.cursor import encode_chat_cursor
@@ -122,6 +131,7 @@ class ChatRepository:
         card_owner_cga = aliased(ContactGroupAssignment)
         card_owner_user = aliased(User)
         inbox_group = aliased(Group)
+        latest_message = aliased(ChatMessage)
         stmt = (
             select(
                 Chat,
@@ -129,6 +139,7 @@ class ChatRepository:
                 card_owner_user.full_name,
                 card_owner_cga.pending_inbound_at,
                 card_owner_cga.escalated_to_group_at,
+                latest_message.direction,
             )
             .outerjoin(
                 inbox_group,
@@ -148,15 +159,17 @@ class ChatRepository:
                 ),
             )
             .outerjoin(card_owner_user, card_owner_user.id == card_owner_cga.owner_user_id)
+            .outerjoin(latest_msg, latest_msg.c.chat_id == Chat.id)
+            .outerjoin(
+                latest_message,
+                latest_message.id == latest_msg.c.max_message_id,
+            )
             .order_by(*order_by)
             .limit(limit + 1)
         )
         stmt = self._scoped(stmt, ctx, read_perm)
         if status is None:
             stmt = stmt.where(Chat.status != ChatStatus.ARCHIVED)
-        needs_latest_msg = unread_only or (
-            sort == ChatListSort.UNREAD_FIRST and use_actor_unread
-        )
         if use_actor_unread and (
             unread_only or sort == ChatListSort.UNREAD_FIRST
         ):
@@ -166,9 +179,7 @@ class ChatRepository:
                     read_state.chat_id == Chat.id,
                     read_state.user_id == actor_user_id,
                 ),
-            ).outerjoin(latest_msg, latest_msg.c.chat_id == Chat.id)
-        elif needs_latest_msg:
-            stmt = stmt.outerjoin(latest_msg, latest_msg.c.chat_id == Chat.id)
+            )
 
         if status is not None:
             stmt = stmt.where(Chat.status == status)
@@ -204,8 +215,8 @@ class ChatRepository:
                 ),
             ).where(
                 or_(
-                    needs_owner.pending_inbound_at.isnot(None),
                     needs_owner.escalated_to_group_at.isnot(None),
+                    latest_message.direction == MessageDirection.INBOUND,
                 ),
             )
         if assigned_group_id is not None:
@@ -283,7 +294,7 @@ class ChatRepository:
             )
 
         result = await self._session.execute(stmt)
-        rows = [(row[0], row[1], row[2], row[3], row[4]) for row in result.all()]
+        rows = [(row[0], row[1], row[2], row[3], row[4], row[5]) for row in result.all()]
         next_cursor: str | None = None
         if len(rows) > limit:
             rows = rows[:limit]

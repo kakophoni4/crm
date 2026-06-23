@@ -19,6 +19,7 @@ from app.modules.chats.schemas import (
     WhatsappOutreachResponse,
 )
 from app.modules.chats.scope import can_view_chat_async, resolve_chats_read_permission
+from app.modules.chats.needs_reply import chat_list_needs_reply
 from app.modules.chats.serialization import to_chat_detail, to_chat_list_item
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
@@ -120,7 +121,14 @@ class ChatService:
             actor.id,
         )
         items = []
-        for chat, owner_user_id, owner_full_name, pending_inbound_at, escalated_at in rows:
+        for (
+            chat,
+            owner_user_id,
+            owner_full_name,
+            pending_inbound_at,
+            escalated_at,
+            last_direction,
+        ) in rows:
             lead_in_scope = chat.current_lead is None or await actor_can_access_lead(
                 self._session,
                 ctx,
@@ -133,7 +141,10 @@ class ChatService:
             )
             item.pending_inbound_at = pending_inbound_at
             item.escalated_at = escalated_at
-            item.needs_reply = bool(pending_inbound_at or escalated_at)
+            item.needs_reply = chat_list_needs_reply(
+                escalated_at=escalated_at,
+                last_direction=last_direction,
+            )
             owner_group_id = chat.assigned_group_id
             if owner_group_id is None and chat.assigned_department_id is not None:
                 owner_group_id = await get_department_inbox_group_id(

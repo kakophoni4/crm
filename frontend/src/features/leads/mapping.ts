@@ -266,6 +266,16 @@ export function chatWorkflowLabelPatch(
   }
 }
 
+/** Red inbox stripe: last client message or escalation, not stale ownership flags. */
+export function chatListItemNeedsResponse(chat: ChatListItem): boolean {
+  if (chat.escalated_at) return true
+  if (chat.chat_label?.code === 'answered' || chat.chat_label?.code === 'done') {
+    return false
+  }
+  if (chat.chat_label?.code === 'waiting') return true
+  return Boolean(chat.needs_reply ?? chat.needs_response)
+}
+
 
 
 export function chatLabelStatusId(label: ChatLabelSnippet | null | undefined): number | null {
