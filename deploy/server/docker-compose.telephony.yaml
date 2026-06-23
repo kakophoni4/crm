@@ -11,6 +11,7 @@ services:
     image: coturn/coturn:4.14.0-r0
     container_name: crm-coturn
     restart: unless-stopped
+    network_mode: host
     command:
       - -n
       - --log-file=stdout
@@ -26,12 +27,6 @@ services:
       - --max-port=${TURN_RELAY_MAX_PORT:-49200}
       - --external-ip=${TURN_PUBLIC_IP:?TURN_PUBLIC_IP is required}
       - --no-multicast-peers
-    ports:
-      - "${TURN_PORT:-3478}:3478/tcp"
-      - "${TURN_PORT:-3478}:3478/udp"
-      - "${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}/udp"
-    networks:
-      - crm-staging-net
 
   asterisk:
     build:
