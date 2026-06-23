@@ -25,7 +25,7 @@ import {
   enrichMessagesWithReplyAudit,
   ownershipKey,
 } from '@/features/chats/ownership-enrich'
-import { chatWorkflowLabelPatch, chatListItemNeedsResponse } from '@/features/leads/mapping'
+import { chatWorkflowLabelPatch, chatListItemIsAnswered, chatListItemNeedsResponse } from '@/features/leads/mapping'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -479,6 +479,12 @@ export const useChatsStore = defineStore('chats', () => {
       if (!append) {
         needsResponseChatIds.value = new Set(
           listItems.value.filter((chat) => chatListItemNeedsResponse(chat)).map((chat) => chat.id),
+        )
+        highlightedChatIds.value = new Set(
+          [...highlightedChatIds.value].filter((id) => {
+            const chat = listItems.value.find((row) => row.id === id)
+            return chat != null && !chatListItemIsAnswered(chat)
+          }),
         )
       }
       listNextCursor.value = data?.next_cursor ?? null

@@ -52,6 +52,7 @@ import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directo
 import { registerChatListSearchFocus } from '@/features/chats/chat-list-search-focus'
 import { useChatsStore } from '@/features/chats/store'
 import {
+  chatListItemIsAnswered,
   chatListItemNeedsResponse,
   chatListItemStatusLabel,
   currentLeadIsOpen,
@@ -553,11 +554,13 @@ onUnmounted(() => {
 
                 'chats-page__list-item--active': store.currentChatId === chat.id,
 
-                'chats-page__list-item--highlight': isHighlighted(chat.id),
+                'chats-page__list-item--highlight':
+                  !chatListItemIsAnswered(chat) && isHighlighted(chat.id),
 
                 'chats-page__list-item--needs-response':
-                  store.needsResponseChatIds.has(chat.id) ||
-                  chatListItemNeedsResponse(chat),
+                  !chatListItemIsAnswered(chat) &&
+                  (store.needsResponseChatIds.has(chat.id) ||
+                    chatListItemNeedsResponse(chat)),
 
               }"
 

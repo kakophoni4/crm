@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
 
+  chatListItemIsAnswered,
+  chatListItemNeedsResponse,
   chatListItemStatusLabel,
 
   currentLeadIsOpen,
@@ -183,6 +185,28 @@ describe('leads mapping', () => {
         },
       }),
     ).toBe('Ожидает ответа')
+  })
+
+  it('answered chats never need inbox stripe even with stale needs_reply', () => {
+    const answered = {
+      id: 1,
+      contact_id: 1,
+      contact_name: 'Test',
+      bot_id: null,
+      assigned_user_id: null,
+      assigned_group_id: null,
+      assigned_department_id: null,
+      status: 'in_progress',
+      status_id: null,
+      last_message_at: null,
+      last_message_preview: null,
+      chat_label: { status_id: 2, code: 'answered', label: 'Отвечен' },
+      needs_reply: true,
+      needs_response: true,
+    } as const
+
+    expect(chatListItemIsAnswered(answered)).toBe(true)
+    expect(chatListItemNeedsResponse(answered)).toBe(false)
   })
 
   it('formats lead bot label from API fields', () => {

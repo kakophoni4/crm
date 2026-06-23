@@ -266,13 +266,20 @@ export function chatWorkflowLabelPatch(
   }
 }
 
-/** Red inbox stripe: last client message or escalation, not stale ownership flags. */
+/** True when workflow says the operator already replied (no inbox stripe). */
+export function chatListItemIsAnswered(chat: ChatListItem): boolean {
+  const code = chat.chat_label?.code
+  if (code === 'answered' || code === 'done') return true
+  const label = chat.chat_label?.label?.trim()
+  return label === 'Отвечен' || label === 'Завершён'
+}
+
+/** Red inbox stripe: last client message or escalation, never on answered chats. */
 export function chatListItemNeedsResponse(chat: ChatListItem): boolean {
+  if (chatListItemIsAnswered(chat)) return false
   if (chat.escalated_at) return true
-  if (chat.chat_label?.code === 'answered' || chat.chat_label?.code === 'done') {
-    return false
-  }
   if (chat.chat_label?.code === 'waiting') return true
+  if (chat.chat_label?.label?.trim() === 'Ожидает ответа') return true
   return Boolean(chat.needs_reply ?? chat.needs_response)
 }
 
