@@ -25,6 +25,7 @@ from app.modules.telephony.schemas import (
     TelephonyWebrtcConfigResponse,
 )
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
+from app.shared.settings import settings
 
 
 def _clean(value: str | None) -> str | None:
@@ -58,6 +59,25 @@ def _to_response(row: TelephonyAccountRow) -> TelephonyAccountResponse:
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
+
+
+def _ice_servers() -> list[dict[str, object]]:
+    servers: list[dict[str, object]] = [
+        {"urls": url} for url in settings.telephony_stun_urls
+    ]
+    if (
+        settings.telephony_turn_urls
+        and settings.telephony_turn_username
+        and settings.telephony_turn_password
+    ):
+        servers.append(
+            {
+                "urls": settings.telephony_turn_urls,
+                "username": settings.telephony_turn_username,
+                "credential": settings.telephony_turn_password,
+            },
+        )
+    return servers
 
 
 def _normalize_russian_phone(value: str) -> str:
@@ -309,7 +329,7 @@ class TelephonyService:
             sip_uri=f"sip:{extension.extension}@{domain}",
             ws_url=account.webrtc_ws_url or "ws://127.0.0.1:8088/ws",
             outbound_caller_id=account.outbound_caller_id,
-            ice_servers=[{"urls": "stun:stun.l.google.com:19302"}],
+            ice_servers=_ice_servers(),
         )
 
     async def list_calls(self, actor: User, *, limit: int = 50) -> TelephonyCallListResponse:

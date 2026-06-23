@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     wa_bridge_webhook_public_base: str = "https://api.example.com/green/webhook"
     wa_bridge_sync_secret: str = "changeme_wa_bridge_sync_secret_min32"
 
+    telephony_stun_urls: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["stun:stun.l.google.com:19302"],
+    )
+    telephony_turn_urls: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    telephony_turn_username: str = ""
+    telephony_turn_password: str = ""
+
     search_rate_limit_per_minute: int = 60
     search_rate_limit_use_redis: bool = True
 
@@ -125,6 +132,15 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         if isinstance(value, list):
             return [str(origin).strip() for origin in value if str(origin).strip()]
+        return []
+
+    @field_validator("telephony_stun_urls", "telephony_turn_urls", mode="before")
+    @classmethod
+    def parse_ice_urls(cls, value: object) -> list[str]:
+        if isinstance(value, str):
+            return [url.strip() for url in value.split(",") if url.strip()]
+        if isinstance(value, list):
+            return [str(url).strip() for url in value if str(url).strip()]
         return []
 
 

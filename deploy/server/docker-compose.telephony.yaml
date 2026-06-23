@@ -4,9 +4,37 @@
 #   docker compose -f docker/docker-compose.staging.yaml \
 #     -f deploy/server/docker-compose.vps.yaml \
 #     -f deploy/server/docker-compose.telephony.yaml \
-#     --env-file deploy/.env.staging up -d --build asterisk
+#     --env-file deploy/.env.staging up -d --build asterisk coturn
 
 services:
+  coturn:
+    image: coturn/coturn:4.14.0-r0
+    container_name: crm-coturn
+    restart: unless-stopped
+    command:
+      - -n
+      - --log-file=stdout
+      - --fingerprint
+      - --lt-cred-mech
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --realm=${TURN_REALM:?TURN_REALM is required}
+      - --server-name=${TURN_REALM:?TURN_REALM is required}
+      - --user=${TURN_USERNAME:?TURN_USERNAME is required}:${TURN_PASSWORD:?TURN_PASSWORD is required}
+      - --listening-port=3478
+      - --min-port=${TURN_RELAY_MIN_PORT:-49160}
+      - --max-port=${TURN_RELAY_MAX_PORT:-49200}
+      - --external-ip=${TURN_PUBLIC_IP:?TURN_PUBLIC_IP is required}
+      - --no-multicast-peers
+      - --no-loopback-peers
+    ports:
+      - "${TURN_PORT:-3478}:3478/tcp"
+      - "${TURN_PORT:-3478}:3478/udp"
+      - "${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}/udp"
+    networks:
+      - crm-staging-net
+
   asterisk:
     build:
       context: ..
