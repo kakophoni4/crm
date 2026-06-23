@@ -26,7 +26,6 @@ services:
       - --max-port=${TURN_RELAY_MAX_PORT:-49200}
       - --external-ip=${TURN_PUBLIC_IP:?TURN_PUBLIC_IP is required}
       - --no-multicast-peers
-      - --no-loopback-peers
     ports:
       - "${TURN_PORT:-3478}:3478/tcp"
       - "${TURN_PORT:-3478}:3478/udp"
