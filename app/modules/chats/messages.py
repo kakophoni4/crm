@@ -255,15 +255,14 @@ class ChatMessagesService:
                         is_on_behalf=is_on_behalf,
                     ),
                 )
-                if not is_on_behalf:
-                    await record_owner_outbound(
-                        self._session,
-                        chat.contact_id,
-                        group_id,
-                        actor.id,
-                        at=now,
-                    )
-                elif owner_id is not None:
+                await record_owner_outbound(
+                    self._session,
+                    chat.contact_id,
+                    group_id,
+                    owner_id,
+                    at=now,
+                )
+                if is_on_behalf and owner_id is not None:
                     preview = _preview_text(body.text, limit=220) or ""
                     group_ctx = await contact_group_context(
                         self._session,

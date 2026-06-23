@@ -50,7 +50,7 @@ function routeChatTopic(
       void store.handleAttachmentReady(payload)
       break
     case 'chat.message.outbound.requested':
-      void store.handleInboundMessage(payload)
+      void store.handleOutboundMessage(payload)
       break
     case 'chat.takeover.started':
       store.handleTakeoverStarted(payload)

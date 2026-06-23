@@ -396,6 +396,43 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
+  function clearNeedsResponseForChat(chatId: number): void {
+    const nextNeedsResponse = new Set(needsResponseChatIds.value)
+    nextNeedsResponse.delete(chatId)
+    needsResponseChatIds.value = nextNeedsResponse
+
+    const patch = {
+      needs_response: false,
+      needs_reply: false,
+      pending_inbound_at: null,
+      escalated_at: null,
+    } satisfies Partial<ChatListItem>
+
+    const shouldHideFromCurrentTab = listTab.value === 'needs_response'
+    listItems.value = listItems.value
+      .map((chat) => (chat.id === chatId ? { ...chat, ...patch } : chat))
+      .filter((chat) => !(shouldHideFromCurrentTab && chat.id === chatId))
+
+    if (currentChatId.value === chatId && currentChat.value) {
+      currentChat.value = { ...currentChat.value, ...patch }
+      const groupId = currentChat.value.assigned_group_id
+      if (groupId != null) {
+        const key = ownershipKey(currentChat.value.contact_id, groupId)
+        const ownership = ownershipByKey.value[key]
+        if (ownership) {
+          ownershipByKey.value = {
+            ...ownershipByKey.value,
+            [key]: {
+              ...ownership,
+              pending_inbound_at: null,
+              escalated_at: null,
+            },
+          }
+        }
+      }
+    }
+  }
+
   function clearHighlight(chatId: number): void {
     if (!highlightedChatIds.value.has(chatId)) return
     const next = new Set(highlightedChatIds.value)
@@ -650,6 +687,7 @@ export const useChatsStore = defineStore('chats', () => {
         messages.value.push(saved)
       }
       void chatsApi.markChatRead(chatId, { last_read_message_id: saved.id }).catch(() => undefined)
+      clearNeedsResponseForChat(chatId)
       const listIdx = listItems.value.findIndex((c) => c.id === chatId)
       if (listIdx >= 0) {
         listItems.value[listIdx] = {
@@ -683,6 +721,22 @@ export const useChatsStore = defineStore('chats', () => {
       await refreshOpenChatMessages(chatId, messageId)
     } else {
       void fetchList()
+    }
+  }
+
+  async function handleOutboundMessage(payload: Record<string, unknown>): Promise<void> {
+    const chatId = Number(payload.chat_id)
+    const messageId = Number(payload.message_id)
+    if (!Number.isFinite(chatId)) return
+
+    bumpChatInList(chatId, {
+      unread_for_me: false,
+      last_message_at: new Date().toISOString(),
+    }, false)
+    clearNeedsResponseForChat(chatId)
+
+    if (currentChatId.value === chatId && Number.isFinite(messageId)) {
+      await refreshOpenChatMessages(chatId, messageId)
     }
   }
 
@@ -851,6 +905,7 @@ export const useChatsStore = defineStore('chats', () => {
     loadOlderMessages,
     sendMessage,
     handleInboundMessage,
+    handleOutboundMessage,
     handleAttachmentReady,
     handleTakeoverStarted,
     handleTakeoverReleased,
