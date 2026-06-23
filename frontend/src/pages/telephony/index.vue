@@ -1,28 +1,41 @@
 <script setup lang="ts">
-import { Delete, Phone, PhoneCall, PhoneOff, Unplug, Wifi } from 'lucide-vue-next'
+import { Delete, History, PhoneCall, PhoneOff, RotateCcw, Wifi } from 'lucide-vue-next'
 import { NButton, NIcon, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
   getTelephonyWebrtcConfig,
   listTelephonyAccounts,
   type TelephonyAccount,
-  type TelephonyWebrtcConfig,
 } from '@/features/telephony/api'
 import { CrmSoftphone, type SoftphoneStatus } from '@/features/telephony/softphone'
 import { AppError } from '@/shared/api/http'
 
 const message = useMessage()
+const TELEPHONY_HISTORY_KEY = 'crm.telephony.call_history'
+
+type CallHistoryStatus = 'calling' | 'answered' | 'completed' | 'failed'
+
+interface CallHistoryItem {
+  id: string
+  number: string
+  accountName: string
+  startedAt: string
+  durationSeconds: number | null
+  status: CallHistoryStatus
+}
+
 const loading = ref(false)
 const connecting = ref(false)
 const calling = ref(false)
 const accounts = ref<TelephonyAccount[]>([])
 const selectedAccountId = ref<number | null>(null)
 const dialNumber = ref('')
-const webrtcConfig = ref<TelephonyWebrtcConfig | null>(null)
 const status = ref<SoftphoneStatus>('idle')
 const remoteAudio = ref<HTMLAudioElement | null>(null)
+const callHistory = ref<CallHistoryItem[]>([])
+const activeCallId = ref<string | null>(null)
 
 const softphone = new CrmSoftphone({
   onStatus: (value) => {
@@ -57,6 +70,10 @@ const statusLabel = computed(() => {
 const canCall = computed(
   () => status.value === 'registered' && dialNumber.value.trim().length > 0 && !calling.value,
 )
+const connectionTagType = computed(() =>
+  status.value === 'registered' || status.value === 'in-call' ? 'success' : 'default',
+)
+const hasHistory = computed(() => callHistory.value.length > 0)
 
 const dialKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '0', '#']
 
@@ -66,6 +83,82 @@ function appendDigit(value: string): void {
 
 function backspace(): void {
   dialNumber.value = dialNumber.value.slice(0, -1)
+}
+
+function redial(number: string): void {
+  dialNumber.value = number
+}
+
+function loadCallHistory(): void {
+  try {
+    const raw = window.localStorage.getItem(TELEPHONY_HISTORY_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    callHistory.value = Array.isArray(parsed) ? parsed.slice(0, 20) : []
+  } catch {
+    callHistory.value = []
+  }
+}
+
+function saveCallHistory(): void {
+  window.localStorage.setItem(
+    TELEPHONY_HISTORY_KEY,
+    JSON.stringify(callHistory.value.slice(0, 20)),
+  )
+}
+
+function addCallHistoryItem(number: string): void {
+  const item: CallHistoryItem = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    number,
+    accountName: selectedAccount.value?.name ?? 'Телефония',
+    startedAt: new Date().toISOString(),
+    durationSeconds: null,
+    status: 'calling',
+  }
+  activeCallId.value = item.id
+  callHistory.value = [item, ...callHistory.value].slice(0, 20)
+  saveCallHistory()
+}
+
+function updateActiveCall(statusValue: CallHistoryStatus): void {
+  const id = activeCallId.value
+  if (!id) return
+  callHistory.value = callHistory.value.map((item) => {
+    if (item.id !== id) return item
+    const durationSeconds =
+      statusValue === 'completed' || statusValue === 'failed'
+        ? Math.max(0, Math.round((Date.now() - Date.parse(item.startedAt)) / 1000))
+        : item.durationSeconds
+    return { ...item, status: statusValue, durationSeconds }
+  })
+  if (statusValue === 'completed' || statusValue === 'failed') {
+    activeCallId.value = null
+  }
+  saveCallHistory()
+}
+
+function formatCallTime(value: string): string {
+  return new Intl.DateTimeFormat('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null) return '—'
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+function callStatusLabel(value: CallHistoryStatus): string {
+  const labels: Record<CallHistoryStatus, string> = {
+    calling: 'Вызов',
+    answered: 'Разговор',
+    completed: 'Завершён',
+    failed: 'Ошибка',
+  }
+  return labels[value]
 }
 
 async function load(): Promise<void> {
@@ -92,7 +185,6 @@ async function connectSoftphone(): Promise<void> {
   connecting.value = true
   try {
     const config = await getTelephonyWebrtcConfig(selectedAccount.value.id)
-    webrtcConfig.value = config
     if (config.extension_created) {
       message.info('Extension создан, ждем синхронизацию Asterisk')
       await sleep(6500)
@@ -116,11 +208,14 @@ async function startCall(): Promise<void> {
     message.warning('Сначала подключите SIP и введите номер')
     return
   }
+  const number = dialNumber.value.trim()
+  addCallHistoryItem(number)
   calling.value = true
   try {
-    await softphone.call(dialNumber.value)
+    await softphone.call(number)
   } catch (err) {
     status.value = 'registered'
+    updateActiveCall('failed')
     message.error(err instanceof Error ? err.message : 'Не удалось начать звонок')
   } finally {
     calling.value = false
@@ -130,17 +225,24 @@ async function startCall(): Promise<void> {
 async function hangup(): Promise<void> {
   try {
     await softphone.hangup()
+    updateActiveCall('completed')
   } catch (err) {
     message.error(err instanceof Error ? err.message : 'Не удалось завершить звонок')
   }
 }
 
 onMounted(() => {
+  loadCallHistory()
   void load()
 })
 
 onBeforeUnmount(() => {
   void softphone.disconnect()
+})
+
+watch(status, (value) => {
+  if (value === 'in-call') updateActiveCall('answered')
+  if (value === 'ended') updateActiveCall('completed')
 })
 </script>
 
@@ -149,9 +251,9 @@ onBeforeUnmount(() => {
     <header class="telephony-page__header">
       <div>
         <h1 class="telephony-page__title">Телефония</h1>
-        <p class="telephony-page__hint">Звонки через внутренний WebRTC extension и Bitcall trunk.</p>
+        <p class="telephony-page__hint">Набор номера и последние вызовы.</p>
       </div>
-      <NTag :type="status === 'registered' || status === 'in-call' ? 'success' : 'default'">
+      <NTag :type="connectionTagType">
         {{ statusLabel }}
       </NTag>
     </header>
@@ -219,30 +321,44 @@ onBeforeUnmount(() => {
               </template>
             </NButton>
           </div>
+
+          <div class="telephony-dialer__connection">
+            <span>{{ selectedAccount?.name ?? 'Линия не выбрана' }}</span>
+            <NTag size="small" :type="connectionTagType">{{ statusLabel }}</NTag>
+          </div>
         </section>
 
-        <section class="telephony-status" aria-label="Telephony status">
-          <div class="telephony-status__icon">
-            <NIcon :size="28"><Phone /></NIcon>
+        <section class="telephony-history" aria-label="Call history">
+          <header class="telephony-history__header">
+            <div>
+              <h2>История вызовов</h2>
+              <p>Последние звонки с этого рабочего места.</p>
+            </div>
+            <NIcon :size="22"><History /></NIcon>
+          </header>
+
+          <div v-if="hasHistory" class="telephony-history__list">
+            <div v-for="item in callHistory" :key="item.id" class="telephony-history__item">
+              <div class="telephony-history__main">
+                <strong>{{ item.number }}</strong>
+                <span>{{ item.accountName }} · {{ formatCallTime(item.startedAt) }}</span>
+              </div>
+              <div class="telephony-history__meta">
+                <NTag size="small" :type="item.status === 'failed' ? 'error' : 'default'">
+                  {{ callStatusLabel(item.status) }}
+                </NTag>
+                <span>{{ formatDuration(item.durationSeconds) }}</span>
+                <NButton circle quaternary size="small" aria-label="Повторить" @click="redial(item.number)">
+                  <template #icon>
+                    <NIcon><RotateCcw /></NIcon>
+                  </template>
+                </NButton>
+              </div>
+            </div>
           </div>
-          <h2>WebRTC bridge</h2>
-          <p>
-            Браузер регистрируется во внутреннем Asterisk по SIP over WebSocket. Bitcall SIP
-            credentials остаются на серверной стороне и не отдаются в JavaScript.
-          </p>
-          <dl v-if="selectedAccount" class="telephony-status__meta">
-            <dt>Provider</dt>
-            <dd>{{ selectedAccount.provider }}</dd>
-            <dt>SIP host</dt>
-            <dd>{{ selectedAccount.sip_host }}:{{ selectedAccount.sip_port }}</dd>
-            <dt>WebRTC WS</dt>
-            <dd>{{ selectedAccount.webrtc_ws_url || 'ws://127.0.0.1:8088/ws' }}</dd>
-            <dt>Extension</dt>
-            <dd>{{ webrtcConfig?.extension || 'не выдан' }}</dd>
-          </dl>
-          <div v-else class="telephony-status__empty">
-            <NIcon><Unplug /></NIcon>
-            <span>Нет активных SIP-аккаунтов</span>
+          <div v-else class="telephony-history__empty">
+            <NIcon><History /></NIcon>
+            <span>Здесь появятся последние вызовы.</span>
           </div>
           <audio ref="remoteAudio" autoplay />
         </section>
@@ -283,7 +399,7 @@ onBeforeUnmount(() => {
 }
 
 .telephony-dialer,
-.telephony-status {
+.telephony-history {
   border: 1px solid var(--app-border);
   background: var(--app-surface);
   border-radius: 8px;
@@ -330,55 +446,86 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.telephony-status {
+.telephony-dialer__connection {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--app-text-muted);
+  font-size: 0.875rem;
+}
+
+.telephony-history {
   min-height: 320px;
 }
 
-.telephony-status__icon {
-  width: 52px;
-  height: 52px;
+.telephony-history__header {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: var(--app-primary);
-  background: color-mix(in srgb, var(--app-primary) 12%, transparent);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
-.telephony-status h2 {
-  margin: 16px 0 8px;
+.telephony-history__header h2 {
+  margin: 0;
   font-size: 1.125rem;
 }
 
-.telephony-status p {
-  max-width: 620px;
-  margin: 0;
+.telephony-history__header p {
+  margin: 4px 0 0;
   color: var(--app-text-muted);
-  line-height: 1.55;
+  font-size: 0.875rem;
 }
 
-.telephony-status__meta {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 8px 12px;
-  margin: 20px 0 0;
+.telephony-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.telephony-status__meta dt {
-  color: var(--app-text-muted);
+.telephony-history__item {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
 }
 
-.telephony-status__meta dd {
-  margin: 0;
+.telephony-history__main {
   min-width: 0;
-  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
-.telephony-status__empty {
+.telephony-history__main strong {
+  font-size: 0.95rem;
+}
+
+.telephony-history__main span,
+.telephony-history__meta span {
+  color: var(--app-text-muted);
+  font-size: 0.8125rem;
+}
+
+.telephony-history__meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 20px;
+  flex-shrink: 0;
+}
+
+.telephony-history__empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 220px;
+  justify-content: center;
   color: var(--app-text-muted);
 }
 
