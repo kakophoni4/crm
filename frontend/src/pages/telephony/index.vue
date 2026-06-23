@@ -375,7 +375,6 @@ watch(status, (value) => {
     <header class="telephony-page__header">
       <div>
         <h1 class="telephony-page__title">Телефония</h1>
-        <p class="telephony-page__hint">Набор номера и история вызовов.</p>
       </div>
     </header>
 
@@ -483,7 +482,6 @@ watch(status, (value) => {
           <header class="telephony-history__header">
             <div>
               <h2>История вызовов</h2>
-              <p>Операторы видят свои звонки, старшие - отдел, админ - все.</p>
             </div>
             <NButton circle quaternary :loading="historyLoading" aria-label="Обновить" @click="refreshHistory">
               <template #icon>
