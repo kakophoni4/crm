@@ -168,10 +168,12 @@ done <<< "$extensions"
 changed=0
 if ! cmp -s "$tmp_pjsip" "$ASTERISK_DIR/pjsip.generated.conf"; then
   cp "$tmp_pjsip" "$ASTERISK_DIR/pjsip.generated.conf"
+  chmod 0644 "$ASTERISK_DIR/pjsip.generated.conf"
   changed=1
 fi
 if ! cmp -s "$tmp_ext" "$ASTERISK_DIR/extensions.generated.conf"; then
   cp "$tmp_ext" "$ASTERISK_DIR/extensions.generated.conf"
+  chmod 0644 "$ASTERISK_DIR/extensions.generated.conf"
   changed=1
 fi
 
