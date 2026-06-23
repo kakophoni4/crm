@@ -39,7 +39,9 @@ describe('MessageAttachment image preview', () => {
     const preview = document.body.querySelector('.attachment-preview')
     expect(preview).not.toBeNull()
 
-    preview?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    document.body
+      .querySelector('.attachment-preview__stage')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
     expect(document.body.querySelector('.attachment-preview')).toBeNull()
 

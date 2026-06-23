@@ -166,7 +166,7 @@ onUnmounted(() => {
       aria-modal="true"
       :aria-label="label"
       tabindex="-1"
-      @click.self="closePreview"
+      @click="closePreview"
       @keydown.esc="closePreview"
     >
       <div class="attachment-preview__toolbar" @click.stop>
@@ -204,12 +204,13 @@ onUnmounted(() => {
           </template>
         </NButton>
       </div>
-      <div class="attachment-preview__stage" @click.stop>
+      <div class="attachment-preview__stage">
         <img
           class="attachment-preview__image"
           :src="blobUrl"
           :alt="label"
           :style="previewImageStyle"
+          @click.stop
         />
       </div>
     </div>
