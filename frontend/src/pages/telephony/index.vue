@@ -448,7 +448,7 @@ watch(status, (value) => {
               size="large"
               :loading="connecting"
               :disabled="!selectedAccount || status === 'registered' || status === 'in-call'"
-              @click="connectSoftphone"
+              @click="() => connectSoftphone()"
             >
               <template #icon>
                 <NIcon><Wifi /></NIcon>
