@@ -36,6 +36,7 @@ const activeCallStartedAt = ref<number | null>(null)
 const activeElapsedSeconds = ref(0)
 const activeCallAnswered = ref(false)
 const muted = ref(false)
+const audioPrimed = ref(false)
 let callTimer: number | null = null
 
 const softphone = new CrmSoftphone({
@@ -290,6 +291,7 @@ async function startCall(): Promise<void> {
     message.warning('Подключите линию и введите 10 цифр номера')
     return
   }
+  primeRemoteAudio()
   calling.value = true
   try {
     const call = await createTelephonyCall(selectedAccountId.value, fullNumber.value)
@@ -338,13 +340,29 @@ function bindRemoteAudio(): void {
   }
 }
 
-function enableRemoteAudio(): void {
+function primeRemoteAudio(): void {
+  if (!remoteAudio.value || audioPrimed.value) return
+  remoteAudio.value.muted = false
+  remoteAudio.value.volume = 1
+  if (!remoteAudio.value.srcObject) {
+    remoteAudio.value.srcObject = new MediaStream()
+  }
+  void remoteAudio.value.play().then(() => {
+    audioPrimed.value = true
+  }).catch(() => {
+    audioPrimed.value = false
+  })
+}
+
+function enableRemoteAudio(options: { silent?: boolean } = {}): void {
   if (!remoteAudio.value) return
   bindRemoteAudio()
   remoteAudio.value.muted = false
   remoteAudio.value.volume = 1
   void remoteAudio.value.play().catch(() => {
-    message.warning('Браузер не дал включить звук автоматически')
+    if (!options.silent) {
+      message.warning('Браузер не дал включить звук автоматически')
+    }
   })
 }
 
@@ -359,6 +377,7 @@ function handleKeydown(event: KeyboardEvent): void {
     backspace()
     event.preventDefault()
   } else if (event.key === 'Enter') {
+    primeRemoteAudio()
     void startCall()
     event.preventDefault()
   } else if (event.key === 'Escape') {
@@ -381,7 +400,7 @@ onBeforeUnmount(() => {
 watch(status, (value) => {
   if (value === 'in-call') {
     activeCallAnswered.value = true
-    enableRemoteAudio()
+    enableRemoteAudio({ silent: true })
     void updateActiveCall('answered')
   }
   if (value === 'ended') {
@@ -446,7 +465,7 @@ watch(status, (value) => {
                   </NIcon>
                 </template>
               </NButton>
-              <NButton circle secondary aria-label="Включить звук" @click="enableRemoteAudio">
+              <NButton circle secondary aria-label="Включить звук" @click="() => enableRemoteAudio()">
                 <template #icon>
                   <NIcon><Volume2 /></NIcon>
                 </template>
@@ -568,7 +587,7 @@ watch(status, (value) => {
           </NIcon>
         </template>
       </NButton>
-      <NButton circle secondary aria-label="Включить звук" @click="enableRemoteAudio">
+      <NButton circle secondary aria-label="Включить звук" @click="() => enableRemoteAudio()">
         <template #icon>
           <NIcon><Volume2 /></NIcon>
         </template>
