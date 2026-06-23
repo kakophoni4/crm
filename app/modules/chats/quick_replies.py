@@ -3,17 +3,17 @@ from __future__ import annotations
 from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.contacts.scope_loader import ScopeLoader
-from app.modules.db.models.enums import UserRole
-from app.modules.db.models.group import Group
-from app.modules.db.models.quick_reply_template import QuickReplyTemplate
-from app.modules.db.models.user import User
 from app.modules.chats.schemas import (
     QuickReplyTemplateCreateRequest,
     QuickReplyTemplateListResponse,
     QuickReplyTemplateResponse,
     QuickReplyTemplateUpdateRequest,
 )
+from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.db.models.enums import UserRole
+from app.modules.db.models.group import Group
+from app.modules.db.models.quick_reply_template import QuickReplyTemplate
+from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids, visible_group_ids
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 
@@ -70,7 +70,11 @@ class QuickReplyTemplateService:
         actor: User,
         body: QuickReplyTemplateCreateRequest,
     ) -> QuickReplyTemplateResponse:
-        department_id, group_id = await self._resolve_scope(actor, body.department_id, body.group_id)
+        department_id, group_id = await self._resolve_scope(
+            actor,
+            body.department_id,
+            body.group_id,
+        )
         row = QuickReplyTemplate(
             title=body.title.strip(),
             body=body.body.strip(),
@@ -152,12 +156,18 @@ class QuickReplyTemplateService:
         visible_depts: set[int] | str,
         visible_groups: set[int] | str,
     ) -> None:
-        if department_id is not None and visible_depts != SCOPE_ALL:
-            if not isinstance(visible_depts, set) or department_id not in visible_depts:
-                raise PermissionDenied(message="Department outside scope")
-        if group_id is not None and visible_groups != SCOPE_ALL:
-            if not isinstance(visible_groups, set) or group_id not in visible_groups:
-                raise PermissionDenied(message="Group outside scope")
+        if (
+            department_id is not None
+            and visible_depts != SCOPE_ALL
+            and (not isinstance(visible_depts, set) or department_id not in visible_depts)
+        ):
+            raise PermissionDenied(message="Department outside scope")
+        if (
+            group_id is not None
+            and visible_groups != SCOPE_ALL
+            and (not isinstance(visible_groups, set) or group_id not in visible_groups)
+        ):
+            raise PermissionDenied(message="Group outside scope")
 
     async def _resolve_scope(
         self,

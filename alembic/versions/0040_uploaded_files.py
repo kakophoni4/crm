@@ -7,6 +7,7 @@ Revises: 0039_cga_src_user_removal
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0040_uploaded_files"

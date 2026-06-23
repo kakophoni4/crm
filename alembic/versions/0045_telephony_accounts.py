@@ -7,6 +7,7 @@ Revises: 0044_bots_whatsapp_green
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0045_telephony_accounts"

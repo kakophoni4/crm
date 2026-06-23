@@ -56,7 +56,6 @@ class Settings(BaseSettings):
     log_pii_mask: bool = True
 
     ownership_v2: bool = True
-    # When true, API lifespan starts Redis job workers (dev one-process only).
     workers_in_api: bool = False
 
     max_upload_photo_bytes: int = 10 * 1024 * 1024
@@ -81,11 +80,9 @@ class Settings(BaseSettings):
     search_rate_limit_per_minute: int = 60
     search_rate_limit_use_redis: bool = True
 
-    # Rate limiting for chat messages
     chat_messages_rate_limit_per_minute: int = 60
     chat_messages_rate_limit_use_redis: bool = True
 
-    # Rate limiting for contact updates
     contacts_update_rate_limit_per_minute: int = 30
     contacts_update_rate_limit_use_redis: bool = True
 

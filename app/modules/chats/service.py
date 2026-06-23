@@ -10,6 +10,7 @@ from app.modules.bots.chats_bridge import upsert_chat_for_bot, upsert_contact_fr
 from app.modules.bots.repository import BotRepository
 from app.modules.bots.routing import resolve_bot_routing
 from app.modules.chats.filters import ChatListSort
+from app.modules.chats.needs_reply import chat_list_needs_reply
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import (
     ChatCreateRequest,
@@ -19,7 +20,6 @@ from app.modules.chats.schemas import (
     WhatsappOutreachResponse,
 )
 from app.modules.chats.scope import can_view_chat_async, resolve_chats_read_permission
-from app.modules.chats.needs_reply import chat_list_needs_reply
 from app.modules.chats.serialization import to_chat_detail, to_chat_list_item
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader

@@ -7,6 +7,7 @@ Revises: 0028_chat_workflow_answered
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0029_leads_comment"

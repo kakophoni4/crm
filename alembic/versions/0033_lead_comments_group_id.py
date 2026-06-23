@@ -7,6 +7,7 @@ Revises: 0032_lead_comments
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0033_lead_comments_group_id"

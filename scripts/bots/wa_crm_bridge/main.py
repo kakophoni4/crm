@@ -11,11 +11,11 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from aiohttp import web
 import httpx
+from aiohttp import web
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +34,14 @@ def sign_inbound(event_id: str, timestamp: str, body: bytes, secret: str) -> str
     return hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
 
-def verify_outbound(method: str, path: str, timestamp: str, body: bytes, secret: str, signature: str) -> bool:
+def verify_outbound(
+    method: str,
+    path: str,
+    timestamp: str,
+    body: bytes,
+    secret: str,
+    signature: str,
+) -> bool:
     digest = hashlib.sha256(body).hexdigest()
     canonical = f"{method.upper()}\n{path}\n{timestamp}\n{digest}"
     expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
@@ -164,6 +171,7 @@ class Bridge:
         self.webhook_token = _env("WEBHOOK_TOKEN")
         self.bots: dict[str, BotConfig] = {}
         self._bots_lock = asyncio.Lock()
+        self._config_task: asyncio.Task[None] | None = None
 
         if not self.sync_secret:
             raise SystemExit("WA_BRIDGE_SYNC_SECRET is required")
@@ -218,7 +226,7 @@ class Bridge:
             return
 
         event_id = f"wa-{external_id}-{int(time.time())}"
-        occurred_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        occurred_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         envelope = {
             "event": "message.received",
             "event_id": event_id,
@@ -303,7 +311,11 @@ class Bridge:
 
         text, _caption, attachments = parsed
         external_id = str(webhook.get("idMessage") or f"wa-{phone}-{int(time.time())}")
-        contact_name = sender.get("senderContactName") or sender.get("senderName") or sender.get("chatName")
+        contact_name = (
+            sender.get("senderContactName")
+            or sender.get("senderName")
+            or sender.get("chatName")
+        )
         first_name, last_name = _split_name(str(contact_name) if contact_name else None)
 
         await self.send_to_crm(
@@ -392,9 +404,19 @@ class Bridge:
         if cfg is None:
             return web.json_response({"status": "error", "message": "unknown bot"}, status=404)
 
-        if not verify_outbound("POST", request.path, timestamp, body, cfg.outbound_secret, signature):
+        if not verify_outbound(
+            "POST",
+            request.path,
+            timestamp,
+            body,
+            cfg.outbound_secret,
+            signature,
+        ):
             log.warning("Invalid outbound signature for bot=%s", bot_code)
-            return web.json_response({"status": "error", "message": "invalid signature"}, status=401)
+            return web.json_response(
+                {"status": "error", "message": "invalid signature"},
+                status=401,
+            )
 
         command = envelope.get("command")
         payload = envelope.get("payload") or {}
@@ -466,7 +488,7 @@ class Bridge:
         except Exception:
             log.exception("Initial config sync failed, will retry every 30s")
 
-        asyncio.create_task(self.config_loop())
+        self._config_task = asyncio.create_task(self.config_loop())
 
         app = web.Application()
         app.router.add_post("/green/webhook/{bot_code}", self.handle_green_webhook)

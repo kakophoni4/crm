@@ -7,6 +7,7 @@ Revises: 0031_contact_status_returning
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0032_lead_comments"

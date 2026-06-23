@@ -1,74 +1,105 @@
-# Docker — локальная dev-инфраструктура
+# Docker — Локальная Dev-Инфраструктура
 
-`docker-compose.dev.yaml` поднимает **только зависимости** CRM Chat Center. Приложение (FastAPI, worker, frontend) запускается отдельно из IDE или терминала — см. корневой `README.md`.
+`docker-compose.dev.yaml` поднимает зависимости CRM Chat Center и вспомогательные сервисы для разработки. Backend API и frontend запускаются отдельно, worker в dev compose доступен как контейнер `crm-worker`.
 
 ## Сервисы
 
-| Контейнер | Образ | Назначение | Порты (host) | Учётные данные (dev) |
-|-----------|-------|------------|--------------|----------------------|
-| `crm-postgres` | `postgres:16-alpine` | Основная БД | `5432` | user `crm`, password `crm`, DB `crm` |
-| `crm-redis` | `redis:7-alpine` | Кэш, Pub/Sub, refresh-токены, ARQ | `6379` | без пароля |
-| `crm-minio` | `minio/minio:latest` | S3-совместимое хранилище файлов и бэкапов | `9000` (API), `9001` (console) | `minio` / `miniominio` |
-| `crm-minio-init` | `minio/mc:latest` | Однократно создаёт бакеты `crm-files`, `crm-backups` | — | — |
-| `crm-adminer` | `adminer:latest` | Web UI для PostgreSQL | `8080` | сервер: `crm-postgres`, user `crm` |
-| `crm-mailhog` | `mailhog/mailhog` | Перехват SMTP (reset password) | `1025` (SMTP), `8025` (web) | без auth |
+| Контейнер | Образ | Назначение | Порты host | Dev-доступ |
+|---|---|---|---|---|
+| `crm-postgres` | `postgres:16-alpine` | PostgreSQL | `5433 -> 5432` | user/password/db: `crm` / `crm` / `crm` |
+| `crm-redis` | `redis:7-alpine` | Redis cache, Pub/Sub, queues, WS tickets | `6379` | без пароля |
+| `crm-minio` | `minio/minio` | S3-compatible storage | `9000`, `9001` | `minio` / `miniominio` |
+| `crm-minio-init` | `minio/mc` | Создаёт buckets `crm-files`, `crm-backups` | нет | одноразовый init |
+| `crm-adminer` | `adminer` | Web UI для PostgreSQL | `8080` | server: `crm-postgres` |
+| `crm-mailhog` | `mailhog/mailhog` | SMTP catcher | `1025`, `8025` | без auth |
+| `crm-asterisk` | local Dockerfile | Dev PBX for SIP/WebRTC | `5060`, `8088`, `10000-10100/udp` | static dev config |
+| `crm-worker` | `python:3.12-slim` | Background jobs | нет | использует внутренние `crm-postgres`, `crm-redis` |
 
-> **Прод:** не публиковать порты PostgreSQL и Redis на хост и не использовать dev-пароли.
+Production не должен публиковать PostgreSQL/Redis на host и не должен использовать dev-пароли.
 
-## Тома
-
-| Volume | Сервис | Содержимое |
-|--------|--------|------------|
-| `crm-pgdata` | postgres | данные PostgreSQL |
-| `crm-miniodata` | minio | объекты S3 |
-
-## Команды
+## Запуск
 
 ```bash
-# из корня репозитория
 docker compose -f docker/docker-compose.dev.yaml up -d
 docker compose -f docker/docker-compose.dev.yaml ps
-docker compose -f docker/docker-compose.dev.yaml logs -f crm-postgres
-
-# скрипты-обёртки (копируют .env.example → .env при необходимости)
-./scripts/dev.sh          # macOS / Linux
-.\scripts\dev.ps1         # Windows PowerShell
 ```
 
-### Проверка здоровья
+Windows wrapper:
+
+```powershell
+.\scripts\dev.ps1
+```
+
+macOS/Linux wrapper:
 
 ```bash
-docker exec crm-postgres pg_isready -U crm
+./scripts/dev.sh
+```
+
+После первого запуска или `down -v` примените миграции из корня репозитория:
+
+```bash
+pip install -e ".[dev]"
+alembic upgrade head
+python scripts/seed_dev_data.py
+```
+
+Если worker успел стартовать до миграций и пишет ошибки о missing relation, после `alembic upgrade head` перезапустите его:
+
+```bash
+docker compose -f docker/docker-compose.dev.yaml restart crm-worker
+```
+
+## Проверка
+
+```bash
+docker exec crm-postgres pg_isready -U crm -d crm
 docker exec crm-redis redis-cli ping
 curl -f http://localhost:9000/minio/health/live
+docker compose -f docker/docker-compose.dev.yaml logs -f crm-worker
+```
 
-# бакеты MinIO (после успешного crm-minio-init)
+MinIO buckets:
+
+```bash
 docker run --rm --network crm-net minio/mc:latest sh -c \
   "mc alias set myminio http://crm-minio:9000 minio miniominio && mc ls myminio/"
 ```
 
-### Сброс данных
+## Volumes
 
-Удаляет контейнеры **и** именованные тома (все данные БД и MinIO будут потеряны):
+| Volume | Сервис | Содержимое |
+|---|---|---|
+| `crm-pgdata` | PostgreSQL | БД |
+| `crm-miniodata` | MinIO | S3 objects |
+
+Сброс всех dev-данных:
 
 ```bash
 docker compose -f docker/docker-compose.dev.yaml down -v
 ```
 
-После сброса снова выполните `up -d` — `crm-minio-init` пересоздаст бакеты.
+После сброса заново выполните `up -d`, `alembic upgrade head` и seed.
 
 ## Сеть
 
-Все сервисы в сети `crm-net` (имя фиксировано для отладки и `docker run --network crm-net`).
+Все сервисы dev compose подключены к сети `crm-net`. Это имя фиксировано, чтобы можно было запускать одноразовые диагностические контейнеры через `docker run --network crm-net`.
 
-## Staging / production stack
-
-Полный стек (API, worker, frontend, Postgres, Redis, MinIO, Traefik) — см. [`docs/DEPLOY.md`](../docs/DEPLOY.md).
+## Monitoring
 
 ```bash
-cp deploy/env.staging.example deploy/.env.staging
-docker compose -f docker/docker-compose.staging.yaml --env-file deploy/.env.staging --profile with-proxy config
+docker compose -f docker/docker-compose.dev.yaml -f docker/docker-compose.monitoring.yaml up -d
 ```
+
+Подробнее: [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md).
+
+## Staging / Production
+
+Полный стек см. в [`docs/DEPLOY.md`](../docs/DEPLOY.md) и compose-файлах:
+
+- `docker/docker-compose.staging.yaml`
+- `docker/docker-compose.prod.yaml`
+- `deploy/prod/docker-compose.override.yaml.example`
 
 Локальный smoke без Traefik:
 
@@ -77,23 +108,13 @@ docker compose -f docker/docker-compose.staging.yaml -f docker/docker-compose.lo
   --env-file deploy/.env.staging up -d --build
 ```
 
-## Мониторинг (Prometheus + Grafana)
-
-```bash
-docker compose -f docker/docker-compose.dev.yaml -f docker/docker-compose.monitoring.yaml up -d
-```
-
-Подробности, URL, алерты и бэкапы — [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md).
 ## Telephony Dev PBX
 
-`crm-asterisk` is included in `docker-compose.dev.yaml` as a local PBX for SIP/WebRTC
-development.
+`crm-asterisk` включён в `docker-compose.dev.yaml` для SIP/WebRTC разработки.
 
 - SIP over WebSocket: `ws://localhost:8088/ws`
 - SIP UDP/TCP: `localhost:5060`
 - RTP media: `10000-10100/udp`
 - Static smoke-test extension: `7001` / `dev-webrtc-7001`
 
-Browser operators must use internal WebRTC extensions issued by the CRM API, not the
-Bitcall trunk password. The checked-in `extensions.conf` currently returns `501` for
-outbound calls until a real Bitcall trunk is configured on the PBX side.
+Операторы должны использовать внутренние WebRTC extensions, выданные CRM API. Checked-in `extensions.conf` возвращает `501` для outbound calls, пока реальный Bitcall trunk не настроен на стороне PBX.

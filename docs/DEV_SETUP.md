@@ -1,73 +1,118 @@
-# Dev setup (кратко)
+# Dev Setup
+
+Краткая инструкция для локальной разработки. Production/staging живут отдельно и описаны в [`DEPLOY.md`](DEPLOY.md).
 
 ## Зависимости
 
+- Docker Desktop или Docker Engine + Compose v2
+- Python 3.12+
+- Node.js 20+ / npm 10+
+
+## Инфраструктура
+
 ```bash
 docker compose -f docker/docker-compose.dev.yaml up -d
-pip install -e ".[dev]"
-cd frontend && npm ci
 ```
 
-## Миграции
-
-```bash
-alembic upgrade head
-```
-
-После `pytest` с session-фикстурой `migrated_db` схема может быть на `base`. Перед API/E2E:
-
-```bash
-alembic upgrade head
-```
-
-## API (Windows)
+Windows wrapper:
 
 ```powershell
-$env:OWNERSHIP_V2 = "true"
-python scripts/run_uvicorn_win.py
+.\scripts\dev.ps1
 ```
 
-Linux/macOS: `uvicorn app.main:app --reload` (порт 8000).
+Сервисы:
 
-## Worker (отдельный процесс)
+- PostgreSQL: `localhost:5433`, user/password/db: `crm` / `crm` / `crm`
+- Redis: `localhost:6379`
+- MinIO: http://localhost:9001 (`minio` / `miniominio`)
+- Adminer: http://localhost:8080
+- MailHog: http://localhost:8025
+
+## Backend
+
+```bash
+pip install -e ".[dev]"
+alembic upgrade head
+python scripts/seed_dev_data.py
+```
+
+Windows:
+
+```powershell
+python scripts\run_uvicorn_win.py
+```
+
+macOS / Linux:
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+API:
+
+- http://localhost:8000/api/docs
+- http://localhost:8000/api/openapi.json
+- http://localhost:8000/healthz
+- http://localhost:8000/readyz
+
+Важно: `healthz`/`readyz` проверяют доступность БД и Redis. После сброса volume схема может быть пустой, поэтому перед работой с API всегда выполняйте `alembic upgrade head`.
+
+## Worker
+
+В dev compose есть контейнер `crm-worker`. Если вы запускаете worker вручную:
 
 ```bash
 python -m app.workers.run
 ```
 
-`WORKERS_IN_API=true` — только для one-process dev (воркеры в lifespan API).
+`WORKERS_IN_API=true` используйте только для one-process dev, когда worker должен стартовать внутри lifespan API.
 
 ## Frontend
 
 ```bash
-cd frontend && npm run dev
+cd frontend
+cp -n .env.example .env
+npm ci
+npm run dev
 ```
 
-## QA E2E ownership
+Windows:
 
-API на `:8000`, затем:
+```powershell
+cd frontend
+copy .env.example .env
+npm ci
+npm run dev
+```
+
+Frontend: http://localhost:5173
+
+## Проверки
+
+Backend:
 
 ```bash
-python scripts/qa_e2e_ownership.py
+ruff check .
+mypy app
+pytest -q
 ```
 
-Скрипт проверяет `alembic_version == head` и наличие `message_reply_audit`.
-
-## Gate (backend)
+Frontend:
 
 ```bash
-make gate
+cd frontend
+npm run lint
+npm run typecheck
+npm run test
 ```
 
-Эквивалент: `alembic upgrade head`, `pytest -q`, `ruff check .`, `mypy app`.
-
-## Gate-full (backend + frontend)
+Полный gate:
 
 ```bash
 make gate-full
 ```
 
-### Windows (без make)
+Windows без `make`:
 
 ```powershell
 alembic upgrade head
@@ -80,41 +125,28 @@ npm run lint
 npm run test
 ```
 
-## Observability (фаза 6, backend)
+## Полезные Команды
 
-Переменные в `.env` (см. `.env.example`):
+```bash
+docker compose -f docker/docker-compose.dev.yaml ps
+docker compose -f docker/docker-compose.dev.yaml logs -f crm-worker
+docker compose -f docker/docker-compose.dev.yaml down
+docker compose -f docker/docker-compose.dev.yaml down -v
+```
 
-| Переменная | По умолчанию | Назначение |
-|---|---|---|
-| `METRICS_ENABLED` | `false` | `GET /metrics` (Prometheus) |
-| `LOG_PII_MASK` | `true` | маскирование PII в structlog |
-| `SENTRY_DSN` | пусто | Sentry backend (опционально) |
-| `SENTRY_ENVIRONMENT` | `dev` | тег environment в Sentry |
-| `SENTRY_TRACES_SAMPLE_RATE` | `0.0` | доля транзакций (0–1) |
+`down -v` удаляет данные PostgreSQL и MinIO. После него заново выполните миграции и seed.
 
-Локально включить метрики:
+## Observability
+
+```bash
+docker compose -f docker/docker-compose.dev.yaml -f docker/docker-compose.monitoring.yaml up -d
+```
+
+Для `/metrics` включите:
 
 ```powershell
 $env:METRICS_ENABLED = "true"
-python scripts/run_uvicorn_win.py
-curl http://localhost:8000/metrics
+python scripts\run_uvicorn_win.py
 ```
 
-Readiness (для k8s/compose):
-
-```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/readyz
-```
-
-Без `METRICS_ENABLED=true` эндпоинт `/metrics` отвечает **404**.
-
-## Sentry frontend (фаза 6)
-
-В `frontend/.env` (шаблон `frontend/.env.example`):
-
-| Переменная | По умолчанию | Назначение |
-|---|---|---|
-| `VITE_SENTRY_DSN` | пусто | Sentry browser/Vue SDK (опционально) |
-| `VITE_SENTRY_ENVIRONMENT` | `dev` | тег `environment` в Sentry |
-
-Без DSN приложение стартует как обычно; в тестах `@sentry/vue` замокан. Подробнее: [OBSERVABILITY.md](./OBSERVABILITY.md#sentry).
+Подробнее: [`OBSERVABILITY.md`](OBSERVABILITY.md).

@@ -11,7 +11,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def sign_inbound(event_id: str, timestamp: str, body: bytes, secret: str) -> str:
@@ -30,7 +30,7 @@ def main() -> int:
     parser.add_argument("--text", default="Test message from send_test_event.py")
     args = parser.parse_args()
 
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     event_id = args.event_id or f"test-{int(time.time())}"
     external_id = args.external_id or f"msg-{int(time.time())}"
 

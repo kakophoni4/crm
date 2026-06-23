@@ -6,7 +6,6 @@ import {
   clearChatSnapshots,
   getChatSnapshot,
   isChatSnapshotFresh,
-  priorityPrefetchChat,
   setChatSnapshot,
   snapshotCacheSize,
 } from '@/features/chats/snapshot-cache'

@@ -31,7 +31,7 @@ describe('MessageInput send hotkeys', () => {
     await textarea.trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
-    expect(input.emitted('send')?.[0]).toEqual(['Привет', []])
+    expect(input.emitted('send')?.[0]).toEqual(['Привет', [], null])
     wrapper.unmount()
     document.body.innerHTML = ''
   })

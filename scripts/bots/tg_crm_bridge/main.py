@@ -9,14 +9,12 @@ import hmac
 import json
 import logging
 import os
-import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-import aiohttp
-from aiohttp import web
 import httpx
+from aiohttp import web
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +33,14 @@ def sign_inbound(event_id: str, timestamp: str, body: bytes, secret: str) -> str
     return hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
 
-def verify_outbound(method: str, path: str, timestamp: str, body: bytes, secret: str, signature: str) -> bool:
+def verify_outbound(
+    method: str,
+    path: str,
+    timestamp: str,
+    body: bytes,
+    secret: str,
+    signature: str,
+) -> bool:
     digest = hashlib.sha256(body).hexdigest()
     canonical = f"{method.upper()}\n{path}\n{timestamp}\n{digest}"
     expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
@@ -211,7 +216,7 @@ class Bridge:
                 return
 
             event_id = f"tg-{tg_message.get('message_id')}-{int(time.time())}"
-            occurred_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            occurred_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
             envelope = {
                 "event": "message.received",
                 "event_id": event_id,
@@ -339,7 +344,10 @@ class Bridge:
             signature,
         ):
             log.warning("Invalid outbound signature")
-            return web.json_response({"status": "error", "message": "invalid signature"}, status=401)
+            return web.json_response(
+                {"status": "error", "message": "invalid signature"},
+                status=401,
+            )
 
         try:
             envelope = json.loads(body.decode())

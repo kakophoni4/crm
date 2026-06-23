@@ -68,6 +68,9 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
 "tests/contacts/test_contact_activity_timeline.py" = ["RUF001"]
 "alembic/versions/0007_statuses.py" = ["RUF001"]
 "alembic/versions/0019_leads.py" = ["RUF001"]
+"alembic/versions/0028_chat_workflow_answered_status.py" = ["RUF001"]
+"alembic/versions/0036_simplify_lead_pipeline.py" = ["RUF001"]
+"scripts/seed_dev_data.py" = ["E402", "RUF001"]
 
 [tool.mypy]
 python_version = "3.12"

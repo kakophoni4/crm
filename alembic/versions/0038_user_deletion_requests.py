@@ -56,5 +56,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER IF EXISTS trg_user_deletion_requests_updated_at ON user_deletion_requests")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_user_deletion_requests_updated_at "
+        "ON user_deletion_requests"
+    )
     op.execute("DROP TABLE IF EXISTS user_deletion_requests")

@@ -7,6 +7,7 @@ Revises: 0045_telephony_accounts
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0046_telephony_extensions"

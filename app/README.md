@@ -1,63 +1,80 @@
 # Backend (`app/`)
 
-Developer guide for the CRM Chat Center FastAPI skeleton.
+FastAPI backend CRM Chat Center.
 
-## Prerequisites
+## Назначение
+
+Backend обслуживает REST API, WebSocket realtime, auth/JWT, RBAC, контакты, чаты, лиды, статусы, ботов, файлы, аналитику и телефонию.
+
+## Требования
 
 - Python 3.12+
-- Docker Compose dev stack (`docker/docker-compose.dev.yaml`) for PostgreSQL and Redis
-- `.env` in the repository root (copy from `.env.example`)
+- PostgreSQL/Redis/MinIO из `docker/docker-compose.dev.yaml`
+- `.env` в корне репозитория
 
-## Install
+## Установка
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-## Run locally
+## Запуск
 
 ```bash
 docker compose -f docker/docker-compose.dev.yaml up -d
-make run
+alembic upgrade head
+python scripts/seed_dev_data.py
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Windows:
+
+```powershell
+python scripts\run_uvicorn_win.py
 ```
 
 API:
 
 - Health: http://localhost:8000/healthz
+- Readiness: http://localhost:8000/readyz
 - Swagger: http://localhost:8000/api/docs
 - OpenAPI: http://localhost:8000/api/openapi.json
 
-## Migrations
+## Миграции
 
-Create a revision:
+Создать ревизию:
 
 ```bash
 alembic revision -m "describe_change"
 ```
 
-Apply migrations:
+Применить миграции:
 
 ```bash
-make migrate
+alembic upgrade head
 ```
 
-## Tests
+## Worker
 
 ```bash
-make test
+python -m app.workers.run
 ```
 
-Requires Docker (testcontainers starts PostgreSQL and Redis).
+В dev compose worker уже есть как `crm-worker`; после полного сброса БД примените миграции перед использованием API/worker.
 
-## Lint
+## Проверки
 
 ```bash
-make lint
+ruff check .
+mypy app
+pytest -q
 ```
 
-## Add a new module
+## Новый Модуль
 
-1. Create a package under `app/modules/<name>/` or `app/core/<name>/`.
-2. Add routers and wire them in `create_app()` when the module is ready.
-3. Add Alembic migrations for schema changes.
-4. Add service tests under `tests/`.
+1. Создайте пакет в `app/modules/<name>/`.
+2. Вынесите схемы, router, service/repository по текущим паттернам модуля.
+3. Подключите router в `app/main.py`.
+4. Для изменений БД добавьте Alembic migration.
+5. Добавьте тесты в `tests/<domain>/`.
+6. При изменении публичного контракта обновите `docs/API_CONTRACT.md`, `docs/EVENTS.md`, `docs/DATABASE.md` или `docs/RBAC_MATRIX.md`.

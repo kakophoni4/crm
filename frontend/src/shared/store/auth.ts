@@ -147,7 +147,6 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         await authApi.logout(token)
       } catch {
-        /* session already cleared locally */
       }
     }
   }

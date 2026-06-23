@@ -360,7 +360,6 @@ function stopRingbackTone(): void {
     try {
       oscillator.stop()
     } catch {
-      // Already stopped.
     }
     oscillator.disconnect()
   }

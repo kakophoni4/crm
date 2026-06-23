@@ -73,7 +73,10 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("CREATE INDEX idx_bot_group_assignments_group_id ON bot_group_assignments (group_id)")
+    op.execute(
+        "CREATE INDEX idx_bot_group_assignments_group_id "
+        "ON bot_group_assignments (group_id)"
+    )
     op.execute(
         """
         INSERT INTO bot_group_assignments (bot_id, group_id)
