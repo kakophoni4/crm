@@ -16,7 +16,6 @@ services:
       - --log-file=stdout
       - --fingerprint
       - --lt-cred-mech
-      - --no-cli
       - --no-tls
       - --no-dtls
       - --realm=${TURN_REALM:?TURN_REALM is required}
