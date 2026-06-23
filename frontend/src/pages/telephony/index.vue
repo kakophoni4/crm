@@ -38,6 +38,10 @@ const activeCallAnswered = ref(false)
 const muted = ref(false)
 const audioPrimed = ref(false)
 let callTimer: number | null = null
+let ringbackContext: AudioContext | null = null
+let ringbackGain: GainNode | null = null
+let ringbackTimer: number | null = null
+let ringbackOscillators: OscillatorNode[] = []
 
 const softphone = new CrmSoftphone({
   onStatus: (value) => {
@@ -265,6 +269,68 @@ function stopCallTimer(): void {
   callTimer = null
 }
 
+function audioContextCtor(): typeof AudioContext | null {
+  const win = window as Window & { webkitAudioContext?: typeof AudioContext }
+  return window.AudioContext ?? win.webkitAudioContext ?? null
+}
+
+function ensureRingbackContext(): AudioContext | null {
+  if (ringbackContext) return ringbackContext
+  const Ctor = audioContextCtor()
+  if (!Ctor) return null
+  ringbackContext = new Ctor()
+  ringbackGain = ringbackContext.createGain()
+  ringbackGain.gain.value = 0.045
+  ringbackGain.connect(ringbackContext.destination)
+  return ringbackContext
+}
+
+function stopRingbackTone(): void {
+  for (const oscillator of ringbackOscillators) {
+    try {
+      oscillator.stop()
+    } catch {
+      // Already stopped.
+    }
+    oscillator.disconnect()
+  }
+  ringbackOscillators = []
+}
+
+function playRingbackTone(): void {
+  const context = ensureRingbackContext()
+  if (!context || !ringbackGain || ringbackOscillators.length > 0) return
+  const tones = [425, 450]
+  ringbackOscillators = tones.map((frequency) => {
+    const oscillator = context.createOscillator()
+    oscillator.type = 'sine'
+    oscillator.frequency.value = frequency
+    oscillator.connect(ringbackGain as GainNode)
+    oscillator.start()
+    return oscillator
+  })
+}
+
+function startRingback(): void {
+  const context = ensureRingbackContext()
+  if (!context || ringbackTimer != null) return
+  void context.resume().catch(() => undefined)
+  playRingbackTone()
+  window.setTimeout(stopRingbackTone, 900)
+  ringbackTimer = window.setInterval(() => {
+    playRingbackTone()
+    window.setTimeout(stopRingbackTone, 900)
+  }, 3500)
+}
+
+function stopRingback(): void {
+  if (ringbackTimer != null) {
+    window.clearInterval(ringbackTimer)
+    ringbackTimer = null
+  }
+  stopRingbackTone()
+}
+
 async function updateActiveCall(statusValue: TelephonyCallStatus): Promise<void> {
   const id = activeCallId.value
   if (id == null) return
@@ -283,6 +349,7 @@ async function updateActiveCall(statusValue: TelephonyCallStatus): Promise<void>
     activeElapsedSeconds.value = 0
     muted.value = false
     stopCallTimer()
+    stopRingback()
   }
 }
 
@@ -300,9 +367,11 @@ async function startCall(): Promise<void> {
     activeCallAnswered.value = false
     muted.value = false
     startCallTimer()
+    startRingback()
     callHistory.value = [call, ...callHistory.value.filter((item) => item.id !== call.id)]
     await softphone.call(call.phone_number)
   } catch (err) {
+    stopRingback()
     if (activeCallId.value != null) {
       await updateActiveCall('failed')
     }
@@ -394,16 +463,19 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
   stopCallTimer()
+  stopRingback()
   void softphone.disconnect()
 })
 
 watch(status, (value) => {
   if (value === 'in-call') {
+    stopRingback()
     activeCallAnswered.value = true
     enableRemoteAudio({ silent: true })
     void updateActiveCall('answered')
   }
   if (value === 'ended') {
+    stopRingback()
     void (async () => {
       await updateActiveCall(activeCallAnswered.value ? 'completed' : 'failed')
       stopCallTimer()
