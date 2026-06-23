@@ -55,6 +55,8 @@ import {
   chatListItemIsAnswered,
   chatListItemNeedsResponse,
   chatListItemStatusLabel,
+  chatOwnerBadgeEscalated,
+  chatOwnerBadgePending,
   currentLeadIsOpen,
   filterChatWorkflowStatuses,
   filterLeadPipelineStatuses,
@@ -590,9 +592,9 @@ onUnmounted(() => {
 
                 :owner-user-id="chat.card_owner_user_id"
 
-                :escalated="Boolean(chat.escalated_at)"
+                :escalated="chatOwnerBadgeEscalated(chat)"
 
-                :pending="Boolean(chat.pending_inbound_at)"
+                :pending="chatOwnerBadgePending(chat)"
 
               />
 
@@ -661,8 +663,8 @@ onUnmounted(() => {
                   <ContactOwnerBadge
                     :owner-full-name="store.currentChat.card_owner_full_name"
                     :owner-user-id="store.currentChat.card_owner_user_id"
-                    :escalated="Boolean(store.currentChat.escalated_at)"
-                    :pending="Boolean(store.currentChat.pending_inbound_at)"
+                    :escalated="chatOwnerBadgeEscalated(store.currentChat)"
+                    :pending="chatOwnerBadgePending(store.currentChat)"
                   />
                   <NTag v-if="store.currentChat.contact_illiquid" size="small" type="warning" :bordered="false">
                     Неликвидный

@@ -283,6 +283,17 @@ export function chatListItemNeedsResponse(chat: ChatListItem): boolean {
   return Boolean(chat.needs_reply ?? chat.needs_response)
 }
 
+export function chatOwnerBadgeEscalated(chat: ChatListItem): boolean {
+  if (chatListItemIsAnswered(chat)) return false
+  return Boolean(chat.escalated_at)
+}
+
+export function chatOwnerBadgePending(chat: ChatListItem): boolean {
+  if (chatListItemIsAnswered(chat)) return false
+  if (chatOwnerBadgeEscalated(chat)) return false
+  return Boolean(chat.pending_inbound_at)
+}
+
 
 
 export function chatLabelStatusId(label: ChatLabelSnippet | null | undefined): number | null {

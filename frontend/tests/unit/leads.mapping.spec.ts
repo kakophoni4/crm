@@ -6,6 +6,8 @@ import {
 
   chatListItemIsAnswered,
   chatListItemNeedsResponse,
+  chatOwnerBadgeEscalated,
+  chatOwnerBadgePending,
   chatListItemStatusLabel,
 
   currentLeadIsOpen,
@@ -207,6 +209,8 @@ describe('leads mapping', () => {
 
     expect(chatListItemIsAnswered(answered)).toBe(true)
     expect(chatListItemNeedsResponse(answered)).toBe(false)
+    expect(chatOwnerBadgePending(answered)).toBe(false)
+    expect(chatOwnerBadgeEscalated(answered)).toBe(false)
   })
 
   it('formats lead bot label from API fields', () => {
