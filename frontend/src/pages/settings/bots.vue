@@ -5,6 +5,7 @@ import { computed, h, onMounted, ref } from 'vue'
 
 import type { BotItem, Group } from '@/features/admin/api'
 import { listBots, listGroups, setBotGroupAssignments } from '@/features/admin/api'
+import TelephonyAccountsPanel from '@/features/telephony/TelephonyAccountsPanel.vue'
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -112,6 +113,8 @@ onMounted(() => {
     <NSpin :show="loading">
       <NDataTable :columns="columns" :data="rows" :row-key="(r: BotItem) => r.id" />
     </NSpin>
+
+    <TelephonyAccountsPanel />
   </section>
 </template>
 
