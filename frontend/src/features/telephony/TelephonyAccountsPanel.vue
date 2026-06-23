@@ -39,7 +39,7 @@ const editing = ref<TelephonyAccount | null>(null)
 const form = ref({
   name: '',
   department_id: null as number | null,
-  group_id: null as number | null,
+  group_ids: [] as number[],
   sip_host: '',
   sip_port: 5060,
   sip_transport: 'udp' as 'udp' | 'tcp' | 'tls',
@@ -68,7 +68,12 @@ const columns = computed<DataTableColumns<TelephonyAccount>>(() => [
     title: 'Отдел / группа',
     key: 'scope',
     minWidth: 180,
-    render: (row) => row.group_name ?? row.department_name ?? `Отдел #${row.department_id}`,
+    render: (row) =>
+      row.group_names.length > 0
+        ? row.group_names.join(', ')
+        : row.department_name
+          ? `${row.department_name} целиком`
+          : `Отдел #${row.department_id}`,
   },
   {
     title: 'SIP',
@@ -107,7 +112,7 @@ function resetForm(): void {
   form.value = {
     name: 'Bitcall',
     department_id: departments.value[0]?.id ?? null,
-    group_id: null,
+    group_ids: [],
     sip_host: 'gateway.bitcall.io',
     sip_port: 5060,
     sip_transport: 'udp',
@@ -131,7 +136,7 @@ function openEdit(row: TelephonyAccount): void {
   form.value = {
     name: row.name,
     department_id: row.department_id,
-    group_id: row.group_id,
+    group_ids: [...row.group_ids],
     sip_host: row.sip_host,
     sip_port: row.sip_port,
     sip_transport: row.sip_transport,
@@ -177,7 +182,7 @@ async function onSubmit(): Promise<void> {
     const payload = {
       name: form.value.name,
       department_id: form.value.department_id,
-      group_id: form.value.group_id,
+      group_ids: form.value.group_ids,
       sip_host: form.value.sip_host,
       sip_port: form.value.sip_port,
       sip_transport: form.value.sip_transport,
@@ -250,8 +255,15 @@ onMounted(() => {
         <NFormItem label="Отдел">
           <NSelect v-model:value="form.department_id" :options="departmentOptions" />
         </NFormItem>
-        <NFormItem label="Группа">
-          <NSelect v-model:value="form.group_id" :options="groupOptions" clearable />
+        <NFormItem label="Группы">
+          <NSelect
+            v-model:value="form.group_ids"
+            :options="groupOptions"
+            multiple
+            filterable
+            clearable
+            placeholder="Пусто = весь отдел"
+          />
         </NFormItem>
         <div class="telephony-modal__grid">
           <NFormItem label="SIP host">

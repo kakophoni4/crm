@@ -39,6 +39,8 @@ def _to_response(row: TelephonyAccountRow) -> TelephonyAccountResponse:
         department_name=row.department_name,
         group_id=account.group_id,
         group_name=row.group_name,
+        group_ids=row.group_ids,
+        group_names=row.group_names,
         sip_host=account.sip_host,
         sip_port=account.sip_port,
         sip_transport=account.sip_transport,
@@ -73,13 +75,13 @@ class TelephonyService:
         if department_id not in set(departments):
             raise NotFound(message="Telephony account not found")
 
-    async def _ensure_group_visible(self, actor: User, group_id: int | None) -> None:
-        if group_id is None:
+    async def _ensure_groups_visible(self, actor: User, group_ids: list[int]) -> None:
+        if not group_ids:
             return
         _departments, groups = await self._scope(actor)
         if groups == SCOPE_ALL:
             return
-        if group_id not in set(groups):
+        if not set(group_ids).intersection(set(groups)):
             raise NotFound(message="Telephony account not found")
 
     async def _ensure_manager(self, actor: User, department_id: int) -> None:
@@ -107,6 +109,15 @@ class TelephonyService:
         if int(group_department_id) != department_id:
             raise ValidationError(message="group_id must belong to account department")
 
+    async def _validate_groups(self, department_id: int, group_ids: list[int]) -> list[int]:
+        valid_group_ids = sorted(set(int(group_id) for group_id in group_ids))
+        if not valid_group_ids:
+            return []
+        found = await self._repo.groups_in_department(valid_group_ids, department_id)
+        if found != valid_group_ids:
+            raise ValidationError(message="group_ids must belong to account department")
+        return valid_group_ids
+
     async def list_accounts(self, actor: User) -> TelephonyAccountListResponse:
         departments, groups = await self._scope(actor)
         rows = await self._repo.list_with_meta()
@@ -118,7 +129,7 @@ class TelephonyService:
             rows = [
                 row
                 for row in rows
-                if row.account.group_id is None or row.account.group_id in group_set
+                if not row.group_ids or set(row.group_ids).intersection(group_set)
             ]
         return TelephonyAccountListResponse(items=[_to_response(row) for row in rows])
 
@@ -127,7 +138,7 @@ class TelephonyService:
         if row is None:
             raise NotFound(message="Telephony account not found")
         await self._ensure_department_visible(actor, row.account.department_id)
-        await self._ensure_group_visible(actor, row.account.group_id)
+        await self._ensure_groups_visible(actor, row.group_ids)
         return _to_response(row)
 
     async def create_account(
@@ -137,12 +148,13 @@ class TelephonyService:
     ) -> TelephonyAccountResponse:
         await self._ensure_manager(actor, body.department_id)
         await self._validate_department(body.department_id)
-        await self._validate_group(body.department_id, body.group_id)
+        body_group_ids = body.group_ids or ([body.group_id] if body.group_id is not None else [])
+        group_ids = await self._validate_groups(body.department_id, body_group_ids)
         account = await self._repo.create(
             name=body.name.strip(),
             provider=body.provider.strip().lower(),
             department_id=body.department_id,
-            group_id=body.group_id,
+            group_id=group_ids[0] if len(group_ids) == 1 else None,
             sip_host=body.sip_host.strip(),
             sip_port=body.sip_port,
             sip_transport=body.sip_transport.lower(),
@@ -152,6 +164,7 @@ class TelephonyService:
             pbx_extension_prefix=_clean(body.pbx_extension_prefix),
             webrtc_ws_url=_clean(body.webrtc_ws_url),
         )
+        await self._repo.replace_group_assignments(account.id, group_ids)
         await self._session.commit()
         row = await self._repo.get_with_meta(account.id)
         assert row is not None
@@ -168,9 +181,14 @@ class TelephonyService:
             raise NotFound(message="Telephony account not found")
         await self._ensure_manager(actor, account.department_id)
 
-        if body.group_id is not None:
+        if body.group_ids is not None:
+            group_ids = await self._validate_groups(account.department_id, body.group_ids)
+            account.group_id = group_ids[0] if len(group_ids) == 1 else None
+            await self._repo.replace_group_assignments(account.id, group_ids)
+        elif body.group_id is not None:
             await self._validate_group(account.department_id, body.group_id)
             account.group_id = body.group_id
+            await self._repo.replace_group_assignments(account.id, [body.group_id])
         if body.name is not None:
             account.name = body.name.strip()
         if body.sip_host is not None:
@@ -223,7 +241,7 @@ class TelephonyService:
             raise NotFound(message="Telephony account not found")
         account = row.account
         await self._ensure_department_visible(actor, account.department_id)
-        await self._ensure_group_visible(actor, account.group_id)
+        await self._ensure_groups_visible(actor, row.group_ids)
 
         extension = await self._repo.get_extension(account_id=account.id, user_id=actor.id)
         extension_created = False

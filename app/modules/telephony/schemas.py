@@ -10,6 +10,7 @@ class TelephonyAccountCreateRequest(BaseModel):
     provider: str = Field(default="bitcall", min_length=1, max_length=64)
     department_id: int = Field(gt=0)
     group_id: int | None = Field(default=None, gt=0)
+    group_ids: list[int] = Field(default_factory=list)
     sip_host: str = Field(min_length=1, max_length=256)
     sip_port: int = Field(default=5060, ge=1, le=65535)
     sip_transport: str = Field(default="udp", pattern="^(udp|tcp|tls)$")
@@ -23,6 +24,7 @@ class TelephonyAccountCreateRequest(BaseModel):
 class TelephonyAccountUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=256)
     group_id: int | None = Field(default=None, gt=0)
+    group_ids: list[int] | None = None
     sip_host: str | None = Field(default=None, min_length=1, max_length=256)
     sip_port: int | None = Field(default=None, ge=1, le=65535)
     sip_transport: str | None = Field(default=None, pattern="^(udp|tcp|tls)$")
@@ -42,6 +44,8 @@ class TelephonyAccountResponse(BaseModel):
     department_name: str | None = None
     group_id: int | None
     group_name: str | None = None
+    group_ids: list[int] = Field(default_factory=list)
+    group_names: list[str] = Field(default_factory=list)
     sip_host: str
     sip_port: int
     sip_transport: str

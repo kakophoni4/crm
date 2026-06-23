@@ -97,6 +97,61 @@ async def test_operator_lists_visible_telephony_accounts(
 
 
 @pytest.mark.asyncio
+async def test_admin_assigns_telephony_account_to_multiple_groups(
+    client: AsyncClient,
+    db_ready: None,
+    admin_headers: dict[str, str],
+    bots_org: dict[str, object],
+    test_settings,
+) -> None:
+    dept_id = int(bots_org["dept_id"])
+    group_id = int(bots_org["group_id"])
+
+    engine = create_engine(_sync_database_url(test_settings.database_url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO groups (name, department_id)
+                    VALUES ('Bots Test Group B', :dept_id)
+                    ON CONFLICT (department_id, name) DO NOTHING
+                    """
+                ),
+                {"dept_id": dept_id},
+            )
+            second_group_id = connection.execute(
+                text(
+                    """
+                    SELECT id FROM groups
+                    WHERE department_id = :dept_id AND name = 'Bots Test Group B'
+                    """
+                ),
+                {"dept_id": dept_id},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    response = await client.post(
+        "/api/v1/telephony/accounts",
+        headers=admin_headers,
+        json={
+            "name": "Bitcall Multi Group",
+            "department_id": dept_id,
+            "group_ids": [group_id, second_group_id],
+            "sip_host": "sip.bitcall.example",
+            "sip_username": "multi-group-user",
+            "sip_password": "multi-group-password",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert set(body["group_ids"]) == {group_id, second_group_id}
+    assert set(body["group_names"]) == {"Bots Test Group", "Bots Test Group B"}
+
+
+@pytest.mark.asyncio
 async def test_admin_updates_and_deactivates_telephony_account(
     client: AsyncClient,
     db_ready: None,

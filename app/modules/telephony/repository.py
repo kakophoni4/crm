@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.crypto import decrypt_secret, encrypt_secret
-from app.modules.db.models.department import Department
-from app.modules.db.models.group import Group
 from app.modules.db.models.telephony_account import TelephonyAccount
 from app.modules.db.models.telephony_extension import TelephonyExtension
 
@@ -17,6 +15,8 @@ class TelephonyAccountRow:
     account: TelephonyAccount
     department_name: str | None
     group_name: str | None
+    group_ids: list[int]
+    group_names: list[str]
 
 
 class TelephonyAccountRepository:
@@ -25,34 +25,65 @@ class TelephonyAccountRepository:
 
     async def list_with_meta(self) -> list[TelephonyAccountRow]:
         result = await self._session.execute(
-            select(TelephonyAccount, Department.name, Group.name)
-            .join(Department, Department.id == TelephonyAccount.department_id)
-            .outerjoin(Group, Group.id == TelephonyAccount.group_id)
-            .order_by(TelephonyAccount.name),
+            text(
+                """
+                SELECT
+                    ta.id,
+                    d.name AS department_name,
+                    legacy_group.name AS group_name,
+                    COALESCE(
+                        array_agg(taga.group_id ORDER BY g.name)
+                            FILTER (WHERE taga.group_id IS NOT NULL),
+                        '{}'
+                    ) AS group_ids,
+                    COALESCE(
+                        array_agg(g.name ORDER BY g.name)
+                            FILTER (WHERE g.id IS NOT NULL),
+                        '{}'
+                    ) AS group_names
+                FROM telephony_accounts ta
+                JOIN departments d ON d.id = ta.department_id
+                LEFT JOIN groups legacy_group ON legacy_group.id = ta.group_id
+                LEFT JOIN telephony_account_group_assignments taga ON taga.account_id = ta.id
+                LEFT JOIN groups g ON g.id = taga.group_id
+                GROUP BY ta.id, d.name, legacy_group.name
+                ORDER BY ta.name
+                """
+            ),
         )
+        meta_by_id: dict[int, tuple[str | None, str | None, list[int], list[str]]] = {}
+        for row in result.mappings():
+            meta_by_id[int(row["id"])] = (
+                row["department_name"],
+                row["group_name"],
+                [int(gid) for gid in (row["group_ids"] or [])],
+                [str(name) for name in (row["group_names"] or [])],
+            )
+
+        accounts_result = await self._session.execute(
+            select(TelephonyAccount).order_by(TelephonyAccount.name),
+        )
+        accounts = list(accounts_result.scalars().all())
         return [
             TelephonyAccountRow(
-                account=row[0],
-                department_name=row[1],
-                group_name=row[2],
+                account=account,
+                department_name=meta_by_id.get(account.id, (None, None, [], []))[0],
+                group_name=meta_by_id.get(account.id, (None, None, [], []))[1],
+                group_ids=meta_by_id.get(account.id, (None, None, [], []))[2],
+                group_names=meta_by_id.get(account.id, (None, None, [], []))[3],
             )
-            for row in result.all()
+            for account in accounts
         ]
 
     async def get(self, account_id: int) -> TelephonyAccount | None:
         return await self._session.get(TelephonyAccount, account_id)
 
     async def get_with_meta(self, account_id: int) -> TelephonyAccountRow | None:
-        result = await self._session.execute(
-            select(TelephonyAccount, Department.name, Group.name)
-            .join(Department, Department.id == TelephonyAccount.department_id)
-            .outerjoin(Group, Group.id == TelephonyAccount.group_id)
-            .where(TelephonyAccount.id == account_id),
-        )
-        row = result.one_or_none()
-        if row is None:
-            return None
-        return TelephonyAccountRow(account=row[0], department_name=row[1], group_name=row[2])
+        rows = await self.list_with_meta()
+        for row in rows:
+            if row.account.id == account_id:
+                return row
+        return None
 
     async def create(
         self,
@@ -87,6 +118,36 @@ class TelephonyAccountRepository:
         self._session.add(account)
         await self._session.flush()
         return account
+
+    async def replace_group_assignments(self, account_id: int, group_ids: list[int]) -> None:
+        await self._session.execute(
+            text("DELETE FROM telephony_account_group_assignments WHERE account_id = :aid"),
+            {"aid": account_id},
+        )
+        for group_id in group_ids:
+            await self._session.execute(
+                text(
+                    """
+                    INSERT INTO telephony_account_group_assignments (account_id, group_id)
+                    VALUES (:aid, :gid)
+                    """
+                ),
+                {"aid": account_id, "gid": group_id},
+            )
+        await self._session.flush()
+
+    async def groups_in_department(self, group_ids: list[int], department_id: int) -> list[int]:
+        if not group_ids:
+            return []
+        stmt = text(
+            """
+            SELECT id FROM groups
+            WHERE department_id = :did AND id IN :gids
+            ORDER BY id
+            """
+        ).bindparams(bindparam("gids", expanding=True))
+        result = await self._session.execute(stmt, {"did": department_id, "gids": group_ids})
+        return [int(row[0]) for row in result.all()]
 
     async def set_password(self, account: TelephonyAccount, password: str) -> None:
         account.sip_password_encrypted = await encrypt_secret(self._session, password)

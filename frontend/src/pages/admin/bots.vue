@@ -25,6 +25,7 @@ import {
   setBotGroupAssignments,
   updateBot,
 } from '@/features/admin/api'
+import TelephonyAccountsPanel from '@/features/telephony/TelephonyAccountsPanel.vue'
 import { AppError } from '@/shared/api/http'
 
 const message = useMessage()
@@ -351,6 +352,8 @@ onMounted(() => {
     <NSpin :show="loading">
       <NDataTable :columns="columns" :data="rows" :row-key="(r: BotItem) => r.id" />
     </NSpin>
+
+    <TelephonyAccountsPanel />
 
     <NModal
       v-model:show="showModal"

@@ -8,6 +8,8 @@ export interface TelephonyAccount {
   department_name: string | null
   group_id: number | null
   group_name: string | null
+  group_ids: number[]
+  group_names: string[]
   sip_host: string
   sip_port: number
   sip_transport: 'udp' | 'tcp' | 'tls'
@@ -26,6 +28,7 @@ export interface TelephonyAccountCreateBody {
   provider?: string
   department_id: number
   group_id?: number | null
+  group_ids?: number[]
   sip_host: string
   sip_port?: number
   sip_transport?: 'udp' | 'tcp' | 'tls'
@@ -39,6 +42,7 @@ export interface TelephonyAccountCreateBody {
 export interface TelephonyAccountUpdateBody {
   name?: string
   group_id?: number | null
+  group_ids?: number[]
   sip_host?: string
   sip_port?: number
   sip_transport?: 'udp' | 'tcp' | 'tls'

@@ -37,6 +37,9 @@ from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.refresh_token import RefreshToken
 from app.modules.db.models.status import Status
 from app.modules.db.models.telephony_account import TelephonyAccount
+from app.modules.db.models.telephony_account_group_assignment import (
+    TelephonyAccountGroupAssignment,
+)
 from app.modules.db.models.telephony_extension import TelephonyExtension
 from app.modules.db.models.uploaded_file import UploadedFile
 from app.modules.db.models.user import User
@@ -74,6 +77,7 @@ __all__ = [
     "Status",
     "StatusKind",
     "TelephonyAccount",
+    "TelephonyAccountGroupAssignment",
     "TelephonyExtension",
     "TransferStatus",
     "UploadedFile",
