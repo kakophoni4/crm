@@ -108,6 +108,26 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
                 },
             )
         except Exception as exc:
+            err_text = str(exc)
+            is_expired_url = "403" in err_text or "Forbidden" in err_text
+            if is_expired_url:
+                att["status"] = "failed"
+                att["error"] = "Ссылка на файл истекла (presigned URL)."
+                attachments[attachment_index] = att
+                await session.execute(
+                    text("UPDATE messages SET attachments = CAST(:att AS jsonb) WHERE id = :mid"),
+                    {"att": json.dumps(attachments), "mid": message_id},
+                )
+                await session.commit()
+                logger.error(
+                    "download_attachment_failed",
+                    message_id=message_id,
+                    index=attachment_index,
+                    error=err_text,
+                    expired_url=True,
+                )
+                return
+
             if attempt + 1 < MAX_ATTEMPTS:
                 delay = BACKOFF_SECONDS[attempt]
                 await enqueue(
