@@ -1,0 +1,106 @@
+import type { ChatDetail, ChatMessage } from '@/entities/chat/types'
+
+import * as chatsApi from '@/features/chats/api'
+
+/** Hot chats kept in memory for instant open. */
+export const CHAT_SNAPSHOT_CACHE_SIZE = 15
+export const CHAT_SNAPSHOT_MESSAGE_LIMIT = 20
+
+export interface ChatSnapshot {
+  detail: ChatDetail
+  messages: ChatMessage[]
+  nextCursor: string | null
+  fetchedAt: number
+}
+
+const cache = new Map<number, ChatSnapshot>()
+const inflight = new Set<number>()
+const queue: number[] = []
+let activePrefetches = 0
+const PREFETCH_CONCURRENCY = 2
+
+function touch(chatId: number, snapshot: ChatSnapshot): void {
+  cache.delete(chatId)
+  cache.set(chatId, snapshot)
+  evictOverflow()
+}
+
+function evictOverflow(): void {
+  while (cache.size > CHAT_SNAPSHOT_CACHE_SIZE) {
+    const oldest = cache.keys().next().value as number | undefined
+    if (oldest == null) break
+    cache.delete(oldest)
+  }
+}
+
+export function getChatSnapshot(chatId: number): ChatSnapshot | null {
+  const snapshot = cache.get(chatId)
+  if (!snapshot) return null
+  touch(chatId, snapshot)
+  return snapshot
+}
+
+export function setChatSnapshot(
+  chatId: number,
+  snapshot: Omit<ChatSnapshot, 'fetchedAt'> & { fetchedAt?: number },
+): void {
+  touch(chatId, {
+    ...snapshot,
+    messages: snapshot.messages.slice(0, CHAT_SNAPSHOT_MESSAGE_LIMIT),
+    fetchedAt: snapshot.fetchedAt ?? Date.now(),
+  })
+}
+
+export function hasChatSnapshot(chatId: number): boolean {
+  return cache.has(chatId)
+}
+
+export function clearChatSnapshots(): void {
+  cache.clear()
+  queue.length = 0
+}
+
+export function scheduleChatSnapshotsPrefetch(chatIds: Iterable<number>): void {
+  for (const chatId of chatIds) {
+    if (cache.has(chatId) || inflight.has(chatId) || queue.includes(chatId)) continue
+    queue.push(chatId)
+  }
+  drainPrefetchQueue()
+}
+
+async function prefetchChat(chatId: number): Promise<void> {
+  if (cache.has(chatId) || inflight.has(chatId)) return
+  inflight.add(chatId)
+  try {
+    const [detail, msgs] = await Promise.all([
+      chatsApi.getChat(chatId),
+      chatsApi.listMessages(chatId, { limit: CHAT_SNAPSHOT_MESSAGE_LIMIT }),
+    ])
+    setChatSnapshot(chatId, {
+      detail,
+      messages: msgs.items,
+      nextCursor: msgs.next_cursor,
+    })
+  } catch {
+    /* prefetch is best-effort */
+  } finally {
+    inflight.delete(chatId)
+  }
+}
+
+function drainPrefetchQueue(): void {
+  while (activePrefetches < PREFETCH_CONCURRENCY && queue.length > 0) {
+    const chatId = queue.shift()
+    if (chatId == null || cache.has(chatId)) continue
+    activePrefetches += 1
+    void prefetchChat(chatId).finally(() => {
+      activePrefetches -= 1
+      drainPrefetchQueue()
+    })
+  }
+}
+
+/** Test helper */
+export function snapshotCacheSize(): number {
+  return cache.size
+}

@@ -26,6 +26,12 @@ import {
   ownershipKey,
 } from '@/features/chats/ownership-enrich'
 import { chatWorkflowLabelPatch, chatListItemIsAnswered, chatListItemNeedsResponse } from '@/features/leads/mapping'
+import {
+  CHAT_SNAPSHOT_CACHE_SIZE,
+  getChatSnapshot,
+  scheduleChatSnapshotsPrefetch,
+  setChatSnapshot,
+} from '@/features/chats/snapshot-cache'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -509,6 +515,11 @@ export const useChatsStore = defineStore('chats', () => {
     } finally {
       listLoading.value = false
       listLoaded.value = true
+      if (!append && listItems.value.length > 0) {
+        scheduleChatSnapshotsPrefetch(
+          listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE).map((chat) => chat.id),
+        )
+      }
     }
   }
 
@@ -571,12 +582,22 @@ export const useChatsStore = defineStore('chats', () => {
       messagesNextCursor.value = msgs.next_cursor
       finishMessagesLoad(seq)
 
-      messages.value = await enrichMessagesWithReplyAudit(
+      if (messageScope.value === 'all') {
+        setChatSnapshot(chatId, {
+          detail: currentChat.value,
+          messages: msgs.items,
+          nextCursor: msgs.next_cursor,
+        })
+      }
+
+      void enrichMessagesWithReplyAudit(
         currentChat.value.contact_id,
         currentChat.value.assigned_group_id,
         msgs.items,
-      )
-      if (!isActiveChat(chatId, seq)) return
+      ).then((enriched) => {
+        if (!isActiveChat(chatId, seq)) return
+        messages.value = enriched
+      })
     } finally {
       finishMessagesLoad(seq)
     }
@@ -599,15 +620,29 @@ export const useChatsStore = defineStore('chats', () => {
     clearHighlight(chatId)
     messageScope.value = 'all'
 
+    const snapshot = getChatSnapshot(chatId)
     const cached = listItems.value.find((c) => c.id === chatId)
-    currentChat.value = cached ? ({ ...cached } as ChatDetail) : null
-    messages.value = []
-    messagesNextCursor.value = null
-    messagesLoading.value = true
+    currentChat.value = snapshot?.detail ?? (cached ? ({ ...cached } as ChatDetail) : null)
+    if (snapshot) {
+      messages.value = snapshot.messages
+      messagesNextCursor.value = snapshot.nextCursor
+      messagesLoading.value = false
+    } else {
+      messages.value = []
+      messagesNextCursor.value = null
+      messagesLoading.value = true
+    }
 
     try {
       void ensureGroupDirectory()
-      const detail = await chatsApi.getChat(chatId)
+      const leadId = resolveMessagesLeadId()
+      const [detail, msgs] = await Promise.all([
+        chatsApi.getChat(chatId),
+        chatsApi.listMessages(chatId, {
+          limit: 50,
+          lead_id: leadId,
+        }),
+      ])
       if (!isActiveChat(chatId, seq)) return
 
       const groupName =
@@ -620,23 +655,24 @@ export const useChatsStore = defineStore('chats', () => {
           ? { ...detail, assigned_group_name: groupName }
           : detail
 
-      const leadId = resolveMessagesLeadId()
-      const msgs = await chatsApi.listMessages(chatId, {
-        limit: 50,
-        lead_id: leadId,
-      })
-      if (!isActiveChat(chatId, seq)) return
-
       messages.value = msgs.items
       messagesNextCursor.value = msgs.next_cursor
       finishMessagesLoad(seq)
 
-      messages.value = await enrichMessagesWithReplyAudit(
+      setChatSnapshot(chatId, {
+        detail: currentChat.value,
+        messages: msgs.items,
+        nextCursor: msgs.next_cursor,
+      })
+
+      void enrichMessagesWithReplyAudit(
         detail.contact_id,
         detail.assigned_group_id,
         msgs.items,
-      )
-      if (!isActiveChat(chatId, seq)) return
+      ).then((enriched) => {
+        if (!isActiveChat(chatId, seq)) return
+        messages.value = enriched
+      })
 
       void chatsApi.markChatRead(chatId).catch(() => undefined)
       const idx = listItems.value.findIndex((c) => c.id === chatId)
@@ -829,6 +865,7 @@ export const useChatsStore = defineStore('chats', () => {
         await refreshOpenChatMessages(chatId, messageId)
       }
     } else {
+      scheduleChatSnapshotsPrefetch([chatId])
       void fetchList()
     }
   }
