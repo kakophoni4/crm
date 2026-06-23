@@ -75,15 +75,19 @@ ORDER BY e.account_id, e.extension;
 "
 
 accounts="$(
-  docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
+  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
     psql -v "pgcrypto_key=$PGCRYPTO_KEY" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -At -F $'\t' -c "$account_sql"
+    -At -F $'\t' <<SQL
+$account_sql
+SQL
 )"
 
 extensions="$(
-  docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
+  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
     psql -v "pgcrypto_key=$PGCRYPTO_KEY" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -At -F $'\t' -c "$extension_sql"
+    -At -F $'\t' <<SQL
+$extension_sql
+SQL
 )"
 
 while IFS=$'\t' read -r account_id sip_host sip_port sip_transport sip_username sip_password caller_id; do
