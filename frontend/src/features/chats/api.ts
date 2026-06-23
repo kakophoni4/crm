@@ -40,6 +40,26 @@ export interface WhatsappOutreachResult {
   created_chat: boolean
 }
 
+export interface QuickReplyTemplate {
+  id: number
+  title: string
+  body: string
+  department_id: number | null
+  group_id: number | null
+  is_active: boolean
+  usage_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface QuickReplyTemplateBody {
+  title: string
+  body: string
+  department_id?: number | null
+  group_id?: number | null
+  is_active?: boolean
+}
+
 export async function startWhatsappOutreach(
   body: WhatsappOutreachBody,
 ): Promise<WhatsappOutreachResult> {
@@ -99,6 +119,49 @@ export async function sendMessage(
 ): Promise<ChatMessage> {
   const { data } = await http.post<ChatMessage>(`/chats/${chatId}/messages`, body)
   return data
+}
+
+export async function listQuickReplies(params: {
+  q?: string
+  department_id?: number | null
+  group_id?: number | null
+  include_inactive?: boolean
+  limit?: number
+} = {}): Promise<QuickReplyTemplate[]> {
+  const query: Record<string, string | number | boolean> = {}
+  if (params.q) query.q = params.q
+  if (params.department_id != null) query.department_id = params.department_id
+  if (params.group_id != null) query.group_id = params.group_id
+  if (params.include_inactive) query.include_inactive = true
+  if (params.limit) query.limit = params.limit
+  const { data } = await http.get<{ items: QuickReplyTemplate[] }>('/chats/quick-replies', {
+    params: query,
+  })
+  return data.items
+}
+
+export async function createQuickReply(
+  body: QuickReplyTemplateBody,
+): Promise<QuickReplyTemplate> {
+  const { data } = await http.post<QuickReplyTemplate>('/chats/quick-replies', body)
+  return data
+}
+
+export async function updateQuickReply(
+  id: number,
+  body: Partial<QuickReplyTemplateBody>,
+): Promise<QuickReplyTemplate> {
+  const { data } = await http.patch<QuickReplyTemplate>(`/chats/quick-replies/${id}`, body)
+  return data
+}
+
+export async function deleteQuickReply(id: number): Promise<QuickReplyTemplate> {
+  const { data } = await http.delete<QuickReplyTemplate>(`/chats/quick-replies/${id}`)
+  return data
+}
+
+export async function trackQuickReplyUse(id: number): Promise<void> {
+  await http.post(`/chats/quick-replies/${id}/use`)
 }
 
 export async function startTakeover(chatId: number, reason?: string): Promise<unknown> {

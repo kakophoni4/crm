@@ -34,6 +34,7 @@ from app.modules.db.models.group_escalation_settings import GroupEscalationSetti
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_comment import LeadComment
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
+from app.modules.db.models.quick_reply_template import QuickReplyTemplate
 from app.modules.db.models.refresh_token import RefreshToken
 from app.modules.db.models.status import Status
 from app.modules.db.models.telephony_account import TelephonyAccount
@@ -74,6 +75,7 @@ __all__ = [
     "MessageDirection",
     "MessageKind",
     "MessageReplyAudit",
+    "QuickReplyTemplate",
     "RefreshToken",
     "Status",
     "StatusKind",

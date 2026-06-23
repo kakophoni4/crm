@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.audit.decorator import AuditedResult, audit
 from app.modules.chats.filters import ChatListSort
 from app.modules.chats.messages import ChatMessagesService
+from app.modules.chats.quick_replies import QuickReplyTemplateService
 from app.modules.chats.rate_limit import check_chat_message_rate_limit
 from app.modules.chats.read_state import ChatReadStateService
 from app.modules.chats.schemas import (
@@ -22,6 +23,10 @@ from app.modules.chats.schemas import (
     MessageListResponse,
     MessageResponse,
     OutboundMessageRequest,
+    QuickReplyTemplateCreateRequest,
+    QuickReplyTemplateListResponse,
+    QuickReplyTemplateResponse,
+    QuickReplyTemplateUpdateRequest,
     TakeoverRequestBody,
     TakeoverResponse,
     WhatsappOutreachRequest,
@@ -59,6 +64,12 @@ def _takeovers_service(db: Annotated[AsyncSession, Depends(get_db)]) -> ChatTake
 
 def _search_service(db: Annotated[AsyncSession, Depends(get_db)]) -> ChatSearchService:
     return ChatSearchService(db)
+
+
+def _quick_replies_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> QuickReplyTemplateService:
+    return QuickReplyTemplateService(db)
 
 
 @router.get("", response_model=ChatListResponse)
@@ -109,6 +120,63 @@ async def list_chats(
         cursor=cursor,
         limit=limit,
     )
+
+
+@router.get("/quick-replies", response_model=QuickReplyTemplateListResponse)
+async def list_quick_replies(
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[QuickReplyTemplateService, Depends(_quick_replies_service)],
+    q: str | None = None,
+    department_id: int | None = None,
+    group_id: int | None = None,
+    include_inactive: bool = False,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> QuickReplyTemplateListResponse:
+    return await service.list_templates(
+        actor,
+        q=q,
+        department_id=department_id,
+        group_id=group_id,
+        include_inactive=include_inactive,
+        limit=limit,
+    )
+
+
+@router.post("/quick-replies", response_model=QuickReplyTemplateResponse, status_code=201)
+async def create_quick_reply(
+    body: QuickReplyTemplateCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[QuickReplyTemplateService, Depends(_quick_replies_service)],
+) -> QuickReplyTemplateResponse:
+    return await service.create_template(actor, body)
+
+
+@router.patch("/quick-replies/{template_id}", response_model=QuickReplyTemplateResponse)
+async def update_quick_reply(
+    template_id: int,
+    body: QuickReplyTemplateUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[QuickReplyTemplateService, Depends(_quick_replies_service)],
+) -> QuickReplyTemplateResponse:
+    return await service.update_template(actor, template_id, body)
+
+
+@router.delete("/quick-replies/{template_id}", response_model=QuickReplyTemplateResponse)
+async def delete_quick_reply(
+    template_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[QuickReplyTemplateService, Depends(_quick_replies_service)],
+) -> QuickReplyTemplateResponse:
+    return await service.delete_template(actor, template_id)
+
+
+@router.post("/quick-replies/{template_id}/use", response_model=QuickReplyTemplateResponse)
+async def use_quick_reply(
+    template_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[QuickReplyTemplateService, Depends(_quick_replies_service)],
+) -> QuickReplyTemplateResponse:
+    return await service.track_use(actor, template_id)
 
 
 @router.get("/search", response_model=ChatMessageSearchResponse)

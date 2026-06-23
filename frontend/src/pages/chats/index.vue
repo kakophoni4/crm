@@ -735,7 +735,12 @@ onUnmounted(() => {
 
 
 
-          <MessageInput :disabled="store.isInputBlocked" @send="onSend" />
+          <MessageInput
+            :disabled="store.isInputBlocked"
+            :department-id="store.currentChat.assigned_department_id"
+            :group-id="store.currentChat.assigned_group_id ?? store.currentChat.card_owner_group_id"
+            @send="onSend"
+          />
 
         </template>
 
@@ -1421,6 +1426,5 @@ onUnmounted(() => {
 }
 
 </style>
-
 
 

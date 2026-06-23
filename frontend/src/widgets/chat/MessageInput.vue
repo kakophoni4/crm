@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { NButton, NUpload, useMessage } from 'naive-ui'
 import type { UploadFileInfo } from 'naive-ui'
-import { Paperclip, Send, X } from 'lucide-vue-next'
-import { ref, nextTick } from 'vue'
+import { MessageSquareText, Paperclip, Plus, Send, Trash2, X } from 'lucide-vue-next'
+import { computed, ref, nextTick, watch } from 'vue'
 
-import { uploadFile } from '@/features/chats/api'
+import {
+  createQuickReply,
+  deleteQuickReply,
+  listQuickReplies,
+  trackQuickReplyUse,
+  uploadFile,
+  type QuickReplyTemplate,
+} from '@/features/chats/api'
 import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { isMessageSendShortcut } from '@/widgets/chat/message-input-hotkeys'
 import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
@@ -12,6 +19,8 @@ import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
 const props = defineProps<{
   disabled?: boolean
   placeholder?: string
+  departmentId?: number | null
+  groupId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +33,15 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const pendingFiles = ref<{ file_id: number; name: string; mime?: string }[]>([])
 const sending = ref(false)
 const dragOver = ref(false)
+const quickReplies = ref<QuickReplyTemplate[]>([])
+const quickRepliesOpen = ref(false)
+const quickRepliesLoading = ref(false)
+const creatingQuickReply = ref(false)
+const newQuickReplyTitle = ref('')
+const newQuickReplyBody = ref('')
+let quickReplySearchTimer: number | null = null
+
+const quickReplyQuery = computed(() => text.value.trim())
 
 function validateFileSize(file: File): boolean {
   const limit = maxUploadBytesFor(file)
@@ -133,6 +151,86 @@ function removePending(fileId: number): void {
   pendingFiles.value = pendingFiles.value.filter((f) => f.file_id !== fileId)
 }
 
+async function loadQuickReplies(): Promise<void> {
+  if (props.disabled) return
+  quickRepliesLoading.value = true
+  try {
+    quickReplies.value = await listQuickReplies({
+      q: quickReplyQuery.value || undefined,
+      department_id: props.departmentId ?? undefined,
+      group_id: props.groupId ?? undefined,
+      limit: 8,
+    })
+  } catch {
+    quickReplies.value = []
+  } finally {
+    quickRepliesLoading.value = false
+  }
+}
+
+function scheduleQuickRepliesLoad(): void {
+  if (!quickRepliesOpen.value) return
+  if (quickReplySearchTimer != null) window.clearTimeout(quickReplySearchTimer)
+  quickReplySearchTimer = window.setTimeout(() => {
+    void loadQuickReplies()
+  }, 180)
+}
+
+function openQuickReplies(): void {
+  if (props.disabled) return
+  quickRepliesOpen.value = true
+  void loadQuickReplies()
+}
+
+async function applyQuickReply(template: QuickReplyTemplate): Promise<void> {
+  text.value = template.body
+  quickRepliesOpen.value = false
+  void trackQuickReplyUse(template.id).catch(() => undefined)
+  await nextTick()
+  textareaRef.value?.focus()
+}
+
+function startCreateQuickReply(): void {
+  creatingQuickReply.value = true
+  newQuickReplyTitle.value = quickReplyQuery.value.slice(0, 80)
+  newQuickReplyBody.value = text.value.trim()
+}
+
+async function saveQuickReply(): Promise<void> {
+  const title = newQuickReplyTitle.value.trim()
+  const body = newQuickReplyBody.value.trim()
+  if (!title || !body) {
+    message.warning('Заполните название и текст шаблона')
+    return
+  }
+  try {
+    await createQuickReply({
+      title,
+      body,
+      department_id: props.departmentId ?? null,
+      group_id: props.groupId ?? null,
+      is_active: true,
+    })
+    creatingQuickReply.value = false
+    newQuickReplyTitle.value = ''
+    newQuickReplyBody.value = ''
+    message.success('Шаблон добавлен')
+    await loadQuickReplies()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : 'Не удалось добавить шаблон')
+  }
+}
+
+async function removeQuickReply(template: QuickReplyTemplate): Promise<void> {
+  try {
+    await deleteQuickReply(template.id)
+    quickReplies.value = quickReplies.value.filter((item) => item.id !== template.id)
+    message.success('Шаблон удалён')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : 'Не удалось удалить шаблон')
+  }
+}
+
 function insertEmoji(emoji: string): void {
   const el = textareaRef.value
   if (el) {
@@ -148,6 +246,15 @@ function insertEmoji(emoji: string): void {
   }
   text.value += emoji
 }
+
+watch(quickReplyQuery, scheduleQuickRepliesLoad)
+
+watch(
+  () => [props.departmentId, props.groupId],
+  () => {
+    if (quickRepliesOpen.value) void loadQuickReplies()
+  },
+)
 </script>
 
 <template>
@@ -175,9 +282,74 @@ function insertEmoji(emoji: string): void {
       </span>
     </div>
 
+    <div v-if="quickRepliesOpen" class="message-input__quick-replies">
+      <div class="message-input__quick-replies-head">
+        <strong>Быстрые ответы</strong>
+        <div class="message-input__quick-replies-actions">
+          <NButton quaternary size="small" :disabled="disabled" @click="startCreateQuickReply">
+            <template #icon><Plus :size="14" /></template>
+          </NButton>
+          <NButton quaternary size="small" @click="quickRepliesOpen = false">
+            <template #icon><X :size="14" /></template>
+          </NButton>
+        </div>
+      </div>
+
+      <div v-if="creatingQuickReply" class="message-input__quick-form">
+        <input
+          v-model="newQuickReplyTitle"
+          class="message-input__quick-input"
+          placeholder="Название"
+          :disabled="disabled"
+        />
+        <textarea
+          v-model="newQuickReplyBody"
+          class="message-input__quick-textarea"
+          rows="3"
+          placeholder="Текст быстрого ответа"
+          :disabled="disabled"
+        />
+        <div class="message-input__quick-form-actions">
+          <NButton size="small" @click="creatingQuickReply = false">Отмена</NButton>
+          <NButton size="small" type="primary" @click="saveQuickReply">Сохранить</NButton>
+        </div>
+      </div>
+
+      <div v-else-if="quickReplies.length" class="message-input__quick-list">
+        <div
+          v-for="reply in quickReplies"
+          :key="reply.id"
+          class="message-input__quick-item"
+          role="button"
+          tabindex="0"
+          @click="applyQuickReply(reply)"
+          @keydown.enter.prevent="applyQuickReply(reply)"
+        >
+          <span class="message-input__quick-main">
+            <strong>{{ reply.title }}</strong>
+            <small>{{ reply.body }}</small>
+          </span>
+          <button
+            type="button"
+            class="message-input__quick-delete"
+            aria-label="Удалить шаблон"
+            @click.stop="removeQuickReply(reply)"
+          >
+            <Trash2 :size="14" />
+          </button>
+        </div>
+      </div>
+      <div v-else class="message-input__quick-empty">
+        {{ quickRepliesLoading ? 'Ищем...' : 'Подходящих шаблонов нет' }}
+      </div>
+    </div>
+
     <div class="message-input__row">
       <div class="message-input__attach">
         <EmojiPicker :disabled="disabled" @pick="insertEmoji" />
+        <NButton quaternary :disabled="disabled" aria-label="Быстрые ответы" @click="openQuickReplies">
+          <template #icon><MessageSquareText :size="18" /></template>
+        </NButton>
         <NUpload :show-file-list="false" @before-upload="onBeforeUpload">
           <NButton quaternary :disabled="disabled" aria-label="Прикрепить файл">
             <template #icon><Paperclip :size="18" /></template>
@@ -268,6 +440,110 @@ function insertEmoji(emoji: string): void {
   align-items: end;
   gap: 8px;
   width: 100%;
+}
+
+.message-input__quick-replies {
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface-elevated, #f4f4f5);
+}
+
+.message-input__quick-replies-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.message-input__quick-replies-actions,
+.message-input__quick-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.message-input__quick-list,
+.message-input__quick-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-input__quick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.message-input__quick-item:hover,
+.message-input__quick-item:focus-visible {
+  border-color: var(--app-accent, #2080f0);
+  outline: none;
+}
+
+.message-input__quick-main {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.message-input__quick-main strong,
+.message-input__quick-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-input__quick-main small,
+.message-input__quick-empty {
+  color: var(--app-text-muted);
+  font-size: 0.8125rem;
+}
+
+.message-input__quick-delete {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.message-input__quick-delete:hover {
+  color: #d03050;
+  background: rgba(208, 48, 80, 0.12);
+}
+
+.message-input__quick-input,
+.message-input__quick-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font: inherit;
+}
+
+.message-input__quick-textarea {
+  resize: vertical;
 }
 
 .message-input__attach {

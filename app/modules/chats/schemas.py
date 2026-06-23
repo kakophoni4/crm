@@ -59,6 +59,38 @@ class TakeoverRequestBody(BaseModel):
     reason: str | None = None
 
 
+class QuickReplyTemplateCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=4000)
+    department_id: int | None = Field(default=None, gt=0)
+    group_id: int | None = Field(default=None, gt=0)
+    is_active: bool = True
+
+
+class QuickReplyTemplateUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    body: str | None = Field(default=None, min_length=1, max_length=4000)
+    department_id: int | None = Field(default=None, gt=0)
+    group_id: int | None = Field(default=None, gt=0)
+    is_active: bool | None = None
+
+
+class QuickReplyTemplateResponse(BaseModel):
+    id: int
+    title: str
+    body: str
+    department_id: int | None
+    group_id: int | None
+    is_active: bool
+    usage_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuickReplyTemplateListResponse(BaseModel):
+    items: list[QuickReplyTemplateResponse]
+
+
 class ChatMarkReadRequest(BaseModel):
     last_read_message_id: int | None = None
 
