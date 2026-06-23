@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Delete, History, PhoneCall, PhoneOff, RotateCcw, Wifi } from 'lucide-vue-next'
+import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, Wifi } from 'lucide-vue-next'
 import { NButton, NIcon, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -33,6 +33,9 @@ const remoteAudio = ref<HTMLAudioElement | null>(null)
 const callHistory = ref<TelephonyCall[]>([])
 const activeCallId = ref<number | null>(null)
 const activeCallStartedAt = ref<number | null>(null)
+const activeElapsedSeconds = ref(0)
+const muted = ref(false)
+let callTimer: number | null = null
 
 const softphone = new CrmSoftphone({
   onStatus: (value) => {
@@ -73,6 +76,12 @@ const connectionTagType = computed(() =>
   status.value === 'registered' || status.value === 'in-call' ? 'success' : 'default',
 )
 const hasHistory = computed(() => callHistory.value.length > 0)
+const activeCall = computed(
+  () => callHistory.value.find((item) => item.id === activeCallId.value) ?? null,
+)
+const callPanelVisible = computed(
+  () => activeCall.value != null && (status.value === 'calling' || status.value === 'in-call'),
+)
 
 const dialKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
 
@@ -121,6 +130,12 @@ function formatDuration(seconds: number | null): string {
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
   return `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+function activeCallStatusLabel(): string {
+  if (muted.value) return 'Микрофон выключен'
+  if (status.value === 'in-call') return 'Разговор'
+  return 'Идёт вызов'
 }
 
 function callStatusLabel(value: TelephonyCallStatus): string {
@@ -234,6 +249,20 @@ function activeDuration(): number | null {
   return Math.max(0, Math.round((Date.now() - activeCallStartedAt.value) / 1000))
 }
 
+function startCallTimer(): void {
+  stopCallTimer()
+  activeElapsedSeconds.value = activeDuration() ?? 0
+  callTimer = window.setInterval(() => {
+    activeElapsedSeconds.value = activeDuration() ?? 0
+  }, 1000)
+}
+
+function stopCallTimer(): void {
+  if (callTimer == null) return
+  window.clearInterval(callTimer)
+  callTimer = null
+}
+
 async function updateActiveCall(statusValue: TelephonyCallStatus): Promise<void> {
   const id = activeCallId.value
   if (id == null) return
@@ -248,6 +277,9 @@ async function updateActiveCall(statusValue: TelephonyCallStatus): Promise<void>
   if (finalStatus) {
     activeCallId.value = null
     activeCallStartedAt.value = null
+    activeElapsedSeconds.value = 0
+    muted.value = false
+    stopCallTimer()
   }
 }
 
@@ -261,6 +293,8 @@ async function startCall(): Promise<void> {
     const call = await createTelephonyCall(selectedAccountId.value, fullNumber.value)
     activeCallId.value = call.id
     activeCallStartedAt.value = Date.parse(call.started_at)
+    muted.value = false
+    startCallTimer()
     callHistory.value = [call, ...callHistory.value.filter((item) => item.id !== call.id)]
     await softphone.call(call.phone_number)
   } catch (err) {
@@ -279,6 +313,17 @@ async function hangup(): Promise<void> {
     await softphone.hangup()
   } catch (err) {
     message.error(err instanceof Error ? err.message : 'Не удалось завершить звонок')
+  }
+}
+
+function toggleMute(): void {
+  if (!callPanelVisible.value) return
+  if (muted.value) {
+    softphone.unmute()
+    muted.value = false
+  } else {
+    softphone.mute()
+    muted.value = true
   }
 }
 
@@ -308,6 +353,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
+  stopCallTimer()
   void softphone.disconnect()
 })
 
@@ -316,6 +362,8 @@ watch(status, (value) => {
   if (value === 'ended') {
     void (async () => {
       await updateActiveCall('completed')
+      stopCallTimer()
+      muted.value = false
       if (status.value === 'ended') status.value = 'registered'
     })()
   }
@@ -351,6 +399,35 @@ watch(status, (value) => {
                 <NIcon><Delete /></NIcon>
               </template>
             </NButton>
+          </div>
+
+          <div v-if="callPanelVisible && activeCall" class="telephony-active-call">
+            <div class="telephony-active-call__main">
+              <span>{{ activeCallStatusLabel() }}</span>
+              <strong>{{ activeCall.phone_number }}</strong>
+              <small>{{ formatDuration(activeElapsedSeconds) }}</small>
+            </div>
+            <div class="telephony-active-call__actions">
+              <NButton
+                circle
+                secondary
+                :type="muted ? 'warning' : 'default'"
+                :aria-label="muted ? 'Включить микрофон' : 'Выключить микрофон'"
+                @click="toggleMute"
+              >
+                <template #icon>
+                  <NIcon>
+                    <MicOff v-if="muted" />
+                    <Mic v-else />
+                  </NIcon>
+                </template>
+              </NButton>
+              <NButton circle type="error" aria-label="Сбросить" @click="hangup">
+                <template #icon>
+                  <NIcon><PhoneOff /></NIcon>
+                </template>
+              </NButton>
+            </div>
           </div>
 
           <div class="telephony-dialer__keys">
@@ -442,6 +519,33 @@ watch(status, (value) => {
         </section>
       </div>
     </NSpin>
+
+    <div v-if="callPanelVisible && activeCall" class="telephony-floating-call">
+      <div class="telephony-floating-call__body">
+        <span>{{ activeCallStatusLabel() }}</span>
+        <strong>{{ activeCall.phone_number }}</strong>
+        <small>{{ formatDuration(activeElapsedSeconds) }}</small>
+      </div>
+      <NButton
+        circle
+        secondary
+        :type="muted ? 'warning' : 'default'"
+        :aria-label="muted ? 'Включить микрофон' : 'Выключить микрофон'"
+        @click="toggleMute"
+      >
+        <template #icon>
+          <NIcon>
+            <MicOff v-if="muted" />
+            <Mic v-else />
+          </NIcon>
+        </template>
+      </NButton>
+      <NButton circle type="error" aria-label="Сбросить" @click="hangup">
+        <template #icon>
+          <NIcon><PhoneOff /></NIcon>
+        </template>
+      </NButton>
+    </div>
   </section>
 </template>
 
@@ -516,6 +620,44 @@ watch(status, (value) => {
 
 .telephony-dialer__key {
   min-height: 44px;
+}
+
+.telephony-active-call {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(99, 226, 183, 0.45);
+  border-radius: 8px;
+  background: rgba(99, 226, 183, 0.08);
+}
+
+.telephony-active-call__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.telephony-active-call__main span,
+.telephony-active-call__main small,
+.telephony-floating-call__body span,
+.telephony-floating-call__body small {
+  color: var(--app-text-muted);
+  font-size: 0.8125rem;
+}
+
+.telephony-active-call__main strong,
+.telephony-floating-call__body strong {
+  font-size: 1rem;
+}
+
+.telephony-active-call__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .telephony-dialer__actions {
@@ -607,6 +749,29 @@ watch(status, (value) => {
   color: var(--app-text-muted);
 }
 
+.telephony-floating-call {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
+}
+
+.telephony-floating-call__body {
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 @media (max-width: 900px) {
   .telephony-workspace {
     grid-template-columns: 1fr;
@@ -614,6 +779,13 @@ watch(status, (value) => {
 
   .telephony-dialer__actions {
     grid-template-columns: 1fr;
+  }
+
+  .telephony-floating-call {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    max-width: none;
   }
 }
 </style>

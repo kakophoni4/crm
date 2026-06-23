@@ -64,6 +64,14 @@ export class CrmSoftphone {
     this.events.onStatus?.('ended')
   }
 
+  mute(): void {
+    this.user?.mute()
+  }
+
+  unmute(): void {
+    this.user?.unmute()
+  }
+
   async disconnect(): Promise<void> {
     if (!this.user) {
       return
