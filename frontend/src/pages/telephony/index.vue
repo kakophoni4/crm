@@ -13,6 +13,7 @@ import {
   type TelephonyAccount,
   type TelephonyCall,
   type TelephonyCallStatus,
+  type TelephonyWebrtcConfig,
 } from '@/features/telephony/api'
 import { CrmSoftphone, type SoftphoneStatus } from '@/features/telephony/softphone'
 import { AppError } from '@/shared/api/http'
@@ -23,6 +24,7 @@ const loading = ref(false)
 const historyLoading = ref(false)
 const connecting = ref(false)
 const calling = ref(false)
+const autoConnectAttempted = ref(false)
 const accounts = ref<TelephonyAccount[]>([])
 const selectedAccountId = ref<number | null>(null)
 const dialDigits = ref('')
@@ -147,6 +149,10 @@ async function load(): Promise<void> {
     accounts.value = accountItems
     callHistory.value = callItems
     selectedAccountId.value = activeAccounts.value[0]?.id ?? null
+    if (selectedAccountId.value != null && !autoConnectAttempted.value) {
+      autoConnectAttempted.value = true
+      void connectSoftphone({ silent: true })
+    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить телефонию')
   } finally {
@@ -165,30 +171,58 @@ async function refreshHistory(): Promise<void> {
   }
 }
 
-async function connectSoftphone(): Promise<void> {
-  if (!selectedAccount.value) {
-    message.warning('Выберите SIP-аккаунт')
+async function connectSoftphone(options: { silent?: boolean } = {}): Promise<void> {
+  const account = selectedAccount.value
+  if (!account) {
+    if (!options.silent) message.warning('Выберите SIP-аккаунт')
     return
   }
   if (!remoteAudio.value) {
-    message.error('Аудио ещё не готово')
+    if (!options.silent) message.error('Аудио ещё не готово')
+    return
+  }
+  if (status.value === 'registered' || status.value === 'in-call' || connecting.value) {
     return
   }
   connecting.value = true
   try {
-    const config = await getTelephonyWebrtcConfig(selectedAccount.value.id)
+    const config = await getTelephonyWebrtcConfig(account.id)
     if (config.extension_created) {
-      message.info('Линия создана, ждём синхронизацию Asterisk')
-      await sleep(6500)
+      if (!options.silent) {
+        message.info('Линия создана, ждём синхронизацию Asterisk')
+      }
+      await sleep(5000)
     }
-    await softphone.connect(config, remoteAudio.value)
-    message.success(`Линия ${config.extension} подключена`)
+    await connectWithRetry(config, remoteAudio.value, config.extension_created ? 5 : 3)
+    if (!options.silent) message.success(`Линия ${config.extension} подключена`)
   } catch (err) {
     status.value = 'idle'
-    message.error(err instanceof AppError ? err.message : 'Не удалось подключить SIP')
+    if (!options.silent) {
+      message.error(err instanceof AppError ? err.message : 'Не удалось подключить SIP')
+    }
   } finally {
     connecting.value = false
   }
+}
+
+async function connectWithRetry(
+  config: TelephonyWebrtcConfig,
+  audio: HTMLAudioElement,
+  attempts: number,
+): Promise<void> {
+  let lastError: unknown = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await softphone.connect(config, audio)
+      return
+    } catch (err) {
+      lastError = err
+      if (attempt < attempts) {
+        await sleep(2500)
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('SIP registration failed')
 }
 
 function sleep(ms: number): Promise<void> {
@@ -243,7 +277,6 @@ async function startCall(): Promise<void> {
 async function hangup(): Promise<void> {
   try {
     await softphone.hangup()
-    await updateActiveCall('completed')
   } catch (err) {
     message.error(err instanceof Error ? err.message : 'Не удалось завершить звонок')
   }
@@ -280,7 +313,12 @@ onBeforeUnmount(() => {
 
 watch(status, (value) => {
   if (value === 'in-call') void updateActiveCall('answered')
-  if (value === 'ended') void updateActiveCall('completed')
+  if (value === 'ended') {
+    void (async () => {
+      await updateActiveCall('completed')
+      if (status.value === 'ended') status.value = 'registered'
+    })()
+  }
 })
 </script>
 
@@ -291,9 +329,6 @@ watch(status, (value) => {
         <h1 class="telephony-page__title">Телефония</h1>
         <p class="telephony-page__hint">Набор номера и история вызовов.</p>
       </div>
-      <NTag :type="connectionTagType">
-        {{ statusLabel }}
-      </NTag>
     </header>
 
     <NSpin :show="loading">
