@@ -36,6 +36,49 @@ export class WSClient {
     return this.url
   }
 
+  isOpen(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN
+  }
+
+  isConnecting(): boolean {
+    return this.socket?.readyState === WebSocket.CONNECTING
+  }
+
+  waitUntilOpen(timeoutMs = 15_000): Promise<void> {
+    if (this.isOpen()) return Promise.resolve()
+
+    const socket = this.socket
+    if (!socket) {
+      return Promise.reject(new Error('ws_not_connected'))
+    }
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup()
+        reject(new Error('ws_open_timeout'))
+      }, timeoutMs)
+
+      const onOpen = (): void => {
+        cleanup()
+        resolve()
+      }
+
+      const onClose = (): void => {
+        cleanup()
+        reject(new Error('ws_closed_before_open'))
+      }
+
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        socket.removeEventListener('open', onOpen)
+        socket.removeEventListener('close', onClose)
+      }
+
+      socket.addEventListener('open', onOpen)
+      socket.addEventListener('close', onClose)
+    })
+  }
+
   connect(): void {
     this.intentionalClose = false
     this.openSocket()

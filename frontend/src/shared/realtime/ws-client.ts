@@ -1,4 +1,5 @@
 import { fetchWsTicket } from '@/features/auth/api'
+import { AppError } from '@/shared/api/http'
 import { WSClient, type WSEventHandler } from '@/shared/api/ws'
 import { env } from '@/shared/config/env'
 import { logger } from '@/shared/lib/logger'
@@ -33,8 +34,10 @@ class RealtimeWSManager {
   private reconnectAttempt = 0
 
   async connect(): Promise<void> {
-    if (this.connecting) return this.connecting
     this.intentionalClose = false
+    if (this.client?.isOpen()) return
+    if (this.connecting) return this.connecting
+
     this.connecting = this.openFresh()
     try {
       await this.connecting
@@ -75,6 +78,9 @@ class RealtimeWSManager {
     this.clearReconnect()
     try {
       const url = await buildTicketUrl()
+      if (this.client?.isOpen()) {
+        return
+      }
       if (this.client) {
         this.client.disconnect()
         this.client = null
@@ -88,8 +94,13 @@ class RealtimeWSManager {
         }
       })
       client.connect()
+      await client.waitUntilOpen()
+      this.reconnectAttempt = 0
     } catch (err) {
       logger.warn('WS connect failed', err)
+      if (err instanceof AppError && (err.status === 401 || err.status === 403)) {
+        return
+      }
       if (!this.intentionalClose) {
         this.scheduleReconnect()
       }
