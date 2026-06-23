@@ -135,6 +135,10 @@ EOF
 
   cat >> "$tmp_ext" <<EOF
 [crm-internal-account-${account_id}]
+exten => _+X.,1,NoOp(CRM outbound via Bitcall account ${account_id}: \${EXTEN})
+ same => n,Dial(PJSIP/\${EXTEN}@${trunk},60)
+ same => n,Hangup()
+
 exten => _X.,1,NoOp(CRM outbound via Bitcall account ${account_id}: \${EXTEN})
  same => n,Dial(PJSIP/\${EXTEN}@${trunk},60)
  same => n,Hangup()

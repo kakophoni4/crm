@@ -34,6 +34,7 @@ const callHistory = ref<TelephonyCall[]>([])
 const activeCallId = ref<number | null>(null)
 const activeCallStartedAt = ref<number | null>(null)
 const activeElapsedSeconds = ref(0)
+const activeCallAnswered = ref(false)
 const muted = ref(false)
 let callTimer: number | null = null
 
@@ -277,6 +278,7 @@ async function updateActiveCall(statusValue: TelephonyCallStatus): Promise<void>
   if (finalStatus) {
     activeCallId.value = null
     activeCallStartedAt.value = null
+    activeCallAnswered.value = false
     activeElapsedSeconds.value = 0
     muted.value = false
     stopCallTimer()
@@ -293,6 +295,7 @@ async function startCall(): Promise<void> {
     const call = await createTelephonyCall(selectedAccountId.value, fullNumber.value)
     activeCallId.value = call.id
     activeCallStartedAt.value = Date.parse(call.started_at)
+    activeCallAnswered.value = false
     muted.value = false
     startCallTimer()
     callHistory.value = [call, ...callHistory.value.filter((item) => item.id !== call.id)]
@@ -358,10 +361,13 @@ onBeforeUnmount(() => {
 })
 
 watch(status, (value) => {
-  if (value === 'in-call') void updateActiveCall('answered')
+  if (value === 'in-call') {
+    activeCallAnswered.value = true
+    void updateActiveCall('answered')
+  }
   if (value === 'ended') {
     void (async () => {
-      await updateActiveCall('completed')
+      await updateActiveCall(activeCallAnswered.value ? 'completed' : 'failed')
       stopCallTimer()
       muted.value = false
       if (status.value === 'ended') status.value = 'registered'
