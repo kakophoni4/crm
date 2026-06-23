@@ -309,7 +309,7 @@ class TelephonyService:
             sip_uri=f"sip:{extension.extension}@{domain}",
             ws_url=account.webrtc_ws_url or "ws://127.0.0.1:8088/ws",
             outbound_caller_id=account.outbound_caller_id,
-            ice_servers=[],
+            ice_servers=[{"urls": "stun:stun.l.google.com:19302"}],
         )
 
     async def list_calls(self, actor: User, *, limit: int = 50) -> TelephonyCallListResponse:

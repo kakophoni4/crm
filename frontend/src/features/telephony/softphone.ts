@@ -32,6 +32,11 @@ export class CrmSoftphone {
         authorizationPassword: config.extension_password,
         authorizationUsername: config.extension,
         displayName: config.display_name ?? config.extension,
+        sessionDescriptionHandlerFactoryOptions: {
+          peerConnectionConfiguration: {
+            iceServers: config.ice_servers as RTCIceServer[],
+          },
+        },
       },
       delegate: {
         onCallAnswered: () => this.events.onStatus?.('in-call'),

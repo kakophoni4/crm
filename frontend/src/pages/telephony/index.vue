@@ -363,6 +363,9 @@ onBeforeUnmount(() => {
 watch(status, (value) => {
   if (value === 'in-call') {
     activeCallAnswered.value = true
+    void remoteAudio.value?.play().catch(() => {
+      message.warning('Нажмите на страницу, чтобы браузер включил звук')
+    })
     void updateActiveCall('answered')
   }
   if (value === 'ended') {

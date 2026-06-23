@@ -64,7 +64,7 @@ export interface TelephonyWebrtcConfig {
   sip_uri: string
   ws_url: string
   outbound_caller_id: string | null
-  ice_servers: Record<string, unknown>[]
+  ice_servers: RTCIceServer[]
 }
 
 export type TelephonyCallStatus = 'calling' | 'answered' | 'completed' | 'failed'
