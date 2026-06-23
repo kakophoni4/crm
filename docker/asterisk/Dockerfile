@@ -6,8 +6,6 @@ RUN printf '%s\n' \
     > /etc/apk/repositories \
     && apk add --no-cache asterisk ca-certificates
 
-COPY ./asterisk/*.conf /etc/asterisk/
-
 EXPOSE 5060/udp 5060/tcp 8088/tcp 12000-12100/udp
 
 CMD ["asterisk", "-f", "-vvv"]
