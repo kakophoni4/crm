@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, Wifi } from 'lucide-vue-next'
+import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, Volume2, Wifi } from 'lucide-vue-next'
 import { NButton, NIcon, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -330,6 +330,15 @@ function toggleMute(): void {
   }
 }
 
+function enableRemoteAudio(): void {
+  if (!remoteAudio.value) return
+  remoteAudio.value.muted = false
+  remoteAudio.value.volume = 1
+  void remoteAudio.value.play().catch(() => {
+    message.warning('Браузер не дал включить звук автоматически')
+  })
+}
+
 function handleKeydown(event: KeyboardEvent): void {
   const target = event.target as HTMLElement | null
   const tag = target?.tagName.toLowerCase()
@@ -430,6 +439,11 @@ watch(status, (value) => {
                   </NIcon>
                 </template>
               </NButton>
+              <NButton circle secondary aria-label="Включить звук" @click="enableRemoteAudio">
+                <template #icon>
+                  <NIcon><Volume2 /></NIcon>
+                </template>
+              </NButton>
               <NButton circle type="error" aria-label="Сбросить" @click="hangup">
                 <template #icon>
                   <NIcon><PhoneOff /></NIcon>
@@ -522,7 +536,7 @@ watch(status, (value) => {
             <NIcon><History /></NIcon>
             <span>Здесь появятся последние вызовы.</span>
           </div>
-          <audio ref="remoteAudio" autoplay />
+          <audio ref="remoteAudio" autoplay playsinline />
         </section>
       </div>
     </NSpin>
@@ -545,6 +559,11 @@ watch(status, (value) => {
             <MicOff v-if="muted" />
             <Mic v-else />
           </NIcon>
+        </template>
+      </NButton>
+      <NButton circle secondary aria-label="Включить звук" @click="enableRemoteAudio">
+        <template #icon>
+          <NIcon><Volume2 /></NIcon>
         </template>
       </NButton>
       <NButton circle type="error" aria-label="Сбросить" @click="hangup">
