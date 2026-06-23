@@ -203,6 +203,7 @@ async function onSubmit(): Promise<void> {
       ? rows.value.map((row) => (row.id === saved.id ? saved : row))
       : [saved, ...rows.value]
     showModal.value = false
+    window.dispatchEvent(new Event('telephony-accounts-changed'))
     message.success('SIP аккаунт сохранён')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить SIP аккаунт')
@@ -215,6 +216,7 @@ async function onDeactivate(row: TelephonyAccount): Promise<void> {
   try {
     const updated = await deactivateTelephonyAccount(row.id)
     rows.value = rows.value.map((item) => (item.id === updated.id ? updated : item))
+    window.dispatchEvent(new Event('telephony-accounts-changed'))
     message.success('SIP аккаунт отключён')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось отключить SIP аккаунт')

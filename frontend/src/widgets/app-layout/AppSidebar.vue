@@ -12,9 +12,10 @@ import {
   UsersRound,
 } from 'lucide-vue-next'
 import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu, NSelect } from 'naive-ui'
-import { computed, h } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { listTelephonyAccounts } from '@/features/telephony/api'
 import { useAuthStore } from '@/shared/store/auth'
 import { useThemeStore, type ThemePreference } from '@/shared/store/theme'
 
@@ -33,12 +34,30 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const themeStore = useThemeStore()
+const telephonyVisible = ref(false)
 
 const themeOptions = [
   { label: 'Светлая', value: 'light' as ThemePreference },
   { label: 'Тёмная', value: 'dark' as ThemePreference },
   { label: 'Системная', value: 'system' as ThemePreference },
 ]
+
+const canRequestTelephony = computed(
+  () => auth.user?.permissions.includes('telephony.call') === true,
+)
+
+async function refreshTelephonyVisibility(): Promise<void> {
+  if (!canRequestTelephony.value) {
+    telephonyVisible.value = false
+    return
+  }
+  try {
+    const accounts = await listTelephonyAccounts()
+    telephonyVisible.value = accounts.some((account) => account.is_active)
+  } catch {
+    telephonyVisible.value = false
+  }
+}
 
 const menuOptions = computed(() => {
   const items = [
@@ -53,16 +72,19 @@ const menuOptions = computed(() => {
     icon: () => h(NIcon, null, { default: () => h(Users) }),
   },
   {
-    label: 'Телефония',
-    key: 'telephony',
-    icon: () => h(NIcon, null, { default: () => h(Phone) }),
-  },
-  {
     label: 'Dashboard',
     key: 'dashboard',
     icon: () => h(NIcon, null, { default: () => h(LayoutDashboard) }),
   },
   ]
+
+  if (telephonyVisible.value) {
+    items.splice(2, 0, {
+      label: 'Телефония',
+      key: 'telephony',
+      icon: () => h(NIcon, null, { default: () => h(Phone) }),
+    })
+  }
 
   if (auth.user?.role === 'senior' || auth.user?.role === 'admin') {
     items.push({
@@ -189,6 +211,22 @@ function onMenuUpdate(key: string): void {
 
 const sidebarWidth = 240
 const collapsedWidth = 64
+
+onMounted(() => {
+  void refreshTelephonyVisibility()
+  window.addEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
+})
+
+watch(
+  () => auth.user?.permissions.join(',') ?? '',
+  () => {
+    void refreshTelephonyVisibility()
+  },
+)
 </script>
 
 <template>

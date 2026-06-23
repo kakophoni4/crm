@@ -6,6 +6,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AppLayout from '@/widgets/app-layout/AppLayout.vue'
 
+import { listTelephonyAccounts } from '@/features/telephony/api'
+
 import { requiresAdminMeta } from '@/shared/lib/admin-routes'
 
 import { useAuthStore } from '@/shared/store/auth'
@@ -109,6 +111,8 @@ const routes: RouteRecordRaw[] = [
         name: 'telephony',
 
         component: () => import('@/pages/telephony/index.vue'),
+
+        meta: { requiresTelephonyCall: true },
 
       },
 
@@ -341,6 +345,34 @@ router.beforeEach(async (to) => {
     const role = auth.user?.role
 
     if (role !== 'admin' && role !== 'senior') return { name: 'contacts' }
+
+  }
+
+
+
+  const needsTelephonyCall = to.matched.some((r) => r.meta.requiresTelephonyCall)
+
+  if (needsTelephonyCall) {
+
+    const auth = useAuthStore()
+
+    await auth.ensureSession()
+
+    if (!auth.isAuthenticated) return { name: 'login' }
+
+    if (!auth.user?.permissions.includes('telephony.call')) return { name: 'contacts' }
+
+    try {
+
+      const accounts = await listTelephonyAccounts()
+
+      if (!accounts.some((account) => account.is_active)) return { name: 'contacts' }
+
+    } catch {
+
+      return { name: 'contacts' }
+
+    }
 
   }
 
