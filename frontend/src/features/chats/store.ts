@@ -78,6 +78,18 @@ export const useChatsStore = defineStore('chats', () => {
     return seq === openChatSeq && currentChatId.value === chatId
   }
 
+  function finishMessagesLoad(seq: number): void {
+    if (seq === openChatSeq) {
+      messagesLoading.value = false
+    }
+  }
+
+  function finishOlderMessagesLoad(seq: number): void {
+    if (seq === openChatSeq) {
+      loadingOlderMessages.value = false
+    }
+  }
+
   const activeTakeover = computed(() => {
     if (currentChatId.value == null) return null
     return takeoverByChatId.value[currentChatId.value] ?? null
@@ -561,9 +573,7 @@ export const useChatsStore = defineStore('chats', () => {
       if (!isActiveChat(chatId, seq)) return
       messagesNextCursor.value = msgs.next_cursor
     } finally {
-      if (isActiveChat(chatId, seq)) {
-        messagesLoading.value = false
-      }
+      finishMessagesLoad(seq)
     }
   }
 
@@ -629,14 +639,14 @@ export const useChatsStore = defineStore('chats', () => {
         }
       }
     } finally {
-      if (isActiveChat(chatId, seq)) {
-        messagesLoading.value = false
-      }
+      finishMessagesLoad(seq)
     }
   }
 
   function closeChat(): void {
     openChatSeq += 1
+    messagesLoading.value = false
+    loadingOlderMessages.value = false
     currentChatId.value = null
     currentChat.value = null
     selectedLeadId.value = null
@@ -673,9 +683,7 @@ export const useChatsStore = defineStore('chats', () => {
       messages.value = [...older, ...messages.value]
       messagesNextCursor.value = data.next_cursor
     } finally {
-      if (isActiveChat(chatId, seq)) {
-        loadingOlderMessages.value = false
-      }
+      finishOlderMessagesLoad(seq)
     }
   }
 
@@ -900,6 +908,8 @@ export const useChatsStore = defineStore('chats', () => {
       }
     } catch {
       /* list refresh is best-effort */
+    } finally {
+      finishMessagesLoad(seq)
     }
   }
 
