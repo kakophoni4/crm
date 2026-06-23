@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHAT_SNAPSHOT_CACHE_SIZE,
+  CHAT_SNAPSHOT_FRESH_MS,
   clearChatSnapshots,
   getChatSnapshot,
+  isChatSnapshotFresh,
+  priorityPrefetchChat,
   setChatSnapshot,
   snapshotCacheSize,
 } from '@/features/chats/snapshot-cache'
@@ -44,5 +47,12 @@ describe('chat snapshot cache', () => {
     setChatSnapshot(CHAT_SNAPSHOT_CACHE_SIZE + 1, makeSnapshot(CHAT_SNAPSHOT_CACHE_SIZE + 1))
     expect(getChatSnapshot(1)).not.toBeNull()
     expect(getChatSnapshot(2)).toBeNull()
+  })
+
+  it('detects fresh snapshots', () => {
+    setChatSnapshot(7, { ...makeSnapshot(7), fetchedAt: Date.now() })
+    expect(isChatSnapshotFresh(7)).toBe(true)
+    setChatSnapshot(8, { ...makeSnapshot(8), fetchedAt: Date.now() - CHAT_SNAPSHOT_FRESH_MS - 1 })
+    expect(isChatSnapshotFresh(8)).toBe(false)
   })
 })

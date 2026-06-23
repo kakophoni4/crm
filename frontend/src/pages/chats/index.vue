@@ -78,6 +78,7 @@ import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
 
 import { onChatsInvalidate } from '@/shared/lib/query-invalidation'
 import { connectChatsRealtime } from '@/shared/realtime/chats-ws'
+import { priorityPrefetchChat } from '@/features/chats/snapshot-cache'
 import { connectLeadsRealtime } from '@/shared/realtime/leads-ws'
 
 import { connectOwnershipRealtime } from '@/shared/realtime/ownership-ws'
@@ -364,6 +365,10 @@ function openChatFromQuery(): void {
   })
 }
 
+function prefetchChatOnHover(chatId: number): void {
+  priorityPrefetchChat(chatId)
+}
+
 function openChatMobile(chatId: number): void {
   void store.openChat(chatId)
   if (isNarrow.value) narrowPane.value = 'chat'
@@ -566,6 +571,8 @@ onUnmounted(() => {
 
               }"
 
+              tabindex="0"
+              @mouseenter="prefetchChatOnHover(chat.id)"
               @click="openChatMobile(chat.id)"
 
             >

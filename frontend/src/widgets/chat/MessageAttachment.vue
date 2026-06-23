@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useIntersectionObserver } from '@vueuse/core'
 import { NSpin } from 'naive-ui'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
@@ -11,9 +12,11 @@ const props = defineProps<{
   att: unknown
 }>()
 
+const rootRef = ref<HTMLElement | null>(null)
 const blobUrl = ref<string | null>(null)
 const loading = ref(false)
 const failed = ref(false)
+const visible = ref(false)
 let loadToken = 0
 
 const row = computed(() => props.att as Record<string, unknown>)
@@ -42,12 +45,22 @@ const isImage = computed(() => {
   return typeof mime === 'string' && mime.startsWith('image/')
 })
 
+useIntersectionObserver(
+  rootRef,
+  ([entry]) => {
+    if (entry?.isIntersecting) {
+      visible.value = true
+    }
+  },
+  { rootMargin: '120px' },
+)
+
 async function load(): Promise<void> {
   const token = ++loadToken
   failed.value = false
   blobUrl.value = null
 
-  if (status.value !== 'ready' || !downloadPath.value) return
+  if (status.value !== 'ready' || !downloadPath.value || !visible.value) return
 
   const cached = peekAttachmentBlobUrl(downloadPath.value)
   if (cached) {
@@ -71,9 +84,8 @@ async function load(): Promise<void> {
 }
 
 watch(
-  () => [status.value, downloadPath.value] as const,
+  () => [status.value, downloadPath.value, visible.value] as const,
   () => void load(),
-  { immediate: true },
 )
 
 onUnmounted(() => {
@@ -82,36 +94,42 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <span v-if="status === 'pending' || status === 'queued'" class="message-attachment message-attachment--pending">
-    Загрузка файла…
+  <span ref="rootRef" class="message-attachment-wrap">
+    <span v-if="status === 'pending' || status === 'queued'" class="message-attachment message-attachment--pending">
+      Загрузка файла…
+    </span>
+    <span v-else-if="status === 'failed'" class="message-attachment message-attachment--failed">
+      {{ failureText }}
+    </span>
+    <NSpin v-else-if="loading" size="small" />
+    <span v-else-if="failed" class="message-attachment message-attachment--failed">
+      {{ label }}
+    </span>
+    <img
+      v-else-if="isImage && blobUrl"
+      class="message-attachment__image"
+      :src="blobUrl"
+      :alt="label"
+    />
+    <a
+      v-else-if="blobUrl"
+      class="message-attachment__link"
+      :href="blobUrl"
+      :download="label"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {{ label }}
+    </a>
+    <span v-else class="message-attachment">{{ label }}</span>
   </span>
-  <span v-else-if="status === 'failed'" class="message-attachment message-attachment--failed">
-    {{ failureText }}
-  </span>
-  <NSpin v-else-if="loading" size="small" />
-  <span v-else-if="failed" class="message-attachment message-attachment--failed">
-    {{ label }}
-  </span>
-  <img
-    v-else-if="isImage && blobUrl"
-    class="message-attachment__image"
-    :src="blobUrl"
-    :alt="label"
-  />
-  <a
-    v-else-if="blobUrl"
-    class="message-attachment__link"
-    :href="blobUrl"
-    :download="label"
-    target="_blank"
-    rel="noopener noreferrer"
-  >
-    {{ label }}
-  </a>
-  <span v-else class="message-attachment">{{ label }}</span>
 </template>
 
 <style scoped>
+.message-attachment-wrap {
+  display: block;
+}
+
 .message-attachment {
   display: block;
 }
@@ -137,4 +155,3 @@ onUnmounted(() => {
   word-break: break-all;
 }
 </style>
-

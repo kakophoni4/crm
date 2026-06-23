@@ -5,6 +5,8 @@ import * as chatsApi from '@/features/chats/api'
 /** Hot chats kept in memory for instant open. */
 export const CHAT_SNAPSHOT_CACHE_SIZE = 15
 export const CHAT_SNAPSHOT_MESSAGE_LIMIT = 20
+/** Skip blocking network refresh when reopening a recently prefetched chat. */
+export const CHAT_SNAPSHOT_FRESH_MS = 25_000
 
 export interface ChatSnapshot {
   detail: ChatDetail
@@ -17,7 +19,7 @@ const cache = new Map<number, ChatSnapshot>()
 const inflight = new Set<number>()
 const queue: number[] = []
 let activePrefetches = 0
-const PREFETCH_CONCURRENCY = 2
+const PREFETCH_CONCURRENCY = 3
 
 function touch(chatId: number, snapshot: ChatSnapshot): void {
   cache.delete(chatId)
@@ -40,6 +42,15 @@ export function getChatSnapshot(chatId: number): ChatSnapshot | null {
   return snapshot
 }
 
+export function isChatSnapshotFresh(
+  chatId: number,
+  maxAgeMs = CHAT_SNAPSHOT_FRESH_MS,
+): boolean {
+  const snapshot = cache.get(chatId)
+  if (!snapshot) return false
+  return Date.now() - snapshot.fetchedAt < maxAgeMs
+}
+
 export function setChatSnapshot(
   chatId: number,
   snapshot: Omit<ChatSnapshot, 'fetchedAt'> & { fetchedAt?: number },
@@ -60,12 +71,43 @@ export function clearChatSnapshots(): void {
   queue.length = 0
 }
 
-export function scheduleChatSnapshotsPrefetch(chatIds: Iterable<number>): void {
-  for (const chatId of chatIds) {
-    if (cache.has(chatId) || inflight.has(chatId) || queue.includes(chatId)) continue
+function enqueuePrefetch(chatId: number, priority: boolean): void {
+  if (cache.has(chatId) || inflight.has(chatId)) return
+  const existing = queue.indexOf(chatId)
+  if (existing >= 0) {
+    queue.splice(existing, 1)
+  }
+  if (priority) {
+    queue.unshift(chatId)
+  } else {
     queue.push(chatId)
   }
+}
+
+export function scheduleChatSnapshotsPrefetch(
+  chatIds: Iterable<number>,
+  options: { priority?: boolean } = {},
+): void {
+  for (const chatId of chatIds) {
+    enqueuePrefetch(chatId, options.priority === true)
+  }
   drainPrefetchQueue()
+}
+
+export function priorityPrefetchChat(chatId: number): void {
+  scheduleChatSnapshotsPrefetch([chatId], { priority: true })
+}
+
+export function scheduleChatSnapshotsPrefetchIdle(chatIds: Iterable<number>): void {
+  const ids = [...chatIds]
+  const run = (): void => {
+    scheduleChatSnapshotsPrefetch(ids)
+  }
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(run, { timeout: 2_000 })
+  } else {
+    setTimeout(run, 0)
+  }
 }
 
 async function prefetchChat(chatId: number): Promise<void> {

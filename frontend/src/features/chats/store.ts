@@ -29,7 +29,10 @@ import { chatWorkflowLabelPatch, chatListItemIsAnswered, chatListItemNeedsRespon
 import {
   CHAT_SNAPSHOT_CACHE_SIZE,
   getChatSnapshot,
+  isChatSnapshotFresh,
+  priorityPrefetchChat,
   scheduleChatSnapshotsPrefetch,
+  scheduleChatSnapshotsPrefetchIdle,
   setChatSnapshot,
 } from '@/features/chats/snapshot-cache'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
@@ -516,9 +519,9 @@ export const useChatsStore = defineStore('chats', () => {
       listLoading.value = false
       listLoaded.value = true
       if (!append && listItems.value.length > 0) {
-        scheduleChatSnapshotsPrefetch(
-          listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE).map((chat) => chat.id),
-        )
+        const topIds = listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE).map((chat) => chat.id)
+        scheduleChatSnapshotsPrefetch(topIds.slice(0, 3), { priority: true })
+        scheduleChatSnapshotsPrefetchIdle(topIds.slice(3))
       }
     }
   }
@@ -612,6 +615,56 @@ export const useChatsStore = defineStore('chats', () => {
     await reloadMessages()
   }
 
+  async function syncChatFromNetwork(chatId: number, seq: number): Promise<void> {
+    const leadId = resolveMessagesLeadId()
+    const [detail, msgs] = await Promise.all([
+      chatsApi.getChat(chatId),
+      chatsApi.listMessages(chatId, {
+        limit: 50,
+        lead_id: leadId,
+      }),
+    ])
+    if (!isActiveChat(chatId, seq)) return
+
+    const groupName =
+      detail.assigned_group_name?.trim() ||
+      (detail.assigned_group_id != null
+        ? lookupGroupName(detail.assigned_group_id)?.trim()
+        : undefined)
+    currentChat.value =
+      groupName && !detail.assigned_group_name
+        ? { ...detail, assigned_group_name: groupName }
+        : detail
+
+    messages.value = msgs.items
+    messagesNextCursor.value = msgs.next_cursor
+    finishMessagesLoad(seq)
+
+    setChatSnapshot(chatId, {
+      detail: currentChat.value,
+      messages: msgs.items,
+      nextCursor: msgs.next_cursor,
+    })
+
+    void enrichMessagesWithReplyAudit(
+      detail.contact_id,
+      detail.assigned_group_id,
+      msgs.items,
+    ).then((enriched) => {
+      if (!isActiveChat(chatId, seq)) return
+      messages.value = enriched
+    })
+
+    void chatsApi.markChatRead(chatId).catch(() => undefined)
+    const idx = listItems.value.findIndex((c) => c.id === chatId)
+    if (idx >= 0) {
+      listItems.value[idx] = {
+        ...listItems.value[idx],
+        unread_for_me: false,
+      }
+    }
+  }
+
   async function openChat(chatId: number): Promise<void> {
     const seq = ++openChatSeq
     leadClosedBanner.value = false
@@ -635,53 +688,11 @@ export const useChatsStore = defineStore('chats', () => {
 
     try {
       void ensureGroupDirectory()
-      const leadId = resolveMessagesLeadId()
-      const [detail, msgs] = await Promise.all([
-        chatsApi.getChat(chatId),
-        chatsApi.listMessages(chatId, {
-          limit: 50,
-          lead_id: leadId,
-        }),
-      ])
-      if (!isActiveChat(chatId, seq)) return
-
-      const groupName =
-        detail.assigned_group_name?.trim() ||
-        (detail.assigned_group_id != null
-          ? lookupGroupName(detail.assigned_group_id)?.trim()
-          : undefined)
-      currentChat.value =
-        groupName && !detail.assigned_group_name
-          ? { ...detail, assigned_group_name: groupName }
-          : detail
-
-      messages.value = msgs.items
-      messagesNextCursor.value = msgs.next_cursor
-      finishMessagesLoad(seq)
-
-      setChatSnapshot(chatId, {
-        detail: currentChat.value,
-        messages: msgs.items,
-        nextCursor: msgs.next_cursor,
-      })
-
-      void enrichMessagesWithReplyAudit(
-        detail.contact_id,
-        detail.assigned_group_id,
-        msgs.items,
-      ).then((enriched) => {
-        if (!isActiveChat(chatId, seq)) return
-        messages.value = enriched
-      })
-
-      void chatsApi.markChatRead(chatId).catch(() => undefined)
-      const idx = listItems.value.findIndex((c) => c.id === chatId)
-      if (idx >= 0) {
-        listItems.value[idx] = {
-          ...listItems.value[idx],
-          unread_for_me: false,
-        }
+      if (snapshot && isChatSnapshotFresh(chatId)) {
+        void syncChatFromNetwork(chatId, seq)
+        return
       }
+      await syncChatFromNetwork(chatId, seq)
     } finally {
       finishMessagesLoad(seq)
     }
@@ -865,7 +876,7 @@ export const useChatsStore = defineStore('chats', () => {
         await refreshOpenChatMessages(chatId, messageId)
       }
     } else {
-      scheduleChatSnapshotsPrefetch([chatId])
+      priorityPrefetchChat(chatId)
       void fetchList()
     }
   }
