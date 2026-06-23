@@ -5,37 +5,32 @@ import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
+  createTelephonyCall,
   getTelephonyWebrtcConfig,
   listTelephonyAccounts,
+  listTelephonyCalls,
+  updateTelephonyCall,
   type TelephonyAccount,
+  type TelephonyCall,
+  type TelephonyCallStatus,
 } from '@/features/telephony/api'
 import { CrmSoftphone, type SoftphoneStatus } from '@/features/telephony/softphone'
 import { AppError } from '@/shared/api/http'
 
 const message = useMessage()
-const TELEPHONY_HISTORY_KEY = 'crm.telephony.call_history'
-
-type CallHistoryStatus = 'calling' | 'answered' | 'completed' | 'failed'
-
-interface CallHistoryItem {
-  id: string
-  number: string
-  accountName: string
-  startedAt: string
-  durationSeconds: number | null
-  status: CallHistoryStatus
-}
 
 const loading = ref(false)
+const historyLoading = ref(false)
 const connecting = ref(false)
 const calling = ref(false)
 const accounts = ref<TelephonyAccount[]>([])
 const selectedAccountId = ref<number | null>(null)
-const dialNumber = ref('')
+const dialDigits = ref('')
 const status = ref<SoftphoneStatus>('idle')
 const remoteAudio = ref<HTMLAudioElement | null>(null)
-const callHistory = ref<CallHistoryItem[]>([])
-const activeCallId = ref<string | null>(null)
+const callHistory = ref<TelephonyCall[]>([])
+const activeCallId = ref<number | null>(null)
+const activeCallStartedAt = ref<number | null>(null)
 
 const softphone = new CrmSoftphone({
   onStatus: (value) => {
@@ -52,7 +47,7 @@ const selectedAccount = computed(
 )
 const accountOptions = computed<SelectOption[]>(() =>
   activeAccounts.value.map((account) => ({
-    label: account.group_name ? `${account.name} · ${account.group_name}` : account.name,
+    label: account.group_name ? `${account.name} - ${account.group_name}` : account.name,
     value: account.id,
   })),
 )
@@ -67,92 +62,67 @@ const statusLabel = computed(() => {
   }
   return labels[status.value]
 })
+const fullNumber = computed(() => `+7${dialDigits.value}`)
+const displayNumber = computed(() => formatRussianNumber(dialDigits.value))
 const canCall = computed(
-  () => status.value === 'registered' && dialNumber.value.trim().length > 0 && !calling.value,
+  () => status.value === 'registered' && dialDigits.value.length === 10 && !calling.value,
 )
 const connectionTagType = computed(() =>
   status.value === 'registered' || status.value === 'in-call' ? 'success' : 'default',
 )
 const hasHistory = computed(() => callHistory.value.length > 0)
 
-const dialKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '0', '#']
+const dialKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
 
 function appendDigit(value: string): void {
-  dialNumber.value = `${dialNumber.value}${value}`
+  if (!/^\d$/.test(value) || dialDigits.value.length >= 10) return
+  dialDigits.value = `${dialDigits.value}${value}`
 }
 
 function backspace(): void {
-  dialNumber.value = dialNumber.value.slice(0, -1)
+  dialDigits.value = dialDigits.value.slice(0, -1)
 }
 
 function redial(number: string): void {
-  dialNumber.value = number
-}
-
-function loadCallHistory(): void {
-  try {
-    const raw = window.localStorage.getItem(TELEPHONY_HISTORY_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    callHistory.value = Array.isArray(parsed) ? parsed.slice(0, 20) : []
-  } catch {
-    callHistory.value = []
+  const digits = number.replace(/\D/g, '')
+  if (digits.length === 11 && digits.startsWith('7')) {
+    dialDigits.value = digits.slice(1, 11)
+    return
+  }
+  if (digits.length === 10) {
+    dialDigits.value = digits
   }
 }
 
-function saveCallHistory(): void {
-  window.localStorage.setItem(
-    TELEPHONY_HISTORY_KEY,
-    JSON.stringify(callHistory.value.slice(0, 20)),
-  )
-}
-
-function addCallHistoryItem(number: string): void {
-  const item: CallHistoryItem = {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    number,
-    accountName: selectedAccount.value?.name ?? 'Телефония',
-    startedAt: new Date().toISOString(),
-    durationSeconds: null,
-    status: 'calling',
-  }
-  activeCallId.value = item.id
-  callHistory.value = [item, ...callHistory.value].slice(0, 20)
-  saveCallHistory()
-}
-
-function updateActiveCall(statusValue: CallHistoryStatus): void {
-  const id = activeCallId.value
-  if (!id) return
-  callHistory.value = callHistory.value.map((item) => {
-    if (item.id !== id) return item
-    const durationSeconds =
-      statusValue === 'completed' || statusValue === 'failed'
-        ? Math.max(0, Math.round((Date.now() - Date.parse(item.startedAt)) / 1000))
-        : item.durationSeconds
-    return { ...item, status: statusValue, durationSeconds }
-  })
-  if (statusValue === 'completed' || statusValue === 'failed') {
-    activeCallId.value = null
-  }
-  saveCallHistory()
+function formatRussianNumber(digits: string): string {
+  const padded = digits.padEnd(10, '0')
+  const chunks = [
+    padded.slice(0, 3),
+    padded.slice(3, 6),
+    padded.slice(6, 8),
+    padded.slice(8, 10),
+  ]
+  return `+7 ${chunks[0]} ${chunks[1]}-${chunks[2]}-${chunks[3]}`
 }
 
 function formatCallTime(value: string): string {
   return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
 }
 
 function formatDuration(seconds: number | null): string {
-  if (seconds == null) return '—'
+  if (seconds == null) return '-'
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
   return `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-function callStatusLabel(value: CallHistoryStatus): string {
-  const labels: Record<CallHistoryStatus, string> = {
+function callStatusLabel(value: TelephonyCallStatus): string {
+  const labels: Record<TelephonyCallStatus, string> = {
     calling: 'Вызов',
     answered: 'Разговор',
     completed: 'Завершён',
@@ -161,15 +131,37 @@ function callStatusLabel(value: CallHistoryStatus): string {
   return labels[value]
 }
 
+function callOwnerLabel(item: TelephonyCall): string {
+  const parts = [item.account_name]
+  if (item.user_name) parts.push(item.user_name)
+  return parts.join(' - ')
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
-    accounts.value = await listTelephonyAccounts()
+    const [accountItems, callItems] = await Promise.all([
+      listTelephonyAccounts(),
+      listTelephonyCalls(),
+    ])
+    accounts.value = accountItems
+    callHistory.value = callItems
     selectedAccountId.value = activeAccounts.value[0]?.id ?? null
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить телефонию')
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshHistory(): Promise<void> {
+  historyLoading.value = true
+  try {
+    callHistory.value = await listTelephonyCalls()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось обновить историю')
+  } finally {
+    historyLoading.value = false
   }
 }
 
@@ -179,18 +171,18 @@ async function connectSoftphone(): Promise<void> {
     return
   }
   if (!remoteAudio.value) {
-    message.error('Аудио-элемент еще не готов')
+    message.error('Аудио ещё не готово')
     return
   }
   connecting.value = true
   try {
     const config = await getTelephonyWebrtcConfig(selectedAccount.value.id)
     if (config.extension_created) {
-      message.info('Extension создан, ждем синхронизацию Asterisk')
+      message.info('Линия создана, ждём синхронизацию Asterisk')
       await sleep(6500)
     }
     await softphone.connect(config, remoteAudio.value)
-    message.success(`SIP ${config.extension} зарегистрирован`)
+    message.success(`Линия ${config.extension} подключена`)
   } catch (err) {
     status.value = 'idle'
     message.error(err instanceof AppError ? err.message : 'Не удалось подключить SIP')
@@ -203,19 +195,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+function activeDuration(): number | null {
+  if (activeCallStartedAt.value == null) return null
+  return Math.max(0, Math.round((Date.now() - activeCallStartedAt.value) / 1000))
+}
+
+async function updateActiveCall(statusValue: TelephonyCallStatus): Promise<void> {
+  const id = activeCallId.value
+  if (id == null) return
+  const finalStatus = statusValue === 'completed' || statusValue === 'failed'
+  const durationSeconds = finalStatus ? activeDuration() : null
+  try {
+    const updated = await updateTelephonyCall(id, statusValue, durationSeconds)
+    callHistory.value = callHistory.value.map((item) => (item.id === id ? updated : item))
+  } catch {
+    await refreshHistory()
+  }
+  if (finalStatus) {
+    activeCallId.value = null
+    activeCallStartedAt.value = null
+  }
+}
+
 async function startCall(): Promise<void> {
-  if (!canCall.value) {
-    message.warning('Сначала подключите SIP и введите номер')
+  if (!canCall.value || selectedAccountId.value == null) {
+    message.warning('Подключите линию и введите 10 цифр номера')
     return
   }
-  const number = dialNumber.value.trim()
-  addCallHistoryItem(number)
   calling.value = true
   try {
-    await softphone.call(number)
+    const call = await createTelephonyCall(selectedAccountId.value, fullNumber.value)
+    activeCallId.value = call.id
+    activeCallStartedAt.value = Date.parse(call.started_at)
+    callHistory.value = [call, ...callHistory.value.filter((item) => item.id !== call.id)]
+    await softphone.call(call.phone_number)
   } catch (err) {
+    if (activeCallId.value != null) {
+      await updateActiveCall('failed')
+    }
     status.value = 'registered'
-    updateActiveCall('failed')
     message.error(err instanceof Error ? err.message : 'Не удалось начать звонок')
   } finally {
     calling.value = false
@@ -225,24 +243,44 @@ async function startCall(): Promise<void> {
 async function hangup(): Promise<void> {
   try {
     await softphone.hangup()
-    updateActiveCall('completed')
+    await updateActiveCall('completed')
   } catch (err) {
     message.error(err instanceof Error ? err.message : 'Не удалось завершить звонок')
   }
 }
 
+function handleKeydown(event: KeyboardEvent): void {
+  const target = event.target as HTMLElement | null
+  const tag = target?.tagName.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return
+  if (/^\d$/.test(event.key)) {
+    appendDigit(event.key)
+    event.preventDefault()
+  } else if (event.key === 'Backspace') {
+    backspace()
+    event.preventDefault()
+  } else if (event.key === 'Enter') {
+    void startCall()
+    event.preventDefault()
+  } else if (event.key === 'Escape') {
+    void hangup()
+    event.preventDefault()
+  }
+}
+
 onMounted(() => {
-  loadCallHistory()
   void load()
+  window.addEventListener('keydown', handleKeydown)
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
   void softphone.disconnect()
 })
 
 watch(status, (value) => {
-  if (value === 'in-call') updateActiveCall('answered')
-  if (value === 'ended') updateActiveCall('completed')
+  if (value === 'in-call') void updateActiveCall('answered')
+  if (value === 'ended') void updateActiveCall('completed')
 })
 </script>
 
@@ -251,7 +289,7 @@ watch(status, (value) => {
     <header class="telephony-page__header">
       <div>
         <h1 class="telephony-page__title">Телефония</h1>
-        <p class="telephony-page__hint">Набор номера и последние вызовы.</p>
+        <p class="telephony-page__hint">Набор номера и история вызовов.</p>
       </div>
       <NTag :type="connectionTagType">
         {{ statusLabel }}
@@ -270,9 +308,10 @@ watch(status, (value) => {
           />
 
           <div class="telephony-dialer__display">
-            <span v-if="dialNumber">{{ dialNumber }}</span>
-            <span v-else class="telephony-dialer__placeholder">+7 900 000-00-00</span>
-            <NButton circle quaternary aria-label="Backspace" @click="backspace">
+            <span :class="{ 'telephony-dialer__placeholder': dialDigits.length === 0 }">
+              {{ displayNumber }}
+            </span>
+            <NButton circle quaternary aria-label="Стереть" @click="backspace">
               <template #icon>
                 <NIcon><Delete /></NIcon>
               </template>
@@ -332,23 +371,27 @@ watch(status, (value) => {
           <header class="telephony-history__header">
             <div>
               <h2>История вызовов</h2>
-              <p>Последние звонки с этого рабочего места.</p>
+              <p>Операторы видят свои звонки, старшие - отдел, админ - все.</p>
             </div>
-            <NIcon :size="22"><History /></NIcon>
+            <NButton circle quaternary :loading="historyLoading" aria-label="Обновить" @click="refreshHistory">
+              <template #icon>
+                <NIcon :size="22"><History /></NIcon>
+              </template>
+            </NButton>
           </header>
 
           <div v-if="hasHistory" class="telephony-history__list">
             <div v-for="item in callHistory" :key="item.id" class="telephony-history__item">
               <div class="telephony-history__main">
-                <strong>{{ item.number }}</strong>
-                <span>{{ item.accountName }} · {{ formatCallTime(item.startedAt) }}</span>
+                <strong>{{ item.phone_number }}</strong>
+                <span>{{ callOwnerLabel(item) }} - {{ formatCallTime(item.started_at) }}</span>
               </div>
               <div class="telephony-history__meta">
                 <NTag size="small" :type="item.status === 'failed' ? 'error' : 'default'">
                   {{ callStatusLabel(item.status) }}
                 </NTag>
-                <span>{{ formatDuration(item.durationSeconds) }}</span>
-                <NButton circle quaternary size="small" aria-label="Повторить" @click="redial(item.number)">
+                <span>{{ formatDuration(item.duration_seconds) }}</span>
+                <NButton circle quaternary size="small" aria-label="Повторить" @click="redial(item.phone_number)">
                   <template #icon>
                     <NIcon><RotateCcw /></NIcon>
                   </template>

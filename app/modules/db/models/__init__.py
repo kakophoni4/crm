@@ -40,6 +40,7 @@ from app.modules.db.models.telephony_account import TelephonyAccount
 from app.modules.db.models.telephony_account_group_assignment import (
     TelephonyAccountGroupAssignment,
 )
+from app.modules.db.models.telephony_call import TelephonyCall
 from app.modules.db.models.telephony_extension import TelephonyExtension
 from app.modules.db.models.uploaded_file import UploadedFile
 from app.modules.db.models.user import User
@@ -78,6 +79,7 @@ __all__ = [
     "StatusKind",
     "TelephonyAccount",
     "TelephonyAccountGroupAssignment",
+    "TelephonyCall",
     "TelephonyExtension",
     "TransferStatus",
     "UploadedFile",

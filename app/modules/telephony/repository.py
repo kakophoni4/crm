@@ -6,8 +6,12 @@ from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.crypto import decrypt_secret, encrypt_secret
+from app.modules.db.models.department import Department
+from app.modules.db.models.group import Group
 from app.modules.db.models.telephony_account import TelephonyAccount
+from app.modules.db.models.telephony_call import TelephonyCall
 from app.modules.db.models.telephony_extension import TelephonyExtension
+from app.modules.db.models.user import User
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,15 @@ class TelephonyAccountRow:
     group_name: str | None
     group_ids: list[int]
     group_names: list[str]
+
+
+@dataclass(frozen=True)
+class TelephonyCallRow:
+    call: TelephonyCall
+    account_name: str
+    user_name: str | None
+    department_name: str | None
+    group_name: str | None
 
 
 class TelephonyAccountRepository:
@@ -199,3 +212,106 @@ class TelephonyAccountRepository:
 
     async def decrypt_extension_password(self, extension: TelephonyExtension) -> str:
         return await decrypt_secret(self._session, extension.password_encrypted)
+
+    async def create_call(
+        self,
+        *,
+        account_id: int,
+        user_id: int,
+        department_id: int,
+        group_id: int | None,
+        phone_number: str,
+    ) -> TelephonyCall:
+        row = TelephonyCall(
+            account_id=account_id,
+            user_id=user_id,
+            department_id=department_id,
+            group_id=group_id,
+            direction="outbound",
+            phone_number=phone_number,
+            status="calling",
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def get_call(self, call_id: int) -> TelephonyCall | None:
+        return await self._session.get(TelephonyCall, call_id)
+
+    async def update_call_status(
+        self,
+        call: TelephonyCall,
+        *,
+        status: str,
+        duration_seconds: int | None,
+    ) -> None:
+        call.status = status
+        if duration_seconds is not None:
+            call.duration_seconds = duration_seconds
+        await self._session.execute(
+            text(
+                """
+                UPDATE telephony_calls
+                SET
+                    status = :status,
+                    duration_seconds = COALESCE(:duration_seconds, duration_seconds),
+                    answered_at = CASE
+                        WHEN :status = 'answered' AND answered_at IS NULL THEN now()
+                        ELSE answered_at
+                    END,
+                    ended_at = CASE
+                        WHEN :status IN ('completed', 'failed') AND ended_at IS NULL THEN now()
+                        ELSE ended_at
+                    END,
+                    updated_at = now()
+                WHERE id = :call_id
+                """
+            ),
+            {
+                "call_id": call.id,
+                "status": status,
+                "duration_seconds": duration_seconds,
+            },
+        )
+        await self._session.flush()
+
+    async def list_calls(
+        self,
+        *,
+        visible_user_ids: set[int] | str,
+        department_ids: set[int] | str,
+        limit: int,
+    ) -> list[TelephonyCallRow]:
+        stmt = (
+            select(
+                TelephonyCall,
+                TelephonyAccount.name,
+                User.full_name,
+                Department.name,
+                Group.name,
+            )
+            .select_from(TelephonyCall)
+            .join(TelephonyAccount, TelephonyAccount.id == TelephonyCall.account_id)
+            .join(User, User.id == TelephonyCall.user_id)
+            .join(Department, Department.id == TelephonyCall.department_id)
+            .outerjoin(Group, Group.id == TelephonyCall.group_id)
+            .order_by(TelephonyCall.started_at.desc(), TelephonyCall.id.desc())
+            .limit(limit)
+        )
+        if visible_user_ids != "ALL":
+            stmt = stmt.where(TelephonyCall.user_id.in_(visible_user_ids))
+        if department_ids != "ALL":
+            stmt = stmt.where(TelephonyCall.department_id.in_(department_ids))
+        result = await self._session.execute(stmt)
+        rows: list[TelephonyCallRow] = []
+        for call, account_name, user_name, department_name, group_name in result.all():
+            rows.append(
+                TelephonyCallRow(
+                    call=call,
+                    account_name=str(account_name),
+                    user_name=str(user_name) if user_name is not None else None,
+                    department_name=str(department_name) if department_name is not None else None,
+                    group_name=str(group_name) if group_name is not None else None,
+                )
+            )
+        return rows

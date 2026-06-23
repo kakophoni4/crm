@@ -67,6 +67,27 @@ export interface TelephonyWebrtcConfig {
   ice_servers: Record<string, unknown>[]
 }
 
+export type TelephonyCallStatus = 'calling' | 'answered' | 'completed' | 'failed'
+
+export interface TelephonyCall {
+  id: number
+  account_id: number
+  account_name: string
+  user_id: number
+  user_name: string | null
+  department_id: number
+  department_name: string | null
+  group_id: number | null
+  group_name: string | null
+  direction: 'outbound' | 'inbound'
+  phone_number: string
+  status: TelephonyCallStatus
+  duration_seconds: number | null
+  started_at: string
+  answered_at: string | null
+  ended_at: string | null
+}
+
 export async function listTelephonyAccounts(): Promise<TelephonyAccount[]> {
   const { data } = await http.get<{ items: TelephonyAccount[] }>('/telephony/accounts')
   return data.items
@@ -76,6 +97,34 @@ export async function createTelephonyAccount(
   body: TelephonyAccountCreateBody,
 ): Promise<TelephonyAccount> {
   const { data } = await http.post<TelephonyAccount>('/telephony/accounts', body)
+  return data
+}
+
+export async function listTelephonyCalls(): Promise<TelephonyCall[]> {
+  const { data } = await http.get<{ items: TelephonyCall[] }>('/telephony/calls')
+  return data.items
+}
+
+export async function createTelephonyCall(
+  accountId: number,
+  phoneNumber: string,
+): Promise<TelephonyCall> {
+  const { data } = await http.post<TelephonyCall>('/telephony/calls', {
+    account_id: accountId,
+    phone_number: phoneNumber,
+  })
+  return data
+}
+
+export async function updateTelephonyCall(
+  id: number,
+  status: TelephonyCallStatus,
+  durationSeconds?: number | null,
+): Promise<TelephonyCall> {
+  const { data } = await http.patch<TelephonyCall>(`/telephony/calls/${id}`, {
+    status,
+    duration_seconds: durationSeconds ?? null,
+  })
   return data
 }
 

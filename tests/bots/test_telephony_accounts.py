@@ -245,3 +245,150 @@ async def test_operator_gets_internal_webrtc_extension_not_bitcall_password(
     assert second.status_code == 200, second.text
     assert second.json()["extension"] == body["extension"]
     assert second.json()["extension_password"] == body["extension_password"]
+
+
+@pytest.mark.asyncio
+async def test_telephony_call_history_is_scoped_by_role(
+    client: AsyncClient,
+    db_ready: None,
+    admin_headers: dict[str, str],
+    operator_headers: dict[str, str],
+    senior_headers: dict[str, str],
+    bots_org: dict[str, object],
+    test_settings,
+) -> None:
+    dept_id = int(bots_org["dept_id"])
+    group_id = int(bots_org["group_id"])
+    created = await client.post(
+        "/api/v1/telephony/accounts",
+        headers=admin_headers,
+        json={
+            "name": "Bitcall History",
+            "department_id": dept_id,
+            "group_id": group_id,
+            "sip_host": "sip.bitcall.example",
+            "sip_username": "history-user",
+            "sip_password": "history-secret",
+            "webrtc_ws_url": "ws://127.0.0.1:8088/ws",
+        },
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+
+    started = await client.post(
+        "/api/v1/telephony/calls",
+        headers=operator_headers,
+        json={"account_id": account_id, "phone_number": "9001112233"},
+    )
+    assert started.status_code == 201, started.text
+    call = started.json()
+    assert call["phone_number"] == "+79001112233"
+
+    completed = await client.patch(
+        f"/api/v1/telephony/calls/{call['id']}",
+        headers=operator_headers,
+        json={"status": "completed", "duration_seconds": 12},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["duration_seconds"] == 12
+
+    engine = create_engine(_sync_database_url(test_settings.database_url))
+    try:
+        with engine.begin() as connection:
+            other_dept_id = connection.execute(
+                text(
+                    """
+                    INSERT INTO departments (name)
+                    VALUES ('Telephony Other Dept')
+                    ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+                    RETURNING id
+                    """
+                ),
+            ).scalar_one()
+            other_group_id = connection.execute(
+                text(
+                    """
+                    INSERT INTO groups (name, department_id)
+                    VALUES ('Telephony Other Group', :dept_id)
+                    ON CONFLICT (department_id, name) DO UPDATE SET name = EXCLUDED.name
+                    RETURNING id
+                    """
+                ),
+                {"dept_id": other_dept_id},
+            ).scalar_one()
+            other_user_id = connection.execute(
+                text(
+                    """
+                    INSERT INTO users (
+                        email, username, password_hash, full_name, role, department_id, group_id
+                    )
+                    VALUES (
+                        'telephony.other@crm.local',
+                        'telephony.other',
+                        'hash',
+                        'Telephony Other',
+                        'user',
+                        :dept_id,
+                        :group_id
+                    )
+                    ON CONFLICT (email) DO UPDATE
+                    SET department_id = EXCLUDED.department_id,
+                        group_id = EXCLUDED.group_id
+                    RETURNING id
+                    """
+                ),
+                {"dept_id": other_dept_id, "group_id": other_group_id},
+            ).scalar_one()
+            other_account_id = connection.execute(
+                text(
+                    """
+                    INSERT INTO telephony_accounts (
+                        name, provider, department_id, sip_host, sip_username,
+                        sip_password_encrypted, is_active
+                    )
+                    VALUES (
+                        'Bitcall Other',
+                        'bitcall',
+                        :dept_id,
+                        'sip.bitcall.example',
+                        'other-user',
+                        pgp_sym_encrypt('other-secret', :key),
+                        TRUE
+                    )
+                    RETURNING id
+                    """
+                ),
+                {"dept_id": other_dept_id, "key": test_settings.pgcrypto_key},
+            ).scalar_one()
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO telephony_calls (
+                        account_id, user_id, department_id, phone_number, status
+                    )
+                    VALUES (:account_id, :user_id, :dept_id, '+79009998877', 'completed')
+                    """
+                ),
+                {
+                    "account_id": other_account_id,
+                    "user_id": other_user_id,
+                    "dept_id": other_dept_id,
+                },
+            )
+    finally:
+        engine.dispose()
+
+    operator_history = await client.get("/api/v1/telephony/calls", headers=operator_headers)
+    assert operator_history.status_code == 200, operator_history.text
+    assert [item["id"] for item in operator_history.json()["items"]] == [call["id"]]
+
+    senior_history = await client.get("/api/v1/telephony/calls", headers=senior_headers)
+    assert senior_history.status_code == 200, senior_history.text
+    senior_numbers = {item["phone_number"] for item in senior_history.json()["items"]}
+    assert "+79001112233" in senior_numbers
+    assert "+79009998877" not in senior_numbers
+
+    admin_history = await client.get("/api/v1/telephony/calls", headers=admin_headers)
+    assert admin_history.status_code == 200, admin_history.text
+    admin_numbers = {item["phone_number"] for item in admin_history.json()["items"]}
+    assert {"+79001112233", "+79009998877"}.issubset(admin_numbers)

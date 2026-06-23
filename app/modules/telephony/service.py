@@ -18,6 +18,10 @@ from app.modules.telephony.schemas import (
     TelephonyAccountListResponse,
     TelephonyAccountResponse,
     TelephonyAccountUpdateRequest,
+    TelephonyCallCreateRequest,
+    TelephonyCallListResponse,
+    TelephonyCallResponse,
+    TelephonyCallUpdateRequest,
     TelephonyWebrtcConfigResponse,
 )
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
@@ -56,6 +60,17 @@ def _to_response(row: TelephonyAccountRow) -> TelephonyAccountResponse:
     )
 
 
+def _normalize_russian_phone(value: str) -> str:
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) == 11 and digits[0] in {"7", "8"}:
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"+7{digits}"
+    if len(digits) == 11 and digits.startswith("7"):
+        return f"+{digits}"
+    raise ValidationError(message="Phone number must be a Russian +7 number")
+
+
 def _sip_domain(account_host: str) -> str:
     return account_host.split(":", 1)[0]
 
@@ -76,6 +91,15 @@ class TelephonyService:
     async def _scope(self, actor: User) -> tuple[set[int] | str, set[int] | str]:
         ctx = await ScopeLoader(self._session).load(actor)
         return visible_department_ids(ctx), visible_group_ids(ctx)
+
+    async def _history_scope(self, actor: User) -> tuple[set[int] | str, set[int] | str]:
+        role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        if role == UserRole.ADMIN:
+            return SCOPE_ALL, SCOPE_ALL
+        if role == UserRole.SENIOR:
+            departments, _groups = await self._scope(actor)
+            return SCOPE_ALL, departments
+        return {actor.id}, SCOPE_ALL
 
     async def _ensure_department_visible(self, actor: User, department_id: int) -> None:
         departments, _groups = await self._scope(actor)
@@ -287,6 +311,128 @@ class TelephonyService:
             outbound_caller_id=account.outbound_caller_id,
             ice_servers=[],
         )
+
+    async def list_calls(self, actor: User, *, limit: int = 50) -> TelephonyCallListResponse:
+        visible_users, departments = await self._history_scope(actor)
+        rows = await self._repo.list_calls(
+            visible_user_ids=visible_users,
+            department_ids=departments,
+            limit=max(1, min(limit, 200)),
+        )
+        return TelephonyCallListResponse(
+            items=[
+                TelephonyCallResponse(
+                    id=row.call.id,
+                    account_id=row.call.account_id,
+                    account_name=row.account_name,
+                    user_id=row.call.user_id,
+                    user_name=row.user_name,
+                    department_id=row.call.department_id,
+                    department_name=row.department_name,
+                    group_id=row.call.group_id,
+                    group_name=row.group_name,
+                    direction=row.call.direction,
+                    phone_number=row.call.phone_number,
+                    status=row.call.status,
+                    duration_seconds=row.call.duration_seconds,
+                    started_at=row.call.started_at,
+                    answered_at=row.call.answered_at,
+                    ended_at=row.call.ended_at,
+                )
+                for row in rows
+            ],
+        )
+
+    async def create_call(
+        self,
+        actor: User,
+        body: TelephonyCallCreateRequest,
+    ) -> TelephonyCallResponse:
+        row = await self._repo.get_with_meta(body.account_id)
+        if row is None or not row.account.is_active:
+            raise NotFound(message="Telephony account not found")
+        account = row.account
+        await self._ensure_department_visible(actor, account.department_id)
+        await self._ensure_groups_visible(actor, row.group_ids)
+        phone_number = _normalize_russian_phone(body.phone_number)
+        call = await self._repo.create_call(
+            account_id=account.id,
+            user_id=actor.id,
+            department_id=account.department_id,
+            group_id=actor.group_id,
+            phone_number=phone_number,
+        )
+        await self._session.commit()
+        calls = await self._repo.list_calls(
+            visible_user_ids={actor.id},
+            department_ids=SCOPE_ALL,
+            limit=1,
+        )
+        for call_row in calls:
+            if call_row.call.id == call.id:
+                return TelephonyCallResponse(
+                    id=call_row.call.id,
+                    account_id=call_row.call.account_id,
+                    account_name=call_row.account_name,
+                    user_id=call_row.call.user_id,
+                    user_name=call_row.user_name,
+                    department_id=call_row.call.department_id,
+                    department_name=call_row.department_name,
+                    group_id=call_row.call.group_id,
+                    group_name=call_row.group_name,
+                    direction=call_row.call.direction,
+                    phone_number=call_row.call.phone_number,
+                    status=call_row.call.status,
+                    duration_seconds=call_row.call.duration_seconds,
+                    started_at=call_row.call.started_at,
+                    answered_at=call_row.call.answered_at,
+                    ended_at=call_row.call.ended_at,
+                )
+        raise NotFound(message="Telephony call not found")
+
+    async def update_call(
+        self,
+        call_id: int,
+        actor: User,
+        body: TelephonyCallUpdateRequest,
+    ) -> TelephonyCallResponse:
+        call = await self._repo.get_call(call_id)
+        if call is None:
+            raise NotFound(message="Telephony call not found")
+        if call.user_id != actor.id:
+            raise PermissionDenied(message="Insufficient permissions")
+        await self._repo.update_call_status(
+            call,
+            status=body.status,
+            duration_seconds=body.duration_seconds,
+        )
+        await self._session.commit()
+        calls = await self._repo.list_calls(
+            visible_user_ids={actor.id},
+            department_ids=SCOPE_ALL,
+            limit=50,
+        )
+        for call_row in calls:
+            if call_row.call.id == call_id:
+                return TelephonyCallResponse(
+                    id=call_row.call.id,
+                    account_id=call_row.call.account_id,
+                    account_name=call_row.account_name,
+                    user_id=call_row.call.user_id,
+                    user_name=call_row.user_name,
+                    department_id=call_row.call.department_id,
+                    department_name=call_row.department_name,
+                    group_id=call_row.call.group_id,
+                    group_name=call_row.group_name,
+                    direction=call_row.call.direction,
+                    phone_number=call_row.call.phone_number,
+                    status=call_row.call.status,
+                    duration_seconds=call_row.call.duration_seconds,
+                    started_at=call_row.call.started_at,
+                    answered_at=call_row.call.answered_at,
+                    ended_at=call_row.call.ended_at,
+                )
+        raise NotFound(message="Telephony call not found")
 
     async def _next_extension(
         self,

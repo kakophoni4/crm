@@ -12,6 +12,10 @@ from app.modules.telephony.schemas import (
     TelephonyAccountListResponse,
     TelephonyAccountResponse,
     TelephonyAccountUpdateRequest,
+    TelephonyCallCreateRequest,
+    TelephonyCallListResponse,
+    TelephonyCallResponse,
+    TelephonyCallUpdateRequest,
     TelephonyWebrtcConfigResponse,
 )
 from app.modules.telephony.service import TelephonyService
@@ -80,3 +84,31 @@ async def get_webrtc_config(
     service: Annotated[TelephonyService, Depends(_service)],
 ) -> TelephonyWebrtcConfigResponse:
     return await service.get_webrtc_config(account_id, actor)
+
+
+@router.get("/calls", response_model=TelephonyCallListResponse)
+async def list_calls(
+    actor: Annotated[User, Depends(requires_permission(Permission.TELEPHONY_CALL))],
+    service: Annotated[TelephonyService, Depends(_service)],
+    limit: int = 50,
+) -> TelephonyCallListResponse:
+    return await service.list_calls(actor, limit=limit)
+
+
+@router.post("/calls", response_model=TelephonyCallResponse, status_code=201)
+async def create_call(
+    body: TelephonyCallCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TELEPHONY_CALL))],
+    service: Annotated[TelephonyService, Depends(_service)],
+) -> TelephonyCallResponse:
+    return await service.create_call(actor, body)
+
+
+@router.patch("/calls/{call_id}", response_model=TelephonyCallResponse)
+async def update_call(
+    call_id: int,
+    body: TelephonyCallUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TELEPHONY_CALL))],
+    service: Annotated[TelephonyService, Depends(_service)],
+) -> TelephonyCallResponse:
+    return await service.update_call(call_id, actor, body)

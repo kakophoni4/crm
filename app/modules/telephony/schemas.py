@@ -74,3 +74,36 @@ class TelephonyWebrtcConfigResponse(BaseModel):
     ws_url: str
     outbound_caller_id: str | None
     ice_servers: list[dict[str, object]] = Field(default_factory=list)
+
+
+class TelephonyCallCreateRequest(BaseModel):
+    account_id: int = Field(gt=0)
+    phone_number: str = Field(min_length=1, max_length=64)
+
+
+class TelephonyCallUpdateRequest(BaseModel):
+    status: str = Field(pattern="^(calling|answered|completed|failed)$")
+    duration_seconds: int | None = Field(default=None, ge=0)
+
+
+class TelephonyCallResponse(BaseModel):
+    id: int
+    account_id: int
+    account_name: str
+    user_id: int
+    user_name: str | None
+    department_id: int
+    department_name: str | None
+    group_id: int | None
+    group_name: str | None
+    direction: str
+    phone_number: str
+    status: str
+    duration_seconds: int | None
+    started_at: datetime
+    answered_at: datetime | None
+    ended_at: datetime | None
+
+
+class TelephonyCallListResponse(BaseModel):
+    items: list[TelephonyCallResponse]
