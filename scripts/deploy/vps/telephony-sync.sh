@@ -95,6 +95,7 @@ while IFS=$'\t' read -r account_id sip_host sip_port sip_transport sip_username 
   trunk="bitcall-trunk-${account_id}"
   auth="bitcall-auth-${account_id}"
   aor="bitcall-aor-${account_id}"
+  reg="bitcall-registration-${account_id}"
   transport="transport-${sip_transport}"
 
   cat >> "$tmp_pjsip" <<EOF
@@ -118,6 +119,17 @@ outbound_auth=${auth}
 aors=${aor}
 from_user=${sip_username}
 direct_media=no
+
+[${reg}]
+type=registration
+transport=${transport}
+outbound_auth=${auth}
+server_uri=sip:${sip_host}:${sip_port}
+client_uri=sip:${sip_username}@${sip_host}
+contact_user=${sip_username}
+retry_interval=60
+forbidden_retry_interval=600
+expiration=3600
 
 EOF
 
