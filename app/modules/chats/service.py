@@ -116,7 +116,7 @@ class ChatService:
             limit=limit,
         )
         unread_map = await self._repo.get_unread_for_me_map(
-            [chat.id for chat, _, _ in rows],
+            [chat.id for chat, *_ in rows],
             actor.id,
         )
         items = []
