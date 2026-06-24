@@ -186,6 +186,7 @@ async def request_contact_group_transfer(
         contact_id,
         group_id,
         to_user_id=body.to_user_id,
+        target_group_id=body.target_group_id,
         comment=body.comment,
         force=body.force,
     )

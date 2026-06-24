@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,10 +17,13 @@ from app.modules.contacts.ownership import (
 from app.modules.contacts.realtime_payloads import contact_group_context, user_full_name
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.db.models.bot_group_assignment import BotGroupAssignment
+from app.modules.db.models.chat import Chat
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.contact_group_transfer import ContactGroupTransfer
 from app.modules.db.models.enums import (
     CONTACT_TRANSFER_ACTIVE_STATES,
+    ChatStatus,
     TransferStatus,
     UserRole,
 )
@@ -195,6 +198,62 @@ class ContactGroupTransfersService:
         if not can_act_on_user(ctx, to_user):
             raise PermissionDenied(message="Target user is outside your scope")
 
+    async def _load_transfer_chat(
+        self,
+        *,
+        contact_id: int,
+        source_group_id: int,
+    ) -> Chat:
+        result = await self._session.execute(
+            select(Chat).where(
+                Chat.contact_id == contact_id,
+                Chat.assigned_group_id == source_group_id,
+                Chat.status != ChatStatus.ARCHIVED,
+            ).order_by(Chat.id.desc()).limit(1),
+        )
+        chat = result.scalar_one_or_none()
+        if chat is None:
+            raise NotFound(message="Active chat in the source group not found")
+        if chat.bot_id is None:
+            raise ValidationError(message="Cross-group transfer requires a bot chat")
+        return chat
+
+    async def _ensure_group_assigned_to_chat_bot(self, *, bot_id: int, group_id: int) -> None:
+        result = await self._session.execute(
+            select(BotGroupAssignment.bot_id).where(
+                BotGroupAssignment.bot_id == bot_id,
+                BotGroupAssignment.group_id == group_id,
+            ),
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValidationError(message="Target group is not assigned to this bot")
+
+    async def _move_chat_to_group(
+        self,
+        *,
+        chat: Chat,
+        target_group: Group,
+    ) -> None:
+        chat.assigned_group_id = target_group.id
+        chat.assigned_department_id = target_group.department_id
+        chat.updated_at = utc_now()
+        await self._session.execute(
+            text(
+                """
+                UPDATE leads
+                SET group_id = :target_group_id,
+                    updated_at = now()
+                WHERE chat_id = :chat_id
+                  AND closed_at IS NULL
+                  AND group_id IS DISTINCT FROM :target_group_id
+                """
+            ),
+            {
+                "chat_id": chat.id,
+                "target_group_id": target_group.id,
+            },
+        )
+
     async def request_transfer(
         self,
         actor: User,
@@ -202,6 +261,7 @@ class ContactGroupTransfersService:
         group_id: int,
         *,
         to_user_id: int,
+        target_group_id: int | None = None,
         comment: str | None,
         force: bool = False,
     ) -> tuple[ContactGroupTransfer, dict[str, Any]]:
@@ -209,13 +269,23 @@ class ContactGroupTransfersService:
         await self._ensure_contact_visible(ctx, contact_id)
         self._ensure_group_visible(ctx, group_id)
         await self._load_group(group_id)
+        effective_group_id = target_group_id or group_id
+        self._ensure_group_visible(ctx, effective_group_id)
+        target_group = await self._load_group(effective_group_id)
 
         role = self._actor_role(actor)
+        cross_group = effective_group_id != group_id
+        if cross_group:
+            if role not in (UserRole.ADMIN, UserRole.SENIOR):
+                raise PermissionDenied(message="Only admin or senior can move cards between groups")
+            if not force:
+                raise ValidationError(message="Cross-group transfer requires force assignment")
+
         if force:
             if role == UserRole.ADMIN:
                 pass
             elif role == UserRole.SENIOR:
-                if not self._senior_group_in_scope(ctx, group_id):
+                if not self._senior_group_in_scope(ctx, effective_group_id):
                     raise PermissionDenied(
                         message="Senior can only assign cards within their department",
                     )
@@ -225,7 +295,7 @@ class ContactGroupTransfersService:
                 )
 
         # Transactional check to stay compatible until DB-level partial unique is introduced.
-        active = await self._get_active_transfer(contact_id, group_id, for_update=True)
+        active = await self._get_active_transfer(contact_id, effective_group_id, for_update=True)
         # DB partial unique index may be missing on old environments; keep app-level guard.
         if active is not None:
             raise Conflict(message="Active transfer already exists for this contact in the group")
@@ -246,16 +316,28 @@ class ContactGroupTransfersService:
         to_user = await self._load_user(to_user_id)
         await self._validate_target(
             ctx,
-            group_id=group_id,
+            group_id=effective_group_id,
             to_user=to_user,
             from_user_id=from_user_id,
         )
+
+        transfer_chat: Chat | None = None
+        if cross_group:
+            transfer_chat = await self._load_transfer_chat(
+                contact_id=contact_id,
+                source_group_id=group_id,
+            )
+            await self._ensure_group_assigned_to_chat_bot(
+                bot_id=int(transfer_chat.bot_id),
+                group_id=effective_group_id,
+            )
+            await ensure_assignment(self._session, contact_id, effective_group_id)
 
         now = utc_now()
         state = self._initial_state(actor, force=force)
         transfer = ContactGroupTransfer(
             contact_id=contact_id,
-            group_id=group_id,
+            group_id=effective_group_id,
             from_user_id=from_user_id,
             to_user_id=to_user_id,
             requested_by=actor.id,
@@ -271,10 +353,15 @@ class ContactGroupTransfersService:
             await reassign_owner(
                 self._session,
                 contact_id,
-                group_id,
+                effective_group_id,
                 to_user_id,
                 source=ASSIGNMENT_MANUAL_TRANSFER,
             )
+            if transfer_chat is not None:
+                await self._move_chat_to_group(
+                    chat=transfer_chat,
+                    target_group=target_group,
+                )
         elif state == TransferStatus.PENDING_RECIPIENT and role == UserRole.SENIOR:
             transfer.senior_user_id = actor.id
             transfer.senior_decided_at = now
@@ -295,18 +382,19 @@ class ContactGroupTransfersService:
             {
                 "transfer_id": transfer.id,
                 "contact_id": contact_id,
-                "group_id": group_id,
+                "group_id": effective_group_id,
+                "source_group_id": group_id,
                 "from_user_id": from_user_id,
                 "to_user_id": to_user_id,
                 "requested_by": actor.id,
                 "state": transfer.state.value,
             },
-            scope={"group_id": group_id},
+            scope={"group_id": effective_group_id},
         )
         if state == TransferStatus.ACCEPTED:
             await self._publish_ownership_transferred(
                 contact_id,
-                group_id,
+                effective_group_id,
                 from_user_id=from_user_id,
                 to_user_id=to_user_id,
             )
@@ -314,7 +402,8 @@ class ContactGroupTransfersService:
         return transfer, {
             "transfer_id": transfer.id,
             "contact_id": contact_id,
-            "group_id": group_id,
+            "group_id": effective_group_id,
+            "source_group_id": group_id,
             "to_user_id": to_user_id,
             "state": transfer.state.value,
             "force": force,

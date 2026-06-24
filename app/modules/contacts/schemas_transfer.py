@@ -9,6 +9,7 @@ from app.modules.db.models.enums import ChatStatus
 
 class ContactTransferRequestBody(BaseModel):
     to_user_id: int
+    target_group_id: int | None = Field(default=None, gt=0)
     comment: str | None = None
     force: bool = False
 

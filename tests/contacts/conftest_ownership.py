@@ -210,6 +210,40 @@ async def ownership_org(
             connection.execute(
                 text(
                     f"""
+                    DELETE FROM lead_comments
+                    WHERE lead_id IN (
+                        SELECT id FROM leads
+                        WHERE contact_id IN (
+                            SELECT id FROM contacts WHERE {ownership_contact_filter}
+                        )
+                    )
+                    """
+                ),
+            )
+            connection.execute(
+                text(
+                    f"""
+                    UPDATE chats
+                    SET current_lead_id = NULL
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE {ownership_contact_filter}
+                    )
+                    """
+                ),
+            )
+            connection.execute(
+                text(
+                    f"""
+                    DELETE FROM leads
+                    WHERE contact_id IN (
+                        SELECT id FROM contacts WHERE {ownership_contact_filter}
+                    )
+                    """
+                ),
+            )
+            connection.execute(
+                text(
+                    f"""
                     DELETE FROM chats
                     WHERE contact_id IN (
                         SELECT id FROM contacts WHERE {ownership_contact_filter}

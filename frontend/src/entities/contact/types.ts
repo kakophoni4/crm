@@ -247,6 +247,8 @@ export interface ContactTransferRequestBody {
 
   to_user_id: number
 
+  target_group_id?: number
+
   comment?: string
 
   force?: boolean
@@ -436,4 +438,3 @@ export const REASSIGN_STRATEGY_OPTIONS: { label: string; value: ReassignStrategy
   { label: 'Случайный доступный', value: 'random_available' },
 
 ]
-

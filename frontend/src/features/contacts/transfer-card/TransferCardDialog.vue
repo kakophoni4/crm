@@ -14,6 +14,7 @@ const props = defineProps<{
   show: boolean
   contactId: number | null
   groupId: number | null
+  groupOptions?: SelectOption[]
   contactName?: string | null
   groupName?: string | null
   /** Текущий владелец карточки в группе — ему передать нельзя. */
@@ -29,6 +30,7 @@ const auth = useAuthStore()
 const message = useMessage()
 
 const toUserId = ref<number | null>(null)
+const selectedGroupId = ref<number | null>(props.groupId)
 const loading = ref(false)
 const groupUsers = ref<AdminUser[]>([])
 const loadingUsers = ref(false)
@@ -36,9 +38,26 @@ const resolvedGroupName = ref<string | null>(null)
 const resolvingGroupName = ref(false)
 
 const hint = computed(() => transferHintForRole(auth.user?.role))
-const displayGroupName = computed(() => resolvedGroupName.value?.trim() || null)
+const canAssignInGroup = computed(() => auth.isSenior || auth.isAdmin)
+const groupOptions = computed<SelectOption[]>(() => {
+  const options = props.groupOptions ?? []
+  if (options.length > 0) return options
+  if (props.groupId == null) return []
+  return [
+    {
+      label: props.groupName?.trim() || lookupGroupName(props.groupId) || `#${props.groupId}`,
+      value: props.groupId,
+    },
+  ]
+})
+const showGroupSelect = computed(() => canAssignInGroup.value && groupOptions.value.length > 1)
+const displayGroupName = computed(() => {
+  const option = groupOptions.value.find((item) => item.value === selectedGroupId.value)
+  const label = typeof option?.label === 'string' ? option.label.trim() : ''
+  return label || resolvedGroupName.value?.trim() || null
+})
 const scopeLine = computed(() => {
-  if (props.contactId == null || props.groupId == null) return ''
+  if (props.contactId == null || selectedGroupId.value == null) return ''
   const contact = props.contactName?.trim() || `Контакт #${props.contactId}`
   if (resolvingGroupName.value) return `${contact} → …`
   const group = displayGroupName.value
@@ -61,7 +80,7 @@ const userOptions = computed<SelectOption[]>(() =>
 )
 
 const noRecipients = computed(
-  () => !loadingUsers.value && props.groupId != null && eligibleUsers.value.length === 0,
+  () => !loadingUsers.value && selectedGroupId.value != null && eligibleUsers.value.length === 0,
 )
 const isCardOwner = computed(
   () =>
@@ -70,40 +89,44 @@ const isCardOwner = computed(
     props.cardOwnerUserId === auth.user.id,
 )
 
-const canAssignInGroup = computed(() => auth.isSenior || auth.isAdmin)
-
 const canSubmit = computed(
   () =>
     (isCardOwner.value || canAssignInGroup.value) &&
     props.contactId != null &&
     props.groupId != null &&
+    selectedGroupId.value != null &&
     toUserId.value != null,
 )
 
 async function resolveGroupName(): Promise<void> {
-  const fromProps = props.groupName?.trim()
+  const fromOption = groupOptions.value.find((item) => item.value === selectedGroupId.value)
+  if (typeof fromOption?.label === 'string' && fromOption.label.trim()) {
+    resolvedGroupName.value = fromOption.label.trim()
+    return
+  }
+  const fromProps = selectedGroupId.value === props.groupId ? props.groupName?.trim() : ''
   if (fromProps) {
     resolvedGroupName.value = fromProps
     return
   }
-  if (props.groupId == null) {
+  if (selectedGroupId.value == null) {
     resolvedGroupName.value = null
     return
   }
   resolvingGroupName.value = true
   try {
     await ensureGroupDirectory()
-    resolvedGroupName.value = lookupGroupName(props.groupId)
+    resolvedGroupName.value = lookupGroupName(selectedGroupId.value)
   } finally {
     resolvingGroupName.value = false
   }
 }
 
 async function loadGroupUsers(): Promise<void> {
-  if (props.groupId == null) return
+  if (selectedGroupId.value == null) return
   loadingUsers.value = true
   try {
-    groupUsers.value = await listUsers({ group_id: props.groupId })
+    groupUsers.value = await listUsers({ group_id: selectedGroupId.value })
   } catch {
     groupUsers.value = []
   } finally {
@@ -122,27 +145,42 @@ watch(
   (visible) => {
     if (!visible) {
       toUserId.value = null
+      selectedGroupId.value = props.groupId
       resolvedGroupName.value = null
       return
     }
+    selectedGroupId.value = props.groupId
     void resolveGroupName()
-    if (props.groupId != null) void loadGroupUsers()
+    if (selectedGroupId.value != null) void loadGroupUsers()
   },
 )
 
 watch(
-  () => [props.groupId, props.groupName] as const,
+  () => [props.groupId, props.groupName, props.groupOptions] as const,
   () => {
+    if (selectedGroupId.value == null) selectedGroupId.value = props.groupId
     if (props.show) void resolveGroupName()
   },
 )
+
+watch(selectedGroupId, () => {
+  toUserId.value = null
+  if (!props.show) return
+  void resolveGroupName()
+  void loadGroupUsers()
+})
 
 async function submit(): Promise<void> {
   if (!isCardOwner.value && !canAssignInGroup.value) {
     message.warning('Передать можно только свою карточку')
     return
   }
-  if (!canSubmit.value || props.contactId == null || props.groupId == null) {
+  if (
+    !canSubmit.value ||
+    props.contactId == null ||
+    props.groupId == null ||
+    selectedGroupId.value == null
+  ) {
     message.warning('Выберите получателя')
     return
   }
@@ -150,6 +188,8 @@ async function submit(): Promise<void> {
   try {
     await requestContactTransfer(props.contactId, props.groupId, {
       to_user_id: toUserId.value!,
+      target_group_id:
+        selectedGroupId.value !== props.groupId ? selectedGroupId.value : undefined,
       force: canAssignInGroup.value,
     })
     message.success(
@@ -178,11 +218,18 @@ async function submit(): Promise<void> {
     <p class="transfer-card-dialog__hint">{{ hint }}</p>
     <p v-if="scopeLine" class="transfer-card-dialog__scope">{{ scopeLine }}</p>
     <NSpace vertical :size="12">
+      <NSelect
+        v-if="showGroupSelect"
+        v-model:value="selectedGroupId"
+        :options="groupOptions"
+        placeholder="Группа"
+        filterable
+      />
       <p v-if="noRecipients" class="transfer-card-dialog__empty">
         Нет других операторов в группе для передачи.
       </p>
       <NSelect
-        v-else
+        v-if="!noRecipients"
         v-model:value="toUserId"
         :options="userOptions"
         :loading="loadingUsers"

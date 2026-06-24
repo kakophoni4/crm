@@ -3,6 +3,8 @@ export interface BotListItem {
   code: string
   name: string
   channel?: 'telegram' | 'whatsapp' | 'bitcall'
+  assigned_group_ids?: number[]
+  assigned_group_names?: string[]
   purpose: string | null
   owner_type: string
   owner_id: number

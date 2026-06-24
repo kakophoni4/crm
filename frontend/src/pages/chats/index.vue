@@ -224,6 +224,25 @@ const transferGroupName = computed(() => {
   )
 })
 
+const transferGroupOptions = computed(() => {
+  const chat = store.currentChat
+  if (chat == null) return []
+  const bot = chat.bot_id != null ? bots.value.find((item) => item.id === chat.bot_id) : null
+  const ids =
+    bot?.assigned_group_ids?.length
+      ? bot.assigned_group_ids
+      : chat.assigned_group_id != null
+        ? [chat.assigned_group_id]
+        : []
+  return [...new Set(ids)].map((id) => ({
+    label:
+      lookupGroupName(id)?.trim() ||
+      (id === chat.assigned_group_id ? chat.assigned_group_name?.trim() : '') ||
+      `Группа #${id}`,
+    value: id,
+  }))
+})
+
 async function onCardTransferred(): Promise<void> {
   await store.fetchList()
   await store.refreshCurrentChatOwner()
@@ -844,6 +863,8 @@ onUnmounted(() => {
       :contact-id="store.currentChat?.contact_id ?? null"
 
       :group-id="transferGroupId"
+
+      :group-options="transferGroupOptions"
 
       :contact-name="store.currentChat?.contact_name"
 
