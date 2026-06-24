@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,12 @@ class IngestResult:
     message_id: int
     attachment_indices: list[int]
     duplicate: bool = False
+
+
+@dataclass(frozen=True)
+class ChatUpsertResult:
+    chat_id: int
+    assigned_group_id: int | None
 
 
 def parse_bot_message_direction(message_data: dict[str, Any]) -> MessageDirection:
@@ -146,16 +153,16 @@ async def upsert_chat_for_bot(
     bot_id: int,
     owner_type: BotOwnerType,
     owner_id: int,
-) -> int:
+    candidate_group_ids: list[int] | None = None,
+) -> ChatUpsertResult:
     assigned_group_id: int | None = None
     assigned_department_id: int | None = None
     if owner_type == BotOwnerType.GROUP:
         assigned_group_id = owner_id
-        group_row = await session.execute(
-            text("SELECT department_id FROM groups WHERE id = :gid"),
-            {"gid": owner_id},
-        )
-        assigned_department_id = group_row.scalar_one_or_none()
+        assigned_department_id = await _group_department_id(session, owner_id)
+    elif candidate_group_ids:
+        assigned_group_id = random.choice(candidate_group_ids)
+        assigned_department_id = await _group_department_id(session, assigned_group_id)
     else:
         assigned_department_id = owner_id
 
@@ -163,7 +170,7 @@ async def upsert_chat_for_bot(
     active = await session.execute(
         text(
             """
-            SELECT id FROM chats
+            SELECT id, assigned_group_id FROM chats
             WHERE contact_id = :cid AND bot_id = :bid AND status != 'archived'
             ORDER BY id DESC
             LIMIT 1
@@ -174,6 +181,14 @@ async def upsert_chat_for_bot(
     active_row = active.one_or_none()
     if active_row is not None:
         chat_id = int(active_row[0])
+        current_group_id = active_row[1]
+        if current_group_id is not None and _group_allowed(
+            int(current_group_id),
+            assigned_group_id=assigned_group_id,
+            candidate_group_ids=candidate_group_ids,
+        ):
+            assigned_group_id = int(current_group_id)
+            assigned_department_id = await _group_department_id(session, assigned_group_id)
         await session.execute(
             text(
                 """
@@ -190,12 +205,12 @@ async def upsert_chat_for_bot(
                 "did": assigned_department_id,
             },
         )
-        return chat_id
+        return ChatUpsertResult(chat_id=chat_id, assigned_group_id=assigned_group_id)
 
     existing = await session.execute(
         text(
             """
-            SELECT id FROM chats
+            SELECT id, assigned_group_id FROM chats
             WHERE contact_id = :cid AND bot_id = :bid AND status = 'archived'
             ORDER BY id DESC
             LIMIT 1
@@ -206,6 +221,14 @@ async def upsert_chat_for_bot(
     row = existing.one_or_none()
     if row is not None:
         chat_id = int(row[0])
+        current_group_id = row[1]
+        if current_group_id is not None and _group_allowed(
+            int(current_group_id),
+            assigned_group_id=assigned_group_id,
+            candidate_group_ids=candidate_group_ids,
+        ):
+            assigned_group_id = int(current_group_id)
+            assigned_department_id = await _group_department_id(session, assigned_group_id)
         await session.execute(
             text(
                 """
@@ -223,7 +246,7 @@ async def upsert_chat_for_bot(
                 "did": assigned_department_id,
             },
         )
-        return chat_id
+        return ChatUpsertResult(chat_id=chat_id, assigned_group_id=assigned_group_id)
 
     insert = await session.execute(
         text(
@@ -243,7 +266,30 @@ async def upsert_chat_for_bot(
             "status": ChatStatus.OPEN.value,
         },
     )
-    return int(insert.scalar_one())
+    return ChatUpsertResult(
+        chat_id=int(insert.scalar_one()),
+        assigned_group_id=assigned_group_id,
+    )
+
+
+async def _group_department_id(session: AsyncSession, group_id: int) -> int | None:
+    group_row = await session.execute(
+        text("SELECT department_id FROM groups WHERE id = :gid"),
+        {"gid": group_id},
+    )
+    value = group_row.scalar_one_or_none()
+    return int(value) if value is not None else None
+
+
+def _group_allowed(
+    group_id: int,
+    *,
+    assigned_group_id: int | None,
+    candidate_group_ids: list[int] | None,
+) -> bool:
+    if assigned_group_id is not None and group_id == assigned_group_id:
+        return True
+    return candidate_group_ids is not None and group_id in set(candidate_group_ids)
 
 
 def _prepare_message_attachments(

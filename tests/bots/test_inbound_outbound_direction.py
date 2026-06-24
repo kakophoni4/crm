@@ -146,3 +146,84 @@ async def test_inbound_without_direction_unchanged(
         engine.dispose()
 
     assert str(direction) == "inbound"
+
+
+@pytest.mark.asyncio
+async def test_inbound_multi_group_bot_uses_one_assigned_group_for_chat_and_lead(
+    client: AsyncClient,
+    db_ready: None,
+    test_settings,
+    bots_org: dict[str, object],
+) -> None:
+    bot_id = int(bots_org["bot_id"])
+    dept_id = int(bots_org["dept_id"])
+    group_a_id = int(bots_org["group_id"])
+    engine = create_engine(_sync_database_url(test_settings.database_url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO groups (name, department_id)
+                    VALUES ('Bots Test Group D', :dept_id)
+                    ON CONFLICT (department_id, name) DO NOTHING
+                    """
+                ),
+                {"dept_id": dept_id},
+            )
+            group_b_id = int(
+                connection.execute(
+                    text(
+                        """
+                        SELECT id FROM groups
+                        WHERE department_id = :dept_id AND name = 'Bots Test Group D'
+                        """
+                    ),
+                    {"dept_id": dept_id},
+                ).scalar_one()
+            )
+            connection.execute(
+                text("DELETE FROM bot_group_assignments WHERE bot_id = :bid"),
+                {"bid": bot_id},
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO bot_group_assignments (bot_id, group_id)
+                    VALUES (:bid, :group_a), (:bid, :group_b)
+                    """
+                ),
+                {"bid": bot_id, "group_a": group_a_id, "group_b": group_b_id},
+            )
+    finally:
+        engine.dispose()
+
+    event_id = "01J5INBOUNDMULTIGROUP"
+    await _accept_and_process(
+        client,
+        event_id=event_id,
+        external_id="msg_multi_group_001",
+        text="Client hello for multi group bot",
+        telegram_user_id=999005,
+    )
+
+    engine = create_engine(_sync_database_url(test_settings.database_url))
+    try:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT c.assigned_group_id, l.group_id
+                    FROM messages m
+                    JOIN chats c ON c.id = m.chat_id
+                    JOIN leads l ON l.id = m.lead_id
+                    WHERE m.external_message_id = :ext
+                    """
+                ),
+                {"ext": "msg_multi_group_001"},
+            ).one()
+    finally:
+        engine.dispose()
+
+    assert int(row[0]) in {group_a_id, group_b_id}
+    assert int(row[1]) == int(row[0])

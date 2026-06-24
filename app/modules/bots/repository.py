@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -293,6 +294,79 @@ class BotRepository:
                 ),
                 {"gid": group_id, "did": department_id, "bid": bot_id},
             )
+            await self._session.execute(
+                text(
+                    """
+                    UPDATE leads l
+                    SET group_id = :gid,
+                        updated_at = now()
+                    FROM chats c
+                    WHERE l.chat_id = c.id
+                      AND c.bot_id = :bid
+                      AND c.status != 'archived'
+                      AND l.closed_at IS NULL
+                      AND l.group_id IS DISTINCT FROM :gid
+                    """
+                ),
+                {"gid": group_id, "bid": bot_id},
+            )
+        elif len(group_ids) > 1:
+            stmt = text(
+                """
+                SELECT id, contact_id
+                FROM chats
+                WHERE bot_id = :bid
+                  AND status != 'archived'
+                  AND (
+                    assigned_group_id IS NULL
+                    OR assigned_group_id NOT IN :gids
+                  )
+                """
+            ).bindparams(bindparam("gids", expanding=True))
+            rows = await self._session.execute(stmt, {"bid": bot_id, "gids": group_ids})
+            for row in rows.all():
+                group_id = random.choice(group_ids)
+                await self._session.execute(
+                    text(
+                        """
+                        UPDATE chats
+                        SET assigned_group_id = :gid,
+                            assigned_department_id = :did,
+                            updated_at = now()
+                        WHERE id = :chat_id
+                        """
+                    ),
+                    {
+                        "chat_id": int(row[0]),
+                        "gid": group_id,
+                        "did": department_id,
+                    },
+                )
+                await self._session.execute(
+                    text(
+                        """
+                        UPDATE leads
+                        SET group_id = :gid,
+                            updated_at = now()
+                        WHERE chat_id = :chat_id
+                          AND closed_at IS NULL
+                          AND group_id IS DISTINCT FROM :gid
+                        """
+                    ),
+                    {"chat_id": int(row[0]), "gid": group_id},
+                )
+                await self._session.execute(
+                    text(
+                        """
+                        INSERT INTO contact_group_assignments (
+                            contact_id, group_id, owner_user_id, assigned_at, assignment_source
+                        )
+                        VALUES (:contact_id, :gid, NULL, now(), 'migration')
+                        ON CONFLICT (contact_id, group_id) DO NOTHING
+                        """
+                    ),
+                    {"contact_id": int(row[1]), "gid": group_id},
+                )
         else:
             await self._session.execute(
                 text(

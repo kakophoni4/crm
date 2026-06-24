@@ -320,13 +320,15 @@ class ChatService:
         )
         chat = active.scalar_one_or_none()
         if chat is None:
-            chat_id = await upsert_chat_for_bot(
+            chat_result = await upsert_chat_for_bot(
                 self._session,
                 contact_id=contact_id,
                 bot_id=bot.id,
                 owner_type=routing.owner_type,
                 owner_id=routing.owner_id,
+                candidate_group_ids=routing.candidate_group_ids,
             )
+            chat_id = chat_result.chat_id
             chat = await self._repo.get_by_id(chat_id)
             created_chat = True
         else:

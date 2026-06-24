@@ -181,19 +181,21 @@ async def _handle_message_received(
         created_by=created_by,
     )
     routing = await resolve_bot_routing(session, bot)
-    chat_id = await upsert_chat_for_bot(
+    chat_result = await upsert_chat_for_bot(
         session,
         contact_id=contact_id,
         bot_id=bot.id,
         owner_type=routing.owner_type,
         owner_id=routing.owner_id,
+        candidate_group_ids=routing.candidate_group_ids,
     )
+    chat_id = chat_result.chat_id
     contact_row = await session.get(Contact, contact_id)
     if contact_row is not None:
         await apply_auto_contact_status(session, contact_row, bot_id=bot.id)
     lead_id: int | None = None
-    if routing.lead_group_id is not None:
-        group_id = routing.lead_group_id
+    if chat_result.assigned_group_id is not None:
+        group_id = chat_result.assigned_group_id
     else:
         group_id = await get_or_create_department_inbox_group(
             session,
@@ -263,18 +265,20 @@ async def _handle_call_received(
         created_by=created_by,
     )
     routing = await resolve_bot_routing(session, bot)
-    chat_id = await upsert_chat_for_bot(
+    chat_result = await upsert_chat_for_bot(
         session,
         contact_id=contact_id,
         bot_id=bot.id,
         owner_type=routing.owner_type,
         owner_id=routing.owner_id,
+        candidate_group_ids=routing.candidate_group_ids,
     )
+    chat_id = chat_result.chat_id
     contact_row = await session.get(Contact, contact_id)
     if contact_row is not None:
         await apply_auto_contact_status(session, contact_row, bot_id=bot.id)
-    if routing.lead_group_id is not None:
-        group_id = routing.lead_group_id
+    if chat_result.assigned_group_id is not None:
+        group_id = chat_result.assigned_group_id
     else:
         group_id = await get_or_create_department_inbox_group(
             session,
@@ -335,15 +339,17 @@ async def _handle_bot_outbound_message(
         created_by=created_by,
     )
     routing = await resolve_bot_routing(session, bot)
-    chat_id = await upsert_chat_for_bot(
+    chat_result = await upsert_chat_for_bot(
         session,
         contact_id=contact_id,
         bot_id=bot.id,
         owner_type=routing.owner_type,
         owner_id=routing.owner_id,
+        candidate_group_ids=routing.candidate_group_ids,
     )
-    if routing.lead_group_id is not None:
-        group_id = routing.lead_group_id
+    chat_id = chat_result.chat_id
+    if chat_result.assigned_group_id is not None:
+        group_id = chat_result.assigned_group_id
     else:
         group_id = await get_or_create_department_inbox_group(
             session,

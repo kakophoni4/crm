@@ -15,6 +15,7 @@ class BotRoutingTarget:
     owner_id: int
     department_id: int
     lead_group_id: int | None
+    candidate_group_ids: list[int]
 
 
 async def resolve_bot_routing(session: AsyncSession, bot: Bot) -> BotRoutingTarget:
@@ -29,6 +30,7 @@ async def resolve_bot_routing(session: AsyncSession, bot: Bot) -> BotRoutingTarg
             owner_id=group_id,
             department_id=department_id,
             lead_group_id=group_id,
+            candidate_group_ids=group_ids,
         )
 
     return BotRoutingTarget(
@@ -36,4 +38,5 @@ async def resolve_bot_routing(session: AsyncSession, bot: Bot) -> BotRoutingTarg
         owner_id=department_id,
         department_id=department_id,
         lead_group_id=None,
+        candidate_group_ids=group_ids,
     )
