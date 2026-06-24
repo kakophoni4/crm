@@ -65,6 +65,13 @@ async def _resync(*, dry_run: bool) -> None:
             print(f"resync complete, changed bots: {changed_bots}")
 
 
+async def _main_async(*, dry_run: bool) -> None:
+    try:
+        await _resync(dry_run=dry_run)
+    finally:
+        await dispose_engine()
+
+
 async def _count_chats_to_resync(session, bot_id: int, group_ids: list[int]) -> int:
     result = await session.execute(
         text(
@@ -90,10 +97,7 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would change.")
     args = parser.parse_args()
-    try:
-        asyncio.run(_resync(dry_run=args.dry_run))
-    finally:
-        asyncio.run(dispose_engine())
+    asyncio.run(_main_async(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":
