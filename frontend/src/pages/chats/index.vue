@@ -632,13 +632,27 @@ onUnmounted(() => {
 
           </ul>
 
+          <div
+            v-if="store.displayListItems.length && store.listNextCursor"
+            class="chats-page__load-more"
+          >
+            <NButton
+              block
+              secondary
+              :loading="store.listLoading"
+              @click="store.fetchList(true)"
+            >
+              Показать еще
+            </NButton>
+          </div>
+
           <NEmpty
-            v-else-if="store.listError"
+            v-if="!store.displayListItems.length && store.listError"
             description="Ошибка загрузки"
           >
             <template #extra>{{ store.listError }}</template>
           </NEmpty>
-          <NEmpty v-else description="Нет чатов по фильтрам" />
+          <NEmpty v-else-if="!store.displayListItems.length" description="Нет чатов по фильтрам" />
 
         </NSpin>
 
@@ -1031,6 +1045,10 @@ onUnmounted(() => {
 
   padding: 0;
 
+}
+
+.chats-page__load-more {
+  padding: 8px 0 4px;
 }
 
 
