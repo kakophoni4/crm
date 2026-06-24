@@ -160,6 +160,11 @@ export async function deleteQuickReply(id: number): Promise<QuickReplyTemplate> 
   return data
 }
 
+export async function hideQuickReply(id: number): Promise<QuickReplyTemplate> {
+  const { data } = await http.post<QuickReplyTemplate>(`/chats/quick-replies/${id}/hide`)
+  return data
+}
+
 export async function trackQuickReplyUse(id: number): Promise<void> {
   await http.post(`/chats/quick-replies/${id}/use`)
 }

@@ -6,7 +6,7 @@ import { computed, ref, nextTick, watch } from 'vue'
 
 import {
   createQuickReply,
-  deleteQuickReply,
+  hideQuickReply,
   listQuickReplies,
   trackQuickReplyUse,
   uploadFile,
@@ -239,9 +239,9 @@ async function saveQuickReply(): Promise<void> {
   }
 }
 
-async function removeQuickReply(template: QuickReplyTemplate): Promise<void> {
+async function hideQuickReplyForMe(template: QuickReplyTemplate): Promise<void> {
   try {
-    await deleteQuickReply(template.id)
+    await hideQuickReply(template.id)
     quickReplies.value = quickReplies.value.filter((item) => item.id !== template.id)
     message.success('Шаблон удалён')
   } catch (err) {
@@ -365,8 +365,8 @@ watch(
           <button
             type="button"
             class="message-input__quick-delete"
-            aria-label="Удалить шаблон"
-            @click.stop="removeQuickReply(reply)"
+            aria-label="Скрыть шаблон для себя"
+            @click.stop="hideQuickReplyForMe(reply)"
           >
             <Trash2 :size="14" />
           </button>

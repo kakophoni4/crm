@@ -170,6 +170,15 @@ async def delete_quick_reply(
     return await service.delete_template(actor, template_id)
 
 
+@router.post("/quick-replies/{template_id}/hide", response_model=QuickReplyTemplateResponse)
+async def hide_quick_reply(
+    template_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    service: Annotated[QuickReplyTemplateService, Depends(_quick_replies_service)],
+) -> QuickReplyTemplateResponse:
+    return await service.hide_template(actor, template_id)
+
+
 @router.post("/quick-replies/{template_id}/use", response_model=QuickReplyTemplateResponse)
 async def use_quick_reply(
     template_id: int,

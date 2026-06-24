@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, exists, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.schemas import (
@@ -13,6 +14,7 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.enums import UserRole
 from app.modules.db.models.group import Group
 from app.modules.db.models.quick_reply_template import QuickReplyTemplate
+from app.modules.db.models.quick_reply_template_hidden import QuickReplyTemplateHidden
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids, visible_group_ids
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
@@ -45,6 +47,12 @@ class QuickReplyTemplateService:
             QuickReplyTemplate.updated_at.desc(),
         )
         stmt = self._apply_visible_scope(stmt, visible_depts, visible_groups)
+        stmt = stmt.where(
+            ~exists().where(
+                QuickReplyTemplateHidden.template_id == QuickReplyTemplate.id,
+                QuickReplyTemplateHidden.user_id == actor.id,
+            ),
+        )
         if not include_inactive:
             stmt = stmt.where(QuickReplyTemplate.is_active.is_(True))
         if department_id is not None:
@@ -119,6 +127,21 @@ class QuickReplyTemplateService:
         await self._session.delete(row)
         await self._session.commit()
         return response
+
+    async def hide_template(self, actor: User, template_id: int) -> QuickReplyTemplateResponse:
+        row = await self._get_visible(actor, template_id)
+        await self._session.execute(
+            insert(QuickReplyTemplateHidden)
+            .values(template_id=row.id, user_id=actor.id)
+            .on_conflict_do_nothing(
+                index_elements=[
+                    QuickReplyTemplateHidden.template_id,
+                    QuickReplyTemplateHidden.user_id,
+                ],
+            ),
+        )
+        await self._session.commit()
+        return self._to_response(row)
 
     async def track_use(self, actor: User, template_id: int) -> QuickReplyTemplateResponse:
         row = await self._get_visible(actor, template_id)
