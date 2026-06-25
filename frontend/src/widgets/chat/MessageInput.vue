@@ -175,7 +175,7 @@ async function loadQuickReplies(): Promise<void> {
   try {
     quickReplies.value = await listQuickReplies({
       q: quickReplyQuery.value || undefined,
-      department_id: props.departmentId ?? undefined,
+      department_id: props.groupId == null ? (props.departmentId ?? undefined) : undefined,
       group_id: props.groupId ?? undefined,
       limit: 8,
     })
@@ -225,7 +225,7 @@ async function saveQuickReply(): Promise<void> {
     await createQuickReply({
       title,
       body,
-      department_id: props.departmentId ?? null,
+      department_id: props.groupId == null ? (props.departmentId ?? null) : null,
       group_id: props.groupId ?? null,
       is_active: true,
     })
