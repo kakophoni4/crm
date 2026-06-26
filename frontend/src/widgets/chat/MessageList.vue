@@ -236,6 +236,7 @@ watch(
                     v-for="(att, i) in msg.attachments"
                     :key="i"
                     :att="att"
+                    eager
                   />
                 </div>
                 <footer class="message-list__meta">

@@ -9,15 +9,20 @@ import {
   peekAttachmentBlobUrl,
 } from '@/shared/lib/attachment-blob-cache'
 
-const props = defineProps<{
-  att: unknown
-}>()
+const props = withDefaults(
+  defineProps<{
+    att: unknown
+    /** Skip viewport gate — load immediately (open chat). */
+    eager?: boolean
+  }>(),
+  { eager: false },
+)
 
 const rootRef = ref<HTMLElement | null>(null)
 const blobUrl = ref<string | null>(null)
 const loading = ref(false)
 const failed = ref(false)
-const visible = ref(false)
+const visible = ref(props.eager)
 const previewOpen = ref(false)
 const previewZoom = ref(1)
 let loadToken = 0

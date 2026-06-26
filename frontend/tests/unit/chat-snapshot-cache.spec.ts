@@ -15,6 +15,10 @@ vi.mock('@/features/chats/api', () => ({
   listMessages: vi.fn(),
 }))
 
+vi.mock('@/shared/lib/attachment-blob-cache', () => ({
+  prefetchAttachmentsForMessages: vi.fn(),
+}))
+
 function makeSnapshot(id: number) {
   return {
     detail: { id, contact_id: id, contact_name: `c${id}` } as never,

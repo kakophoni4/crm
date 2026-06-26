@@ -1,6 +1,8 @@
 import type { ChatDetail, ChatMessage } from '@/entities/chat/types'
 
 import * as chatsApi from '@/features/chats/api'
+import { prefetchChatDeals } from '@/features/chats/deals-cache'
+import { prefetchAttachmentsForMessages } from '@/shared/lib/attachment-blob-cache'
 
 /** Hot chats kept in memory for instant open. */
 export const CHAT_SNAPSHOT_CACHE_SIZE = 15
@@ -54,12 +56,17 @@ export function isChatSnapshotFresh(
 export function setChatSnapshot(
   chatId: number,
   snapshot: Omit<ChatSnapshot, 'fetchedAt'> & { fetchedAt?: number },
+  options: { prefetchAttachments?: boolean } = {},
 ): void {
+  const messages = snapshot.messages.slice(0, CHAT_SNAPSHOT_MESSAGE_LIMIT)
   touch(chatId, {
     ...snapshot,
-    messages: snapshot.messages.slice(0, CHAT_SNAPSHOT_MESSAGE_LIMIT),
+    messages,
     fetchedAt: snapshot.fetchedAt ?? Date.now(),
   })
+  if (options.prefetchAttachments !== false) {
+    prefetchAttachmentsForMessages(messages)
+  }
 }
 
 export function hasChatSnapshot(chatId: number): boolean {
@@ -123,6 +130,7 @@ async function prefetchChat(chatId: number): Promise<void> {
       messages: msgs.items,
       nextCursor: msgs.next_cursor,
     })
+    void prefetchChatDeals(detail)
   } catch {
     /* prefetch is best-effort */
   } finally {

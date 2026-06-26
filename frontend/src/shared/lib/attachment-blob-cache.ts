@@ -4,7 +4,7 @@ const cache = new Map<string, string>()
 const inflight = new Map<string, Promise<string>>()
 
 /** Keep below browser per-host connection limit so API calls are not starved. */
-const MAX_CONCURRENT_DOWNLOADS = 2
+const MAX_CONCURRENT_DOWNLOADS = 4
 const QUEUE_WAIT_MS = 30_000
 const DOWNLOAD_MS = 60_000
 
@@ -76,6 +76,36 @@ export async function fetchAttachmentBlobUrl(downloadPath: string): Promise<stri
     inflight.delete(downloadPath)
     throw err
   })
+}
+
+export function collectReadyAttachmentPaths(
+  messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
+): string[] {
+  const paths = new Set<string>()
+  for (const msg of messages) {
+    for (const att of msg.attachments ?? []) {
+      if (String(att.status ?? '') !== 'ready') continue
+      const path = att.download_path
+      if (typeof path === 'string' && path.length > 0) {
+        paths.add(path)
+      }
+    }
+  }
+  return [...paths]
+}
+
+/** Best-effort warm-up; skips paths already cached or in flight. */
+export function prefetchAttachmentBlobUrls(downloadPaths: Iterable<string>): void {
+  for (const path of downloadPaths) {
+    if (peekAttachmentBlobUrl(path) || inflight.has(path)) continue
+    void fetchAttachmentBlobUrl(path).catch(() => undefined)
+  }
+}
+
+export function prefetchAttachmentsForMessages(
+  messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
+): void {
+  prefetchAttachmentBlobUrls(collectReadyAttachmentPaths(messages))
 }
 
 export function releaseAttachmentBlobUrl(downloadPath: string): void {

@@ -32,7 +32,6 @@ import {
   isChatSnapshotFresh,
   priorityPrefetchChat,
   scheduleChatSnapshotsPrefetch,
-  scheduleChatSnapshotsPrefetchIdle,
   setChatSnapshot,
 } from '@/features/chats/snapshot-cache'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
@@ -521,7 +520,9 @@ export const useChatsStore = defineStore('chats', () => {
       if (!append && listItems.value.length > 0) {
         const topIds = listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE).map((chat) => chat.id)
         scheduleChatSnapshotsPrefetch(topIds.slice(0, 3), { priority: true })
-        scheduleChatSnapshotsPrefetchIdle(topIds.slice(3))
+        if (topIds.length > 3) {
+          scheduleChatSnapshotsPrefetch(topIds.slice(3))
+        }
       }
     }
   }
@@ -586,11 +587,15 @@ export const useChatsStore = defineStore('chats', () => {
       finishMessagesLoad(seq)
 
       if (messageScope.value === 'all') {
-        setChatSnapshot(chatId, {
-          detail: currentChat.value,
-          messages: msgs.items,
-          nextCursor: msgs.next_cursor,
-        })
+        setChatSnapshot(
+          chatId,
+          {
+            detail: currentChat.value,
+            messages: msgs.items,
+            nextCursor: msgs.next_cursor,
+          },
+          { prefetchAttachments: false },
+        )
       }
 
       void enrichMessagesWithReplyAudit(
@@ -640,11 +645,15 @@ export const useChatsStore = defineStore('chats', () => {
     messagesNextCursor.value = msgs.next_cursor
     finishMessagesLoad(seq)
 
-    setChatSnapshot(chatId, {
-      detail: currentChat.value,
-      messages: msgs.items,
-      nextCursor: msgs.next_cursor,
-    })
+    setChatSnapshot(
+      chatId,
+      {
+        detail: currentChat.value,
+        messages: msgs.items,
+        nextCursor: msgs.next_cursor,
+      },
+      { prefetchAttachments: false },
+    )
 
     void enrichMessagesWithReplyAudit(
       detail.contact_id,

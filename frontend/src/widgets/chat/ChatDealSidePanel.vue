@@ -13,6 +13,14 @@ import type { SelectOption } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import type { ChatDetail } from '@/entities/chat/types'
+import {
+  getCachedLeadDetail,
+  getChatDealsSnapshot,
+  isChatDealsSnapshotFresh,
+  pickPreferredLeadId,
+  setCachedLeadDetail,
+  setChatDealsSnapshot,
+} from '@/features/chats/deals-cache'
 import { getLead, listContactLeads, patchLead } from '@/features/leads/api'
 import {
   buildLeadDealPatch,
@@ -102,10 +110,19 @@ function applyLeadDetail(detail: LeadDetail): void {
   commentDraft.value = ''
 }
 
-async function loadLeadDetail(leadId: number): Promise<void> {
+async function loadLeadDetail(leadId: number, forceRefresh = false): Promise<void> {
+  if (!forceRefresh) {
+    const cached = getCachedLeadDetail(leadId)
+    if (cached) {
+      applyLeadDetail(cached)
+      return
+    }
+  }
   loadingLead.value = true
   try {
-    applyLeadDetail(await getLead(leadId))
+    const detail = await getLead(leadId)
+    setCachedLeadDetail(detail)
+    applyLeadDetail(detail)
   } catch {
     leadDetail.value = null
     resetOrderForm()
@@ -114,7 +131,7 @@ async function loadLeadDetail(leadId: number): Promise<void> {
   }
 }
 
-async function loadLeads(): Promise<void> {
+async function loadLeads(forceRefresh = false): Promise<void> {
   const chat = props.chat
   if (chat == null) {
     leadItems.value = []
@@ -128,7 +145,26 @@ async function loadLeads(): Promise<void> {
     resetOrderForm()
     return
   }
-  loadingLeads.value = true
+
+  const cached = !forceRefresh ? getChatDealsSnapshot(chat.id) : null
+  if (cached) {
+    leadItems.value = cached.leadItems
+    const preferredId =
+      selectedLeadId.value != null &&
+      cached.leadItems.some((lead) => lead.id === selectedLeadId.value)
+        ? selectedLeadId.value
+        : cached.preferredLeadId
+    if (preferredId != null) {
+      const detail = getCachedLeadDetail(preferredId)
+      if (detail) applyLeadDetail(detail)
+    }
+    if (!forceRefresh && isChatDealsSnapshotFresh(chat.id)) {
+      await store.selectLead(preferredId)
+      return
+    }
+  }
+
+  loadingLeads.value = !cached
   try {
     const data = await listContactLeads(chat.contact_id, {
       group_id: chat.assigned_group_id ?? undefined,
@@ -139,7 +175,15 @@ async function loadLeads(): Promise<void> {
     const preferredId =
       selectedLeadId.value != null && items.some((lead) => lead.id === selectedLeadId.value)
         ? selectedLeadId.value
-        : (items.find((lead) => lead.closed_at == null)?.id ?? items[0]?.id ?? null)
+        : pickPreferredLeadId(items)
+    setChatDealsSnapshot(chat.id, items, preferredId)
+    if (preferredId != null) {
+      try {
+        setCachedLeadDetail(await getLead(preferredId))
+      } catch {
+        /* detail load is optional here; loadLeadDetail will retry */
+      }
+    }
     await store.selectLead(preferredId)
   } catch {
     leadItems.value = []
@@ -185,6 +229,7 @@ async function persistOrderFields(): Promise<void> {
       customFields = mergeServiceSuggestion(customFields, service.value)
     }
     const updated = await patchLead(leadDetail.value.id, { custom_fields: customFields })
+    setCachedLeadDetail(updated)
     applyLeadDetail(updated)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить сделку')
@@ -197,8 +242,9 @@ async function updateSelectedLeadStatus(statusId: number): Promise<void> {
   if (!hasSelectedOpenLead.value || leadDetail.value == null) return
   try {
     const updated = await patchLead(leadDetail.value.id, { status_id: statusId })
+    setCachedLeadDetail(updated)
     applyLeadDetail(updated)
-    await loadLeads()
+    await loadLeads(true)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось изменить статус')
   }
@@ -208,7 +254,7 @@ async function onCreateLead(): Promise<void> {
   try {
     const created = await store.createManualLead()
     if (created != null) {
-      await loadLeads()
+      await loadLeads(true)
       selectedLeadId.value = created.id
     }
     message.success('Сделка открыта')
@@ -221,7 +267,7 @@ async function onCloseLead(statusId: number | null): Promise<void> {
   if (statusId == null || leadDetail.value == null) return
   try {
     await store.closeCurrentLead(statusId, leadDetail.value.id)
-    await loadLeads()
+    await loadLeads(true)
     message.success('Сделка закрыта')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось закрыть сделку')
@@ -233,6 +279,7 @@ async function saveLeadComment(): Promise<void> {
   if (!text || !hasSelectedOpenLead.value || leadDetail.value == null) return
   try {
     const updated = await patchLead(leadDetail.value.id, { comment: text })
+    setCachedLeadDetail(updated)
     applyLeadDetail(updated)
     message.success('Комментарий добавлен')
   } catch (err) {
