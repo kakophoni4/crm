@@ -93,12 +93,6 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
-  function finishOlderMessagesLoad(seq: number): void {
-    if (seq === openChatSeq) {
-      loadingOlderMessages.value = false
-    }
-  }
-
   const activeTakeover = computed(() => {
     if (currentChatId.value == null) return null
     return takeoverByChatId.value[currentChatId.value] ?? null
@@ -617,6 +611,7 @@ export const useChatsStore = defineStore('chats', () => {
     if (scope === 'current_lead') {
       leadClosedBanner.value = false
     }
+    loadingOlderMessages.value = false
     messageScope.value = scope
     await reloadMessages()
   }
@@ -678,6 +673,7 @@ export const useChatsStore = defineStore('chats', () => {
   async function openChat(chatId: number): Promise<void> {
     const seq = ++openChatSeq
     leadClosedBanner.value = false
+    loadingOlderMessages.value = false
     currentChatId.value = chatId
     selectedLeadId.value = null
     clearHighlight(chatId)
@@ -748,8 +744,10 @@ export const useChatsStore = defineStore('chats', () => {
       if (!isActiveChat(chatId, seq)) return
       messages.value = [...older, ...messages.value]
       messagesNextCursor.value = data.next_cursor
+    } catch {
+      /* keep cursor; user can retry scroll */
     } finally {
-      finishOlderMessagesLoad(seq)
+      loadingOlderMessages.value = false
     }
   }
 

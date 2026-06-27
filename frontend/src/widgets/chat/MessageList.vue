@@ -131,6 +131,10 @@ function onViewportScroll(): void {
 watch(
   () => props.loadingOlder,
   async (loading, wasLoading) => {
+    if (!loading) {
+      loadingOlderGuard.value = false
+      anchorHeight.value = null
+    }
     if (wasLoading && !loading && anchorHeight.value != null) {
       await nextTick()
       const el = viewportRef.value
@@ -138,7 +142,6 @@ watch(
         el.scrollTop += el.scrollHeight - anchorHeight.value
       }
       anchorHeight.value = null
-      loadingOlderGuard.value = false
     }
   },
 )
@@ -148,6 +151,7 @@ watch(
   () => {
     stickToBottom.value = true
     loadingOlderGuard.value = false
+    anchorHeight.value = null
     void nextTick(() => scrollToBottom(false))
   },
 )
