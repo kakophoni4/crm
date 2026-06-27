@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { useIntersectionObserver } from '@vueuse/core'
-import { Download, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-vue-next'
+import { Download, Eye, FileSpreadsheet, FileText, Image as ImageIcon } from 'lucide-vue-next'
 import { NButton, NSpin } from 'naive-ui'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
 import {
-  fetchAttachmentBlobUrl,
-  peekAttachmentBlobUrl,
+  fetchAttachmentBlob,
+  peekAttachmentBlob,
 } from '@/shared/lib/attachment-blob-cache'
+import {
+  attachmentPreviewSupported,
+  resolveAttachmentPreviewKind,
+} from '@/shared/lib/attachment-preview-kind'
+import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -20,11 +25,11 @@ const props = withDefaults(
 
 const rootRef = ref<HTMLElement | null>(null)
 const blobUrl = ref<string | null>(null)
+const blob = ref<Blob | null>(null)
 const loading = ref(false)
 const failed = ref(false)
 const visible = ref(props.eager)
 const previewOpen = ref(false)
-const previewZoom = ref(1)
 let loadToken = 0
 
 const row = computed(() => props.att as Record<string, unknown>)
@@ -33,6 +38,10 @@ const status = computed(() => String(row.value.status ?? ''))
 const downloadPath = computed(() => {
   const path = row.value.download_path
   return typeof path === 'string' && path.length > 0 ? path : null
+})
+const mime = computed(() => {
+  const value = row.value.mime
+  return typeof value === 'string' ? value : null
 })
 const label = computed(() => {
   const filename = row.value.filename ?? row.value.name
@@ -46,15 +55,15 @@ const failureText = computed(() => {
   if (typeof error === 'string' && error.trim()) return error.trim()
   return 'Не удалось загрузить файл'
 })
-const isImage = computed(() => {
-  if (status.value !== 'ready' || !downloadPath.value) return false
-  if (row.value.type === 'photo') return true
-  const mime = row.value.mime
-  return typeof mime === 'string' && mime.startsWith('image/')
+const previewKind = computed(() => resolveAttachmentPreviewKind(row.value))
+const isImage = computed(() => previewKind.value === 'image')
+const isReady = computed(() => status.value === 'ready' && downloadPath.value != null)
+const canPreview = computed(() => attachmentPreviewSupported(previewKind.value))
+const docIcon = computed(() => {
+  if (previewKind.value === 'spreadsheet') return FileSpreadsheet
+  if (isImage.value) return ImageIcon
+  return FileText
 })
-const previewImageStyle = computed(() => ({
-  transform: `scale(${previewZoom.value})`,
-}))
 
 useIntersectionObserver(
   rootRef,
@@ -66,24 +75,30 @@ useIntersectionObserver(
   { rootMargin: '120px' },
 )
 
+function applyCached(path: string): boolean {
+  const cached = peekAttachmentBlob(path)
+  if (!cached) return false
+  blobUrl.value = cached.url
+  blob.value = cached.blob
+  return true
+}
+
 async function load(): Promise<void> {
   const token = ++loadToken
   failed.value = false
   blobUrl.value = null
+  blob.value = null
 
-  if (status.value !== 'ready' || !downloadPath.value || !visible.value) return
+  if (!isReady.value || !downloadPath.value || !visible.value) return
 
-  const cached = peekAttachmentBlobUrl(downloadPath.value)
-  if (cached) {
-    blobUrl.value = cached
-    return
-  }
+  if (applyCached(downloadPath.value)) return
 
   loading.value = true
   try {
-    const url = await fetchAttachmentBlobUrl(downloadPath.value)
+    const entry = await fetchAttachmentBlob(downloadPath.value, mime.value)
     if (token !== loadToken) return
-    blobUrl.value = url
+    blobUrl.value = entry.url
+    blob.value = entry.blob
   } catch {
     if (token !== loadToken) return
     failed.value = true
@@ -95,25 +110,27 @@ async function load(): Promise<void> {
 }
 
 function openPreview(): void {
-  if (!isImage.value || !blobUrl.value) return
-  previewZoom.value = 1
+  if (!blobUrl.value) return
   previewOpen.value = true
 }
 
-function closePreview(): void {
-  previewOpen.value = false
+function downloadFile(): void {
+  if (!blobUrl.value) {
+    void load().then(() => {
+      if (blobUrl.value) triggerDownload()
+    })
+    return
+  }
+  triggerDownload()
 }
 
-function zoomIn(): void {
-  previewZoom.value = Math.min(4, Number((previewZoom.value + 0.25).toFixed(2)))
-}
-
-function zoomOut(): void {
-  previewZoom.value = Math.max(0.5, Number((previewZoom.value - 0.25).toFixed(2)))
-}
-
-function resetZoom(): void {
-  previewZoom.value = 1
+function triggerDownload(): void {
+  if (!blobUrl.value) return
+  const anchor = document.createElement('a')
+  anchor.href = blobUrl.value
+  anchor.download = label.value
+  anchor.rel = 'noopener'
+  anchor.click()
 }
 
 watch(
@@ -134,9 +151,13 @@ onUnmounted(() => {
     <span v-else-if="status === 'failed'" class="message-attachment message-attachment--failed">
       {{ failureText }}
     </span>
-    <NSpin v-else-if="loading" size="small" />
+    <span v-else-if="!downloadPath && status === 'ready'" class="message-attachment message-attachment--failed">
+      {{ label }} — файл недоступен
+    </span>
+    <NSpin v-else-if="loading && !blobUrl" size="small" />
     <span v-else-if="failed" class="message-attachment message-attachment--failed">
       {{ label }}
+      <NButton size="tiny" quaternary @click="load">Повторить</NButton>
     </span>
     <img
       v-else-if="isImage && blobUrl"
@@ -150,76 +171,53 @@ onUnmounted(() => {
       @keydown.enter.prevent="openPreview"
       @keydown.space.prevent="openPreview"
     />
-    <a
-      v-else-if="blobUrl"
-      class="message-attachment__link"
-      :href="blobUrl"
-      :download="label"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      {{ label }}
-    </a>
-    <span v-else class="message-attachment">{{ label }}</span>
-  </span>
-
-  <Teleport to="body">
-    <div
-      v-if="previewOpen && blobUrl"
-      class="attachment-preview"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="label"
-      tabindex="-1"
-      @click="closePreview"
-      @keydown.esc="closePreview"
-    >
-      <div class="attachment-preview__toolbar" @click.stop>
-        <NButton quaternary circle size="large" title="Уменьшить" @click="zoomOut">
+    <div v-else-if="isReady" class="message-attachment__doc">
+      <button
+        type="button"
+        class="message-attachment__doc-main"
+        :disabled="!blobUrl && loading"
+        @click="openPreview"
+      >
+        <component :is="docIcon" :size="18" class="message-attachment__doc-icon" />
+        <span class="message-attachment__doc-name" :title="label">{{ label }}</span>
+        <NSpin v-if="loading && !blobUrl" size="small" />
+      </button>
+      <div class="message-attachment__doc-actions">
+        <NButton
+          size="tiny"
+          quaternary
+          :disabled="!blobUrl && loading"
+          title="Открыть"
+          @click="openPreview"
+        >
           <template #icon>
-            <ZoomOut :size="20" />
-          </template>
-        </NButton>
-        <NButton quaternary circle size="large" title="Сбросить масштаб" @click="resetZoom">
-          <template #icon>
-            <RotateCcw :size="20" />
-          </template>
-        </NButton>
-        <NButton quaternary circle size="large" title="Увеличить" @click="zoomIn">
-          <template #icon>
-            <ZoomIn :size="20" />
+            <Eye :size="14" />
           </template>
         </NButton>
         <NButton
+          size="tiny"
           quaternary
-          circle
-          size="large"
-          tag="a"
-          :href="blobUrl"
-          :download="label"
+          :loading="loading && !blobUrl"
           title="Скачать"
+          @click="downloadFile"
         >
           <template #icon>
-            <Download :size="20" />
+            <Download :size="14" />
           </template>
         </NButton>
-        <NButton quaternary circle size="large" title="Закрыть" @click="closePreview">
-          <template #icon>
-            <X :size="22" />
-          </template>
-        </NButton>
-      </div>
-      <div class="attachment-preview__stage">
-        <img
-          class="attachment-preview__image"
-          :src="blobUrl"
-          :alt="label"
-          :style="previewImageStyle"
-          @click.stop
-        />
       </div>
     </div>
-  </Teleport>
+    <span v-else class="message-attachment">{{ label }}</span>
+  </span>
+
+  <AttachmentPreviewModal
+    :open="previewOpen"
+    :label="label"
+    :blob-url="blobUrl"
+    :blob="blob"
+    :preview-kind="canPreview ? previewKind : 'unsupported'"
+    @close="previewOpen = false"
+  />
 </template>
 
 <style scoped>
@@ -238,6 +236,9 @@ onUnmounted(() => {
 
 .message-attachment--failed {
   color: #d03050;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .message-attachment__image {
@@ -248,60 +249,51 @@ onUnmounted(() => {
   cursor: zoom-in;
 }
 
-.message-attachment__link {
-  color: var(--app-accent, #2080f0);
-  word-break: break-all;
-}
-
-.attachment-preview {
-  position: fixed;
-  inset: 0;
-  z-index: 4000;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  background: rgb(8 12 20 / 92%);
-  backdrop-filter: blur(6px);
-}
-
-.attachment-preview__toolbar {
+.message-attachment__doc {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
-  padding: 12px;
-  background: linear-gradient(to bottom, rgb(8 12 20 / 72%), transparent);
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border, rgb(255 255 255 / 12%));
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
 }
 
-.attachment-preview__toolbar :deep(.n-button) {
-  color: #fff;
+.message-attachment__doc-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
 }
 
-.attachment-preview__stage {
-  min-height: 0;
-  overflow: auto;
-  display: grid;
-  place-items: center;
-  padding: 16px;
+.message-attachment__doc-main:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
-.attachment-preview__image {
-  max-width: min(96vw, 1600px);
-  max-height: 88vh;
-  display: block;
-  border-radius: 8px;
-  object-fit: contain;
-  transform-origin: center center;
-  transition: transform 120ms ease;
-  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+.message-attachment__doc-icon {
+  flex-shrink: 0;
+  color: var(--app-accent, #2080f0);
 }
 
-@media (max-width: 640px) {
-  .attachment-preview__toolbar {
-    justify-content: center;
-    padding: 8px;
-  }
+.message-attachment__doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
 
-  .attachment-preview__stage {
-    padding: 8px;
-  }
+.message-attachment__doc-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
 }
 </style>

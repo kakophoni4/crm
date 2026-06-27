@@ -12,8 +12,14 @@ vi.mock('@vueuse/core', () => ({
 }))
 
 vi.mock('@/shared/lib/attachment-blob-cache', () => ({
-  peekAttachmentBlobUrl: vi.fn(() => null),
-  fetchAttachmentBlobUrl: vi.fn(() => Promise.resolve('blob:test-image')),
+  peekAttachmentBlob: vi.fn(() => null),
+  fetchAttachmentBlob: vi.fn(() =>
+    Promise.resolve({
+      url: 'blob:test-image',
+      mime: 'image/png',
+      blob: new Blob(['x'], { type: 'image/png' }),
+    }),
+  ),
 }))
 
 describe('MessageAttachment image preview', () => {
@@ -36,11 +42,10 @@ describe('MessageAttachment image preview', () => {
     await nextTick()
 
     await wrapper.find('.message-attachment__image').trigger('click')
-    const preview = document.body.querySelector('.attachment-preview')
-    expect(preview).not.toBeNull()
+    expect(document.body.querySelector('.attachment-preview')).not.toBeNull()
 
     document.body
-      .querySelector('.attachment-preview__stage')
+      .querySelector('.attachment-preview [title="Закрыть"]')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
     expect(document.body.querySelector('.attachment-preview')).toBeNull()

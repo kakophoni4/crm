@@ -1,7 +1,13 @@
 import { http } from '@/shared/api/http'
 
-const cache = new Map<string, string>()
-const inflight = new Map<string, Promise<string>>()
+export interface CachedAttachmentBlob {
+  url: string
+  mime: string
+  blob: Blob
+}
+
+const cache = new Map<string, CachedAttachmentBlob>()
+const inflight = new Map<string, Promise<CachedAttachmentBlob>>()
 
 /** Keep below browser per-host connection limit so API calls are not starved. */
 const MAX_CONCURRENT_DOWNLOADS = 4
@@ -40,10 +46,28 @@ function releaseDownloadSlot(): void {
 }
 
 export function peekAttachmentBlobUrl(downloadPath: string): string | null {
+  return cache.get(downloadPath)?.url ?? null
+}
+
+export function peekAttachmentBlob(downloadPath: string): CachedAttachmentBlob | null {
   return cache.get(downloadPath) ?? null
 }
 
-export async function fetchAttachmentBlobUrl(downloadPath: string): Promise<string> {
+function normalizeBlob(raw: Blob, mimeHint: string | null | undefined, headerMime: string | undefined): Blob {
+  const fromHeader = headerMime?.split(';')[0]?.trim()
+  const mime =
+    (fromHeader && fromHeader !== 'application/octet-stream' ? fromHeader : null) ||
+    (mimeHint && mimeHint !== 'application/octet-stream' ? mimeHint : null) ||
+    (raw.type && raw.type !== 'application/octet-stream' ? raw.type : null) ||
+    'application/octet-stream'
+  if (raw.type === mime) return raw
+  return new Blob([raw], { type: mime })
+}
+
+export async function fetchAttachmentBlob(
+  downloadPath: string,
+  mimeHint?: string | null,
+): Promise<CachedAttachmentBlob> {
   const cached = cache.get(downloadPath)
   if (cached) return cached
 
@@ -62,9 +86,15 @@ export async function fetchAttachmentBlobUrl(downloadPath: string): Promise<stri
         responseType: 'blob',
         timeout: remaining,
       })
-      const url = URL.createObjectURL(resp.data)
-      cache.set(downloadPath, url)
-      return url
+      const blob = normalizeBlob(
+        resp.data as Blob,
+        mimeHint,
+        resp.headers['content-type'] as string | undefined,
+      )
+      const url = URL.createObjectURL(blob)
+      const entry: CachedAttachmentBlob = { url, mime: blob.type, blob }
+      cache.set(downloadPath, entry)
+      return entry
     } finally {
       releaseDownloadSlot()
       inflight.delete(downloadPath)
@@ -76,6 +106,14 @@ export async function fetchAttachmentBlobUrl(downloadPath: string): Promise<stri
     inflight.delete(downloadPath)
     throw err
   })
+}
+
+export async function fetchAttachmentBlobUrl(
+  downloadPath: string,
+  mimeHint?: string | null,
+): Promise<string> {
+  const entry = await fetchAttachmentBlob(downloadPath, mimeHint)
+  return entry.url
 }
 
 export function collectReadyAttachmentPaths(
@@ -109,17 +147,17 @@ export function prefetchAttachmentsForMessages(
 }
 
 export function releaseAttachmentBlobUrl(downloadPath: string): void {
-  const url = cache.get(downloadPath)
-  if (!url) return
-  URL.revokeObjectURL(url)
+  const entry = cache.get(downloadPath)
+  if (!entry) return
+  URL.revokeObjectURL(entry.url)
   cache.delete(downloadPath)
   inflight.delete(downloadPath)
 }
 
 /** Test helper */
 export function clearAttachmentBlobCache(): void {
-  for (const url of cache.values()) {
-    URL.revokeObjectURL(url)
+  for (const entry of cache.values()) {
+    URL.revokeObjectURL(entry.url)
   }
   cache.clear()
   inflight.clear()
