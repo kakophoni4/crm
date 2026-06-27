@@ -30,6 +30,7 @@ const loading = ref(false)
 const failed = ref(false)
 const visible = ref(props.eager)
 const previewOpen = ref(false)
+const previewLoading = ref(false)
 let loadToken = 0
 
 const row = computed(() => props.att as Record<string, unknown>)
@@ -84,14 +85,14 @@ function applyCached(path: string): boolean {
 }
 
 async function load(): Promise<void> {
+  if (!isReady.value || !downloadPath.value || !visible.value) return
+  if (applyCached(downloadPath.value)) return
+  if (blobUrl.value || loading.value) return
+
   const token = ++loadToken
   failed.value = false
   blobUrl.value = null
   blob.value = null
-
-  if (!isReady.value || !downloadPath.value || !visible.value) return
-
-  if (applyCached(downloadPath.value)) return
 
   loading.value = true
   try {
@@ -109,16 +110,35 @@ async function load(): Promise<void> {
   }
 }
 
-function openPreview(): void {
-  if (!blobUrl.value) return
-  previewOpen.value = true
+async function ensureBlobLoaded(): Promise<boolean> {
+  if (blobUrl.value) return true
+  if (downloadPath.value && applyCached(downloadPath.value)) return true
+  if (!isReady.value || !downloadPath.value) return false
+  await load()
+  return blobUrl.value != null
 }
 
-function downloadFile(): void {
+async function openPreview(): Promise<void> {
+  previewOpen.value = true
+  if (blobUrl.value) return
+  previewLoading.value = true
+  try {
+    const ok = await ensureBlobLoaded()
+    if (!ok) previewOpen.value = false
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function downloadFile(): Promise<void> {
   if (!blobUrl.value) {
-    void load().then(() => {
-      if (blobUrl.value) triggerDownload()
-    })
+    previewLoading.value = true
+    try {
+      const ok = await ensureBlobLoaded()
+      if (ok) triggerDownload()
+    } finally {
+      previewLoading.value = false
+    }
     return
   }
   triggerDownload()
@@ -136,6 +156,7 @@ function triggerDownload(): void {
 watch(
   () => [status.value, downloadPath.value, visible.value] as const,
   () => void load(),
+  { immediate: true },
 )
 
 onUnmounted(() => {
@@ -154,11 +175,7 @@ onUnmounted(() => {
     <span v-else-if="!downloadPath && status === 'ready'" class="message-attachment message-attachment--failed">
       {{ label }} — файл недоступен
     </span>
-    <NSpin v-else-if="loading && !blobUrl" size="small" />
-    <span v-else-if="failed" class="message-attachment message-attachment--failed">
-      {{ label }}
-      <NButton size="tiny" quaternary @click="load">Повторить</NButton>
-    </span>
+    <NSpin v-else-if="isImage && !blobUrl && (loading || previewLoading)" size="small" />
     <img
       v-else-if="isImage && blobUrl"
       class="message-attachment__image"
@@ -171,24 +188,25 @@ onUnmounted(() => {
       @keydown.enter.prevent="openPreview"
       @keydown.space.prevent="openPreview"
     />
-    <div v-else-if="isReady" class="message-attachment__doc">
+    <NSpin v-else-if="!isImage && isReady && !blobUrl && (loading || previewLoading)" size="small" />
+    <div v-else-if="!isImage && isReady" class="message-attachment__doc">
       <button
         type="button"
         class="message-attachment__doc-main"
-        :disabled="!blobUrl && loading"
+        :disabled="previewLoading"
         @click="openPreview"
       >
         <component :is="docIcon" :size="18" class="message-attachment__doc-icon" />
         <span class="message-attachment__doc-name" :title="label">{{ label }}</span>
-        <NSpin v-if="loading && !blobUrl" size="small" />
+        <NSpin v-if="(loading || previewLoading) && !blobUrl" size="small" />
       </button>
       <div class="message-attachment__doc-actions">
         <NButton
           size="tiny"
           quaternary
-          :disabled="!blobUrl && loading"
+          :loading="previewLoading && !blobUrl"
           title="Открыть"
-          @click="openPreview"
+          @click.stop="openPreview"
         >
           <template #icon>
             <Eye :size="14" />
@@ -197,9 +215,9 @@ onUnmounted(() => {
         <NButton
           size="tiny"
           quaternary
-          :loading="loading && !blobUrl"
+          :loading="(loading || previewLoading) && !blobUrl"
           title="Скачать"
-          @click="downloadFile"
+          @click.stop="downloadFile"
         >
           <template #icon>
             <Download :size="14" />
@@ -207,11 +225,16 @@ onUnmounted(() => {
         </NButton>
       </div>
     </div>
+    <span v-else-if="failed" class="message-attachment message-attachment--failed">
+      {{ label }}
+      <NButton size="tiny" quaternary @click="load">Повторить</NButton>
+    </span>
     <span v-else class="message-attachment">{{ label }}</span>
   </span>
 
   <AttachmentPreviewModal
     :open="previewOpen"
+    :loading="previewLoading || (loading && !blobUrl)"
     :label="label"
     :blob-url="blobUrl"
     :blob="blob"

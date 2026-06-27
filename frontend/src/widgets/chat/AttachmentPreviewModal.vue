@@ -8,6 +8,7 @@ import { renderAttachmentPreviewHtml } from '@/shared/lib/attachment-preview-ren
 
 const props = defineProps<{
   open: boolean
+  loading?: boolean
   label: string
   blobUrl: string | null
   blob: Blob | null
@@ -35,6 +36,11 @@ const canZoom = computed(
 const stageStyle = computed(() => ({
   transform: props.previewKind === 'image' || props.previewKind === 'pdf' ? `scale(${previewZoom.value})` : undefined,
 }))
+
+const pdfSrc = computed(() => {
+  if (!props.blobUrl || props.previewKind !== 'pdf') return null
+  return `${props.blobUrl}#view=FitH&toolbar=1`
+})
 
 const htmlStageStyle = computed(() => ({
   transform:
@@ -96,7 +102,7 @@ function download(): void {
 <template>
   <Teleport to="body">
     <div
-      v-if="open && blobUrl"
+      v-if="open"
       class="attachment-preview"
       role="dialog"
       aria-modal="true"
@@ -108,29 +114,29 @@ function download(): void {
       <div class="attachment-preview__toolbar" @click.stop>
         <span class="attachment-preview__title">{{ label }}</span>
         <div class="attachment-preview__actions">
-          <NButton v-if="canZoom" quaternary circle size="large" title="Уменьшить" @click="zoomOut">
+          <NButton v-if="canZoom && blobUrl" quaternary circle size="large" title="Уменьшить" @click="zoomOut">
             <template #icon>
               <ZoomOut :size="20" />
             </template>
           </NButton>
-          <NButton
-            v-if="canZoom"
-            quaternary
-            circle
-            size="large"
-            title="Сбросить масштаб"
-            @click="resetZoom"
-          >
+          <NButton v-if="canZoom && blobUrl" quaternary circle size="large" title="Сбросить масштаб" @click="resetZoom">
             <template #icon>
               <RotateCcw :size="20" />
             </template>
           </NButton>
-          <NButton v-if="canZoom" quaternary circle size="large" title="Увеличить" @click="zoomIn">
+          <NButton v-if="canZoom && blobUrl" quaternary circle size="large" title="Увеличить" @click="zoomIn">
             <template #icon>
               <ZoomIn :size="20" />
             </template>
           </NButton>
-          <NButton quaternary circle size="large" title="Скачать" @click="download">
+          <NButton
+            quaternary
+            circle
+            size="large"
+            title="Скачать"
+            :disabled="!blobUrl"
+            @click="download"
+          >
             <template #icon>
               <Download :size="20" />
             </template>
@@ -144,8 +150,12 @@ function download(): void {
       </div>
 
       <div class="attachment-preview__stage" @click.stop>
+        <NSpin v-if="loading && !blobUrl" size="large" />
+        <div v-else-if="!blobUrl" class="attachment-preview__fallback">
+          <p>Не удалось загрузить файл для предпросмотра.</p>
+        </div>
         <img
-          v-if="previewKind === 'image'"
+          v-else-if="previewKind === 'image'"
           class="attachment-preview__image"
           :src="blobUrl"
           :alt="label"
@@ -156,7 +166,7 @@ function download(): void {
           class="attachment-preview__pdf-wrap"
           :style="stageStyle"
         >
-          <iframe class="attachment-preview__pdf" :src="blobUrl" :title="label" />
+          <iframe class="attachment-preview__pdf" :src="pdfSrc ?? blobUrl" :title="label" />
         </div>
         <NSpin v-else-if="htmlLoading" size="large" />
         <div v-else-if="htmlError" class="attachment-preview__fallback">
