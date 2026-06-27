@@ -35,6 +35,7 @@ import {
   setChatSnapshot,
 } from '@/features/chats/snapshot-cache'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
+import { priorityPrefetchAttachmentsForMessages } from '@/shared/lib/attachment-blob-cache'
 import { useAuthStore } from '@/shared/store/auth'
 
 export const useChatsStore = defineStore('chats', () => {
@@ -689,6 +690,7 @@ export const useChatsStore = defineStore('chats', () => {
       messages.value = snapshot.messages
       messagesNextCursor.value = snapshot.nextCursor
       messagesLoading.value = false
+      priorityPrefetchAttachmentsForMessages(snapshot.messages)
     } else {
       messages.value = []
       messagesNextCursor.value = null

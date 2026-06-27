@@ -6,22 +6,34 @@ export interface CachedAttachmentBlob {
   blob: Blob
 }
 
+export type AttachmentDownloadPriority = 'high' | 'normal'
+
+export interface ReadyAttachmentRef {
+  path: string
+  mime: string | null
+}
+
 const cache = new Map<string, CachedAttachmentBlob>()
 const inflight = new Map<string, Promise<CachedAttachmentBlob>>()
 
-/** Keep below browser per-host connection limit so API calls are not starved. */
-const MAX_CONCURRENT_DOWNLOADS = 4
-const QUEUE_WAIT_MS = 30_000
-const DOWNLOAD_MS = 60_000
+/** Parallel attachment warm-up while chat snapshots prefetch (browser ~6–10 per host). */
+const MAX_CONCURRENT_DOWNLOADS = 10
+const QUEUE_WAIT_MS = 120_000
+const DOWNLOAD_MS = 120_000
 
 let activeDownloads = 0
-const waitQueue: Array<() => void> = []
+const highWaitQueue: Array<() => void> = []
+const normalWaitQueue: Array<() => void> = []
 
-function acquireDownloadSlot(deadlineMs: number): Promise<void> {
+function acquireDownloadSlot(
+  deadlineMs: number,
+  priority: AttachmentDownloadPriority,
+): Promise<void> {
   if (activeDownloads < MAX_CONCURRENT_DOWNLOADS) {
     activeDownloads += 1
     return Promise.resolve()
   }
+  const waitQueue = priority === 'high' ? highWaitQueue : normalWaitQueue
   return new Promise((resolve, reject) => {
     const wait = (): void => {
       if (Date.now() >= deadlineMs) {
@@ -41,7 +53,7 @@ function acquireDownloadSlot(deadlineMs: number): Promise<void> {
 
 function releaseDownloadSlot(): void {
   activeDownloads = Math.max(0, activeDownloads - 1)
-  const next = waitQueue.shift()
+  const next = highWaitQueue.shift() ?? normalWaitQueue.shift()
   if (next) next()
 }
 
@@ -67,6 +79,7 @@ function normalizeBlob(raw: Blob, mimeHint: string | null | undefined, headerMim
 export async function fetchAttachmentBlob(
   downloadPath: string,
   mimeHint?: string | null,
+  priority: AttachmentDownloadPriority = 'high',
 ): Promise<CachedAttachmentBlob> {
   const cached = cache.get(downloadPath)
   if (cached) return cached
@@ -76,7 +89,7 @@ export async function fetchAttachmentBlob(
 
   const task = (async () => {
     const deadlineMs = Date.now() + QUEUE_WAIT_MS + DOWNLOAD_MS
-    await acquireDownloadSlot(deadlineMs)
+    await acquireDownloadSlot(deadlineMs, priority)
     try {
       const remaining = deadlineMs - Date.now()
       if (remaining <= 0) {
@@ -111,39 +124,65 @@ export async function fetchAttachmentBlob(
 export async function fetchAttachmentBlobUrl(
   downloadPath: string,
   mimeHint?: string | null,
+  priority: AttachmentDownloadPriority = 'high',
 ): Promise<string> {
-  const entry = await fetchAttachmentBlob(downloadPath, mimeHint)
+  const entry = await fetchAttachmentBlob(downloadPath, mimeHint, priority)
   return entry.url
 }
 
 export function collectReadyAttachmentPaths(
   messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
 ): string[] {
-  const paths = new Set<string>()
+  return collectReadyAttachments(messages).map((item) => item.path)
+}
+
+export function collectReadyAttachments(
+  messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
+): ReadyAttachmentRef[] {
+  const byPath = new Map<string, ReadyAttachmentRef>()
   for (const msg of messages) {
     for (const att of msg.attachments ?? []) {
       if (String(att.status ?? '') !== 'ready') continue
       const path = att.download_path
-      if (typeof path === 'string' && path.length > 0) {
-        paths.add(path)
-      }
+      if (typeof path !== 'string' || path.length === 0) continue
+      const mimeRaw = att.mime
+      byPath.set(path, {
+        path,
+        mime: typeof mimeRaw === 'string' && mimeRaw.length > 0 ? mimeRaw : null,
+      })
     }
   }
-  return [...paths]
+  return [...byPath.values()]
 }
 
 /** Best-effort warm-up; skips paths already cached or in flight. */
-export function prefetchAttachmentBlobUrls(downloadPaths: Iterable<string>): void {
+export function prefetchAttachmentBlobUrls(
+  downloadPaths: Iterable<string>,
+  options: { priority?: AttachmentDownloadPriority } = {},
+): void {
+  const priority = options.priority ?? 'normal'
   for (const path of downloadPaths) {
     if (peekAttachmentBlobUrl(path) || inflight.has(path)) continue
-    void fetchAttachmentBlobUrl(path).catch(() => undefined)
+    void fetchAttachmentBlobUrl(path, null, priority).catch(() => undefined)
   }
 }
 
 export function prefetchAttachmentsForMessages(
   messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
+  options: { priority?: AttachmentDownloadPriority } = {},
 ): void {
-  prefetchAttachmentBlobUrls(collectReadyAttachmentPaths(messages))
+  const priority = options.priority ?? 'normal'
+  for (const { path, mime } of collectReadyAttachments(messages)) {
+    if (peekAttachmentBlobUrl(path) || inflight.has(path)) continue
+    void fetchAttachmentBlob(path, mime, priority).catch(() => undefined)
+  }
+}
+
+/** Jump the queue — open chat, hover, top list chats. */
+export function priorityPrefetchAttachmentsForMessages(
+  messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
+): void {
+  prefetchAttachmentsForMessages(messages, { priority: 'high' })
 }
 
 export function releaseAttachmentBlobUrl(downloadPath: string): void {
@@ -162,5 +201,6 @@ export function clearAttachmentBlobCache(): void {
   cache.clear()
   inflight.clear()
   activeDownloads = 0
-  waitQueue.length = 0
+  highWaitQueue.length = 0
+  normalWaitQueue.length = 0
 }
