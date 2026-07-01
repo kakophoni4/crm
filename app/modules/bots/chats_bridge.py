@@ -22,6 +22,7 @@ class IngestResult:
     message_id: int
     attachment_indices: list[int]
     duplicate: bool = False
+    text_preview: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,23 @@ def _message_kind_from_attachment(att_type: str) -> MessageKind:
         "voice": MessageKind.VOICE,
     }
     return mapping.get(att_type, MessageKind.DOCUMENT)
+
+
+def _message_list_preview(text_body: str | None, attachments: list[dict[str, Any]]) -> str:
+    if text_body and text_body.strip():
+        return text_body.strip()[:200]
+    if not attachments:
+        return "Вложение"
+    first = attachments[0]
+    filename = first.get("filename") or first.get("name")
+    if filename:
+        return str(filename)[:200]
+    att_type = str(first.get("type") or "document")
+    if att_type == "photo":
+        return "Фото"
+    if att_type == "voice":
+        return "Голосовое сообщение"
+    return "Вложение"
 
 
 async def upsert_contact_from_telegram(
@@ -343,6 +361,7 @@ async def _ingest_result_for_message(
     message_id: int,
     attachment_indices: list[int],
     duplicate: bool = False,
+    text_preview: str | None = None,
 ) -> IngestResult:
     contact_row = await session.execute(
         text("SELECT contact_id FROM chats WHERE id = :cid"),
@@ -355,6 +374,7 @@ async def _ingest_result_for_message(
         message_id=message_id,
         attachment_indices=attachment_indices,
         duplicate=duplicate,
+        text_preview=text_preview,
     )
 
 
@@ -424,7 +444,7 @@ async def insert_bot_message(
     )
     message_id = int(result.scalar_one())
 
-    preview = (text_body or "")[:200] if text_body else "[attachment]"
+    preview = _message_list_preview(text_body, stored_attachments)
     await session.execute(
         text(
             """
@@ -448,6 +468,7 @@ async def insert_bot_message(
         chat_id=chat_id,
         message_id=message_id,
         attachment_indices=pending_indices,
+        text_preview=preview,
     )
 
 

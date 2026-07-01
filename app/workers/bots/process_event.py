@@ -82,6 +82,8 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
                     "contact_id": result.contact_id,
                     "bot_code": bot.code,
                 }
+                if result.text_preview:
+                    publish_payload["text_preview"] = result.text_preview
             elif event_type == "call.received":
                 result = await _handle_call_received(session, bot, envelope, inner)
                 await publish(

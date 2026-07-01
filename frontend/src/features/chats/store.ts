@@ -35,6 +35,7 @@ import {
 } from '@/features/chats/snapshot-cache'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { priorityPrefetchAttachmentsForMessages } from '@/shared/lib/attachment-blob-cache'
+import { formatChatMessagePreview } from '@/features/chats/message-preview'
 import { useAuthStore } from '@/shared/store/auth'
 
 export const useChatsStore = defineStore('chats', () => {
@@ -826,7 +827,7 @@ export const useChatsStore = defineStore('chats', () => {
     patchChatResponseState(chatId, {
       unread_for_me: currentChatId.value !== chatId,
       last_message_at: now,
-      ...(preview ? { last_message_preview: preview } : {}),
+      ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
       ...chatWorkflowLabelPatch('waiting'),
       pending_inbound_at: now,
       needs_response: true,
@@ -862,7 +863,7 @@ export const useChatsStore = defineStore('chats', () => {
       {
         unread_for_me: false,
         last_message_at: now,
-        ...(preview ? { last_message_preview: preview } : {}),
+        ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
         ...chatWorkflowLabelPatch('answered'),
       },
       false,
@@ -874,7 +875,7 @@ export const useChatsStore = defineStore('chats', () => {
         ...currentChat.value,
         ...chatWorkflowLabelPatch('answered'),
         last_message_at: now,
-        ...(preview ? { last_message_preview: preview } : {}),
+        ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
       }
     }
 

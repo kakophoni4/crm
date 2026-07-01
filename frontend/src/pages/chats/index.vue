@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 
 import {
 
@@ -49,6 +49,7 @@ import ContactOwnerBadge from '@/entities/contact/ContactOwnerBadge.vue'
 import { listBots } from '@/features/bots/api'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { registerChatListSearchFocus } from '@/features/chats/chat-list-search-focus'
+import { formatChatMessagePreview } from '@/features/chats/message-preview'
 import { useChatsStore } from '@/features/chats/store'
 import {
   chatListItemIsAnswered,
@@ -596,7 +597,7 @@ onUnmounted(() => {
 
               />
 
-              <p class="chats-page__preview">{{ chat.last_message_preview ?? '—' }}</p>
+              <p class="chats-page__preview">{{ formatChatMessagePreview(chat.last_message_preview) }}</p>
 
               <span class="chats-page__meta">{{ chatMetaLine(chat) }}</span>
 

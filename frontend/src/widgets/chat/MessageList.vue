@@ -9,6 +9,7 @@ import type { ChatMessage } from '@/entities/chat/types'
 import { formatOnBehalfLabel } from '@/entities/contact/on-behalf-label'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
 import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
+import { isAttachmentPlaceholderText } from '@/features/chats/message-preview'
 
 const props = defineProps<{
   messages: ChatMessage[]
@@ -94,6 +95,7 @@ function quotedMessage(msg: ChatMessage): ChatMessage | null {
 function shouldShowMessageText(msg: ChatMessage): boolean {
   const text = msg.text?.trim()
   if (!text) return false
+  if (isAttachmentPlaceholderText(text)) return false
   const att = msg.attachments?.[0] as { filename?: string; name?: string } | undefined
   if (!att) return true
   const fn = (att.filename ?? att.name)?.trim()
