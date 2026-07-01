@@ -526,7 +526,7 @@ onUnmounted(() => {
               v-if="canDeleteOrder(selectedOrder)"
               positive-text="Удалить"
               negative-text="Отмена"
-              @positive-click="() => onDelete(selectedOrder)"
+              @positive-click="() => { if (selectedOrder) void onDelete(selectedOrder) }"
             >
               <template #trigger>
                 <NButton
