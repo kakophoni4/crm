@@ -13,6 +13,7 @@ import type { SelectOption } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import type { ChatDetail } from '@/entities/chat/types'
+import type { BotListItem } from '@/entities/bot/types'
 import {
   getCachedLeadDetail,
   getChatDealsSnapshot,
@@ -22,17 +23,20 @@ import {
   setChatDealsSnapshot,
 } from '@/features/chats/deals-cache'
 import { getLead, listContactLeads, patchLead } from '@/features/leads/api'
+import { listOptOrders } from '@/features/leads/opt-api'
 import {
   buildLeadDealPatch,
-  mergeServiceSuggestion,
   readLeadDealFields,
 } from '@/features/leads/order-fields'
+import { serviceOptionsForBot } from '@/features/leads/service-types'
 import type { LeadDetail, LeadListItem } from '@/features/leads/types'
 import { useChatsStore } from '@/features/chats/store'
+import OptOrdersPanel from '@/widgets/chat/OptOrdersPanel.vue'
 import { AppError } from '@/shared/api/http'
 
 const props = defineProps<{
   chat: ChatDetail | null
+  bots?: BotListItem[]
   leadStatusOptions: SelectOption[]
   wonStatusId: number | null
   lostStatusId: number | null
@@ -63,11 +67,19 @@ const quantity = ref<number | null>(null)
 const cost = ref<number | null>(null)
 const costPrice = ref<number | null>(null)
 const commentDraft = ref('')
+const optPaymentsReady = ref(true)
 
 const serviceOptions = computed<SelectOption[]>(() => {
-  const fields = readLeadDealFields(leadDetail.value?.custom_fields)
-  return (fields.service_suggestions ?? []).map((name) => ({ label: name, value: name }))
+  const botId = props.chat?.bot_id
+  const bot = botId != null ? props.bots?.find((row) => row.id === botId) : null
+  return serviceOptionsForBot(bot?.service_types, service.value)
 })
+
+const isOptService = computed(() => service.value === 'ОПТ')
+
+const canCloseWon = computed(
+  () => hasSelectedOpenLead.value && (!isOptService.value || optPaymentsReady.value),
+)
 
 const leadOptions = computed<SelectOption[]>(() =>
   leadItems.value.map((lead) => ({
@@ -110,11 +122,26 @@ function applyLeadDetail(detail: LeadDetail): void {
   commentDraft.value = ''
 }
 
+async function refreshOptPaymentGate(leadId: number | null): Promise<void> {
+  if (!isOptService.value || leadId == null) {
+    optPaymentsReady.value = true
+    return
+  }
+  try {
+    const orders = await listOptOrders(leadId)
+    optPaymentsReady.value =
+      orders.length === 0 || orders.every((row) => row.payment_status === 'paid')
+  } catch {
+    optPaymentsReady.value = true
+  }
+}
+
 async function loadLeadDetail(leadId: number, forceRefresh = false): Promise<void> {
   if (!forceRefresh) {
     const cached = getCachedLeadDetail(leadId)
     if (cached) {
       applyLeadDetail(cached)
+      await refreshOptPaymentGate(cached.id)
       return
     }
   }
@@ -123,6 +150,7 @@ async function loadLeadDetail(leadId: number, forceRefresh = false): Promise<voi
     const detail = await getLead(leadId)
     setCachedLeadDetail(detail)
     applyLeadDetail(detail)
+    await refreshOptPaymentGate(detail.id)
   } catch {
     leadDetail.value = null
     resetOrderForm()
@@ -217,7 +245,7 @@ async function persistOrderFields(): Promise<void> {
   if (!hasSelectedOpenLead.value || leadDetail.value == null) return
   savingFields.value = true
   try {
-    let customFields = buildLeadDealPatch(leadDetail.value.custom_fields, {
+    const customFields = buildLeadDealPatch(leadDetail.value.custom_fields, {
       order: {
         service: service.value.trim() || undefined,
         quantity: quantity.value ?? undefined,
@@ -225,9 +253,6 @@ async function persistOrderFields(): Promise<void> {
         cost_price: costPrice.value ?? undefined,
       },
     })
-    if (service.value.trim()) {
-      customFields = mergeServiceSuggestion(customFields, service.value)
-    }
     const updated = await patchLead(leadDetail.value.id, { custom_fields: customFields })
     setCachedLeadDetail(updated)
     applyLeadDetail(updated)
@@ -268,7 +293,12 @@ async function onCloseLead(statusId: number | null): Promise<void> {
   try {
     await store.closeCurrentLead(statusId, leadDetail.value.id)
     await loadLeads(true)
-    message.success('Сделка закрыта')
+    const created = await store.createManualLead()
+    if (created != null) {
+      await loadLeads(true)
+      selectedLeadId.value = created.id
+    }
+    message.success('Сделка закрыта, открыта новая')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось закрыть сделку')
   }
@@ -360,22 +390,26 @@ async function saveLeadComment(): Promise<void> {
             />
           </div>
 
-          <h3 class="deal-side__section">Заказ</h3>
-
-          <div class="deal-side__field">
+          <div v-if="hasSelectedOpenLead" class="deal-side__field">
             <span class="deal-side__label">Услуга</span>
             <NSelect
               v-model:value="service"
               size="small"
-              filterable
-              tag
               :disabled="!hasSelectedOpenLead"
               :options="serviceOptions"
-              placeholder="Введите услугу"
+              placeholder="Выберите услугу"
               @update:value="persistOrderFields"
             />
           </div>
 
+          <OptOrdersPanel
+            v-if="isOptService && leadDetail"
+            :lead-id="leadDetail.id"
+            :disabled="!hasSelectedOpenLead"
+            @payments-changed="refreshOptPaymentGate(leadDetail.id)"
+          />
+
+          <template v-if="!isOptService">
           <div class="deal-side__field">
             <span class="deal-side__label">Количество</span>
             <NInputNumber
@@ -412,6 +446,7 @@ async function saveLeadComment(): Promise<void> {
               @blur="persistOrderFields"
             />
           </div>
+          </template>
 
           <div v-if="hasSelectedOpenLead" class="deal-side__field">
             <span class="deal-side__label">Завершить сделку</span>
@@ -420,12 +455,15 @@ async function saveLeadComment(): Promise<void> {
                 size="small"
                 type="success"
                 block
-                :disabled="wonStatusId == null"
+                :disabled="wonStatusId == null || !canCloseWon"
                 :loading="store.closingLead"
                 @click="onCloseLead(wonStatusId)"
               >
                 Успешная продажа
               </NButton>
+              <p v-if="isOptService && !optPaymentsReady" class="deal-side__hint">
+                Закрыть как успешную можно только когда все заявки ОПТ оплачены полностью.
+              </p>
               <NButton
                 size="small"
                 type="error"
@@ -537,6 +575,13 @@ async function saveLeadComment(): Promise<void> {
 .deal-side__label {
   font-size: 0.8rem;
   color: var(--app-text-muted);
+}
+
+.deal-side__hint {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+  line-height: 1.35;
 }
 
 .deal-side__number {

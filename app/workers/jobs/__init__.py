@@ -11,6 +11,10 @@ from app.workers.jobs.scheduler import (
 
 def register_crm_job_workers() -> None:
     register_handler(PERIODIC_JOB_TYPE, run_periodic_maintenance)
+    from app.modules.leads.opt.queue import OPT_SUBMIT_JOB_TYPE
+    from app.workers.jobs.opt_submit import process_opt_submit_queue
+
+    register_handler(OPT_SUBMIT_JOB_TYPE, process_opt_submit_queue)
 
 
 def start_crm_jobs() -> None:

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.modules.db.models.enums import BotChannel, BotOwnerType
+from app.modules.leads.service_types import ALL_SERVICE_TYPES, DEFAULT_BOT_SERVICE_TYPES
 
 
 class BotCreateRequest(BaseModel):
@@ -23,6 +24,17 @@ class BotCreateRequest(BaseModel):
     green_media_url: str | None = None
     green_instance_id: str | None = None
     green_api_token: str | None = Field(default=None, min_length=8)
+    service_types: list[str] = Field(default_factory=lambda: list(DEFAULT_BOT_SERVICE_TYPES))
+
+    @model_validator(mode="after")
+    def _validate_service_types(self) -> BotCreateRequest:
+        from app.modules.leads.service_types import normalize_service_types
+
+        try:
+            self.service_types = normalize_service_types(self.service_types)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
     @model_validator(mode="after")
     def _validate_channel(self) -> BotCreateRequest:
@@ -54,6 +66,19 @@ class BotUpdateRequest(BaseModel):
     green_media_url: str | None = None
     green_instance_id: str | None = None
     green_api_token: str | None = Field(default=None, min_length=8)
+    service_types: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _validate_service_types(self) -> BotUpdateRequest:
+        if self.service_types is None:
+            return self
+        from app.modules.leads.service_types import normalize_service_types
+
+        try:
+            self.service_types = normalize_service_types(self.service_types)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class BotGroupAssignmentsRequest(BaseModel):
@@ -89,6 +114,7 @@ class BotResponse(BaseModel):
     green_instance_id: str | None = None
     has_green_api_token: bool = False
     whatsapp_webhook_url: str | None = None
+    service_types: list[str] = Field(default_factory=lambda: list(ALL_SERVICE_TYPES))
     last_seen_at: str | None
     last_health_status: str | None
     last_health_checked_at: str | None

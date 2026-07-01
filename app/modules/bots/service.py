@@ -44,6 +44,7 @@ from app.shared.exceptions import (
     PermissionDenied,
     ValidationError,
 )
+from app.modules.leads.service_types import DEFAULT_BOT_SERVICE_TYPES
 from app.shared.settings import get_settings
 from app.workers.bots.queue import enqueue
 
@@ -113,6 +114,7 @@ def _to_response(row: BotListRow) -> BotResponse:
         green_instance_id=bot.green_instance_id,
         has_green_api_token=bot.green_api_token_encrypted is not None,
         whatsapp_webhook_url=webhook_url,
+        service_types=list(bot.service_types or DEFAULT_BOT_SERVICE_TYPES),
         last_seen_at=_iso(bot.last_seen_at),
         last_health_status=bot.last_health_status,
         last_health_checked_at=_iso(bot.last_health_checked_at),
@@ -215,6 +217,7 @@ class BotService:
             green_media_url=green_media_url,
             green_instance_id=green_instance_id,
             green_api_token_encrypted=green_token_enc,
+            service_types=body.service_types,
         )
         await self._session.commit()
 
@@ -253,7 +256,7 @@ class BotService:
         ):
             new_department_id = body.owner_id
 
-        if new_department_id is not None:
+        if new_department_id is not None and new_department_id != bot.department_id:
             if actor.role != UserRole.ADMIN:
                 raise PermissionDenied(message="Only admin can move bot between departments")
             if not await self._repo.department_exists(new_department_id):
@@ -276,6 +279,8 @@ class BotService:
             bot.ip_allowlist = body.ip_allowlist
         if body.is_active is not None:
             bot.is_active = body.is_active
+        if body.service_types is not None:
+            bot.service_types = body.service_types
 
         green_token_for_sync: str | None = None
         if _bot_channel(bot) == BotChannel.WHATSAPP:

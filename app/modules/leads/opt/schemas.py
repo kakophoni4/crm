@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class OptCounterpartyResponse(BaseModel):
+    inn: str
+    kpp: str | None = None
+    name: str | None = None
+
+
+class OptOrderLineResponse(BaseModel):
+    id: int
+    crm_id: str
+    line_no: int
+    supplier: OptCounterpartyResponse
+    document_date: date
+    amount: Decimal
+    vat_amount: Decimal
+    amount_without_vat: Decimal
+    document_number: str | None = None
+
+
+class OptVolumeCategoryBreakdown(BaseModel):
+    label: str
+    volume: Decimal
+    rate_percent: Decimal
+    commission: Decimal
+
+
+class OptPaymentResponse(BaseModel):
+    id: int
+    amount: Decimal
+    paid_at: datetime
+    payment_type: str
+    recipient: str
+    created_at: datetime
+
+
+class OptOrderPaymentCreateRequest(BaseModel):
+    amount: Decimal = Field(gt=0)
+    paid_at: datetime
+    payment_type: Literal["card", "crypto", "wire", "cash"]
+    recipient: Literal["orange", "beneficiary"]
+
+
+class OptOrderResponse(BaseModel):
+    id: int
+    lead_id: int
+    order_no: int
+    crm_id: str
+    status: str
+    payment_status: str
+    total_volume: Decimal
+    commission_due: Decimal
+    amount_paid: Decimal
+    amount_remaining: Decimal
+    volume_by_category: dict[str, OptVolumeCategoryBreakdown] = Field(default_factory=dict)
+    buyer: OptCounterpartyResponse
+    source_filename: str | None = None
+    submission_error: str | None = None
+    submitted_at: datetime | None = None
+    created_at: datetime
+    lines: list[OptOrderLineResponse] = Field(default_factory=list)
+    payments: list[OptPaymentResponse] = Field(default_factory=list)
+
+    @field_validator("volume_by_category", mode="before")
+    @classmethod
+    def _coerce_volume_breakdown(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return {}
+        parsed: dict[str, OptVolumeCategoryBreakdown] = {}
+        for code, row in value.items():
+            if isinstance(row, dict):
+                parsed[str(code)] = OptVolumeCategoryBreakdown(
+                    label=str(row.get("label") or code),
+                    volume=Decimal(str(row.get("volume", 0))),
+                    rate_percent=Decimal(str(row.get("rate_percent", 0))),
+                    commission=Decimal(str(row.get("commission", 0))),
+                )
+        return parsed
+
+
+class OptOrderListResponse(BaseModel):
+    items: list[OptOrderResponse]
+
+
+class OptSendRegistryResponse(BaseModel):
+    message_id: int
+    chat_id: int

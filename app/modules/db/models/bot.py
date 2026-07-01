@@ -30,6 +30,11 @@ class Bot(Base):
     outbound_url: Mapped[str] = mapped_column(Text, nullable=False)
     health_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     ip_allowlist: Mapped[list[Any] | None] = mapped_column(ARRAY(INET), nullable=True)
+    service_types: Mapped[list[str]] = mapped_column(
+        ARRAY(Text),
+        nullable=False,
+        server_default="{Деревья,ОПТ}",
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_status: Mapped[str | None] = mapped_column(Text, nullable=True)

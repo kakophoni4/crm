@@ -39,6 +39,7 @@ import {
   formatLeadOpenState,
   leadListItemLabel,
 } from '@/features/leads/mapping'
+import LeadDealModal from '@/widgets/chat/LeadDealModal.vue'
 import ContactOwnerBadge from '@/entities/contact/ContactOwnerBadge.vue'
 import { contactStatusLabel } from '@/entities/contact/types'
 import { useChatsStore } from '@/features/chats/store'
@@ -79,17 +80,16 @@ const historyLoaded = ref(false)
 const leadsItems = ref<LeadListItem[]>([])
 const leadsLoading = ref(false)
 const leadsLoaded = ref(false)
+const leadDealModalVisible = ref(false)
+const leadDealModalLeadId = ref<number | null>(null)
 
 const crmSummaryBadge = computed(() =>
   formatCrmSummaryBadge(contact.value?.crm_summary as ContactCrmSummary | undefined),
 )
 
-function openLeadInChats(row: LeadListItem): void {
-  if (row.chat_id == null) return
-  void router.push({
-    name: 'chats',
-    query: { chatId: String(row.chat_id), leadId: String(row.id) },
-  })
+function openLeadDetails(row: LeadListItem): void {
+  leadDealModalLeadId.value = row.id
+  leadDealModalVisible.value = true
 }
 
 function openBotChat(row: ContactBotLink): void {
@@ -180,22 +180,6 @@ const leadsColumns: DataTableColumns<LeadListItem> = [
     key: 'comments',
     minWidth: 220,
     render: (row) => renderLeadComments(row),
-  },
-  {
-    title: '',
-    key: 'actions',
-    width: 100,
-    render: (row) =>
-      h(
-        NButton,
-        {
-          size: 'small',
-          quaternary: true,
-          disabled: row.chat_id == null,
-          onClick: () => openLeadInChats(row),
-        },
-        { default: () => 'Открыть' },
-      ),
   },
 ]
 
@@ -478,12 +462,18 @@ watch(
                 :columns="leadsColumns"
                 :data="leadsItems"
                 :row-key="(row: LeadListItem) => row.id"
+                :row-props="(row: LeadListItem) => ({
+                  style: 'cursor: pointer',
+                  onClick: () => openLeadDetails(row),
+                })"
               />
             </div>
           </NSpin>
         </NTabPane>
       </NTabs>
     </NSpin>
+
+    <LeadDealModal v-model:show="leadDealModalVisible" :lead-id="leadDealModalLeadId" />
   </section>
 </template>
 

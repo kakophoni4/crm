@@ -21,7 +21,9 @@ from app.modules.leads.crm_cache import invalidate_contact_crm
 from app.modules.leads.pipeline_constants import (
     PIPELINE_NEW_CODE,
     PIPELINE_TERMINAL_CODES,
+    PIPELINE_WON_CODE,
 )
+from app.modules.leads.opt.payment_guard import assert_lead_won_payment_allowed
 from app.modules.leads.repository import LeadRepository
 from app.modules.statuses.validation import ensure_status_kind
 from app.realtime.events import publish
@@ -122,6 +124,17 @@ class LeadService:
             raise ValidationError(
                 message="Lead can only be closed with a successful or unsuccessful sale status",
                 details={"allowed_codes": sorted(PIPELINE_TERMINAL_CODES)},
+            )
+
+        if status.code == PIPELINE_WON_CODE:
+            order_fields = (lead.custom_fields or {}).get("order")
+            service_name = (
+                order_fields.get("service") if isinstance(order_fields, dict) else None
+            )
+            await assert_lead_won_payment_allowed(
+                self._session,
+                lead_id,
+                str(service_name) if service_name else None,
             )
 
         if lead.status_id != status_id:

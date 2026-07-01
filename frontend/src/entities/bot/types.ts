@@ -5,6 +5,7 @@ export interface BotListItem {
   channel?: 'telegram' | 'whatsapp' | 'bitcall'
   assigned_group_ids?: number[]
   assigned_group_names?: string[]
+  service_types?: string[]
   purpose: string | null
   owner_type: string
   owner_id: number

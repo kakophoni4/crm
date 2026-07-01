@@ -26,6 +26,7 @@ vi.mock('@/features/chats/ownership-enrich', () => ({
 vi.mock('@/features/leads/api', () => ({
   closeLead: (...args: unknown[]) => closeLeadMock(...args),
   patchLead: vi.fn(),
+  createContactLead: vi.fn(),
 }))
 
 vi.mock('@/shared/store/auth', () => ({
@@ -48,13 +49,11 @@ describe('close lead UX', () => {
     listMessagesMock.mockResolvedValue({ items: [{ id: 1 }], next_cursor: null })
   })
 
-  it('switches to all chat and shows closed banner after close', async () => {
+  it('reloads full chat after close', async () => {
     const store = useChatsStore()
     await store.openChat(1)
     await store.closeCurrentLead(99)
     expect(closeLeadMock).toHaveBeenCalledWith(42, 99)
-    expect(store.messageScope).toBe('all')
-    expect(store.leadClosedBanner).toBe(true)
-    expect(listMessagesMock).toHaveBeenLastCalledWith(1, { limit: 50, lead_id: undefined })
+    expect(listMessagesMock).toHaveBeenLastCalledWith(1, { limit: 50 })
   })
 })

@@ -13,6 +13,7 @@ from app.modules.db.models.bot import Bot
 from app.modules.db.models.bot_event_inbox import BotEventInbox
 from app.modules.db.models.bot_outbound_log import BotOutboundLog
 from app.modules.db.models.enums import BotChannel, BotOutboundStatus, BotOwnerType
+from app.modules.leads.service_types import normalize_service_types
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ class BotRepository:
         green_media_url: str | None = None,
         green_instance_id: str | None = None,
         green_api_token_encrypted: bytes | None = None,
+        service_types: list[str] | None = None,
     ) -> Bot:
         inbound_enc = await encrypt_secret(self._session, inbound_secret)
         outbound_enc = await encrypt_secret(self._session, outbound_secret)
@@ -152,6 +154,7 @@ class BotRepository:
             green_media_url=green_media_url,
             green_instance_id=green_instance_id,
             green_api_token_encrypted=green_api_token_encrypted,
+            service_types=normalize_service_types(service_types),
         )
         self._session.add(bot)
         await self._session.flush()

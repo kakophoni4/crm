@@ -73,8 +73,6 @@ export interface ChatListParams {
 
 export type MessageDirection = 'inbound' | 'outbound'
 
-export type MessageScope = 'current_lead' | 'all'
-
 export interface ChatMessage {
   id: number
   chat_id: number

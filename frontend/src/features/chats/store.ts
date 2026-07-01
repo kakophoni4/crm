@@ -10,7 +10,6 @@ import type {
   ChatListTab,
   ChatMessage,
   CurrentLeadSnippet,
-  MessageScope,
   TakeoverState,
 } from '@/entities/chat/types'
 import {
@@ -55,8 +54,6 @@ export const useChatsStore = defineStore('chats', () => {
   const messagesLoading = ref(false)
   const loadingOlderMessages = ref(false)
   const messagesNextCursor = ref<string | null>(null)
-  const messageScope = ref<MessageScope>('all')
-  const leadClosedBanner = ref(false)
 
   const typingByChatId = ref<Record<number, boolean>>({})
   const takeoverByChatId = ref<Record<number, TakeoverState>>({})
@@ -237,12 +234,9 @@ export const useChatsStore = defineStore('chats', () => {
       if (currentChatId.value != null && currentChat.value?.current_lead?.id === lead.id) {
         patchChatLead(currentChatId.value, null)
         await refreshChatLead(currentChatId.value)
-        leadClosedBanner.value = true
-        messageScope.value = 'all'
         await reloadMessages()
       } else if (selectedLeadId.value === lead.id) {
         selectedLeadId.value = null
-        messageScope.value = 'all'
         await reloadMessages()
       }
     } finally {
@@ -336,8 +330,6 @@ export const useChatsStore = defineStore('chats', () => {
         selectedLeadId.value = snippet.id
         await refreshChatLead(currentChatId.value)
       }
-      leadClosedBanner.value = false
-      messageScope.value = 'current_lead'
       await reloadMessages()
       return snippet
     } finally {
@@ -546,34 +538,17 @@ export const useChatsStore = defineStore('chats', () => {
     },
   )
 
-  function resolveMessagesLeadId(): number | undefined {
-    if (messageScope.value !== 'current_lead') return undefined
-    return selectedLeadId.value ?? currentChat.value?.current_lead?.id
-  }
-
-  async function selectLead(leadId: number | null): Promise<void> {
     selectedLeadId.value = leadId
-    if (messageScope.value === 'current_lead') {
-      await reloadMessages()
-    }
   }
 
   async function reloadMessages(): Promise<void> {
     if (!currentChatId.value || !currentChat.value) return
     const chatId = currentChatId.value
     const seq = openChatSeq
-    const leadId = resolveMessagesLeadId()
-    if (messageScope.value === 'current_lead' && leadId == null) {
-      messages.value = []
-      messagesNextCursor.value = null
-      finishMessagesLoad(seq)
-      return
-    }
     messagesLoading.value = true
     try {
       const msgs = await chatsApi.listMessages(chatId, {
         limit: 50,
-        lead_id: leadId,
       })
       if (!isActiveChat(chatId, seq)) return
 
@@ -581,17 +556,15 @@ export const useChatsStore = defineStore('chats', () => {
       messagesNextCursor.value = msgs.next_cursor
       finishMessagesLoad(seq)
 
-      if (messageScope.value === 'all') {
-        setChatSnapshot(
-          chatId,
-          {
-            detail: currentChat.value,
-            messages: msgs.items,
-            nextCursor: msgs.next_cursor,
-          },
-          { prefetchAttachments: false },
-        )
-      }
+      setChatSnapshot(
+        chatId,
+        {
+          detail: currentChat.value,
+          messages: msgs.items,
+          nextCursor: msgs.next_cursor,
+        },
+        { prefetchAttachments: false },
+      )
 
       void enrichMessagesWithReplyAudit(
         currentChat.value.contact_id,
@@ -606,23 +579,11 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
-  async function setMessageScope(scope: MessageScope): Promise<void> {
-    if (messageScope.value === scope) return
-    if (scope === 'current_lead') {
-      leadClosedBanner.value = false
-    }
-    loadingOlderMessages.value = false
-    messageScope.value = scope
-    await reloadMessages()
-  }
-
   async function syncChatFromNetwork(chatId: number, seq: number): Promise<void> {
-    const leadId = resolveMessagesLeadId()
     const [detail, msgs] = await Promise.all([
       chatsApi.getChat(chatId),
       chatsApi.listMessages(chatId, {
         limit: 50,
-        lead_id: leadId,
       }),
     ])
     if (!isActiveChat(chatId, seq)) return
@@ -672,12 +633,10 @@ export const useChatsStore = defineStore('chats', () => {
 
   async function openChat(chatId: number): Promise<void> {
     const seq = ++openChatSeq
-    leadClosedBanner.value = false
     loadingOlderMessages.value = false
     currentChatId.value = chatId
     selectedLeadId.value = null
     clearHighlight(chatId)
-    messageScope.value = 'all'
 
     const snapshot = getChatSnapshot(chatId)
     const cached = listItems.value.find((c) => c.id === chatId)
@@ -714,7 +673,6 @@ export const useChatsStore = defineStore('chats', () => {
     selectedLeadId.value = null
     messages.value = []
     messagesNextCursor.value = null
-    messageScope.value = 'all'
   }
 
   async function loadOlderMessages(): Promise<void> {
@@ -733,7 +691,6 @@ export const useChatsStore = defineStore('chats', () => {
       const data = await chatsApi.listMessages(chatId, {
         cursor: messagesNextCursor.value,
         limit: 50,
-        lead_id: resolveMessagesLeadId(),
       })
       if (!isActiveChat(chatId, seq) || !currentChat.value) return
       const older = await enrichMessagesWithReplyAudit(
@@ -935,11 +892,9 @@ export const useChatsStore = defineStore('chats', () => {
   async function refreshOpenChatMessages(chatId: number, messageId: number): Promise<void> {
     const seq = openChatSeq
     if (!isActiveChat(chatId, seq) || !currentChat.value) return
-    const leadId = resolveMessagesLeadId()
     try {
       const msgs = await chatsApi.listMessages(chatId, {
         limit: 50,
-        lead_id: leadId,
       })
       if (!isActiveChat(chatId, seq) || !currentChat.value) return
 
@@ -1067,9 +1022,6 @@ export const useChatsStore = defineStore('chats', () => {
     messagesLoading,
     loadingOlderMessages,
     messagesNextCursor,
-    messageScope,
-    leadClosedBanner,
-    setMessageScope,
     selectLead,
     reloadMessages,
     typingByChatId,

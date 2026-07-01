@@ -26,13 +26,14 @@ vi.mock('@/features/chats/ownership-enrich', () => ({
 vi.mock('@/features/leads/api', () => ({
   closeLead: vi.fn(),
   patchLead: vi.fn(),
+  createContactLead: vi.fn(),
 }))
 
 vi.mock('@/shared/store/auth', () => ({
   useAuthStore: () => ({ user: { id: 1, role: 'user' } }),
 }))
 
-describe('chats message scope', () => {
+describe('chats messages', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     listMessagesMock.mockReset()
@@ -48,29 +49,11 @@ describe('chats message scope', () => {
     listMessagesMock.mockResolvedValue({ items: [{ id: 1, lead_id: 42 }], next_cursor: null })
   })
 
-  it('loads all chat messages by default', async () => {
+  it('loads full chat history without lead filter', async () => {
     const store = useChatsStore()
     await store.openChat(1)
-    expect(listMessagesMock).toHaveBeenCalledWith(1, { limit: 50, lead_id: undefined })
-  })
-
-  it('switches to current lead with lead_id param', async () => {
-    const store = useChatsStore()
-    await store.openChat(1)
-    listMessagesMock.mockClear()
-    listMessagesMock.mockResolvedValue({ items: [{ id: 1, lead_id: 42 }], next_cursor: null })
-    await store.setMessageScope('current_lead')
-    expect(listMessagesMock).toHaveBeenCalledWith(1, { limit: 50, lead_id: 42 })
-  })
-
-  it('switches to all chat without lead_id', async () => {
-    const store = useChatsStore()
-    await store.openChat(1)
-    await store.setMessageScope('current_lead')
-    listMessagesMock.mockClear()
-    listMessagesMock.mockResolvedValue({ items: [{ id: 1 }, { id: 2 }], next_cursor: null })
-    await store.setMessageScope('all')
-    expect(listMessagesMock).toHaveBeenCalledWith(1, { limit: 50, lead_id: undefined })
-    expect(store.messages).toHaveLength(2)
+    expect(listMessagesMock).toHaveBeenCalledWith(1, { limit: 50 })
+    await store.reloadMessages()
+    expect(listMessagesMock).toHaveBeenLastCalledWith(1, { limit: 50 })
   })
 })

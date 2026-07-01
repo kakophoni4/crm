@@ -19,6 +19,7 @@ from app.modules.files.router import bot_outbound_router
 from app.modules.files.router import router as files_router
 from app.modules.groups.router import router as groups_router
 from app.modules.leads.router import router as leads_router
+from app.modules.leads.opt.router import router as leads_opt_router
 from app.modules.search.router import router as search_router
 from app.modules.statuses.router import router as statuses_router
 from app.modules.telephony.router import router as telephony_router
@@ -105,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(realtime_router)
     app.include_router(contacts_router)
     app.include_router(leads_router)
+    app.include_router(leads_opt_router)
     app.include_router(contact_transfers_router)
     app.include_router(groups_router)
     app.include_router(chats_router)

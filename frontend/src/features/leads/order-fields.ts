@@ -55,10 +55,7 @@ export function mergeServiceSuggestion(
 ): Record<string, unknown> {
   const trimmed = service.trim()
   if (!trimmed) return { ...(current ?? {}) }
-  const fields = readLeadDealFields(current)
-  const existing = new Set(fields.service_suggestions ?? [])
-  existing.add(trimmed)
   return buildLeadDealPatch(current, {
-    service_suggestions: [...existing].sort((a, b) => a.localeCompare(b, 'ru')),
+    order: { service: trimmed },
   })
 }

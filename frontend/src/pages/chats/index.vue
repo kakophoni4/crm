@@ -1,8 +1,7 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 
 import {
 
-  NAlert,
   NBadge,
 
   NButton,
@@ -70,7 +69,6 @@ import { useStatusesStore } from '@/features/statuses/store'
 import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDialog.vue'
 import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
-import LeadDealModal from '@/widgets/chat/LeadDealModal.vue'
 
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
@@ -158,9 +156,6 @@ const showLeadPipelineSelect = computed(
   () => hasOpenLead.value && leadStatusOptions.value.length > 0,
 )
 
-const leadDealModalVisible = ref(false)
-const leadDealModalLeadId = ref<number | null>(null)
-
 type RightPaneTab = 'deal' | 'notifications'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
@@ -180,29 +175,11 @@ function goToContact(): void {
   void router.push({ name: 'contact-detail', params: { id: contactId } })
 }
 
-function openLeadDealModal(leadId: number): void {
-  leadDealModalLeadId.value = leadId
-  leadDealModalVisible.value = true
-}
-
-const messageScopeTab = computed({
-  get: () => store.messageScope,
-  set: (value: 'current_lead' | 'all') => {
-    void store.setMessageScope(value)
-  },
-})
-
 const listTabs: { name: ChatListTab; label: string }[] = [
-
   { name: 'mine', label: 'Мои карточки' },
-
   { name: 'group', label: 'Вся группа' },
-
   { name: 'needs_response', label: 'Нужен ответ' },
-
 ]
-
-
 
 const transferGroupId = computed(() => store.currentChat?.assigned_group_id ?? null)
 
@@ -371,16 +348,11 @@ async function updateLeadStatus(statusId: number): Promise<void> {
 
 function openChatFromQuery(): void {
   const rawChat = route.query.chatId
-  const rawLead = route.query.leadId
   const chatId = typeof rawChat === 'string' ? Number(rawChat) : NaN
-  const leadId = typeof rawLead === 'string' ? Number(rawLead) : NaN
   if (!Number.isFinite(chatId) || chatId <= 0) return
-  void store.openChat(chatId).then(async () => {
+  void store.openChat(chatId).then(() => {
     if (isNarrow.value) narrowPane.value = 'chat'
-    if (Number.isFinite(leadId) && leadId > 0) {
-      await store.setMessageScope('current_lead')
-      openLeadDealModal(leadId)
-    }
+    void router.replace({ name: 'chats', query: { chatId: String(chatId) } })
   })
 }
 
@@ -760,25 +732,6 @@ onUnmounted(() => {
 
           />
 
-          <NAlert
-            v-if="store.leadClosedBanner"
-            type="info"
-            :bordered="false"
-            class="chats-page__lead-closed-banner"
-          >
-            Сделка закрыта. Показан весь чат.
-          </NAlert>
-
-          <NTabs
-            v-model:value="messageScopeTab"
-            type="segment"
-            size="small"
-            class="chats-page__message-scope"
-          >
-            <NTab name="current_lead" tab="Текущая сделка" />
-            <NTab name="all" tab="Весь чат" />
-          </NTabs>
-
           <MessageList
             :messages="store.messages"
             :loading="store.messagesLoading"
@@ -830,6 +783,7 @@ onUnmounted(() => {
         <ChatDealSidePanel
           v-if="store.currentChat && rightPaneTab === 'deal'"
           :chat="store.currentChat"
+          :bots="bots"
           :lead-status-options="leadStatusOptions"
           :won-status-id="wonStatusId"
           :lost-status-id="lostStatusId"
@@ -855,14 +809,6 @@ onUnmounted(() => {
     </div>
 
 
-
-    <LeadDealModal
-      v-model:show="leadDealModalVisible"
-      :lead-id="leadDealModalLeadId"
-      :chat-id="store.currentChatId"
-      :contact-id="store.currentChat?.contact_id ?? null"
-      :contact-name="store.currentChat?.contact_name ?? null"
-    />
 
     <NewWhatsappChatDialog
       v-model:show="newWhatsappChatVisible"

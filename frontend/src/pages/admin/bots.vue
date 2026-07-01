@@ -26,6 +26,7 @@ import {
   updateBot,
 } from '@/features/admin/api'
 import TelephonyAccountsPanel from '@/features/telephony/TelephonyAccountsPanel.vue'
+import { FIXED_SERVICE_TYPES } from '@/features/leads/service-types'
 import { AppError } from '@/shared/api/http'
 
 const message = useMessage()
@@ -52,6 +53,7 @@ const form = ref({
   green_media_url: '',
   green_instance_id: '',
   green_api_token: '',
+  service_types: ['Деревья', 'ОПТ'] as string[],
 })
 const editForm = ref({
   name: '',
@@ -61,10 +63,20 @@ const editForm = ref({
   green_media_url: '',
   green_instance_id: '',
   green_api_token: '',
+  service_types: ['Деревья', 'ОПТ'] as string[],
 })
 
 const isWhatsAppForm = computed(() => form.value.channel === 'whatsapp')
 const isWhatsAppEdit = computed(() => editingBot.value?.channel === 'whatsapp')
+
+const serviceTypeOptions = computed<SelectOption[]>(() =>
+  FIXED_SERVICE_TYPES.map((row) => ({ label: row.label, value: row.value })),
+)
+
+function formatServiceTypes(types: string[] | undefined): string {
+  if (!types?.length) return 'Деревья, ОПТ'
+  return types.join(', ')
+}
 
 function randomSecret(): string {
   const bytes = new Uint8Array(24)
@@ -107,6 +119,12 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
     key: 'department_name',
     width: 160,
     render: (row) => row.department_name ?? `#${row.department_id}`,
+  },
+  {
+    title: 'Услуги',
+    key: 'service_types',
+    width: 140,
+    render: (row) => formatServiceTypes(row.service_types),
   },
   {
     title: 'Группы',
@@ -178,6 +196,7 @@ function openCreate(): void {
     green_media_url: '',
     green_instance_id: '',
     green_api_token: '',
+    service_types: ['Деревья', 'ОПТ'],
   }
   showModal.value = true
 }
@@ -197,6 +216,7 @@ function openEdit(row: BotItem): void {
     green_media_url: row.green_media_url ?? '',
     green_instance_id: row.green_instance_id ?? '',
     green_api_token: '',
+    service_types: row.service_types?.length ? [...row.service_types] : ['Деревья', 'ОПТ'],
   }
   showEditModal.value = true
 }
@@ -246,6 +266,10 @@ async function onSave(): Promise<void> {
     message.warning('Выберите отдел')
     return
   }
+  if (!form.value.service_types.length) {
+    message.warning('Выберите хотя бы одну услугу')
+    return
+  }
   if (form.value.channel === 'telegram') {
     if (form.value.inbound_secret.length < 16 || form.value.outbound_secret.length < 16) {
       message.warning('Секреты должны быть не короче 16 символов')
@@ -272,6 +296,9 @@ async function onSave(): Promise<void> {
       if (form.value.green_api_url.trim()) body.green_api_url = form.value.green_api_url.trim()
       if (form.value.green_media_url.trim()) body.green_media_url = form.value.green_media_url.trim()
     }
+    if (form.value.service_types.length) {
+      body.service_types = [...form.value.service_types]
+    }
     const created = await createBot(body)
     showModal.value = false
     if (created.secrets) {
@@ -296,11 +323,18 @@ async function onSaveEdit(): Promise<void> {
     message.warning('Выберите отдел')
     return
   }
+  if (!editForm.value.service_types.length) {
+    message.warning('Выберите хотя бы одну услугу')
+    return
+  }
   try {
     const payload: Parameters<typeof updateBot>[1] = {
       name: editForm.value.name.trim(),
-      department_id: editForm.value.department_id,
       is_active: editForm.value.is_active,
+      service_types: [...editForm.value.service_types],
+    }
+    if (editForm.value.department_id != null && editForm.value.department_id !== bot.department_id) {
+      payload.department_id = editForm.value.department_id
     }
     if (bot.channel === 'whatsapp') {
       payload.green_instance_id = editForm.value.green_instance_id.trim() || null
@@ -384,6 +418,14 @@ onMounted(() => {
             placeholder="Выберите отдел…"
           />
         </NFormItem>
+        <NFormItem label="Услуги в сделках">
+          <NSelect
+            v-model:value="form.service_types"
+            multiple
+            :options="serviceTypeOptions"
+            placeholder="Деревья и ОПТ"
+          />
+        </NFormItem>
         <template v-if="isWhatsAppForm">
           <p class="admin-page__wa-hint">
             Вставьте данные из консоли GREEN API. Секреты ХУИтРИКС и webhook настроятся автоматически.
@@ -451,6 +493,14 @@ onMounted(() => {
         </NFormItem>
         <NFormItem label="Активен">
           <NSwitch v-model:value="editForm.is_active" />
+        </NFormItem>
+        <NFormItem label="Услуги в сделках">
+          <NSelect
+            v-model:value="editForm.service_types"
+            multiple
+            :options="serviceTypeOptions"
+            placeholder="Деревья и ОПТ"
+          />
         </NFormItem>
         <template v-if="isWhatsAppEdit">
           <p v-if="editingBot?.whatsapp_webhook_url" class="admin-page__wa-hint">

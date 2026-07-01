@@ -5,16 +5,12 @@ import { computed, ref, watch } from 'vue'
 import { getLead } from '@/features/leads/api'
 import { readLeadDealFields } from '@/features/leads/order-fields'
 import type { LeadDetail } from '@/features/leads/types'
-import * as chatsApi from '@/features/chats/api'
-import type { ChatMessage } from '@/entities/chat/types'
-import MessageList from '@/widgets/chat/MessageList.vue'
+import { leadCommentItems } from '@/features/leads/comments'
+import { formatLeadDate, formatLeadOpenState, leadListItemLabel } from '@/features/leads/mapping'
 
 const props = defineProps<{
   show: boolean
   leadId: number | null
-  chatId: number | null
-  contactId?: number | null
-  contactName?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -22,32 +18,29 @@ const emit = defineEmits<{
 }>()
 
 const lead = ref<LeadDetail | null>(null)
-const messages = ref<ChatMessage[]>([])
 const loading = ref(false)
 
 const orderFields = computed(() => readLeadDealFields(lead.value?.custom_fields))
 
+const comments = computed(() => (lead.value ? leadCommentItems(lead.value) : []))
+
 watch(
-  () => [props.show, props.leadId, props.chatId] as const,
-  ([visible, leadId, chatId]) => {
-    if (!visible || leadId == null || chatId == null) {
+  () => [props.show, props.leadId] as const,
+  ([visible, leadId]) => {
+    if (!visible || leadId == null) {
       lead.value = null
-      messages.value = []
       return
     }
-    void load(leadId, chatId)
+    void load(leadId)
   },
 )
 
-async function load(leadId: number, chatId: number): Promise<void> {
+async function load(leadId: number): Promise<void> {
   loading.value = true
   try {
-    const [leadRow, msgPage] = await Promise.all([
-      getLead(leadId),
-      chatsApi.listMessages(chatId, { lead_id: leadId, limit: 50 }),
-    ])
-    lead.value = leadRow
-    messages.value = msgPage.items
+    lead.value = await getLead(leadId)
+  } catch {
+    lead.value = null
   } finally {
     loading.value = false
   }
@@ -59,16 +52,22 @@ async function load(leadId: number, chatId: number): Promise<void> {
     :show="show"
     preset="card"
     :title="lead ? `Сделка № ${lead.id}` : 'Сделка'"
-    style="width: min(720px, 96vw); max-height: 90vh"
+    style="width: min(520px, 96vw)"
     @update:show="emit('update:show', $event)"
   >
     <NSpin :show="loading">
       <div v-if="lead" class="lead-deal-modal">
         <div class="lead-deal-modal__meta">
           <NTag size="small">{{ lead.status_label ?? '—' }}</NTag>
-          <span v-if="lead.closed_at">Закрыта</span>
-          <span v-else>Открыта</span>
+          <span>{{ formatLeadOpenState(lead.closed_at) }}</span>
+          <span v-if="lead.created_at" class="lead-deal-modal__date">
+            {{ formatLeadDate(lead.created_at) }}
+          </span>
         </div>
+
+        <p v-if="leadListItemLabel(lead) !== '—'" class="lead-deal-modal__status-line">
+          {{ leadListItemLabel(lead) }}
+        </p>
 
         <dl class="lead-deal-modal__grid">
           <dt>Услуга</dt>
@@ -81,18 +80,17 @@ async function load(leadId: number, chatId: number): Promise<void> {
           <dd>{{ orderFields.order?.cost_price ?? '—' }}</dd>
         </dl>
 
-        <p v-if="lead.comment" class="lead-deal-modal__comment">{{ lead.comment }}</p>
-
-        <div class="lead-deal-modal__chat">
-          <h4>Переписка по сделке</h4>
-          <MessageList
-            :messages="messages"
-            :chat-id="chatId"
-            :contact-id="contactId"
-            :contact-name="contactName"
-            :has-more="false"
-          />
+        <div v-if="comments.length" class="lead-deal-modal__comments">
+          <h4>Комментарии</h4>
+          <ul>
+            <li v-for="item in comments" :key="item.id">
+              <p>{{ item.body }}</p>
+              <span>{{ formatLeadDate(item.created_at) }}</span>
+            </li>
+          </ul>
         </div>
+
+        <p v-else-if="lead.comment" class="lead-deal-modal__comment">{{ lead.comment }}</p>
       </div>
     </NSpin>
   </NModal>
@@ -103,14 +101,24 @@ async function load(leadId: number, chatId: number): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: calc(90vh - 120px);
 }
 
 .lead-deal-modal__meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 0.85rem;
+}
+
+.lead-deal-modal__date {
+  color: var(--app-text-muted);
+}
+
+.lead-deal-modal__status-line {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--app-text-muted);
 }
 
 .lead-deal-modal__grid {
@@ -135,20 +143,27 @@ async function load(leadId: number, chatId: number): Promise<void> {
   font-size: 0.9rem;
 }
 
-.lead-deal-modal__chat {
-  display: flex;
-  flex-direction: column;
-  min-height: 240px;
-  max-height: 360px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  overflow: hidden;
+.lead-deal-modal__comments h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
 }
 
-.lead-deal-modal__chat h4 {
+.lead-deal-modal__comments ul {
   margin: 0;
-  padding: 8px 12px;
-  font-size: 0.85rem;
-  border-bottom: 1px solid var(--app-border);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lead-deal-modal__comments p {
+  margin: 0 0 2px;
+  white-space: pre-wrap;
+}
+
+.lead-deal-modal__comments span {
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
 }
 </style>
