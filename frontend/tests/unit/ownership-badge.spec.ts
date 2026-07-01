@@ -57,15 +57,17 @@ describe('ContactOwnerBadge', () => {
 
 
   it('shows unassigned label', () => {
-
     const wrapper = mountBadge({})
-
     expect(wrapper.text()).toContain('Владелец: Не назначен')
-
     wrapper.unmount()
-
   })
 
+  it('compact mode shows owner name without prefix', () => {
+    const wrapper = mountBadge({ ownerFullName: 'Admin', compact: true })
+    expect(wrapper.text()).toContain('Admin')
+    expect(wrapper.text()).not.toContain('Владелец:')
+    wrapper.unmount()
+  })
 })
 
 

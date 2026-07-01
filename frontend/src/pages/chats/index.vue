@@ -57,7 +57,6 @@ import {
   chatListItemStatusLabel,
   chatOwnerBadgeEscalated,
   chatOwnerBadgePending,
-  currentLeadIsOpen,
   filterChatWorkflowStatuses,
   filterLeadPipelineStatuses,
   filterOpenLeadPipelineStatuses,
@@ -141,20 +140,6 @@ const chatWorkflowLabel = computed(() => store.currentChat?.chat_label?.label?.t
 
 const contactClientLabel = computed(() =>
   formatContactClientLabel(store.currentChat?.contact_client_label),
-)
-
-const currentLeadStatusId = computed({
-  get: () => store.currentChat?.current_lead?.status_id ?? null,
-  set: (statusId: number | null) => {
-    if (statusId == null) return
-    void updateLeadStatus(statusId)
-  },
-})
-
-const hasOpenLead = computed(() => currentLeadIsOpen(store.currentChat?.current_lead))
-
-const showLeadPipelineSelect = computed(
-  () => hasOpenLead.value && leadStatusOptions.value.length > 0,
 )
 
 type RightPaneTab = 'deal' | 'notifications'
@@ -334,16 +319,6 @@ async function loadChatWorkflowStatuses(): Promise<void> {
     chatWorkflowStatuses.value = filterChatWorkflowStatuses(items)
   } catch {
     chatWorkflowStatuses.value = []
-  }
-}
-
-async function updateLeadStatus(statusId: number): Promise<void> {
-  try {
-    await store.updateCurrentLeadStatus(statusId)
-    message.success('Статус сделки обновлён')
-  } catch (err) {
-    const text = err instanceof AppError ? err.message : 'Не удалось обновить статус сделки'
-    message.error(text)
   }
 }
 
@@ -666,8 +641,9 @@ onUnmounted(() => {
                   <h2>{{ store.currentChat.contact_name }}</h2>
                 </button>
 
-                <div class="chats-page__chat-meta">
+                <div v-if="store.currentChat" class="chats-page__chat-meta">
                   <ContactOwnerBadge
+                    compact
                     :owner-full-name="store.currentChat.card_owner_full_name"
                     :owner-user-id="store.currentChat.card_owner_user_id"
                     :escalated="chatOwnerBadgeEscalated(store.currentChat)"
@@ -682,19 +658,6 @@ onUnmounted(() => {
                   <NTag v-if="contactClientLabel" size="small" type="info" :bordered="false">
                     {{ contactClientLabel }}
                   </NTag>
-                </div>
-
-                <div v-if="showLeadPipelineSelect" class="chats-page__lead-status-row">
-                  <span class="chats-page__lead-label">Статус сделки</span>
-                  <NSelect
-                    v-model:value="currentLeadStatusId"
-                    class="chats-page__lead-status"
-                    size="small"
-                    :options="leadStatusOptions"
-                    :consistent-menu-width="false"
-                    :loading="store.updatingLeadStatus"
-                    placeholder="Статус"
-                  />
                 </div>
 
               </div>
@@ -924,24 +887,12 @@ onUnmounted(() => {
   margin: 0;
   font-size: 1.1rem;
   font-weight: 700;
+  line-height: 1.25;
 }
 
 .chats-page__contact-link:hover,
 .chats-page__contact-name:hover {
   opacity: 0.85;
-}
-
-.chats-page__lead-status-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  max-width: 320px;
-}
-
-.chats-page__lead-status-row .chats-page__lead-status {
-  flex: 1;
-  min-width: 0;
 }
 
 .chats-page__list-pane {
@@ -1192,18 +1143,26 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
+  gap: 4px;
+  margin-top: 4px;
+  max-width: 100%;
+}
+
+.chats-page__chat-meta :deep(.n-tag) {
+  max-width: 100%;
+}
+
+.chats-page__chat-meta :deep(.n-tag__content) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 
 
 .chats-page__chat-header h2 {
-
-  margin: 0 0 4px;
-
+  margin: 0;
   font-size: 1.1rem;
-
 }
 
 
