@@ -435,28 +435,6 @@ onUnmounted(() => {
 
   <section class="chats-page">
 
-    <header class="chats-page__header">
-
-      <h1 class="chats-page__title">Чаты</h1>
-
-      <NSpace :size="8">
-        <NButton type="primary" size="small" @click="newWhatsappChatVisible = true">
-          WhatsApp
-        </NButton>
-        <NButton
-          v-if="isNarrow || store.currentChat"
-          quaternary
-          size="small"
-          @click="isNarrow ? (transferInboxOpen = true) : (rightPaneTab = 'notifications')"
-        >
-          Уведомления
-        </NButton>
-      </NSpace>
-
-    </header>
-
-
-
     <div
       class="chats-page__split"
       :class="{
@@ -469,21 +447,37 @@ onUnmounted(() => {
 
       <aside class="chats-page__list-pane">
 
-        <NTabs
+        <div class="chats-page__list-toolbar">
+          <NTabs
 
-          v-model:value="store.listTab"
+            v-model:value="store.listTab"
 
-          type="segment"
+            type="segment"
 
-          size="small"
+            size="small"
 
-          class="chats-page__tabs"
+            class="chats-page__tabs"
 
-        >
+          >
 
-          <NTab v-for="tab in listTabsForPane" :key="tab.name" :name="tab.name" :tab="tab.label" />
+            <NTab v-for="tab in listTabsForPane" :key="tab.name" :name="tab.name" :tab="tab.label" />
 
-        </NTabs>
+          </NTabs>
+
+          <NSpace :size="6" class="chats-page__list-actions" :wrap="false">
+            <NButton type="primary" size="small" @click="newWhatsappChatVisible = true">
+              WhatsApp
+            </NButton>
+            <NButton
+              v-if="isNarrow"
+              quaternary
+              size="small"
+              @click="transferInboxOpen = true"
+            >
+              Уведомления
+            </NButton>
+          </NSpace>
+        </div>
 
 
 
@@ -848,39 +842,34 @@ onUnmounted(() => {
 .chats-page {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - var(--app-topbar-height) - 2 * var(--app-content-padding));
-  max-height: calc(100dvh - var(--app-topbar-height) - 2 * var(--app-content-padding));
+  height: calc(100dvh - var(--app-topbar-height) - var(--app-content-padding));
+  max-height: calc(100dvh - var(--app-topbar-height) - var(--app-content-padding));
   min-height: 480px;
   overflow: hidden;
+  margin-top: calc(-1 * var(--app-content-padding) / 2);
 }
 
-.chats-page__header {
-  flex-shrink: 0;
+.chats-page__list-toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
-
-
-.chats-page__title {
-
-  margin: 0;
-
-  font-size: 1.5rem;
-
-  font-weight: 700;
-
+.chats-page__list-toolbar .chats-page__tabs {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
 }
 
-
+.chats-page__list-actions {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
 
 .chats-page__tabs {
-
   margin-bottom: 12px;
-
 }
 
 
