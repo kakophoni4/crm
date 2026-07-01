@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select, func
@@ -222,6 +222,33 @@ class OptOrderRepository:
         order.submission_request = request_payload
         order.submission_response = response_payload
         order.submission_error = error_message[:2000]
+
+    async def list_ids_by_status(self, *statuses: str) -> list[int]:
+        if not statuses:
+            return []
+        result = await self._session.execute(
+            select(LeadOptOrder.id)
+            .where(LeadOptOrder.status.in_(statuses))
+            .order_by(LeadOptOrder.id.asc()),
+        )
+        return [int(row) for row in result.scalars()]
+
+    async def recover_stale_submitting(self, *, minutes: int = 15) -> list[int]:
+        cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+        result = await self._session.execute(
+            select(LeadOptOrder).where(
+                LeadOptOrder.status == "submitting",
+                LeadOptOrder.updated_at < cutoff,
+            ),
+        )
+        recovered: list[int] = []
+        for order in result.scalars():
+            order.status = "queued"
+            order.submission_error = None
+            recovered.append(int(order.id))
+        if recovered:
+            await self._session.flush()
+        return recovered
 
     async def save(self, entity: LeadOptOrder | LeadOptOrderLine | LeadOptOrderPayment | OptUnit) -> None:
         self._session.add(entity)

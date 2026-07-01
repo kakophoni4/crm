@@ -393,8 +393,10 @@ class OptOrderService:
 
     async def retry_submission(self, actor: User, lead_id: int, order_id: int) -> OptOrderResponse:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
-        if order.status != "failed":
-            raise ValidationError(message="Повтор доступен только для заявок с ошибкой отправки")
+        if order.status == "submitted":
+            raise ValidationError(message="Заявка уже отправлена в 1С")
+        if order.status not in {"failed", "queued", "submitting"}:
+            raise ValidationError(message="Повтор доступен только для заявок в очереди или с ошибкой")
         await self._repo.mark_queued(order)
         await self._session.commit()
         await enqueue_opt_submit(order.id)

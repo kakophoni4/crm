@@ -433,8 +433,9 @@ async function saveLeadComment(): Promise<void> {
           </div>
           </template>
 
-          <div v-if="hasSelectedOpenLead" class="deal-side__field">
+          <div v-if="hasSelectedOpenLead" class="deal-side__field deal-side__field--stacked">
             <span class="deal-side__label">Завершить сделку</span>
+            <div class="deal-side__value">
             <NSpace vertical>
               <NButton
                 size="small"
@@ -460,10 +461,12 @@ async function saveLeadComment(): Promise<void> {
                 Неуспешная продажа
               </NButton>
             </NSpace>
+            </div>
           </div>
 
-          <div v-if="hasSelectedOpenLead" class="deal-side__field">
+          <div v-if="hasSelectedOpenLead" class="deal-side__field deal-side__field--stacked">
             <span class="deal-side__label">Комментарий к сделке</span>
+            <div class="deal-side__value">
             <NInput
               v-model:value="commentDraft"
               type="textarea"
@@ -474,6 +477,7 @@ async function saveLeadComment(): Promise<void> {
             <NButton size="small" quaternary :loading="savingFields" @click="saveLeadComment">
               Добавить комментарий
             </NButton>
+            </div>
           </div>
         </template>
       </div>
@@ -549,14 +553,27 @@ async function saveLeadComment(): Promise<void> {
 }
 
 .deal-side__field {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.deal-side__field--stacked {
+  align-items: start;
+}
+
+.deal-side__value {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .deal-side__label {
   font-size: 0.8rem;
   color: var(--app-text-muted);
+  line-height: 1.2;
 }
 
 .deal-side__hint {

@@ -13,7 +13,7 @@ import {
   NSwitch,
   useMessage,
 } from 'naive-ui'
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 
 import type { BotItem, Department, Group } from '@/features/admin/api'
 import {
@@ -31,11 +31,9 @@ import { AppError } from '@/shared/api/http'
 
 const message = useMessage()
 const loading = ref(false)
-const savingId = ref<number | null>(null)
 const rows = ref<BotItem[]>([])
 const departments = ref<Department[]>([])
 const groups = ref<Group[]>([])
-const draftGroupIds = ref<Record<number, number[]>>({})
 const showModal = ref(false)
 const showEditModal = ref(false)
 const secretsModal = ref(false)
@@ -64,6 +62,7 @@ const editForm = ref({
   green_instance_id: '',
   green_api_token: '',
   service_types: ['Деревья', 'ОПТ'] as string[],
+  assigned_group_ids: [] as number[],
 })
 
 const isWhatsAppForm = computed(() => form.value.channel === 'whatsapp')
@@ -99,11 +98,19 @@ const departmentOptions = computed<SelectOption[]>(() =>
   departments.value.map((d) => ({ label: d.name, value: d.id })),
 )
 
-function groupOptionsForBot(row: BotItem): SelectOption[] {
+function groupOptionsForDepartment(departmentId: number | null): SelectOption[] {
+  if (departmentId == null) return []
   return groups.value
-    .filter((g) => g.department_id === row.department_id)
+    .filter((g) => g.department_id === departmentId)
     .map((g) => ({ label: g.name, value: g.id }))
 }
+
+function formatGroupNames(row: BotItem): string {
+  if (row.assigned_group_names?.length) return row.assigned_group_names.join(', ')
+  return '—'
+}
+
+const editGroupOptions = computed(() => groupOptionsForDepartment(editForm.value.department_id))
 
 const columns = computed<DataTableColumns<BotItem>>(() => [
   { title: 'Код', key: 'code', width: 140, ellipsis: { tooltip: true } },
@@ -131,18 +138,9 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
   {
     title: 'Группы',
     key: 'assigned_group_ids',
-    minWidth: 240,
-    render: (row) =>
-      h(NSelect, {
-        multiple: true,
-        filterable: true,
-        value: draftGroupIds.value[row.id] ?? row.assigned_group_ids,
-        options: groupOptionsForBot(row),
-        placeholder: 'Не распределён (ящик отдела)',
-        onUpdateValue: (value: number[]) => {
-          draftGroupIds.value[row.id] = value
-        },
-      }),
+    minWidth: 180,
+    ellipsis: { tooltip: true },
+    render: (row) => formatGroupNames(row),
   },
   {
     title: 'Активен',
@@ -153,20 +151,10 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
   {
     title: '',
     key: 'actions',
-    width: 200,
+    width: 220,
     fixed: 'right',
     render: (row) =>
-      h(NSpace, { vertical: true, size: 'small' }, () => [
-        h(
-          NButton,
-          {
-            size: 'small',
-            type: 'primary',
-            loading: savingId.value === row.id,
-            onClick: () => onSaveGroups(row),
-          },
-          { default: () => 'Группы' },
-        ),
+      h(NSpace, { size: 'small', wrap: true }, () => [
         h(
           NButton,
           { size: 'small', onClick: () => openEdit(row) },
@@ -220,6 +208,7 @@ function openEdit(row: BotItem): void {
     green_instance_id: row.green_instance_id ?? '',
     green_api_token: '',
     service_types: row.service_types?.length ? [...row.service_types] : ['Деревья', 'ОПТ'],
+    assigned_group_ids: [...row.assigned_group_ids],
   }
   showEditModal.value = true
 }
@@ -235,28 +224,10 @@ async function load(): Promise<void> {
     departments.value = deptItems
     groups.value = groupItems
     rows.value = botItems
-    draftGroupIds.value = Object.fromEntries(
-      botItems.map((row) => [row.id, [...row.assigned_group_ids]]),
-    )
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить ботов')
   } finally {
     loading.value = false
-  }
-}
-
-async function onSaveGroups(row: BotItem): Promise<void> {
-  savingId.value = row.id
-  try {
-    const groupIds = draftGroupIds.value[row.id] ?? row.assigned_group_ids
-    const updated = await setBotGroupAssignments(row.id, groupIds)
-    rows.value = rows.value.map((item) => (item.id === updated.id ? updated : item))
-    draftGroupIds.value[row.id] = [...updated.assigned_group_ids]
-    message.success('Распределение сохранено')
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Ошибка сохранения групп')
-  } finally {
-    savingId.value = null
   }
 }
 
@@ -348,6 +319,12 @@ async function onSaveEdit(): Promise<void> {
       }
     }
     await updateBot(bot.id, payload)
+    const groupsChanged =
+      editForm.value.assigned_group_ids.length !== bot.assigned_group_ids.length ||
+      editForm.value.assigned_group_ids.some((id) => !bot.assigned_group_ids.includes(id))
+    if (groupsChanged) {
+      await setBotGroupAssignments(bot.id, editForm.value.assigned_group_ids)
+    }
     showEditModal.value = false
     editingBot.value = null
     message.success('Бот обновлён')
@@ -371,6 +348,17 @@ async function onRotate(row: BotItem, kind: 'inbound' | 'outbound'): Promise<voi
 onMounted(() => {
   void load()
 })
+
+watch(
+  () => editForm.value.department_id,
+  (departmentId) => {
+    if (!showEditModal.value) return
+    const validIds = new Set(groupOptionsForDepartment(departmentId).map((row) => row.value as number))
+    editForm.value.assigned_group_ids = editForm.value.assigned_group_ids.filter((id) =>
+      validIds.has(id),
+    )
+  },
+)
 </script>
 
 <template>
@@ -508,6 +496,15 @@ onMounted(() => {
             multiple
             :options="serviceTypeOptions"
             placeholder="Деревья и ОПТ"
+          />
+        </NFormItem>
+        <NFormItem label="Группы">
+          <NSelect
+            v-model:value="editForm.assigned_group_ids"
+            multiple
+            filterable
+            :options="editGroupOptions"
+            placeholder="Не распределён (ящик отдела)"
           />
         </NFormItem>
         <template v-if="isWhatsAppEdit">

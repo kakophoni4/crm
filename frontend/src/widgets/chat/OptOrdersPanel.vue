@@ -171,7 +171,7 @@ function statusLabel(status: string): string {
 }
 
 function statusHint(status: string): string {
-  if (status === 'queued') return 'Заявка в очереди — отправка в 1С идёт по одной'
+  if (status === 'queued') return ''
   if (status === 'submitting') return 'Отправка в 1С…'
   if (status === 'submitted') return 'Реестр готов — можно скачать или отправить клиенту'
   if (status === 'failed') return 'Ошибка отправки в 1С — можно повторить'
@@ -383,7 +383,9 @@ onUnmounted(() => {
             </NTag>
           </div>
 
-          <p class="opt-orders__hint">{{ statusHint(selectedOrder.status) }}</p>
+          <p v-if="statusHint(selectedOrder.status)" class="opt-orders__hint">
+            {{ statusHint(selectedOrder.status) }}
+          </p>
 
           <dl class="opt-orders__facts">
             <div>
@@ -502,13 +504,13 @@ onUnmounted(() => {
             </NButton>
 
             <NButton
-              v-if="selectedOrder.status === 'failed'"
+              v-if="selectedOrder.status === 'failed' || selectedOrder.status === 'queued' || selectedOrder.status === 'submitting'"
               size="small"
               type="warning"
               :loading="retryingId === selectedOrder.id"
               @click="onRetry(selectedOrder)"
             >
-              Повторить отправку
+              {{ selectedOrder.status === 'failed' ? 'Повторить отправку' : 'Отправить снова' }}
             </NButton>
           </div>
         </article>
@@ -675,13 +677,17 @@ onUnmounted(() => {
 .opt-orders__facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: 10px 16px;
   margin: 0;
   font-size: 0.8rem;
+  align-items: start;
 }
 
 .opt-orders__facts div {
   min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
 }
 
 .opt-orders__facts dt {

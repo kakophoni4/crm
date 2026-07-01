@@ -35,7 +35,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
 
 import { useWindowSize } from '@vueuse/core'
-import { ArrowLeft, MessageSquare } from 'lucide-vue-next'
+import { ArrowLeft, MessageSquare, X } from 'lucide-vue-next'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -796,8 +796,15 @@ onUnmounted(() => {
     >
       <div class="chats-page__inbox-drawer-backdrop" @click="transferInboxOpen = false" />
       <aside class="chats-page__inbox-drawer-panel">
-        <NButton quaternary size="small" class="chats-page__inbox-close" @click="transferInboxOpen = false">
-          Закрыть
+        <NButton
+          quaternary
+          circle
+          size="small"
+          class="chats-page__inbox-close"
+          aria-label="Закрыть"
+          @click="transferInboxOpen = false"
+        >
+          <X :size="18" />
         </NButton>
         <ChatsNotificationsPane />
       </aside>
@@ -851,7 +858,7 @@ onUnmounted(() => {
 
 .chats-page__list-toolbar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   margin-bottom: 8px;
   flex-shrink: 0;
@@ -865,7 +872,6 @@ onUnmounted(() => {
 
 .chats-page__list-actions {
   flex-shrink: 0;
-  padding-top: 2px;
 }
 
 .chats-page__tabs {
@@ -1426,7 +1432,8 @@ onUnmounted(() => {
 }
 
 .chats-page__inbox-close {
-  margin-bottom: 8px;
+  margin: 0 0 8px auto;
+  display: flex;
 }
 
 </style>
