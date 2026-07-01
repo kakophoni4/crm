@@ -538,6 +538,7 @@ export const useChatsStore = defineStore('chats', () => {
     },
   )
 
+  async function selectLead(leadId: number | null): Promise<void> {
     selectedLeadId.value = leadId
   }
 
