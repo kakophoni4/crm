@@ -7,6 +7,7 @@ import {
   NSpace,
   NSpin,
   NTag,
+  NTooltip,
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
@@ -80,6 +81,14 @@ const isOptService = computed(() => service.value === 'ОПТ')
 const canCloseWon = computed(
   () => hasSelectedOpenLead.value && (!isOptService.value || optPaymentsReady.value),
 )
+
+const closeWonTooltip = computed(() => {
+  if (!hasSelectedOpenLead.value || props.wonStatusId == null) return null
+  if (isOptService.value && !optPaymentsReady.value) {
+    return 'Закрыть как успешную можно только когда все заявки ОПТ оплачены полностью.'
+  }
+  return null
+})
 
 const leadOptions = computed<SelectOption[]>(() =>
   leadItems.value.map((lead) => ({
@@ -437,19 +446,23 @@ async function saveLeadComment(): Promise<void> {
             <span class="deal-side__label">Завершить сделку</span>
             <div class="deal-side__value">
             <NSpace vertical>
-              <NButton
-                size="small"
-                type="success"
-                block
-                :disabled="wonStatusId == null || !canCloseWon"
-                :loading="store.closingLead"
-                @click="onCloseLead(wonStatusId)"
-              >
-                Успешная продажа
-              </NButton>
-              <p v-if="isOptService && !optPaymentsReady" class="deal-side__hint">
-                Закрыть как успешную можно только когда все заявки ОПТ оплачены полностью.
-              </p>
+              <NTooltip trigger="hover" :disabled="!closeWonTooltip">
+                <template #trigger>
+                  <span class="deal-side__btn-wrap">
+                    <NButton
+                      size="small"
+                      type="success"
+                      block
+                      :disabled="wonStatusId == null || !canCloseWon"
+                      :loading="store.closingLead"
+                      @click="onCloseLead(wonStatusId)"
+                    >
+                      Успешная продажа
+                    </NButton>
+                  </span>
+                </template>
+                {{ closeWonTooltip }}
+              </NTooltip>
               <NButton
                 size="small"
                 type="error"
@@ -568,6 +581,11 @@ async function saveLeadComment(): Promise<void> {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.deal-side__btn-wrap {
+  display: block;
+  width: 100%;
 }
 
 .deal-side__label {
