@@ -12,6 +12,7 @@ from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.user import User
 from app.modules.leads.access import actor_can_access_lead
+from app.modules.leads.opt.buyer_lookup import lookup_buyer_by_inn
 from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
 from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import enqueue_opt_submit
@@ -192,8 +193,7 @@ class OptOrderService:
 
         parsed = parse_application_workbook(content)
         buyer_inn = parsed.buyer_inn
-        buyer_kpp = None
-        buyer_name = None
+        buyer_kpp, buyer_name = lookup_buyer_by_inn(buyer_inn)
 
         settings = get_settings()
         vat_rate = Decimal(str(settings.opt_vat_rate_percent))
@@ -404,6 +404,21 @@ class OptOrderService:
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
         return self._to_response(refreshed)
+
+    async def delete_order(self, actor: User, lead_id: int, order_id: int) -> None:
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        if order.status != "failed":
+            raise ValidationError(message="Удалить можно только заявку с ошибкой отправки")
+        if order.payments:
+            raise ValidationError(message="Нельзя удалить заявку с записанными оплатами")
+        lead_id_value = order.lead_id
+        order_no = order.order_no
+        await self._session.delete(order)
+        await self._session.commit()
+        await publish(
+            "opt.order.deleted",
+            {"lead_id": lead_id_value, "order_id": order_id, "order_no": order_no},
+        )
 
     async def send_registry_to_client(
         self,

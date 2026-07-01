@@ -1,0 +1,37 @@
+{
+  "description": "Копия структуры «Заявка НАВЕЛ КО 1 кв 25 с вайтами.xlsx» для тестов CRM",
+  "sheet_title": "Заявка",
+  "vat_rate_percent": 20,
+  "buyer": {
+    "inn": "5507266215",
+    "kpp": "550701001",
+    "name": "НАВЕЛ КО ООО"
+  },
+  "lines": [
+    {
+      "supplier_inn": "7703822568",
+      "document_date": "2025-01-22",
+      "amount": 314752
+    },
+    {
+      "supplier_inn": "7743622734",
+      "document_date": "2025-01-28",
+      "amount": 186420
+    },
+    {
+      "supplier_inn": "7713151911",
+      "document_date": "2025-02-05",
+      "amount": 92500
+    },
+    {
+      "supplier_inn": "7720313708",
+      "document_date": "2025-02-12",
+      "amount": 203150
+    },
+    {
+      "supplier_inn": "7730303346",
+      "document_date": "2025-02-20",
+      "amount": 150000
+    }
+  ]
+}

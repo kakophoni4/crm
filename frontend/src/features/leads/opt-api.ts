@@ -20,6 +20,10 @@ export async function retryOptOrder(leadId: number, orderId: number): Promise<Op
   return data
 }
 
+export async function deleteOptOrder(leadId: number, orderId: number): Promise<void> {
+  await http.delete(`/leads/${leadId}/opt-orders/${orderId}`)
+}
+
 export async function sendOptRegistryToClient(
   leadId: number,
   orderId: number,

@@ -1,58 +1,44 @@
 #!/usr/bin/env python3
-"""Build a small OPT test application xlsx using lavki from opt_units_vane.json.
+"""Build OPT test application xlsx (NAVEL-style layout).
 
 Usage:
   py scripts/opt_build_test_zayavka.py
-  py scripts/opt_build_test_zayavka.py --buyer-inn 5507266215 --out scripts/fixtures/Заявка-тест-CRM.xlsx
+  py scripts/opt_build_test_zayavka.py --out scripts/fixtures/Заявка-тест-CRM.xlsx
+
+Before upload on server:
+  bash scripts/deploy/seed-opt-lavki.sh
+  docker exec -i crm-staging-postgres psql -U crm -d crm < scripts/fixtures/seed-opt-test-lavki.sql
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook
 
 _ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_JSON = _ROOT / "scripts" / "opt_units_vane.json"
-_DEFAULT_OUT = _ROOT / "scripts" / "fixtures" / "Заявка-тест-CRM.xlsx"
-
-# Same buyer as sample NAVEL files — set this INN on the contact card before upload.
-DEFAULT_BUYER_INN = "5507266215"
-DEFAULT_AMOUNTS = (Decimal("150000"), Decimal("220500"), Decimal("98500"))
+_DEFAULT_SPEC = _ROOT / "scripts" / "fixtures" / "opt-navel-zayavka-spec.json"
+_DEFAULT_OUT = _ROOT / "scripts" / "fixtures" / "opt-test-crm.xlsx"
+_DEFAULT_OUT_RU = _ROOT / "scripts" / "fixtures" / "Заявка-тест-CRM.xlsx"
 
 
-def _load_supplier_inns(json_path: Path, count: int) -> list[str]:
-    units = json.loads(json_path.read_text(encoding="utf-8"))
-    inns: list[str] = []
-    for unit in units:
-        inn = str(unit.get("inn", "")).strip()
-        if inn and inn not in inns:
-            inns.append(inn)
-        if len(inns) >= count:
-            break
-    if len(inns) < count:
-        raise SystemExit(f"Need at least {count} lavki in {json_path}, got {len(inns)}")
-    return inns
+def _parse_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def build_workbook(
-    *,
-    buyer_inn: str,
-    supplier_inns: list[str],
-    amounts: tuple[Decimal, ...],
-    document_dates: tuple[date, ...],
-) -> Workbook:
+def build_workbook_from_spec(spec: dict) -> Workbook:
     wb = Workbook()
     ws = wb.active
-    ws.title = "Заявка"
+    ws.title = str(spec.get("sheet_title") or "Заявка")
 
+    vat_rate = spec.get("vat_rate_percent", 20)
     ws["B2"] = "Ставка"
     ws["C2"] = "Ставка НДС:"
-    ws["D2"] = 20
+    ws["D2"] = vat_rate
     ws["E2"] = "%"
 
     ws["B3"] = "ИНН Поставщик-продавец\n(лавка поставщик)"
@@ -60,56 +46,45 @@ def build_workbook(
     ws["D3"] = "Дата с/ф\n(дата док. счета)"
     ws["E3"] = "Сумма платежа\n(руб с НДС сверху)"
 
+    buyer_inn = str(spec["buyer"]["inn"])
     row = 4
-    for idx, supplier_inn in enumerate(supplier_inns):
-        ws.cell(row, 2, supplier_inn)
+    for line in spec["lines"]:
+        ws.cell(row, 2, str(line["supplier_inn"]))
         ws.cell(row, 3, buyer_inn)
-        ws.cell(row, 4, document_dates[idx])
-        ws.cell(row, 5, float(amounts[idx]))
+        ws.cell(row, 4, _parse_date(str(line["document_date"])))
+        amount = line["amount"]
+        if isinstance(amount, str):
+            amount = float(Decimal(amount))
+        ws.cell(row, 5, float(amount))
         row += 1
 
     return wb
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build OPT test application xlsx")
-    parser.add_argument("--json", type=Path, default=_DEFAULT_JSON)
+    parser = argparse.ArgumentParser(description="Build NAVEL-style OPT test xlsx")
+    parser.add_argument("--spec", type=Path, default=_DEFAULT_SPEC)
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
-    parser.add_argument("--buyer-inn", default=DEFAULT_BUYER_INN)
-    parser.add_argument("--lines", type=int, default=3)
     args = parser.parse_args()
-    if args.lines < 1 or args.lines > 10:
-        raise SystemExit("--lines must be between 1 and 10")
 
-    supplier_inns = _load_supplier_inns(args.json, args.lines)
-    amounts = DEFAULT_AMOUNTS[: args.lines]
-    if len(amounts) < args.lines:
-        amounts = amounts + (Decimal("100000"),) * (args.lines - len(amounts))
-
-    dates = (
-        date(2026, 1, 15),
-        date(2026, 2, 10),
-        date(2026, 3, 5),
-        date(2026, 3, 20),
-        date(2026, 4, 1),
-    )[: args.lines]
-
+    spec = json.loads(args.spec.read_text(encoding="utf-8"))
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    wb = build_workbook(
-        buyer_inn=args.buyer_inn,
-        supplier_inns=supplier_inns,
-        amounts=amounts,
-        document_dates=dates,
-    )
+    wb = build_workbook_from_spec(spec)
     wb.save(args.out)
+    if args.out.resolve() != _DEFAULT_OUT_RU.resolve():
+        try:
+            wb.save(_DEFAULT_OUT_RU)
+        except OSError:
+            pass
 
+    buyer = spec["buyer"]
     print(f"Created {args.out}")
-    print(f"Buyer INN (from xlsx, stored on order): {args.buyer_inn}")
+    print(f"Buyer: {buyer.get('name')} ИНН {buyer['inn']} КПП {buyer.get('kpp')}")
     print("Supplier INNs:")
-    for inn in supplier_inns:
-        print(f"  - {inn}")
+    for line in spec["lines"]:
+        print(f"  - {line['supplier_inn']}  {line['document_date']}  {line['amount']}")
     print("")
-    print("Server: seed lavki first, then upload this file in an ОПТ deal.")
+    print("Server: seed lavki (seed-opt-lavki.sh + seed-opt-test-lavki.sql), then upload in ОПТ deal.")
 
 
 if __name__ == "__main__":

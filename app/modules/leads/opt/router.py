@@ -82,6 +82,16 @@ async def retry_opt_order(
     return await service.retry_submission(actor, lead_id, order_id)
 
 
+@router.delete("/leads/{lead_id}/opt-orders/{order_id}", status_code=204)
+async def delete_opt_order(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> None:
+    await service.delete_order(actor, lead_id, order_id)
+
+
 @router.post(
     "/leads/{lead_id}/opt-orders/{order_id}/send-registry",
     response_model=OptSendRegistryResponse,

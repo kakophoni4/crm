@@ -9,6 +9,7 @@ import {
   NFormItem,
   NInputNumber,
   NModal,
+  NPopconfirm,
   NSelect,
   NSpin,
   NTag,
@@ -20,6 +21,7 @@ import { computed, h, onUnmounted, ref, watch } from 'vue'
 
 import {
   addOptOrderPayment,
+  deleteOptOrder,
   downloadOptRegistry,
   listOptOrders,
   retryOptOrder,
@@ -49,6 +51,7 @@ const message = useMessage()
 const loading = ref(false)
 const uploading = ref(false)
 const retryingId = ref<number | null>(null)
+const deletingId = ref<number | null>(null)
 const downloadingId = ref<number | null>(null)
 const sendingId = ref<number | null>(null)
 const orders = ref<OptOrder[]>([])
@@ -271,6 +274,22 @@ async function onRetry(order: OptOrder): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось повторить отправку')
   } finally {
     retryingId.value = null
+  }
+}
+
+async function onDelete(order: OptOrder): Promise<void> {
+  if (props.leadId == null) return
+  deletingId.value = order.id
+  try {
+    await deleteOptOrder(props.leadId, order.id)
+    orders.value = orders.value.filter((row) => row.id !== order.id)
+    selectedOrderId.value = pickSelectedOrder(orders.value, null)
+    if (!needsPolling.value) stopPolling()
+    message.success(`Заявка ${order.order_no} удалена`)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось удалить заявку')
+  } finally {
+    deletingId.value = null
   }
 }
 
@@ -512,6 +531,25 @@ onUnmounted(() => {
             >
               {{ selectedOrder.status === 'failed' ? 'Повторить отправку' : 'Отправить снова' }}
             </NButton>
+
+            <NPopconfirm
+              v-if="selectedOrder.status === 'failed'"
+              positive-text="Удалить"
+              negative-text="Отмена"
+              @positive-click="onDelete(selectedOrder)"
+            >
+              <template #trigger>
+                <NButton
+                  size="small"
+                  type="error"
+                  quaternary
+                  :loading="deletingId === selectedOrder.id"
+                >
+                  Удалить заявку
+                </NButton>
+              </template>
+              Удалить заявку {{ orderLabel(selectedOrder) }}? Это действие нельзя отменить.
+            </NPopconfirm>
           </div>
         </article>
       </template>
