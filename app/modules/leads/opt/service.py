@@ -12,8 +12,8 @@ from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.user import User
 from app.modules.leads.access import actor_can_access_lead
-from app.modules.leads.opt.buyer_lookup import lookup_buyer_by_inn
 from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
+from app.modules.leads.opt.requisites import ensure_unit_requisites, resolve_buyer_requisites
 from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
@@ -193,7 +193,7 @@ class OptOrderService:
 
         parsed = parse_application_workbook(content)
         buyer_inn = parsed.buyer_inn
-        buyer_kpp, buyer_name = lookup_buyer_by_inn(buyer_inn)
+        buyer_kpp, buyer_name = await resolve_buyer_requisites(self._repo, buyer_inn)
 
         settings = get_settings()
         vat_rate = Decimal(str(settings.opt_vat_rate_percent))
@@ -208,6 +208,7 @@ class OptOrderService:
                 supplier_kpp = None
                 supplier_name = None
             else:
+                unit = await ensure_unit_requisites(self._repo, unit)
                 supplier_kpp = unit.kpp
                 supplier_name = unit.name
 
@@ -327,6 +328,8 @@ class OptOrderService:
         if not order.lines:
             raise ValidationError(message="В заявке нет строк реестра")
 
+        await self._ensure_order_requisites(order)
+
         payload = self._build_mole_payload(order)
         await self._repo.mark_submitting(order)
         await self._session.flush()
@@ -359,6 +362,22 @@ class OptOrderService:
             raise
 
         await self._publish_status(order)
+
+    async def _ensure_order_requisites(self, order: LeadOptOrder) -> None:
+        if not order.buyer_kpp or not order.buyer_name:
+            kpp, name = await resolve_buyer_requisites(self._repo, order.buyer_inn)
+            if kpp and name:
+                order.buyer_kpp = kpp
+                order.buyer_name = name
+        for line in order.lines:
+            if line.supplier_kpp and line.supplier_name:
+                continue
+            unit = await self._repo.get_unit_by_inn(line.supplier_inn)
+            if unit is None:
+                continue
+            unit = await ensure_unit_requisites(self._repo, unit)
+            line.supplier_kpp = unit.kpp
+            line.supplier_name = unit.name
 
     async def submit_order_worker(self, order_id: int) -> None:
         order = await self._repo.get_order(order_id)

@@ -94,11 +94,14 @@ def write_sql(units: list[dict[str, str]], path: Path) -> None:
     ]
     for unit in units:
         inn = unit["inn"]
-        name = unit["name"].replace("'", "''")
+        name = (unit.get("legal_name") or unit["name"]).replace("'", "''")
+        kpp = unit.get("kpp")
+        kpp_sql = "NULL" if not kpp else f"'{kpp}'"
         lines.append(
-            "INSERT INTO opt_units (inn, name, category_code, is_active)\n"
-            f"VALUES ('{inn}', '{name}', 'TECH', TRUE)\n"
+            "INSERT INTO opt_units (inn, kpp, name, category_code, is_active)\n"
+            f"VALUES ('{inn}', {kpp_sql}, '{name}', 'TECH', TRUE)\n"
             "ON CONFLICT (inn) DO UPDATE SET\n"
+            "  kpp = COALESCE(EXCLUDED.kpp, opt_units.kpp),\n"
             "  name = EXCLUDED.name,\n"
             "  category_code = COALESCE(opt_units.category_code, 'TECH'),\n"
             "  is_active = TRUE;"

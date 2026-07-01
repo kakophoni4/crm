@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
+from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_unit import OptUnit
 from app.modules.leads.opt.pricing import compute_order_pricing, payment_status
 
@@ -29,6 +30,36 @@ class OptOrderRepository:
             select(OptUnit).where(OptUnit.inn == inn, OptUnit.is_active.is_(True)),
         )
         return result.scalar_one_or_none()
+
+    async def get_buyer_by_inn(self, inn: str) -> OptBuyer | None:
+        result = await self._session.execute(
+            select(OptBuyer).where(OptBuyer.inn == inn, OptBuyer.is_active.is_(True)),
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_buyer(self, *, inn: str, kpp: str | None, name: str) -> OptBuyer:
+        buyer = await self.get_buyer_by_inn(inn)
+        if buyer is None:
+            buyer = OptBuyer(inn=inn, kpp=kpp, name=name)
+            self._session.add(buyer)
+        else:
+            buyer.kpp = kpp
+            buyer.name = name
+        await self._session.flush()
+        return buyer
+
+    async def update_unit_requisites(
+        self,
+        unit: OptUnit,
+        *,
+        kpp: str | None,
+        name: str | None = None,
+    ) -> None:
+        if kpp:
+            unit.kpp = kpp
+        if name:
+            unit.name = name
+        await self._session.flush()
 
     async def list_units(self) -> list[OptUnit]:
         result = await self._session.execute(

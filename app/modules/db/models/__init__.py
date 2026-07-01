@@ -36,6 +36,7 @@ from app.modules.db.models.lead_comment import LeadComment
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
+from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.quick_reply_template import QuickReplyTemplate
 from app.modules.db.models.quick_reply_template_hidden import QuickReplyTemplateHidden
@@ -82,6 +83,7 @@ __all__ = [
     "MessageDirection",
     "MessageKind",
     "MessageReplyAudit",
+    "OptBuyer",
     "OptUnit",
     "QuickReplyTemplate",
     "QuickReplyTemplateHidden",
