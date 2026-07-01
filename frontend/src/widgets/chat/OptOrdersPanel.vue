@@ -189,10 +189,6 @@ function orderLabel(order: OptOrder): string {
   return `Заявка ${order.order_no}`
 }
 
-function orderTotal(order: OptOrder): number {
-  return order.lines.reduce((sum, line) => sum + line.amount, 0)
-}
-
 function clientMessagePreview(order: OptOrder): string {
   return `Реестр по заявке №${order.order_no} сделки №${order.lead_id}.`
 }

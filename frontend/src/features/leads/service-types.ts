@@ -19,7 +19,10 @@ export function serviceOptionsForBot(
     botServiceTypes?.length
       ? FIXED_SERVICE_TYPES.filter((row) => botServiceTypes.includes(row.value))
       : [...FIXED_SERVICE_TYPES]
-  const options = allowed.map((row) => ({ label: row.label, value: row.value }))
+  const options: Array<{ label: string; value: string }> = allowed.map((row) => ({
+    label: row.label,
+    value: row.value,
+  }))
   if (
     currentService &&
     currentService.trim() &&
