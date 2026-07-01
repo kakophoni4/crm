@@ -426,7 +426,10 @@ class OptOrderService:
             raise ValidationError(message="Нельзя удалить заявку с записанными оплатами")
         lead_id_value = order.lead_id
         order_no = order.order_no
-        await dequeue_opt_submit(order.id)
+        try:
+            await dequeue_opt_submit(order.id)
+        except Exception:
+            logger.warning("opt_submit_dequeue_failed", order_id=order.id, exc_info=True)
         await self._session.delete(order)
         await self._session.commit()
         await publish(

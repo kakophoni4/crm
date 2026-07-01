@@ -72,14 +72,15 @@ async def add_opt_order_payment(
     return await service.add_payment(actor, lead_id, order_id, body)
 
 
-@router.delete("/leads/{lead_id}/opt-orders/{order_id}", status_code=204)
+@router.delete("/leads/{lead_id}/opt-orders/{order_id}")
 async def delete_opt_order(
     lead_id: int,
     order_id: int,
     actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
     service: Annotated[OptOrderService, Depends(_service)],
-) -> None:
+) -> dict[str, bool]:
     await service.delete_order(actor, lead_id, order_id)
+    return {"deleted": True}
 
 
 @router.post(

@@ -54,10 +54,20 @@ export function parseAppError(error: AxiosError): AppError {
     return new AppError(data.error, status)
   }
 
+  const code = error.code
+  let message = error.message || 'Network error'
+  if (!error.response) {
+    if (code === 'ECONNABORTED') {
+      message = 'Превышено время ожидания ответа сервера'
+    } else if (code === 'ERR_NETWORK') {
+      message = 'Сервер не ответил. Проверьте сеть или обновите API на сервере'
+    }
+  }
+
   return new AppError(
     {
       code: 'internal_error',
-      message: error.message || 'Network error',
+      message,
       request_id: error.config?.headers?.['X-Request-Id'] as string | undefined,
     },
     status,

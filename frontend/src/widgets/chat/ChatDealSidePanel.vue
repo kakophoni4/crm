@@ -572,6 +572,7 @@ async function saveLeadComment(): Promise<void> {
 
 .deal-side__field--stacked {
   align-items: start;
+  grid-template-columns: 1fr;
 }
 
 .deal-side__value {
@@ -579,6 +580,11 @@ async function saveLeadComment(): Promise<void> {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.deal-side__value :deep(.n-button__content) {
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .deal-side__btn-wrap {
