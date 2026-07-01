@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.modules.chats.timeutil import utc_now
 
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -89,6 +89,19 @@ class OptOrderRepository:
             ),
         )
         return result.scalar_one_or_none()
+
+    async def delete_order(self, order: LeadOptOrder) -> None:
+        """Delete order via DB CASCADE; expunge ORM graph to avoid nulling child FKs on flush."""
+        related = [order, *order.lines, *order.payments]
+        for obj in related:
+            if obj in self._session:
+                self._session.expunge(obj)
+        await self._session.execute(
+            delete(LeadOptOrder).where(
+                LeadOptOrder.id == order.id,
+                LeadOptOrder.lead_id == order.lead_id,
+            ),
+        )
 
     async def get_units_by_inns(self, inns: list[str]) -> dict[str, OptUnit]:
         if not inns:

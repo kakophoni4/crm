@@ -67,12 +67,14 @@ class LeadOptOrder(Base):
         lazy="selectin",
         order_by="LeadOptOrderLine.line_no",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     payments: Mapped[list[LeadOptOrderPayment]] = relationship(
         back_populates="order",
         lazy="selectin",
         order_by="LeadOptOrderPayment.paid_at",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
