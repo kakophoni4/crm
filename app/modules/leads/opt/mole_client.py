@@ -27,13 +27,25 @@ async def post_opt_order(payload: dict[str, Any]) -> dict[str, Any]:
         path = f"/{path}"
     url = f"{base}{path}"
 
+    auth: tuple[str, str] | None = None
+    username = settings.mole_api_username.strip()
+    password = settings.mole_api_password
+    if username:
+        auth = (username, password)
+
     timeout = httpx.Timeout(settings.mole_api_timeout_seconds)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=payload)
+            response = await client.post(url, json=payload, auth=auth)
     except httpx.HTTPError as exc:
         logger.warning("mole_api_transport_error", error=str(exc))
         raise MoleApiError(message="Не удалось связаться с 1С") from exc
+
+    if response.status_code == 401:
+        raise MoleApiError(
+            message="1С отклонила авторизацию (проверьте MOLE_API_USERNAME / MOLE_API_PASSWORD)",
+            details={"http_status": response.status_code},
+        )
 
     try:
         body: dict[str, Any] = response.json()

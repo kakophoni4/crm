@@ -110,6 +110,8 @@ class Settings(BaseSettings):
     mole_api_base_url: str = ""
     mole_api_orders_path: str = "/hs/mole/orders"
     mole_api_timeout_seconds: float = 60.0
+    mole_api_username: str = ""
+    mole_api_password: str = ""
     opt_vat_rate_percent: float = 20.0
 
     @field_validator("sentry_traces_sample_rate")
