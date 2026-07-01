@@ -8,12 +8,10 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.scope_loader import ScopeLoader
-from app.modules.db.models.contact import Contact
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.user import User
 from app.modules.leads.access import actor_can_access_lead
-from app.modules.leads.opt.contact_buyer import buyer_from_contact
 from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
 from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import enqueue_opt_submit
@@ -191,20 +189,11 @@ class OptOrderService:
         content: bytes,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
-        contact = await self._session.get(Contact, lead.contact_id)
-        if contact is None:
-            raise NotFound(message="Contact not found")
 
         parsed = parse_application_workbook(content)
-        contact_inn, contact_kpp, contact_name = buyer_from_contact(contact)
-        buyer_inn = contact_inn or parsed.buyer_inn
-        buyer_kpp = contact_kpp
-        buyer_name = contact_name
-
-        if contact_inn and contact_inn != parsed.buyer_inn:
-            raise ValidationError(
-                message="ИНН покупателя в заявке не совпадает с карточкой контакта",
-            )
+        buyer_inn = parsed.buyer_inn
+        buyer_kpp = None
+        buyer_name = None
 
         settings = get_settings()
         vat_rate = Decimal(str(settings.opt_vat_rate_percent))
@@ -263,7 +252,12 @@ class OptOrderService:
 
     def _build_mole_payload(self, order: LeadOptOrder) -> dict[str, Any]:
         if not order.buyer_kpp or not order.buyer_name:
-            raise ValidationError(message="Для отправки в 1С нужны КПП и наименование покупателя")
+            raise ValidationError(
+                message=(
+                    "Для отправки в 1С нужны КПП и наименование покупателя по этой заявке "
+                    f"(ИНН {order.buyer_inn})"
+                ),
+            )
 
         registry: list[dict[str, Any]] = []
         for line in sorted(order.lines, key=lambda row: row.line_no):

@@ -412,7 +412,14 @@ onUnmounted(() => {
             </div>
             <div>
               <dt>Покупатель</dt>
-              <dd>{{ selectedOrder.buyer.name || '—' }}</dd>
+              <dd>
+                <template v-if="selectedOrder.buyer.name">
+                  {{ selectedOrder.buyer.name }}
+                </template>
+                <template v-else>
+                  ИНН {{ selectedOrder.buyer.inn }}
+                </template>
+              </dd>
             </div>
           </dl>
 

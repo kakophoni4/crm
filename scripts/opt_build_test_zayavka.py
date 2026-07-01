@@ -104,7 +104,7 @@ def main() -> None:
     wb.save(args.out)
 
     print(f"Created {args.out}")
-    print(f"Buyer INN (contact card): {args.buyer_inn}")
+    print(f"Buyer INN (from xlsx, stored on order): {args.buyer_inn}")
     print("Supplier INNs:")
     for inn in supplier_inns:
         print(f"  - {inn}")

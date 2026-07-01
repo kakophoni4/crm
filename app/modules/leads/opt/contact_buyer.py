@@ -59,7 +59,7 @@ def parse_decimal(value: Any) -> Decimal | None:
 
 
 def buyer_from_contact(contact: Contact) -> tuple[str | None, str | None, str | None]:
-    """Read buyer INN/KPP/name from contact custom_fields."""
+    """Legacy helper — OPT buyer INN is taken from the uploaded заявка, not the contact."""
     fields = contact.custom_fields or {}
     inn = normalize_inn(
         fields.get("company_inn") or fields.get("inn") or fields.get("buyer_inn"),
