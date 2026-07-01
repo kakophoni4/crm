@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
+
+from app.modules.chats.timeutil import utc_now
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -195,7 +197,7 @@ class OptOrderRepository:
         response_payload: dict[str, object],
         line_numbers: dict[str, str],
     ) -> None:
-        now = datetime.now(UTC)
+        now = utc_now()
         order.status = "submitted"
         order.submitted_at = now
         order.submitted_by = actor_id
@@ -217,7 +219,7 @@ class OptOrderRepository:
         response_payload: dict[str, object] | None = None,
     ) -> None:
         order.status = "failed"
-        order.submitted_at = datetime.now(UTC)
+        order.submitted_at = utc_now()
         order.submitted_by = actor_id
         order.submission_request = request_payload
         order.submission_response = response_payload
@@ -234,7 +236,7 @@ class OptOrderRepository:
         return [int(row) for row in result.scalars()]
 
     async def recover_stale_submitting(self, *, minutes: int = 15) -> list[int]:
-        cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+        cutoff = utc_now() - timedelta(minutes=minutes)
         result = await self._session.execute(
             select(LeadOptOrder).where(
                 LeadOptOrder.status == "submitting",

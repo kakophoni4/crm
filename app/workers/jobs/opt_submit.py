@@ -39,10 +39,13 @@ async def process_opt_submit_queue(_job_type: str, _payload: dict[str, object]) 
     if not acquired:
         return
 
-    await _reconcile_pending_orders()
-
-    session_factory = get_session_factory()
     try:
+        try:
+            await _reconcile_pending_orders()
+        except Exception:
+            logger.exception("opt_submit_reconcile_failed")
+
+        session_factory = get_session_factory()
         while True:
             raw = await redis.lpop(QUEUE_KEY)
             if raw is None:
