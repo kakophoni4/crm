@@ -18,9 +18,20 @@ def register_crm_job_workers() -> None:
 
 
 def start_crm_jobs() -> None:
+    import asyncio
+
+    from app.workers.jobs.opt_submit import bootstrap_opt_submit_queue
+
     register_crm_job_workers()
     start_worker()
     start_scheduler()
+    try:
+        asyncio.get_running_loop().create_task(
+            bootstrap_opt_submit_queue(),
+            name="opt-submit-bootstrap",
+        )
+    except RuntimeError:
+        pass
 
 
 async def stop_crm_jobs() -> None:

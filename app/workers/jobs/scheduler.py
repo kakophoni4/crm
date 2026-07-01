@@ -23,6 +23,7 @@ _HEALTH_LOCK_KEY = "crm:bots:health_checks:scheduled"
 
 
 async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) -> None:
+    from app.modules.leads.opt.queue import schedule_opt_submit_if_pending
     from app.workers.bots.health_check import schedule_all_health_checks
     from app.workers.escalation import escalation_scan
     from app.workers.jobs.purge_leads import LEAD_PURGE_JOB_TYPE, purge_expired_leads
@@ -37,6 +38,8 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     acquired = await redis.set(_HEALTH_LOCK_KEY, "1", nx=True, ex=ttl)
     if acquired:
         await schedule_all_health_checks()
+
+    await schedule_opt_submit_if_pending()
 
 
 async def _scheduler_loop() -> None:
