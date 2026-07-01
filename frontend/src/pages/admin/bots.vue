@@ -106,30 +106,32 @@ function groupOptionsForBot(row: BotItem): SelectOption[] {
 }
 
 const columns = computed<DataTableColumns<BotItem>>(() => [
-  { title: 'Код', key: 'code', width: 140 },
+  { title: 'Код', key: 'code', width: 140, ellipsis: { tooltip: true } },
   {
     title: 'Канал',
     key: 'channel',
-    width: 110,
+    width: 100,
     render: (row) => (row.channel === 'whatsapp' ? 'WhatsApp' : 'Telegram'),
   },
-  { title: 'Название', key: 'name' },
+  { title: 'Название', key: 'name', minWidth: 160, ellipsis: { tooltip: true } },
   {
     title: 'Отдел',
     key: 'department_name',
-    width: 160,
+    width: 140,
+    ellipsis: { tooltip: true },
     render: (row) => row.department_name ?? `#${row.department_id}`,
   },
   {
     title: 'Услуги',
     key: 'service_types',
-    width: 140,
+    width: 130,
+    ellipsis: { tooltip: true },
     render: (row) => formatServiceTypes(row.service_types),
   },
   {
     title: 'Группы',
     key: 'assigned_group_ids',
-    minWidth: 280,
+    minWidth: 240,
     render: (row) =>
       h(NSelect, {
         multiple: true,
@@ -145,15 +147,16 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
   {
     title: 'Активен',
     key: 'is_active',
-    width: 90,
+    width: 80,
     render: (row) => (row.is_active ? 'да' : 'нет'),
   },
   {
     title: '',
     key: 'actions',
-    width: 520,
+    width: 200,
+    fixed: 'right',
     render: (row) =>
-      h(NSpace, null, () => [
+      h(NSpace, { vertical: true, size: 'small' }, () => [
         h(
           NButton,
           {
@@ -172,12 +175,12 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
         h(
           NButton,
           { size: 'small', onClick: () => onRotate(row, 'inbound') },
-          { default: () => 'Обновить входящий ключ' },
+          { default: () => 'Входящий ключ' },
         ),
         h(
           NButton,
           { size: 'small', onClick: () => onRotate(row, 'outbound') },
-          { default: () => 'Обновить исходящий ключ' },
+          { default: () => 'Исходящий ключ' },
         ),
       ]),
   },
@@ -384,7 +387,12 @@ onMounted(() => {
       <NButton @click="openCreateWhatsApp">+ WhatsApp</NButton>
     </header>
     <NSpin :show="loading">
-      <NDataTable :columns="columns" :data="rows" :row-key="(r: BotItem) => r.id" />
+      <NDataTable
+        :columns="columns"
+        :data="rows"
+        :row-key="(r: BotItem) => r.id"
+        :scroll-x="1100"
+      />
     </NSpin>
 
     <TelephonyAccountsPanel />
