@@ -83,7 +83,7 @@ const canCloseWon = computed(
 
 const leadOptions = computed<SelectOption[]>(() =>
   leadItems.value.map((lead) => ({
-    label: `Сделка №${lead.id}`,
+    label: `Сделка №${lead.id} — ${statusLabel(lead)}`,
     value: lead.id,
   })),
 )
@@ -351,22 +351,6 @@ async function saveLeadComment(): Promise<void> {
           />
         </div>
 
-        <div v-if="leadItems.length > 0" class="deal-side__lead-list">
-          <button
-            v-for="lead in leadItems"
-            :key="lead.id"
-            type="button"
-            class="deal-side__lead-chip"
-            :class="{ 'deal-side__lead-chip--active': lead.id === selectedLeadId }"
-            @click="selectedLeadId = lead.id"
-          >
-            <span>№{{ lead.id }}</span>
-            <NTag size="tiny" :type="lead.closed_at ? 'default' : 'success'" :bordered="false">
-              {{ statusLabel(lead) }}
-            </NTag>
-          </button>
-        </div>
-
         <div v-if="leadItems.length === 0" class="deal-side__empty">
           <p>Сделок пока нет</p>
         </div>
@@ -528,28 +512,6 @@ async function saveLeadComment(): Promise<void> {
   overflow-y: auto;
   min-height: 0;
   flex: 1;
-}
-
-.deal-side__lead-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.deal-side__lead-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 7px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--app-text);
-  cursor: pointer;
-}
-
-.deal-side__lead-chip--active {
-  border-color: var(--app-accent, #2080f0);
 }
 
 .deal-side__number-line {
