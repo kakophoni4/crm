@@ -333,14 +333,15 @@ async function saveLeadComment(): Promise<void> {
       </NButton>
     </header>
 
-    <NSpin :show="loadingLeads || loadingLead">
-      <div v-if="!chat" class="deal-side__empty">Выберите чат</div>
+    <div class="deal-side__scroll">
+      <NSpin :show="loadingLeads || loadingLead" class="deal-side__spin">
+        <div v-if="!chat" class="deal-side__empty">Выберите чат</div>
 
-      <div v-else-if="chat.assigned_group_id == null" class="deal-side__empty">
-        Нужна группа у бота
-      </div>
+        <div v-else-if="chat.assigned_group_id == null" class="deal-side__empty">
+          Нужна группа у бота
+        </div>
 
-      <div v-else class="deal-side__body">
+        <div v-else class="deal-side__body">
         <div v-if="leadItems.length > 0" class="deal-side__field">
           <span class="deal-side__label">Сделка</span>
           <NSelect
@@ -476,7 +477,8 @@ async function saveLeadComment(): Promise<void> {
           </div>
         </template>
       </div>
-    </NSpin>
+      </NSpin>
+    </div>
   </section>
 </template>
 
@@ -484,10 +486,31 @@ async function saveLeadComment(): Promise<void> {
 .deal-side {
   display: flex;
   flex-direction: column;
+  flex: 1;
   height: 100%;
   min-height: 0;
   padding: 12px;
   overflow: hidden;
+}
+
+.deal-side__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: 16px;
+}
+
+.deal-side__spin {
+  display: block;
+  min-height: min-content;
+}
+
+.deal-side__spin :deep(.n-spin-container),
+.deal-side__spin :deep(.n-spin-content) {
+  min-height: 0;
 }
 
 .deal-side__header {
@@ -509,9 +532,6 @@ async function saveLeadComment(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
 }
 
 .deal-side__number-line {
