@@ -15,11 +15,6 @@ export async function uploadOptApplication(leadId: number, file: File): Promise<
   return data
 }
 
-export async function retryOptOrder(leadId: number, orderId: number): Promise<OptOrder> {
-  const { data } = await http.post<OptOrder>(`/leads/${leadId}/opt-orders/${orderId}/retry`)
-  return data
-}
-
 export async function deleteOptOrder(leadId: number, orderId: number): Promise<void> {
   await http.delete(`/leads/${leadId}/opt-orders/${orderId}`)
 }

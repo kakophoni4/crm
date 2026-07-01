@@ -443,7 +443,6 @@ async function saveLeadComment(): Promise<void> {
           </template>
 
           <div v-if="hasSelectedOpenLead" class="deal-side__field deal-side__field--stacked">
-            <span class="deal-side__label">Завершить сделку</span>
             <div class="deal-side__value">
             <NSpace vertical>
               <NTooltip trigger="hover" :disabled="!closeWonTooltip">
@@ -478,7 +477,6 @@ async function saveLeadComment(): Promise<void> {
           </div>
 
           <div v-if="hasSelectedOpenLead" class="deal-side__field deal-side__field--stacked">
-            <span class="deal-side__label">Комментарий к сделке</span>
             <div class="deal-side__value">
             <NInput
               v-model:value="commentDraft"

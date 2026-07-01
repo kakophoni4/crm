@@ -136,6 +136,17 @@ class OptOrderRepository:
         order.payment_status = payment_status(paid_total, Decimal(str(order.commission_due)))
         return payment
 
+    _PENDING_SUBMISSION_STATUSES = frozenset({"draft", "queued", "submitting", "failed"})
+
+    async def lead_has_pending_submission(self, lead_id: int) -> bool:
+        result = await self._session.execute(
+            select(LeadOptOrder.id).where(
+                LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.status.in_(self._PENDING_SUBMISSION_STATUSES),
+            ).limit(1),
+        )
+        return result.scalar_one_or_none() is not None
+
     async def lead_has_unpaid_orders(self, lead_id: int) -> bool:
         result = await self._session.execute(
             select(LeadOptOrder.id).where(

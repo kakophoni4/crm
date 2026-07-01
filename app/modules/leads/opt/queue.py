@@ -34,3 +34,10 @@ async def enqueue_opt_submit(order_id: int) -> None:
 async def queue_depth() -> int:
     redis = get_redis()
     return int(await redis.llen(QUEUE_KEY))
+
+
+async def dequeue_opt_submit(order_id: int) -> None:
+    redis = get_redis()
+    removed = int(await redis.lrem(QUEUE_KEY, 0, str(order_id)))
+    if removed:
+        logger.info("opt_submit_dequeued", order_id=order_id, removed=removed)

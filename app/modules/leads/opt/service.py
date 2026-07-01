@@ -15,7 +15,7 @@ from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
 from app.modules.leads.opt.requisites import ensure_unit_requisites, resolve_buyer_requisites
 from app.modules.leads.opt.parser import parse_application_workbook
-from app.modules.leads.opt.queue import enqueue_opt_submit
+from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
 from app.modules.leads.opt.schemas import (
@@ -190,6 +190,14 @@ class OptOrderService:
         content: bytes,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
+
+        if await self._repo.lead_has_pending_submission(lead.id):
+            raise ValidationError(
+                message=(
+                    "По сделке уже есть незавершённая заявка. "
+                    "Удалите её и загрузите файл заново — повторная отправка в 1С недоступна."
+                ),
+            )
 
         parsed = parse_application_workbook(content)
         buyer_inn = parsed.buyer_inn
@@ -410,28 +418,15 @@ class OptOrderService:
         assert refreshed is not None
         return self._to_response(refreshed)
 
-    async def retry_submission(self, actor: User, lead_id: int, order_id: int) -> OptOrderResponse:
-        order = await self._get_order_for_actor(actor, lead_id, order_id)
-        if order.status == "submitted":
-            raise ValidationError(message="Заявка уже отправлена в 1С")
-        if order.status not in {"failed", "queued", "submitting"}:
-            raise ValidationError(message="Повтор доступен только для заявок в очереди или с ошибкой")
-        await self._repo.mark_queued(order)
-        await self._session.commit()
-        await enqueue_opt_submit(order.id)
-        await self._publish_status(order)
-        refreshed = await self._repo.get_order(order.id)
-        assert refreshed is not None
-        return self._to_response(refreshed)
-
     async def delete_order(self, actor: User, lead_id: int, order_id: int) -> None:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
-        if order.status != "failed":
-            raise ValidationError(message="Удалить можно только заявку с ошибкой отправки")
+        if order.status == "submitted":
+            raise ValidationError(message="Нельзя удалить заявку, уже отправленную в 1С")
         if order.payments:
             raise ValidationError(message="Нельзя удалить заявку с записанными оплатами")
         lead_id_value = order.lead_id
         order_no = order.order_no
+        await dequeue_opt_submit(order.id)
         await self._session.delete(order)
         await self._session.commit()
         await publish(

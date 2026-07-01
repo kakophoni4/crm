@@ -24,7 +24,6 @@ import {
   deleteOptOrder,
   downloadOptRegistry,
   listOptOrders,
-  retryOptOrder,
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
@@ -50,7 +49,6 @@ const emit = defineEmits<{
 const message = useMessage()
 const loading = ref(false)
 const uploading = ref(false)
-const retryingId = ref<number | null>(null)
 const deletingId = ref<number | null>(null)
 const downloadingId = ref<number | null>(null)
 const sendingId = ref<number | null>(null)
@@ -77,6 +75,16 @@ const selectedOrder = computed(
 const needsPolling = computed(() =>
   orders.value.some((row) => row.status === 'queued' || row.status === 'submitting'),
 )
+
+const hasPendingSubmission = computed(() =>
+  orders.value.some(
+    (row) => row.status === 'failed' || row.status === 'queued' || row.status === 'submitting',
+  ),
+)
+
+function canDeleteOrder(order: OptOrder): boolean {
+  return order.status !== 'submitted' && order.payments.length === 0
+}
 
 const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
   { title: '№', key: 'line_no', width: 44 },
@@ -177,7 +185,7 @@ function statusHint(status: string): string {
   if (status === 'queued') return ''
   if (status === 'submitting') return 'Отправка в 1С…'
   if (status === 'submitted') return 'Реестр готов — можно скачать или отправить клиенту'
-  if (status === 'failed') return 'Ошибка отправки в 1С — можно повторить'
+  if (status === 'failed') return 'Ошибка отправки в 1С — удалите заявку и загрузите файл заново'
   return 'Обработка заявки'
 }
 
@@ -244,6 +252,10 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
 async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
   const raw = options.file.file
   if (!hasLead.value || props.leadId == null || raw == null) return
+  if (hasPendingSubmission.value) {
+    message.warning('Сначала удалите текущую заявку, затем загрузите файл заново')
+    return
+  }
   uploading.value = true
   try {
     const created = await uploadOptApplication(props.leadId, raw)
@@ -260,25 +272,8 @@ async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
   }
 }
 
-async function onRetry(order: OptOrder): Promise<void> {
-  if (props.leadId == null) return
-  retryingId.value = order.id
-  try {
-    const updated = await retryOptOrder(props.leadId, order.id)
-    orders.value = orders.value
-      .map((row) => (row.id === updated.id ? updated : row))
-      .sort((a, b) => a.order_no - b.order_no)
-    startPolling()
-    message.info(`Заявка ${updated.order_no} снова в очереди`)
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось повторить отправку')
-  } finally {
-    retryingId.value = null
-  }
-}
-
 async function onDelete(order: OptOrder): Promise<void> {
-  if (props.leadId == null) return
+  if (props.leadId == null || !canDeleteOrder(order)) return
   deletingId.value = order.id
   try {
     await deleteOptOrder(props.leadId, order.id)
@@ -358,10 +353,15 @@ onUnmounted(() => {
       <NUpload
         :show-file-list="false"
         accept=".xlsx,.xls"
-        :disabled="!hasLead || uploading"
+        :disabled="!hasLead || uploading || hasPendingSubmission"
         @change="onUpload"
       >
-        <NButton size="small" type="primary" :loading="uploading" :disabled="!hasLead">
+        <NButton
+          size="small"
+          type="primary"
+          :loading="uploading"
+          :disabled="!hasLead || hasPendingSubmission"
+        >
           + Заявка
         </NButton>
       </NUpload>
@@ -522,21 +522,11 @@ onUnmounted(() => {
               Отправить клиенту
             </NButton>
 
-            <NButton
-              v-if="selectedOrder.status === 'failed' || selectedOrder.status === 'queued' || selectedOrder.status === 'submitting'"
-              size="small"
-              type="warning"
-              :loading="retryingId === selectedOrder.id"
-              @click="onRetry(selectedOrder)"
-            >
-              {{ selectedOrder.status === 'failed' ? 'Повторить отправку' : 'Отправить снова' }}
-            </NButton>
-
             <NPopconfirm
-              v-if="selectedOrder.status === 'failed'"
+              v-if="canDeleteOrder(selectedOrder)"
               positive-text="Удалить"
               negative-text="Отмена"
-              @positive-click="onDelete(selectedOrder)"
+              @positive-click="() => onDelete(selectedOrder)"
             >
               <template #trigger>
                 <NButton

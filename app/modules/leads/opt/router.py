@@ -72,16 +72,6 @@ async def add_opt_order_payment(
     return await service.add_payment(actor, lead_id, order_id, body)
 
 
-@router.post("/leads/{lead_id}/opt-orders/{order_id}/retry", response_model=OptOrderResponse)
-async def retry_opt_order(
-    lead_id: int,
-    order_id: int,
-    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
-    service: Annotated[OptOrderService, Depends(_service)],
-) -> OptOrderResponse:
-    return await service.retry_submission(actor, lead_id, order_id)
-
-
 @router.delete("/leads/{lead_id}/opt-orders/{order_id}", status_code=204)
 async def delete_opt_order(
     lead_id: int,
