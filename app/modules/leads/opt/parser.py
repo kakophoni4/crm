@@ -42,6 +42,8 @@ def parse_application_workbook(content: bytes) -> ParsedApplication:
         amount = parse_decimal(worksheet.cell(row_idx, 5).value)
 
         if supplier_inn is None and row_buyer_inn is None:
+            if lines:
+                break
             continue
         if supplier_inn is None or document_date is None or amount is None or amount <= 0:
             if lines:

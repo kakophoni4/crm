@@ -1,37 +1,30 @@
 {
-  "description": "Копия структуры «Заявка НАВЕЛ КО 1 кв 25 с вайтами.xlsx» для тестов CRM",
-  "sheet_title": "Заявка",
-  "vat_rate_percent": 20,
+  "description": "Первая заявка из «Заявка НАВЕЛ КО 1 кв 25 с вайтами.xlsx» (строки 4–8)",
+  "sheet_title": "Sheet1",
+  "header_row2": {
+    "B": "Заявка",
+    "C": "Ставка НДС:",
+    "D": 20,
+    "E": "%"
+  },
+  "header_row3": {
+    "B": "ИНН Компании-продавца\n(Наши компании)",
+    "C": "ИНН Компании-покупатели\n(Ваши компании)",
+    "D": "Дата с/ф\n(дд. мм. гггг)",
+    "E": "Сумма покупок\n(НДС в том числе)"
+  },
   "buyer": {
     "inn": "5507266215",
     "kpp": "550701001",
     "name": "НАВЕЛ КО ООО"
   },
   "lines": [
-    {
-      "supplier_inn": "7703822568",
-      "document_date": "2025-01-22",
-      "amount": 314752
-    },
-    {
-      "supplier_inn": "7743622734",
-      "document_date": "2025-01-28",
-      "amount": 186420
-    },
-    {
-      "supplier_inn": "7713151911",
-      "document_date": "2025-02-05",
-      "amount": 92500
-    },
-    {
-      "supplier_inn": "7720313708",
-      "document_date": "2025-02-12",
-      "amount": 203150
-    },
-    {
-      "supplier_inn": "7730303346",
-      "document_date": "2025-02-20",
-      "amount": 150000
-    }
-  ]
+    { "supplier_inn": "7703822568", "document_date": "2025-01-22", "amount": 314752 },
+    { "supplier_inn": "7703822568", "document_date": "2025-02-12", "amount": 342500 },
+    { "supplier_inn": "7713151911", "document_date": "2025-02-24", "amount": 311207 },
+    { "supplier_inn": "7713151911", "document_date": "2025-03-10", "amount": 265300 },
+    { "supplier_inn": "7720313708", "document_date": "2025-03-19", "amount": 395671 }
+  ],
+  "total_row": 13,
+  "total_amount": 1629430
 }

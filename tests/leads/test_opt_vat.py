@@ -29,3 +29,6 @@ def test_parse_test_fixture_workbook() -> None:
     assert parsed.lines[0].supplier_inn == "7703822568"
     assert str(parsed.lines[0].document_date) == "2025-01-22"
     assert parsed.lines[0].amount == Decimal("314752")
+    assert parsed.lines[1].amount == Decimal("342500")
+    assert parsed.lines[4].supplier_inn == "7720313708"
+    assert parsed.lines[4].amount == Decimal("395671")
