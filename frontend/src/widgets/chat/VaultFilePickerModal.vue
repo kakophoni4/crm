@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { NButton, NEmpty, NModal, NSpin, useMessage } from 'naive-ui'
 import { FolderOpen } from 'lucide-vue-next'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 import { listVaultFiles, type VaultFile } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
 import { formatFileSize } from '@/shared/config/uploads'
 
-defineProps<{
+const props = defineProps<{
   show: boolean
 }>()
 
@@ -32,9 +32,15 @@ async function load(): Promise<void> {
   }
 }
 
+watch(
+  () => props.show,
+  (open) => {
+    if (open) void load()
+  },
+)
+
 function onShowUpdate(value: boolean): void {
   emit('update:show', value)
-  if (value) void load()
 }
 
 function pick(file: VaultFile): void {
