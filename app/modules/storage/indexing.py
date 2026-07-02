@@ -10,6 +10,7 @@ from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.enums import MessageDirection
 from app.modules.db.models.user import User
+from app.modules.chats.timeutil import to_naive_utc
 from app.modules.storage.repository import StorageRepository
 
 logger = structlog.get_logger(__name__)
@@ -59,22 +60,23 @@ async def index_message_attachments(session: AsyncSession, *, message_id: int) -
         mime_type = str(att.get("mime") or "application/octet-stream")
         size_bytes = int(att.get("size_bytes") or att.get("size") or 0)
         try:
-            await repo.upsert_group_chat_file(
-                group_id=chat.assigned_group_id,
-                chat_id=chat.id,
-                message_id=message.id,
-                attachment_index=idx,
-                file_id=int(file_id) if file_id is not None else None,
-                storage_key=str(storage_key),
-                original_name=original_name,
-                mime_type=mime_type,
-                size_bytes=size_bytes,
-                direction=direction,
-                sender_user_id=sender_user_id,
-                sender_contact_id=sender_contact_id,
-                sender_display_name=sender_display_name,
-                created_at=message.created_at,
-            )
+            async with session.begin_nested():
+                await repo.upsert_group_chat_file(
+                    group_id=chat.assigned_group_id,
+                    chat_id=chat.id,
+                    message_id=message.id,
+                    attachment_index=idx,
+                    file_id=int(file_id) if file_id is not None else None,
+                    storage_key=str(storage_key),
+                    original_name=original_name,
+                    mime_type=mime_type,
+                    size_bytes=size_bytes,
+                    direction=direction,
+                    sender_user_id=sender_user_id,
+                    sender_contact_id=sender_contact_id,
+                    sender_display_name=sender_display_name,
+                    created_at=to_naive_utc(message.created_at),
+                )
         except Exception as exc:
             logger.warning(
                 "group_chat_file_index_failed",

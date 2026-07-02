@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.chats.timeutil import to_naive_utc
 from app.modules.db.models.file_share_link import FileShareLink
 from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.group import Group
@@ -180,7 +181,7 @@ class StorageRepository:
             sender_display_name=sender_display_name,
         )
         if created_at is not None:
-            row.created_at = created_at
+            row.created_at = to_naive_utc(created_at)
         self._session.add(row)
         await self._session.flush()
         await self._session.refresh(row)
