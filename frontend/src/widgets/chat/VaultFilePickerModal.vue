@@ -7,7 +7,7 @@ import { listVaultFiles, type VaultFile } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
 import { formatFileSize } from '@/shared/config/uploads'
 
-const props = defineProps<{
+defineProps<{
   show: boolean
 }>()
 
