@@ -84,10 +84,9 @@ const assigneeOptions = computed(() =>
     .map((u) => ({ label: u.full_name, value: u.id })),
 )
 
-const departmentOptions = computed(() => [
-  { label: 'Все отделы', value: null as number | null },
-  ...departments.value.map((d) => ({ label: d.name, value: d.id })),
-])
+const boardDepartmentOptions = computed(() =>
+  departments.value.map((d) => ({ label: d.name, value: d.id })),
+)
 
 const departmentMap = computed(() =>
   Object.fromEntries(departments.value.map((d) => [d.id, d.name])),
@@ -284,9 +283,10 @@ onUnmounted(() => {
         <NTabPane v-if="isManager" name="board" tab="Доска отдела">
           <div v-if="isAdmin" class="dept-filter">
             <NSelect
-              :value="selectedDeptId"
-              :options="departmentOptions"
-              placeholder="Отдел"
+              v-model:value="selectedDeptId"
+              :options="boardDepartmentOptions"
+              placeholder="Все отделы"
+              clearable
               style="max-width: 280px"
               @update:value="onBoardDepartmentChange"
             />
