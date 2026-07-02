@@ -104,5 +104,9 @@ class Permission(StrEnum):
     FILES_DOWNLOAD = "files.download"
     FILES_DELETE = "files.delete"
 
+    # Tasks
+    TASKS_READ = "tasks.read"
+    TASKS_MANAGE = "tasks.manage"
+
 
 ALL_PERMISSIONS: frozenset[Permission] = frozenset(Permission)

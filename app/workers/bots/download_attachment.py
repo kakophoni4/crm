@@ -99,6 +99,9 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
                 {"att": json.dumps(attachments), "mid": message_id},
             )
             await session.commit()
+            from app.modules.storage.indexing import index_message_attachments
+
+            await index_message_attachments(session, message_id=message_id)
             await publish(
                 CHAT_MESSAGE_ATTACHMENT_READY,
                 {

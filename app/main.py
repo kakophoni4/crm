@@ -20,9 +20,10 @@ from app.modules.files.router import router as files_router
 from app.modules.groups.router import router as groups_router
 from app.modules.leads.router import router as leads_router
 from app.modules.leads.opt.router import router as leads_opt_router
-from app.modules.search.router import router as search_router
+from app.modules.storage.public_router import router as storage_public_router
+from app.modules.storage.router import router as storage_router
 from app.modules.statuses.router import router as statuses_router
-from app.modules.telephony.router import router as telephony_router
+from app.modules.tasks.router import router as tasks_router
 from app.modules.users.router import router as users_router
 from app.modules.users.user_deletion_router import router as user_deletion_requests_router
 from app.realtime.auth import router as realtime_auth_router
@@ -116,6 +117,9 @@ def create_app() -> FastAPI:
     app.include_router(telephony_router)
     app.include_router(files_router)
     app.include_router(bot_outbound_router)
+    app.include_router(storage_router)
+    app.include_router(storage_public_router)
+    app.include_router(tasks_router)
     app.include_router(analytics_router)
 
     def _health_checks(

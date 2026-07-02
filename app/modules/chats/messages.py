@@ -67,10 +67,15 @@ def _queued_attachments(attachments: list[AttachmentInput]) -> list[dict[str, An
 async def _materialize_attachments(
     session: AsyncSession,
     attachments: list[AttachmentInput],
+    *,
+    actor: User,
 ) -> list[dict[str, Any]]:
     if not attachments:
         return []
     files = FilesService(session)
+    from app.modules.storage.service import StorageService
+
+    storage = StorageService(session)
     result: list[dict[str, Any]] = []
     for item in attachments:
         if item.file_id is not None:
@@ -79,6 +84,7 @@ async def _materialize_attachments(
             row = await files.get_by_id(item.file_id)
             if row is None:
                 raise ValidationError(message="Attachment file not found")
+            await storage.assert_vault_file_owned(actor, item.file_id)
             att_type = "photo" if row.mime_type.startswith("image/") else "document"
             result.append(
                 {
@@ -203,7 +209,7 @@ class ChatMessagesService:
                 chat.current_lead_id = lead_id
         # New deals are opened on inbound from the client only — not when operator sends files/text.
 
-        attachments = await _materialize_attachments(self._session, body.attachments)
+        attachments = await _materialize_attachments(self._session, body.attachments, actor=actor)
         has_text = bool(body.text and body.text.strip())
         if not has_text and not attachments:
             raise ValidationError(message="text or attachments required")
@@ -225,6 +231,10 @@ class ChatMessagesService:
             idempotency_key=body.idempotency_key,
         )
         message = await self._repo.add_message(message)
+
+        from app.modules.storage.indexing import index_message_attachments
+
+        await index_message_attachments(self._session, message_id=message.id)
 
         await upsert_read_state(
             self._session,

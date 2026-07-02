@@ -58,6 +58,30 @@ const routes: RouteRecordRaw[] = [
 
   {
 
+    path: '/share',
+
+    name: 'public-share-upload',
+
+    component: () => import('@/pages/share/upload.vue'),
+
+    meta: { layout: false, public: true },
+
+  },
+
+  {
+
+    path: '/share/:token',
+
+    name: 'public-share-download',
+
+    component: () => import('@/pages/share/download.vue'),
+
+    meta: { layout: false, public: true },
+
+  },
+
+  {
+
     path: '/',
 
     component: AppLayout,
@@ -101,6 +125,26 @@ const routes: RouteRecordRaw[] = [
         name: 'contacts',
 
         component: () => import('@/pages/contacts/index.vue'),
+
+      },
+
+      {
+
+        path: 'storage',
+
+        name: 'storage',
+
+        component: () => import('@/pages/storage/index.vue'),
+
+      },
+
+      {
+
+        path: 'tasks',
+
+        name: 'tasks',
+
+        component: () => import('@/pages/tasks/index.vue'),
 
       },
 
@@ -312,22 +356,16 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
 
-  if (to.meta.public && to.name === 'login') {
-
-    const auth = useAuthStore()
-
-    await auth.hydrate()
-
-    if (auth.isAuthenticated) {
-
-      const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/chats'
-
-      return redirect
-
+  if (to.meta.public) {
+    if (to.name === 'login') {
+      const auth = useAuthStore()
+      await auth.hydrate()
+      if (auth.isAuthenticated) {
+        const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/chats'
+        return redirect
+      }
     }
-
     return true
-
   }
 
 

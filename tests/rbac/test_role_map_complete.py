@@ -37,6 +37,8 @@ _USER_EXPECTED: frozenset[Permission] = frozenset(
         Permission.AUDIT_READ_OWN,
         Permission.FILES_UPLOAD,
         Permission.FILES_DOWNLOAD,
+        Permission.FILES_DELETE,
+        Permission.TASKS_READ,
     }
 )
 
@@ -67,6 +69,7 @@ _SENIOR_EXPECTED: frozenset[Permission] = _USER_EXPECTED - {Permission.CHATS_REA
         Permission.AUDIT_READ_DEPARTMENT,
         Permission.ANALYTICS_READ,
         Permission.STATUSES_MANAGE,
+        Permission.TASKS_MANAGE,
     }
 )
 

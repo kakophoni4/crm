@@ -42,6 +42,9 @@ _USER_PERMISSIONS: frozenset[Permission] = frozenset(
         # §3.10 Files
         Permission.FILES_UPLOAD,
         Permission.FILES_DOWNLOAD,
+        Permission.FILES_DELETE,
+        # Tasks
+        Permission.TASKS_READ,
     }
 )
 
@@ -78,6 +81,8 @@ _SENIOR_EXTRA: frozenset[Permission] = frozenset(
         Permission.ANALYTICS_READ,
         # §3.8 Statuses (воронка сделок в отделе)
         Permission.STATUSES_MANAGE,
+        # Tasks
+        Permission.TASKS_MANAGE,
     }
 )
 

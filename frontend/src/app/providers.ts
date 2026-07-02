@@ -5,6 +5,7 @@ import { router } from '@/app/router'
 import { setupAuthHttpInterceptors, useAuthStore } from '@/shared/store/auth'
 import { connectChatsRealtime } from '@/shared/realtime/chats-ws'
 import { connectContactsRealtime } from '@/shared/realtime/contacts-ws'
+import { connectTasksRealtime } from '@/shared/realtime/tasks-ws'
 
 export function setupProviders(app: App): void {
   const pinia = createPinia()
@@ -17,6 +18,7 @@ export function setupProviders(app: App): void {
     if (useAuthStore().isAuthenticated) {
       await connectContactsRealtime()
       await connectChatsRealtime()
+      await connectTasksRealtime()
     }
   })()
 }

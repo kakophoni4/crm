@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   Bot,
+  FolderOpen,
+  CheckSquare,
   LayoutDashboard,
   MessageSquare,
   Phone,
@@ -72,6 +74,16 @@ const menuOptions = computed(() => {
     icon: () => h(NIcon, null, { default: () => h(Users) }),
   },
   {
+    label: 'Хранилище',
+    key: 'storage',
+    icon: () => h(NIcon, null, { default: () => h(FolderOpen) }),
+  },
+  {
+    label: 'Задачи',
+    key: 'tasks',
+    icon: () => h(NIcon, null, { default: () => h(CheckSquare) }),
+  },
+  {
     label: 'Dashboard',
     key: 'dashboard',
     icon: () => h(NIcon, null, { default: () => h(LayoutDashboard) }),
@@ -136,6 +148,8 @@ const menuOptions = computed(() => {
 const activeKey = computed(() => {
   if (route.name === 'chats') return 'chats'
   if (route.name === 'contacts' || route.name === 'contact-detail') return 'contacts'
+  if (route.name === 'storage') return 'storage'
+  if (route.name === 'tasks') return 'tasks'
   if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
   if (route.name === 'group-escalation') return 'group-escalation'
@@ -156,6 +170,16 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'contacts') {
     void router.push({ name: 'contacts' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'storage') {
+    void router.push({ name: 'storage' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'tasks') {
+    void router.push({ name: 'tasks' })
     emit('closeDrawer')
     return
   }

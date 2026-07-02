@@ -1,0 +1,1 @@
+"""Department task board."""

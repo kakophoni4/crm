@@ -463,6 +463,10 @@ async def insert_bot_message(
     else:
         await on_outbound_reply_to_client(session, chat_id)
 
+    from app.modules.storage.indexing import index_message_attachments
+
+    await index_message_attachments(session, message_id=message_id)
+
     return await _ingest_result_for_message(
         session,
         chat_id=chat_id,

@@ -24,6 +24,8 @@ _HEALTH_LOCK_KEY = "crm:bots:health_checks:scheduled"
 
 async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) -> None:
     from app.modules.leads.opt.queue import schedule_opt_submit_if_pending
+    from app.workers.jobs.purge_shares import purge_expired_share_links
+    from app.workers.jobs.task_reminders import task_due_reminders
     from app.workers.bots.health_check import schedule_all_health_checks
     from app.workers.escalation import escalation_scan
     from app.workers.jobs.purge_leads import LEAD_PURGE_JOB_TYPE, purge_expired_leads
@@ -39,6 +41,8 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     if acquired:
         await schedule_all_health_checks()
 
+    await purge_expired_share_links("purge_expired_share_links", {})
+    await task_due_reminders("task_due_reminders", {})
     await schedule_opt_submit_if_pending()
 
 

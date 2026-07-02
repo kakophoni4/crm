@@ -11,7 +11,10 @@ from app.modules.db.models.chat_read_state import ChatReadState
 from app.modules.db.models.chat_takeover import ChatTakeover
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.contact_field_change import ContactFieldChange
+from app.modules.db.models.file_share_link import FileShareLink
+from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
+from app.modules.db.models.department_task import DepartmentTask
 from app.modules.db.models.contact_group_transfer import ContactGroupTransfer
 from app.modules.db.models.department import Department
 from app.modules.db.models.enums import (
@@ -30,6 +33,7 @@ from app.modules.db.models.enums import (
     UserStatus,
 )
 from app.modules.db.models.group import Group
+from app.modules.db.models.group_chat_file import GroupChatFile
 from app.modules.db.models.group_escalation_settings import GroupEscalationSettings
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_comment import LeadComment
@@ -69,11 +73,15 @@ __all__ = [
     "ChatTakeover",
     "Contact",
     "ContactFieldChange",
+    "FileShareLink",
+    "FileVaultItem",
     "ContactGroupAssignment",
+    "DepartmentTask",
     "ContactGroupTransfer",
     "ContactStatus",
     "Department",
     "Group",
+    "GroupChatFile",
     "GroupEscalationSettings",
     "Lead",
     "LeadComment",

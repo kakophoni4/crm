@@ -121,6 +121,24 @@ class FileStorage:
         # Internal URL only — browsers must use /api/v1/chats/.../attachments/{idx}.
         return f"{_object_url(settings, key)}?expires={expires}"
 
+    async def delete_object(self, key: str) -> None:
+        settings = get_settings()
+        headers = _sign_aws4(
+            method="DELETE",
+            bucket=settings.s3_bucket_files,
+            key=key,
+            payload_hash=_EMPTY_PAYLOAD_HASH,
+            access_key=settings.s3_access_key,
+            secret_key=settings.s3_secret_key,
+            region=settings.s3_region,
+            endpoint=settings.s3_endpoint,
+        )
+        url = _object_url(settings, key)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.delete(url, headers=headers)
+            if response.status_code not in (200, 204, 404):
+                response.raise_for_status()
+
 
 _storage: FileStorage | None = None
 

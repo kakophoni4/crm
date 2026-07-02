@@ -23,6 +23,12 @@ BOT_HEALTH_CHANGED = "bot.health_changed"
 BOT_SIGNATURE_INVALID = "bot.signature_invalid"
 PRESENCE_USER_CHANGED = "presence.user.changed"
 
+TASK_CREATED = "task.created"
+TASK_UPDATED = "task.updated"
+TASK_DONE_PENDING = "task.done_pending"
+TASK_CONFIRMED = "task.confirmed"
+TASK_DUE_SOON = "task.due_soon"
+
 ADMIN_ONLY_TOPICS: frozenset[str] = frozenset(
     {
         BOT_HEALTH_CHANGED,
