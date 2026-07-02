@@ -14,6 +14,7 @@ class TaskCreateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=5000)
     task_type: TaskType = TaskType.NORMAL
     assignee_id: int = Field(gt=0)
+    department_id: int | None = Field(default=None, gt=0)
     due_at: datetime | None = None
 
 

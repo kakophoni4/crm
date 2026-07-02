@@ -145,17 +145,36 @@ class TaskService:
         items = await self._build_responses(rows)
         return TaskListResponse(items=items, total=len(items))
 
-    async def board(self, actor: User) -> TaskBoardResponse:
+    async def board(
+        self,
+        actor: User,
+        *,
+        department_id: int | None = None,
+    ) -> TaskBoardResponse:
         if not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Доска задач доступна старшему оператору")
         ctx = await self._ctx(actor)
-        dept_id = actor.department_id
-        if self._role(actor) == UserRole.ADMIN and dept_id is None:
-            raise ValidationError(message="Укажите отдел в профиле или используйте список задач")
-        if dept_id is None:
-            raise ValidationError(message="Отдел не назначен")
-        await self._ensure_department_access(ctx, dept_id)
-        rows = await self._repo.list_for_department(dept_id)
+        role = self._role(actor)
+        visible = visible_department_ids(ctx)
+
+        if role == UserRole.ADMIN:
+            if department_id is not None:
+                await self._ensure_department_access(ctx, department_id)
+                dept_ids: list[int] | None = [department_id]
+            elif visible == SCOPE_ALL:
+                dept_ids = None
+            else:
+                dept_ids = list(visible)
+        else:
+            dept_id = actor.department_id
+            if dept_id is None:
+                raise ValidationError(message="Отдел не назначен")
+            if department_id is not None and department_id != dept_id:
+                raise PermissionDenied(message="Нет доступа к доске этого отдела")
+            await self._ensure_department_access(ctx, dept_id)
+            dept_ids = [dept_id]
+
+        rows = await self._repo.list_for_departments(dept_ids)
         responses = await self._build_responses(rows)
         by_status: dict[str, list[TaskResponse]] = {
             TaskStatus.OPEN.value: [],
@@ -192,12 +211,25 @@ class TaskService:
         if not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Создавать задачи может только старший оператор")
         ctx = await self._ctx(actor)
-        dept_id = actor.department_id
-        if dept_id is None:
-            raise ValidationError(message="Отдел не назначен")
+        role = self._role(actor)
         assignee = await self._load_user(body.assignee_id)
-        if assignee.department_id != dept_id and self._role(actor) != UserRole.ADMIN:
+
+        dept_id = actor.department_id
+        if role == UserRole.ADMIN:
+            if body.department_id is not None:
+                dept_id = body.department_id
+                await self._ensure_department_access(ctx, dept_id)
+            elif dept_id is None:
+                dept_id = assignee.department_id
+                if dept_id is None:
+                    raise ValidationError(message="Укажите отдел или выберите исполнителя с отделом")
+        elif dept_id is None:
+            raise ValidationError(message="Отдел не назначен")
+
+        if assignee.department_id != dept_id and role != UserRole.ADMIN:
             raise ValidationError(message="Исполнитель должен быть из вашего отдела")
+        if role == UserRole.ADMIN and assignee.department_id is not None and assignee.department_id != dept_id:
+            raise ValidationError(message="Исполнитель должен быть из выбранного отдела")
         if not can_act_on_user(ctx, assignee.id):
             raise ValidationError(message="Нельзя назначить этого исполнителя")
         if body.task_type not in TaskType:

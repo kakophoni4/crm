@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.user import User
@@ -37,8 +37,9 @@ async def list_my_tasks(
 async def task_board(
     actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
     service: Annotated[TaskService, Depends(_service)],
+    department_id: Annotated[int | None, Query()] = None,
 ) -> TaskBoardResponse:
-    return await service.board(actor)
+    return await service.board(actor, department_id=department_id)
 
 
 @router.post("", status_code=201, response_model=TaskResponse)

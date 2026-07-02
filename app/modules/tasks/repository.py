@@ -35,14 +35,18 @@ class TaskRepository:
         self,
         department_id: int,
     ) -> list[DepartmentTask]:
-        result = await self._session.execute(
-            select(DepartmentTask)
-            .where(
-                DepartmentTask.department_id == department_id,
-                self._active_filter(),
-            )
-            .order_by(DepartmentTask.created_at.desc()),
-        )
+        return await self.list_for_departments([department_id])
+
+    async def list_for_departments(
+        self,
+        department_ids: list[int] | None,
+    ) -> list[DepartmentTask]:
+        stmt = select(DepartmentTask).where(self._active_filter())
+        if department_ids is not None:
+            if not department_ids:
+                return []
+            stmt = stmt.where(DepartmentTask.department_id.in_(department_ids))
+        result = await self._session.execute(stmt.order_by(DepartmentTask.created_at.desc()))
         return list(result.scalars().all())
 
     async def list_for_assignee(self, assignee_id: int) -> list[DepartmentTask]:

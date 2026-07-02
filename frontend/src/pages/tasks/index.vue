@@ -17,7 +17,7 @@ import {
 import { Check, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-import { listUsers, type AdminUser } from '@/features/admin/api'
+import { listDepartments, listUsers, type AdminUser, type Department } from '@/features/admin/api'
 import {
   completeTask,
   confirmTask,
@@ -50,11 +50,15 @@ const isManager = computed(
     auth.user?.permissions.includes('tasks.manage'),
 )
 
+const isAdmin = computed(() => auth.user?.role === 'admin')
+
 const loading = ref(false)
 const activeTab = ref(isManager.value ? 'board' : 'mine')
 const myTasks = ref<DepartmentTask[]>([])
 const board = ref<TaskBoard | null>(null)
 const deptUsers = ref<AdminUser[]>([])
+const departments = ref<Department[]>([])
+const selectedDeptId = ref<number | null>(null)
 
 const createOpen = ref(false)
 const createLoading = ref(false)
@@ -62,6 +66,7 @@ const formTitle = ref('')
 const formDescription = ref('')
 const formType = ref<TaskType>('normal')
 const formAssigneeId = ref<number | null>(null)
+const formDepartmentId = ref<number | null>(null)
 const formDueAt = ref<number | null>(null)
 
 const typeOptions = computed(() =>
@@ -78,6 +83,17 @@ const assigneeOptions = computed(() =>
     .filter((u) => u.role === 'user' && u.status === 'active')
     .map((u) => ({ label: u.full_name, value: u.id })),
 )
+
+const departmentOptions = computed(() => [
+  { label: 'Все отделы', value: null as number | null },
+  ...departments.value.map((d) => ({ label: d.name, value: d.id })),
+])
+
+const departmentMap = computed(() =>
+  Object.fromEntries(departments.value.map((d) => [d.id, d.name])),
+)
+
+const showAllDepartments = computed(() => isAdmin.value && selectedDeptId.value == null)
 
 function formatDue(iso: string | null): string {
   if (!iso) return 'Без срока'
@@ -104,7 +120,9 @@ async function loadBoard(): Promise<void> {
   if (!isManager.value) return
   loading.value = true
   try {
-    board.value = await getTaskBoard()
+    board.value = await getTaskBoard(
+      isAdmin.value && selectedDeptId.value != null ? selectedDeptId.value : undefined,
+    )
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить доску')
   } finally {
@@ -112,13 +130,41 @@ async function loadBoard(): Promise<void> {
   }
 }
 
-async function loadUsers(): Promise<void> {
-  if (!isManager.value || auth.user?.department_id == null) return
+async function loadDepartments(): Promise<void> {
+  if (!isAdmin.value) return
   try {
-    deptUsers.value = await listUsers({ department_id: auth.user.department_id })
+    departments.value = await listDepartments()
+  } catch {
+    departments.value = []
+  }
+}
+
+async function loadUsers(): Promise<void> {
+  if (!isManager.value) return
+  try {
+    const params: { department_id?: number } = {}
+    if (isAdmin.value) {
+      const deptId = formDepartmentId.value ?? selectedDeptId.value
+      if (deptId != null) params.department_id = deptId
+    } else if (auth.user?.department_id != null) {
+      params.department_id = auth.user.department_id
+    } else {
+      return
+    }
+    deptUsers.value = await listUsers(params)
   } catch {
     deptUsers.value = []
   }
+}
+
+async function onBoardDepartmentChange(deptId: number | null): Promise<void> {
+  selectedDeptId.value = deptId
+  await loadBoard()
+}
+
+async function onCreateDepartmentChange(): Promise<void> {
+  formAssigneeId.value = null
+  await loadUsers()
 }
 
 async function refresh(): Promise<void> {
@@ -130,13 +176,19 @@ function openCreate(): void {
   formDescription.value = ''
   formType.value = 'normal'
   formAssigneeId.value = null
+  formDepartmentId.value = isAdmin.value ? selectedDeptId.value : auth.user?.department_id ?? null
   formDueAt.value = null
   createOpen.value = true
+  void loadUsers()
 }
 
 async function submitCreate(): Promise<void> {
   if (!formTitle.value.trim() || formAssigneeId.value == null) {
     message.warning('Укажите название и исполнителя')
+    return
+  }
+  if (isAdmin.value && formDepartmentId.value == null) {
+    message.warning('Выберите отдел')
     return
   }
   createLoading.value = true
@@ -146,6 +198,7 @@ async function submitCreate(): Promise<void> {
       description: formDescription.value.trim() || null,
       task_type: formType.value,
       assignee_id: formAssigneeId.value,
+      department_id: isAdmin.value ? formDepartmentId.value ?? undefined : undefined,
       due_at: formDueAt.value ? new Date(formDueAt.value).toISOString() : null,
     })
     message.success('Задача создана')
@@ -201,6 +254,7 @@ async function onDelete(task: DepartmentTask): Promise<void> {
 let unsubTasks: (() => void) | null = null
 
 onMounted(async () => {
+  await loadDepartments()
   await loadUsers()
   await refresh()
   await connectTasksRealtime()
@@ -228,6 +282,15 @@ onUnmounted(() => {
 
       <NTabs v-model:value="activeTab" type="line" style="margin-top: 16px">
         <NTabPane v-if="isManager" name="board" tab="Доска отдела">
+          <div v-if="isAdmin" class="dept-filter">
+            <NSelect
+              :value="selectedDeptId"
+              :options="departmentOptions"
+              placeholder="Отдел"
+              style="max-width: 280px"
+              @update:value="onBoardDepartmentChange"
+            />
+          </div>
           <NSpin :show="loading">
             <div v-if="board" class="kanban">
               <div v-for="col in board.columns" :key="col.status" class="kanban-col">
@@ -242,6 +305,9 @@ onUnmounted(() => {
                   </div>
                   <p class="task-card-title">{{ task.title }}</p>
                   <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
+                  <p v-if="showAllDepartments" class="task-card-meta">
+                    Отдел: {{ departmentMap[task.department_id] ?? task.department_id }}
+                  </p>
                   <p class="task-card-meta">Исполнитель: {{ task.assignee?.full_name ?? '—' }}</p>
                   <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
                   <NSpace size="small" class="task-card-actions">
@@ -319,6 +385,14 @@ onUnmounted(() => {
         <NFormItem label="Тип" required>
           <NSelect v-model:value="formType" :options="typeOptions" />
         </NFormItem>
+        <NFormItem v-if="isAdmin" label="Отдел" required>
+          <NSelect
+            v-model:value="formDepartmentId"
+            :options="departments.map((d) => ({ label: d.name, value: d.id }))"
+            filterable
+            @update:value="onCreateDepartmentChange"
+          />
+        </NFormItem>
         <NFormItem label="Исполнитель" required>
           <NSelect v-model:value="formAssigneeId" :options="assigneeOptions" filterable />
         </NFormItem>
@@ -357,6 +431,10 @@ onUnmounted(() => {
   margin: 0;
   font-size: 1.125rem;
   font-weight: 600;
+}
+
+.dept-filter {
+  margin-bottom: 16px;
 }
 
 .kanban {

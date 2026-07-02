@@ -45,6 +45,7 @@ export interface TaskCreateBody {
   description?: string | null
   task_type: TaskType
   assignee_id: number
+  department_id?: number
   due_at?: string | null
 }
 

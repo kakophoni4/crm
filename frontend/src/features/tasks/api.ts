@@ -20,8 +20,10 @@ export async function listMyTasks(): Promise<{ items: DepartmentTask[]; total: n
   return data
 }
 
-export async function getTaskBoard(): Promise<TaskBoard> {
-  const { data } = await http.get<TaskBoard>('/tasks/board')
+export async function getTaskBoard(departmentId?: number): Promise<TaskBoard> {
+  const { data } = await http.get<TaskBoard>('/tasks/board', {
+    params: departmentId != null ? { department_id: departmentId } : undefined,
+  })
   return data
 }
 
