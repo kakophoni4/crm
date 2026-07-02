@@ -24,7 +24,7 @@ async def index_message_attachments(session: AsyncSession, *, message_id: int) -
         return
 
     contact = await session.get(Contact, chat.contact_id)
-    contact_name = contact.display_name if contact is not None else "Клиент"
+    contact_name = contact.full_name if contact is not None else "Клиент"
 
     sender_display_name: str
     sender_user_id: int | None = None

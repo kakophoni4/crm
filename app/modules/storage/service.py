@@ -325,7 +325,7 @@ class StorageService:
         if not chat_ids:
             return {}
         result = await self._session.execute(
-            select(Chat.id, Contact.display_name)
+            select(Chat.id, Contact.full_name)
             .join(Contact, Contact.id == Chat.contact_id)
             .where(Chat.id.in_(chat_ids)),
         )
