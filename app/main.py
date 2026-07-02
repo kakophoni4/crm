@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.modules.analytics.router import router as analytics_router
 from app.modules.auth.router import router as auth_router
@@ -173,6 +173,16 @@ def create_app() -> FastAPI:
         await refresh_redis_stream_gauges()
         body, content_type = render_metrics()
         return Response(content=body, media_type=content_type)
+
+    @app.get("/share")
+    async def redirect_public_share_upload() -> RedirectResponse:
+        base = settings.app_public_base_url.rstrip("/")
+        return RedirectResponse(url=f"{base}/share", status_code=307)
+
+    @app.get("/share/{token}")
+    async def redirect_public_share_download(token: str) -> RedirectResponse:
+        base = settings.app_public_base_url.rstrip("/")
+        return RedirectResponse(url=f"{base}/share/{token}", status_code=307)
 
     return app
 

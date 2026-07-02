@@ -24,6 +24,7 @@ patch_env() {
 
 echo "=== Patch deploy/.env.staging (bttsrvvrs.org + Caddy) ==="
 patch_env "CORS_ALLOWED_ORIGINS" "https://chat.bttsrvvrs.org"
+patch_env "APP_PUBLIC_BASE_URL" "https://chat.bttsrvvrs.org"
 patch_env "VITE_API_BASE_URL" "https://api.bttsrvvrs.org/api/v1"
 patch_env "VITE_WS_URL" "wss://api.bttsrvvrs.org/api/v1/ws"
 patch_env "PBX_DOMAIN" "pbx.bttsrvvrs.org"
