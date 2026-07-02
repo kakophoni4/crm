@@ -95,7 +95,7 @@ async function loadGroupFiles(): Promise<void> {
   }
   loading.value = true
   try {
-    const data = await listGroupFiles({ group_id: selectedGroupId.value, limit: 200 })
+    const data = await listGroupFiles({ group_id: selectedGroupId.value, limit: 100 })
     groupFiles.value = data.items
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить файлы чатов')
