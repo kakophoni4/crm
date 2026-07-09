@@ -17,6 +17,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Alembic defaults to version_num VARCHAR(32); our revision ids can be longer.
+    op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)")
     op.execute(
         """
         ALTER TABLE lead_opt_orders
