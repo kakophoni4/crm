@@ -134,7 +134,7 @@ function rowProps(row: Contact): Record<string, unknown> {
 const pagination = computed(() => ({
   page: pageIndex.value,
   pageSize: pageSize.value,
-  itemCount: rows.value.length + (nextCursor.value ? pageSize.value : 0),
+  pageCount: pageIndex.value + (nextCursor.value ? 1 : 0),
   pageSlot: 5,
   showSizePicker: true,
   pageSizes: [10, 20, 50],
