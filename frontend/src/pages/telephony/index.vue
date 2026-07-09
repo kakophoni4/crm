@@ -3,7 +3,9 @@ import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, UserPlus,
 import { NButton, NIcon, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
+import type { Contact } from '@/entities/contact/types'
 import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
 import {
   createTelephonyCall,
@@ -21,6 +23,7 @@ import { AppError } from '@/shared/api/http'
 import { normalizeRussianPhone } from '@/shared/lib/phone'
 
 const message = useMessage()
+const router = useRouter()
 
 const loading = ref(false)
 const historyLoading = ref(false)
@@ -137,6 +140,12 @@ function openContactModal(phone: string, departmentId?: number | null): void {
   contactModalPhone.value = normalizedPhone
   contactDepartmentId.value = departmentId ?? selectedAccount.value?.department_id ?? null
   contactModalVisible.value = true
+}
+
+function onTelephonyContactCreated(contact: Contact): void {
+  const chatId = contact.workspace?.chat_id
+  if (chatId == null) return
+  void router.push({ name: 'chats', query: { chatId: String(chatId) } })
 }
 
 function formatCallTime(value: string): string {
@@ -717,6 +726,7 @@ watch(status, (value) => {
       :department-id="contactDepartmentId"
       source="telephony"
       require-phone
+      @created="onTelephonyContactCreated"
     />
   </section>
 </template>

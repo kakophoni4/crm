@@ -14,12 +14,14 @@ const props = withDefaults(
     departmentId?: number | null
     source?: string
     requirePhone?: boolean
+    openWorkspace?: boolean
   }>(),
   {
     initialPhone: '',
     departmentId: null,
     source: 'manual',
     requirePhone: false,
+    openWorkspace: true,
   },
 )
 
@@ -88,6 +90,7 @@ async function submit(): Promise<void> {
       telegram_username: telegram || null,
       assigned_department_id: props.departmentId,
       source: props.source,
+      open_workspace: props.openWorkspace,
       custom_fields: props.source === 'telephony' ? { source: 'telephony' } : undefined,
     })
     message.success('Контакт создан')

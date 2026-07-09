@@ -47,10 +47,18 @@ async def test_create_contact_as_operator_visible_in_list(
             "full_name": "Operator Manual Contact",
             "phone": "+79001112233",
             "source": "manual",
+            "open_workspace": True,
         },
     )
     assert response.status_code == 201, response.text
-    contact_id = response.json()["id"]
+    body = response.json()
+    contact_id = body["id"]
+    workspace = body.get("workspace")
+    assert workspace is not None
+    assert workspace["chat_id"] > 0
+    assert workspace["lead_id"] > 0
+    assert workspace["created_chat"] is True
+    assert workspace["created_lead"] is True
 
     detail = await client.get(
         f"/api/v1/contacts/{contact_id}",

@@ -94,8 +94,17 @@ async def create_contact(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AuditedResult[dict[str, object]]:
     result = await service.create_contact(actor, body)
+    payload = to_contact_response(result.contact, actor=actor)
+    if result.workspace is not None:
+        payload["workspace"] = {
+            "chat_id": result.workspace.chat_id,
+            "lead_id": result.workspace.lead_id,
+            "group_id": result.workspace.group_id,
+            "created_chat": result.workspace.created_chat,
+            "created_lead": result.workspace.created_lead,
+        }
     return AuditedResult(
-        data=to_contact_response(result.contact, actor=actor),
+        data=payload,
         entity_id=result.contact.id,
         payload=result.audit_payload,
     )

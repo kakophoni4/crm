@@ -12,6 +12,7 @@ from app.modules.contacts.diff import audit_diff_payload, diff_snapshots, snapsh
 from app.modules.contacts.group_ownership import load_group_ownership
 from app.modules.contacts.linked_bots import load_contact_linked_bots
 from app.modules.contacts.ownership import ensure_manual_create_assignment
+from app.modules.contacts.workspace import ContactWorkspaceResult, ensure_offline_workspace
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.schemas import (
     AuditEntryResponse,
@@ -43,6 +44,7 @@ from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 class ContactMutationResult:
     contact: Contact
     audit_payload: dict[str, Any]
+    workspace: ContactWorkspaceResult | None = None
 
 
 class ContactService:
@@ -140,9 +142,19 @@ class ContactService:
             actor=actor,
             ctx=ctx,
         )
+        workspace: ContactWorkspaceResult | None = None
+        if body.open_workspace:
+            workspace = await ensure_offline_workspace(
+                self._session,
+                actor=actor,
+                ctx=ctx,
+                contact_id=created.id,
+                group_id=body.workspace_group_id,
+            )
         return ContactMutationResult(
             contact=created,
             audit_payload={"after": snapshot_contact(created)},
+            workspace=workspace,
         )
 
     async def update_contact(

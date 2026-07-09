@@ -19,7 +19,7 @@ import { CONTACT_STATUS_FILTER_OPTIONS, contactStatusLabel } from '@/entities/co
 import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
 import { listContacts } from '@/features/contacts/api'
 import { AppError } from '@/shared/api/http'
-import { invalidateContactsQueries, onContactsInvalidate } from '@/shared/lib/query-invalidation'
+import { invalidateChatsQueries, invalidateContactsQueries, onContactsInvalidate } from '@/shared/lib/query-invalidation'
 import AppCard from '@/shared/ui/AppCard.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -50,6 +50,12 @@ const canCreateContact = computed(
 
 function onContactCreated(contact: Contact): void {
   invalidateContactsQueries()
+  invalidateChatsQueries()
+  const chatId = contact.workspace?.chat_id
+  if (chatId != null) {
+    void router.push({ name: 'chats', query: { chatId: String(chatId) } })
+    return
+  }
   void router.push({ name: 'contact-detail', params: { id: contact.id } })
 }
 

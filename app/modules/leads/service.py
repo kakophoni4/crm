@@ -47,8 +47,9 @@ class LeadService:
         *,
         contact_id: int,
         group_id: int,
-        bot_id: int,
+        bot_id: int | None,
         chat_id: int,
+        source: str = "inbound",
     ) -> Lead:
         await self._repo.reopen_chat_if_closed(chat_id)
 
@@ -105,7 +106,7 @@ class LeadService:
                     "group_id": group_id,
                     "chat_id": chat_id,
                     "status_id": lead.status_id,
-                    "source": "inbound",
+                    "source": source,
                 },
                 scope=scope,
             )

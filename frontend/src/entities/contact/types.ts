@@ -46,6 +46,22 @@ export interface ContactBotLink {
 
 
 
+export interface ContactWorkspace {
+
+  chat_id: number
+
+  lead_id: number
+
+  group_id: number
+
+  created_chat: boolean
+
+  created_lead: boolean
+
+}
+
+
+
 export interface Contact {
 
   id: number
@@ -83,6 +99,8 @@ export interface Contact {
   linked_bots?: ContactBotLink[]
 
   crm_summary?: ContactCrmSummary
+
+  workspace?: ContactWorkspace
 
 }
 
@@ -136,6 +154,10 @@ export interface ContactCreateBody {
   assigned_department_id?: number | null
 
   source?: string | null
+
+  open_workspace?: boolean
+
+  workspace_group_id?: number | null
 
 }
 

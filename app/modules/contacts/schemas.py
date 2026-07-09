@@ -24,6 +24,8 @@ class ContactCreateRequest(BaseModel):
         return validate_custom_fields_map(value) or {}
     assigned_department_id: int | None = None
     source: str | None = None
+    open_workspace: bool = False
+    workspace_group_id: int | None = None
 
 
 class ContactUpdateRequest(BaseModel):
@@ -42,6 +44,14 @@ class ContactUpdateRequest(BaseModel):
     @classmethod
     def _validate_custom_fields_update(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return validate_custom_fields_map(value)
+
+
+class ContactWorkspaceResponse(BaseModel):
+    chat_id: int
+    lead_id: int
+    group_id: int
+    created_chat: bool
+    created_lead: bool
 
 
 class ContactResponse(BaseModel):
