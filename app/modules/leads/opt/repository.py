@@ -14,7 +14,11 @@ from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_unit import OptUnit
-from app.modules.leads.opt.pricing import compute_order_pricing, payment_status
+from app.modules.leads.opt.pricing import (
+    commission_base_from_breakdown,
+    compute_order_pricing,
+    payment_status,
+)
 
 
 class OptOrderRepository:
@@ -114,15 +118,33 @@ class OptOrderRepository:
     async def apply_pricing_snapshot(self, order: LeadOptOrder) -> None:
         inns = [line.supplier_inn for line in order.lines]
         units = await self.get_units_by_inns(inns)
-        total_volume, commission_due, breakdown = compute_order_pricing(order.lines, units)
+        total_volume, base_commission, breakdown = compute_order_pricing(order.lines, units)
+        adjustment = Decimal(str(order.commission_adjustment or 0))
+        commission_due = (base_commission + adjustment).quantize(Decimal("0.01"))
         order.total_volume = float(total_volume)
         order.commission_due = float(commission_due)
         order.volume_by_category = breakdown
         order.amount_paid = float(order.amount_paid or 0)
         order.payment_status = payment_status(
             Decimal(str(order.amount_paid)),
-            Decimal(str(order.commission_due)),
+            commission_due,
         )
+
+    async def apply_commission_adjustment(self, order: LeadOptOrder, *, delta: Decimal) -> None:
+        if delta == 0:
+            raise ValueError("delta must be non-zero")
+        current_adjustment = Decimal(str(order.commission_adjustment or 0))
+        new_adjustment = (current_adjustment + delta).quantize(Decimal("0.01"))
+        base_commission = commission_base_from_breakdown(order.volume_by_category)
+        if base_commission == 0:
+            base_commission = (
+                Decimal(str(order.commission_due or 0)) - current_adjustment
+            ).quantize(Decimal("0.01"))
+        new_due = (base_commission + new_adjustment).quantize(Decimal("0.01"))
+        amount_paid = Decimal(str(order.amount_paid or 0))
+        order.commission_adjustment = float(new_adjustment)
+        order.commission_due = float(new_due)
+        order.payment_status = payment_status(amount_paid, new_due)
 
     async def add_payment(
         self,

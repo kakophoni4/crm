@@ -51,3 +51,13 @@ def payment_status(amount_paid: Decimal, commission_due: Decimal) -> str:
     if amount_paid + Decimal("0.01") >= commission_due:
         return "paid"
     return "partial"
+
+
+def commission_base_from_breakdown(breakdown: dict[str, object] | None) -> Decimal:
+    total = Decimal("0")
+    if not isinstance(breakdown, dict):
+        return total
+    for row in breakdown.values():
+        if isinstance(row, dict):
+            total += Decimal(str(row.get("commission", 0)))
+    return total.quantize(Decimal("0.01"))

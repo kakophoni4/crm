@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.modules.leads.opt.pricing import compute_order_pricing, payment_status
+from app.modules.leads.opt.pricing import (
+    commission_base_from_breakdown,
+    compute_order_pricing,
+    payment_status,
+)
 from app.modules.leads.opt.tariffs import OPT_CATEGORY_TECH
 
 
@@ -26,3 +30,15 @@ def test_payment_status_partial_and_paid() -> None:
     assert payment_status(Decimal("0"), Decimal("100")) == "unpaid"
     assert payment_status(Decimal("40"), Decimal("100")) == "partial"
     assert payment_status(Decimal("100"), Decimal("100")) == "paid"
+
+
+def test_commission_base_from_breakdown() -> None:
+    breakdown = {
+        "TECH": {
+            "label": "Техника",
+            "volume": 100.0,
+            "rate_percent": 1.3,
+            "commission": 4091.78,
+        }
+    }
+    assert commission_base_from_breakdown(breakdown) == Decimal("4091.78")

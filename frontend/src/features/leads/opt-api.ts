@@ -37,6 +37,21 @@ export async function uploadOptFromChatAttachment(
   return data
 }
 
+export async function adjustOptOrderCommission(
+  leadId: number,
+  orderId: number,
+  body: {
+    amount: number
+    direction: 'increase' | 'decrease'
+  },
+): Promise<OptOrder> {
+  const { data } = await http.patch<OptOrder>(
+    `/leads/${leadId}/opt-orders/${orderId}/commission`,
+    body,
+  )
+  return data
+}
+
 export async function deleteOptOrder(leadId: number, orderId: number): Promise<void> {
   await http.delete(`/leads/${leadId}/opt-orders/${orderId}`)
 }

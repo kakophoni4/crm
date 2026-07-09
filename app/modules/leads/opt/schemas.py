@@ -48,6 +48,11 @@ class OptOrderPaymentCreateRequest(BaseModel):
     recipient: Literal["orange", "beneficiary"]
 
 
+class OptCommissionAdjustRequest(BaseModel):
+    amount: Decimal = Field(gt=0)
+    direction: Literal["increase", "decrease"]
+
+
 class OptOrderResponse(BaseModel):
     id: int
     lead_id: int
@@ -56,6 +61,8 @@ class OptOrderResponse(BaseModel):
     status: str
     payment_status: str
     total_volume: Decimal
+    commission_base: Decimal
+    commission_adjustment: Decimal
     commission_due: Decimal
     amount_paid: Decimal
     amount_remaining: Decimal

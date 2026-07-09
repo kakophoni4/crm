@@ -45,6 +45,11 @@ class LeadOptOrder(Base):
     payment_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unpaid")
     total_volume: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     commission_due: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
+    commission_adjustment: Mapped[float] = mapped_column(
+        Numeric(15, 2),
+        nullable=False,
+        server_default="0",
+    )
     amount_paid: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     volume_by_category: Mapped[dict[str, object]] = mapped_column(
         JSONB,

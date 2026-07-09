@@ -12,6 +12,7 @@ from app.modules.db.models.user import User
 from app.modules.leads.opt.schemas import (
     OptAttachmentProbeRequest,
     OptAttachmentProbeResponse,
+    OptCommissionAdjustRequest,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
     OptOrderResponse,
@@ -112,6 +113,20 @@ async def add_opt_order_payment(
     service: Annotated[OptOrderService, Depends(_service)],
 ) -> OptOrderResponse:
     return await service.add_payment(actor, lead_id, order_id, body)
+
+
+@router.patch(
+    "/leads/{lead_id}/opt-orders/{order_id}/commission",
+    response_model=OptOrderResponse,
+)
+async def adjust_opt_order_commission(
+    lead_id: int,
+    order_id: int,
+    body: OptCommissionAdjustRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptOrderResponse:
+    return await service.adjust_commission(actor, lead_id, order_id, body)
 
 
 @router.delete("/leads/{lead_id}/opt-orders/{order_id}")

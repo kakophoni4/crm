@@ -53,6 +53,8 @@ export interface OptOrder {
   status: 'queued' | 'submitting' | 'submitted' | 'failed' | string
   payment_status: 'unpaid' | 'partial' | 'paid' | string
   total_volume: number
+  commission_base: number
+  commission_adjustment: number
   commission_due: number
   amount_paid: number
   amount_remaining: number

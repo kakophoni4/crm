@@ -9,8 +9,10 @@ import {
   NFormItem,
   NInputNumber,
   NModal,
-  NPopconfirm,
+  NRadio,
+  NRadioGroup,
   NSelect,
+  NSpace,
   NSpin,
   NTag,
   NUpload,
@@ -21,6 +23,7 @@ import { computed, h, onUnmounted, ref, watch } from 'vue'
 
 import {
   addOptOrderPayment,
+  adjustOptOrderCommission,
   deleteOptOrder,
   downloadOptRegistry,
   listOptOrders,
@@ -59,7 +62,16 @@ const selectedOrderId = ref<number | null>(null)
 const previewOpen = ref(false)
 const sendPreviewOpen = ref(false)
 const paymentOpen = ref(false)
+const commissionOpen = ref(false)
+const deleteOpen = ref(false)
+const deleteStep = ref<1 | 2>(1)
+const deleteTarget = ref<OptOrder | null>(null)
 const savingPayment = ref(false)
+const savingCommission = ref(false)
+const commissionForm = ref({
+  direction: 'decrease' as 'increase' | 'decrease',
+  amount: null as number | null,
+})
 const paymentForm = ref({
   amount: null as number | null,
   paid_at: Date.now(),
@@ -87,6 +99,32 @@ const hasPendingSubmission = computed(() =>
 function canDeleteOrder(order: OptOrder): boolean {
   return order.status !== 'submitted' && order.payments.length === 0
 }
+
+function canAdjustCommission(order: OptOrder): boolean {
+  return order.payment_status !== 'paid'
+}
+
+function commissionBase(order: OptOrder): number {
+  if (order.commission_base != null) return order.commission_base
+  const adjustment = order.commission_adjustment ?? 0
+  return order.commission_due - adjustment
+}
+
+function commissionAdjustment(order: OptOrder): number {
+  return order.commission_adjustment ?? 0
+}
+
+const commissionPreviewDue = computed(() => {
+  const order = selectedOrder.value
+  if (!order || commissionForm.value.amount == null || commissionForm.value.amount <= 0) {
+    return null
+  }
+  const delta =
+    commissionForm.value.direction === 'increase'
+      ? commissionForm.value.amount
+      : -commissionForm.value.amount
+  return Math.max(0, order.commission_due + delta)
+})
 
 const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
   { title: '№', key: 'line_no', width: 44 },
@@ -274,14 +312,61 @@ async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
   }
 }
 
-async function onDelete(order: OptOrder): Promise<void> {
-  if (props.leadId == null || !canDeleteOrder(order)) return
+function openCommissionModal(order: OptOrder): void {
+  commissionForm.value = {
+    direction: 'decrease',
+    amount: null,
+  }
+  commissionOpen.value = true
+}
+
+async function onSaveCommission(): Promise<void> {
+  if (!selectedOrder.value || props.leadId == null) return
+  if (commissionForm.value.amount == null || commissionForm.value.amount <= 0) {
+    message.warning('Укажите сумму корректировки')
+    return
+  }
+  savingCommission.value = true
+  try {
+    const updated = await adjustOptOrderCommission(props.leadId, selectedOrder.value.id, {
+      amount: commissionForm.value.amount,
+      direction: commissionForm.value.direction,
+    })
+    orders.value = orders.value
+      .map((row) => (row.id === updated.id ? updated : row))
+      .sort((a, b) => a.order_no - b.order_no)
+    commissionOpen.value = false
+    emit('paymentsChanged')
+    message.success('Сумма к оплате обновлена')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось изменить сумму к оплате')
+  } finally {
+    savingCommission.value = false
+  }
+}
+
+function openDeleteModal(order: OptOrder): void {
+  deleteTarget.value = order
+  deleteStep.value = 1
+  deleteOpen.value = true
+}
+
+function closeDeleteModal(): void {
+  deleteOpen.value = false
+  deleteStep.value = 1
+  deleteTarget.value = null
+}
+
+async function onDelete(): Promise<void> {
+  const order = deleteTarget.value
+  if (props.leadId == null || order == null || !canDeleteOrder(order)) return
   deletingId.value = order.id
   try {
     await deleteOptOrder(props.leadId, order.id)
     orders.value = orders.value.filter((row) => row.id !== order.id)
     selectedOrderId.value = pickSelectedOrder(orders.value, null)
     if (!needsPolling.value) stopPolling()
+    closeDeleteModal()
     message.success(`Заявка ${order.order_no} удалена`)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось удалить заявку')
@@ -415,7 +500,16 @@ onUnmounted(() => {
             </div>
             <div>
               <dt>К оплате</dt>
-              <dd>{{ formatMoney(selectedOrder.commission_due) }} ₽</dd>
+              <dd>
+                {{ formatMoney(selectedOrder.commission_due) }} ₽
+                <span
+                  v-if="commissionAdjustment(selectedOrder) !== 0"
+                  class="opt-orders__adjustment"
+                >
+                  (база {{ formatMoney(commissionBase(selectedOrder)) }} ₽,
+                  {{ commissionAdjustment(selectedOrder) > 0 ? '+' : '' }}{{ formatMoney(commissionAdjustment(selectedOrder)) }} ₽)
+                </span>
+              </dd>
             </div>
             <div>
               <dt>Оплачено</dt>
@@ -524,24 +618,25 @@ onUnmounted(() => {
               Отправить клиенту
             </NButton>
 
-            <NPopconfirm
-              v-if="canDeleteOrder(selectedOrder)"
-              positive-text="Удалить"
-              negative-text="Отмена"
-              @positive-click="() => { if (selectedOrder) void onDelete(selectedOrder) }"
+            <NButton
+              v-if="canAdjustCommission(selectedOrder)"
+              size="small"
+              quaternary
+              @click="openCommissionModal(selectedOrder)"
             >
-              <template #trigger>
-                <NButton
-                  size="small"
-                  type="error"
-                  quaternary
-                  :loading="deletingId === selectedOrder.id"
-                >
-                  Удалить заявку
-                </NButton>
-              </template>
-              Удалить заявку {{ orderLabel(selectedOrder) }}? Это действие нельзя отменить.
-            </NPopconfirm>
+              Изменить к оплате
+            </NButton>
+
+            <NButton
+              v-if="canDeleteOrder(selectedOrder)"
+              size="small"
+              type="error"
+              quaternary
+              :loading="deletingId === selectedOrder.id"
+              @click="openDeleteModal(selectedOrder)"
+            >
+              Удалить заявку
+            </NButton>
           </div>
         </article>
       </template>
@@ -591,6 +686,92 @@ onUnmounted(() => {
             @click="selectedOrder && onSendToClient(selectedOrder)"
           >
             Отправить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="deleteOpen"
+      preset="card"
+      :title="deleteTarget ? `Удалить ${orderLabel(deleteTarget)}` : 'Удалить заявку'"
+      style="max-width: 460px"
+      @after-leave="closeDeleteModal"
+    >
+      <template v-if="deleteTarget">
+        <template v-if="deleteStep === 1">
+          <p class="opt-orders__preview-text">
+            Удалить заявку {{ orderLabel(deleteTarget) }} по сделке №{{ deleteTarget.lead_id }}?
+          </p>
+          <p class="opt-orders__meta">
+            Файл: {{ deleteTarget.source_filename || deleteTarget.crm_id }}
+          </p>
+        </template>
+        <template v-else>
+          <p class="opt-orders__preview-text">
+            Это действие необратимо. Заявка и все связанные строки будут удалены без восстановления.
+          </p>
+        </template>
+      </template>
+      <template #footer>
+        <div class="opt-orders__modal-footer">
+          <NButton @click="closeDeleteModal">Отмена</NButton>
+          <NButton v-if="deleteStep === 1" type="warning" @click="deleteStep = 2">
+            Продолжить
+          </NButton>
+          <NButton
+            v-else
+            type="error"
+            :loading="deleteTarget != null && deletingId === deleteTarget.id"
+            @click="void onDelete()"
+          >
+            Удалить безвозвратно
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="commissionOpen"
+      preset="card"
+      title="Изменить сумму к оплате"
+      style="max-width: 440px"
+    >
+      <template v-if="selectedOrder">
+        <p class="opt-orders__preview-text">
+          Базовая сумма: {{ formatMoney(commissionBase(selectedOrder)) }} ₽
+        </p>
+        <p v-if="commissionAdjustment(selectedOrder) !== 0" class="opt-orders__meta">
+          Текущая корректировка:
+          {{ commissionAdjustment(selectedOrder) > 0 ? '+' : '' }}{{ formatMoney(commissionAdjustment(selectedOrder)) }} ₽
+        </p>
+        <NForm label-placement="top">
+          <NFormItem label="Тип корректировки">
+            <NRadioGroup v-model:value="commissionForm.direction">
+              <NSpace>
+                <NRadio value="decrease">Скидка (−)</NRadio>
+                <NRadio value="increase">Штраф (+)</NRadio>
+              </NSpace>
+            </NRadioGroup>
+          </NFormItem>
+          <NFormItem label="Сумма">
+            <NInputNumber
+              v-model:value="commissionForm.amount"
+              :min="0.01"
+              :precision="2"
+              class="opt-orders__number"
+            />
+          </NFormItem>
+        </NForm>
+        <p v-if="commissionPreviewDue != null" class="opt-orders__preview-text">
+          К оплате станет: <strong>{{ formatMoney(commissionPreviewDue) }} ₽</strong>
+        </p>
+      </template>
+      <template #footer>
+        <div class="opt-orders__modal-footer">
+          <NButton @click="commissionOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="savingCommission" @click="onSaveCommission">
+            Применить
           </NButton>
         </div>
       </template>
@@ -812,6 +993,13 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.opt-orders__adjustment {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
 }
 
 .opt-orders__number {

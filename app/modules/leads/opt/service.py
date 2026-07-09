@@ -26,10 +26,12 @@ from app.modules.leads.opt.schemas import (
     OptOrderLineResponse,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
+    OptCommissionAdjustRequest,
     OptOrderResponse,
     OptPaymentResponse,
     OptVolumeCategoryBreakdown,
 )
+from app.modules.leads.opt.pricing import commission_base_from_breakdown
 from app.modules.leads.opt.vat import split_vat_included
 from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
@@ -99,6 +101,10 @@ class OptOrderService:
 
     def _to_response(self, order: LeadOptOrder) -> OptOrderResponse:
         commission_due = Decimal(str(order.commission_due or 0))
+        commission_adjustment = Decimal(str(order.commission_adjustment or 0))
+        commission_base = commission_base_from_breakdown(order.volume_by_category)
+        if commission_base == 0:
+            commission_base = (commission_due - commission_adjustment).quantize(Decimal("0.01"))
         amount_paid = Decimal(str(order.amount_paid or 0))
         remaining = max(Decimal("0"), commission_due - amount_paid).quantize(Decimal("0.01"))
         breakdown: dict[str, OptVolumeCategoryBreakdown] = {}
@@ -120,6 +126,8 @@ class OptOrderService:
             status=order.status,
             payment_status=order.payment_status or "unpaid",
             total_volume=Decimal(str(order.total_volume or 0)),
+            commission_base=commission_base,
+            commission_adjustment=commission_adjustment,
             commission_due=commission_due,
             amount_paid=amount_paid,
             amount_remaining=remaining,
@@ -185,6 +193,42 @@ class OptOrderService:
             recipient=body.recipient,
             created_by=actor.id,
         )
+        await self._session.commit()
+        refreshed = await self._repo.get_order(order.id)
+        assert refreshed is not None
+        return self._to_response(refreshed)
+
+    async def adjust_commission(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+        body: OptCommissionAdjustRequest,
+    ) -> OptOrderResponse:
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        if order.payment_status == "paid":
+            raise ValidationError(message="Нельзя менять сумму полностью оплаченной заявки")
+
+        current_adjustment = Decimal(str(order.commission_adjustment or 0))
+        base_commission = commission_base_from_breakdown(order.volume_by_category)
+        if base_commission == 0:
+            base_commission = (
+                Decimal(str(order.commission_due or 0)) - current_adjustment
+            ).quantize(Decimal("0.01"))
+
+        delta = body.amount if body.direction == "increase" else -body.amount
+        new_adjustment = (current_adjustment + delta).quantize(Decimal("0.01"))
+        new_due = (base_commission + new_adjustment).quantize(Decimal("0.01"))
+        amount_paid = Decimal(str(order.amount_paid or 0))
+
+        if new_due < 0:
+            raise ValidationError(message="Сумма к оплате не может быть отрицательной")
+        if new_due + Decimal("0.01") < amount_paid:
+            raise ValidationError(
+                message="Сумма к оплате не может быть меньше уже оплаченной суммы",
+            )
+
+        await self._repo.apply_commission_adjustment(order, delta=delta)
         await self._session.commit()
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
