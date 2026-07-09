@@ -13,7 +13,7 @@ import {
   NUpload,
   useMessage,
 } from 'naive-ui'
-import { Copy, Download, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
+import { Copy, Download, Eye, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
 import { computed, h, onMounted, ref } from 'vue'
 
 import {
@@ -36,6 +36,7 @@ import { AppError } from '@/shared/api/http'
 import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import AppCard from '@/shared/ui/AppCard.vue'
+import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
 const activeTab = ref('vault')
@@ -54,8 +55,10 @@ const sharePassword = ref('')
 const shareLoading = ref(false)
 
 const previewBlobUrl = ref<string | null>(null)
+const previewBlob = ref<Blob | null>(null)
 const previewName = ref('')
 const previewOpen = ref(false)
+const previewLoading = ref(false)
 
 const previewMime = ref('')
 const previewKind = computed(() =>
@@ -296,17 +299,45 @@ function copyText(text: string): void {
   message.success('Скопировано')
 }
 
-async function previewGroupFile(row: GroupChatFile): Promise<void> {
+function resetPreviewBlob(): void {
+  if (previewBlobUrl.value) URL.revokeObjectURL(previewBlobUrl.value)
+  previewBlobUrl.value = null
+  previewBlob.value = null
+}
+
+async function openPreview(
+  name: string,
+  mime: string,
+  load: () => Promise<Blob>,
+): Promise<void> {
+  resetPreviewBlob()
+  previewName.value = name
+  previewMime.value = mime || ''
+  previewOpen.value = true
+  previewLoading.value = true
   try {
-    const blob = await downloadGroupFile(row.id)
-    if (previewBlobUrl.value) URL.revokeObjectURL(previewBlobUrl.value)
+    const blob = await load()
+    previewBlob.value = blob
     previewBlobUrl.value = URL.createObjectURL(blob)
-    previewName.value = row.original_name
-    previewMime.value = row.mime_type || ''
-    previewOpen.value = true
   } catch (err) {
+    previewOpen.value = false
     message.error(err instanceof AppError ? err.message : 'Не удалось открыть файл')
+  } finally {
+    previewLoading.value = false
   }
+}
+
+function closePreview(): void {
+  previewOpen.value = false
+  resetPreviewBlob()
+}
+
+async function previewGroupFile(row: GroupChatFile): Promise<void> {
+  await openPreview(row.original_name, row.mime_type || '', () => downloadGroupFile(row.id))
+}
+
+async function previewVaultFile(row: VaultFile): Promise<void> {
+  await openPreview(row.original_name, row.mime_type || '', () => downloadVaultFile(row.id))
 }
 
 const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
@@ -337,9 +368,19 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
   {
     title: '',
     key: 'actions',
-    width: 260,
+    width: 300,
     render: (row) =>
       h(NSpace, { size: 4, wrap: false }, () => [
+        h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            title: 'Предпросмотр',
+            onClick: () => previewVaultFile(row),
+          },
+          { icon: () => h(Eye, { size: 14 }) },
+        ),
         h(
           NButton,
           {
@@ -591,28 +632,22 @@ onMounted(async () => {
       </template>
     </NModal>
 
-    <NModal v-model:show="previewOpen" preset="card" :title="previewName" style="width: 80vw">
-      <img
-        v-if="previewBlobUrl && previewKind === 'image'"
-        :src="previewBlobUrl"
-        class="preview-img"
-        :alt="previewName"
-      />
-      <iframe
-        v-else-if="previewBlobUrl && previewKind === 'pdf'"
-        :src="previewBlobUrl"
-        class="preview-frame"
-      />
-      <p v-else>Предпросмотр недоступен — скачайте файл из чата.</p>
-    </NModal>
+    <AttachmentPreviewModal
+      :open="previewOpen"
+      :loading="previewLoading"
+      :label="previewName"
+      :blob-url="previewBlobUrl"
+      :blob="previewBlob"
+      :preview-kind="previewKind"
+      @close="closePreview"
+    />
   </div>
 </template>
 
 <style scoped>
 .storage-page {
-  padding: 16px;
-  max-width: 1200px;
-  margin: 0 auto;
+  width: 100%;
+  padding-bottom: 16px;
 }
 
 .chat-block {
@@ -645,19 +680,6 @@ onMounted(async () => {
 .empty-hint {
   color: var(--app-text-muted);
   font-size: 0.8125rem;
-}
-
-.preview-img {
-  max-width: 100%;
-  max-height: 70vh;
-  display: block;
-  margin: 0 auto;
-}
-
-.preview-frame {
-  width: 100%;
-  height: 70vh;
-  border: none;
 }
 
 .editor-textarea :deep(textarea) {

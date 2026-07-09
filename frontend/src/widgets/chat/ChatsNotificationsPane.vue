@@ -10,6 +10,8 @@ import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directo
 import { playTransferInboxSound } from '@/shared/audio/transfer-inbox'
 import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 type FeedTopic =
   | 'message.replied.on_behalf'
   | 'contact.escalation.group_notify'
@@ -186,8 +188,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chats-notifications-pane">
-    <div class="chats-notifications-pane__head">
+  <div
+    class="chats-notifications-pane"
+    :class="{ 'chats-notifications-pane--embedded': embedded }"
+  >
+    <div v-if="!embedded" class="chats-notifications-pane__head">
       <strong class="chats-notifications-pane__title">Уведомления</strong>
     </div>
 
@@ -232,6 +237,20 @@ onUnmounted(() => {
   border-radius: 12px;
   background: var(--app-surface);
   box-sizing: border-box;
+}
+
+/* Встроенный режим: панель уже находится внутри правой колонки с вкладками,
+   поэтому убираем собственную рамку, фон и дублирующий заголовок. */
+.chats-notifications-pane--embedded {
+  flex: 1;
+  padding: 8px 12px 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.chats-notifications-pane--embedded .chats-notifications-pane__tabs {
+  margin-top: 0;
 }
 
 .chats-notifications-pane__title {

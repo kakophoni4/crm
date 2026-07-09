@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AccountingSupplierResponse(BaseModel):
@@ -20,12 +20,55 @@ class AccountingUnitResponse(BaseModel):
     kpp: str | None = None
     name: str | None = None
     category_code: str | None = None
+    commission_rate_percent: Decimal | None = None
     is_active: bool
 
 
 class AccountingUnitListResponse(BaseModel):
     items: list[AccountingUnitResponse]
     is_chief: bool
+
+
+class AccountingUnitCategoryOption(BaseModel):
+    code: str
+    label: str
+    base_rate_percent: Decimal | None = None
+
+
+class AccountingUnitCategoriesResponse(BaseModel):
+    items: list[AccountingUnitCategoryOption]
+
+
+class AccountingUnitCreateRequest(BaseModel):
+    inn: str = Field(min_length=10, max_length=12)
+    kpp: str = Field(min_length=9, max_length=9)
+    name: str = Field(min_length=1, max_length=512)
+    category_code: str = Field(min_length=1, max_length=16)
+    commission_rate_percent: Decimal = Field(ge=0, le=100)
+
+    @field_validator("inn")
+    @classmethod
+    def _validate_inn(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) not in (10, 12):
+            raise ValueError("ИНН должен содержать 10 или 12 цифр")
+        return cleaned
+
+    @field_validator("kpp")
+    @classmethod
+    def _validate_kpp(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) != 9:
+            raise ValueError("КПП должен содержать 9 цифр")
+        return cleaned
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Укажите название")
+        return cleaned
 
 
 class AccountingOrderLineBrief(BaseModel):

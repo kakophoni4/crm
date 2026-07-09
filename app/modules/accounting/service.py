@@ -21,6 +21,9 @@ from app.modules.accounting.schemas import (
     AccountingRequirementListResponse,
     AccountingRequirementResponse,
     AccountingSupplierResponse,
+    AccountingUnitCategoriesResponse,
+    AccountingUnitCategoryOption,
+    AccountingUnitCreateRequest,
     AccountingUnitListResponse,
     AccountingUnitOrderGroup,
     AccountingUnitOrderItem,
@@ -79,10 +82,71 @@ class AccountingService:
                     kpp=unit.kpp,
                     name=unit.name,
                     category_code=unit.category_code,
+                    commission_rate_percent=unit.commission_rate_percent,
                     is_active=unit.is_active,
                 )
                 for unit in visible
             ],
+        )
+
+    def list_categories(self) -> AccountingUnitCategoriesResponse:
+        from app.modules.leads.opt.tariffs import (
+            ALL_CATEGORY_CODES,
+            CATEGORY_BASE_RATE_PERCENT,
+            CATEGORY_LABELS,
+        )
+
+        return AccountingUnitCategoriesResponse(
+            items=[
+                AccountingUnitCategoryOption(
+                    code=code,
+                    label=CATEGORY_LABELS.get(code, code),
+                    base_rate_percent=CATEGORY_BASE_RATE_PERCENT.get(code),
+                )
+                for code in ALL_CATEGORY_CODES
+            ],
+        )
+
+    async def create_unit(
+        self,
+        actor: User,
+        body: AccountingUnitCreateRequest,
+    ) -> AccountingUnitResponse:
+        if not self._is_chief(actor):
+            raise PermissionDenied()
+
+        from app.modules.leads.opt.tariffs import ALL_CATEGORY_CODES
+
+        category_code = body.category_code.strip().upper()
+        if category_code not in ALL_CATEGORY_CODES:
+            raise ValidationError(
+                message="Неизвестный тип компании",
+                details={"category_code": category_code},
+            )
+
+        inn = body.inn.strip()
+        existing = await self._repo.get_unit_by_inn_any(inn)
+        if existing is not None:
+            raise ValidationError(message="Лавка с таким ИНН уже существует")
+
+        unit = OptUnit(
+            inn=inn,
+            kpp=body.kpp.strip(),
+            name=body.name.strip(),
+            category_code=category_code,
+            commission_rate_percent=body.commission_rate_percent,
+            is_active=True,
+        )
+        created = await self._repo.add_unit(unit)
+        await self._session.commit()
+        return AccountingUnitResponse(
+            id=created.id,
+            inn=created.inn,
+            kpp=created.kpp,
+            name=created.name,
+            category_code=created.category_code,
+            commission_rate_percent=created.commission_rate_percent,
+            is_active=created.is_active,
         )
 
     async def list_orders_by_units(
@@ -125,6 +189,9 @@ class AccountingService:
                     name=(unit_row.name if unit_row and unit_row.name else None)
                     or line.supplier_name,
                     category_code=unit_row.category_code if unit_row else None,
+                    commission_rate_percent=(
+                        unit_row.commission_rate_percent if unit_row else None
+                    ),
                     is_active=unit_row.is_active if unit_row else True,
                 )
             order_map = groups.setdefault(inn, {})

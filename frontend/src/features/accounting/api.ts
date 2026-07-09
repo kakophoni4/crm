@@ -2,6 +2,7 @@ import type {
   AccountingAccountantOption,
   AccountingRequirement,
   AccountingUnit,
+  AccountingUnitCategory,
   AccountingUnitOrderGroup,
   AccountingUnitOwnerRow,
 } from '@/features/accounting/types'
@@ -14,6 +15,28 @@ export async function listAccountingUnits(): Promise<{
   const { data } = await http.get<{ items: AccountingUnit[]; is_chief: boolean }>(
     '/accounting/units',
   )
+  return data
+}
+
+export async function listAccountingUnitCategories(): Promise<AccountingUnitCategory[]> {
+  const { data } = await http.get<{ items: AccountingUnitCategory[] }>(
+    '/accounting/units/categories',
+  )
+  return data.items
+}
+
+export interface CreateAccountingUnitPayload {
+  inn: string
+  kpp: string
+  name: string
+  category_code: string
+  commission_rate_percent: number
+}
+
+export async function createAccountingUnit(
+  payload: CreateAccountingUnitPayload,
+): Promise<AccountingUnit> {
+  const { data } = await http.post<AccountingUnit>('/accounting/units', payload)
   return data
 }
 

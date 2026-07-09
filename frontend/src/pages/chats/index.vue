@@ -35,7 +35,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
 
 import { useWindowSize } from '@vueuse/core'
-import { ArrowLeft, MessageSquare, X } from 'lucide-vue-next'
+import { ArrowLeft, ChevronLeft, ChevronRight, MessageSquare, X } from 'lucide-vue-next'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -100,6 +100,14 @@ const router = useRouter()
 const { width } = useWindowSize()
 const isNarrow = computed(() => width.value < CHATS_NARROW_BREAKPOINT)
 const narrowPane = ref<'list' | 'chat'>('list')
+
+const LIST_COLLAPSED_KEY = 'chats:listCollapsed'
+const listCollapsed = ref(localStorage.getItem(LIST_COLLAPSED_KEY) === '1')
+
+function toggleListCollapsed(): void {
+  listCollapsed.value = !listCollapsed.value
+  localStorage.setItem(LIST_COLLAPSED_KEY, listCollapsed.value ? '1' : '0')
+}
 
 const message = useMessage()
 const chatListSearchRef = ref<InstanceType<typeof NInput> | null>(null)
@@ -417,10 +425,23 @@ onUnmounted(() => {
         'chats-page__split--show-list': isNarrow && narrowPane === 'list',
         'chats-page__split--show-chat': isNarrow && narrowPane === 'chat',
         'chats-page__split--deal-open': Boolean(store.currentChat) && !isNarrow,
+        'chats-page__split--list-collapsed': listCollapsed && !isNarrow,
       }"
     >
 
-      <aside class="chats-page__list-pane">
+      <button
+        v-if="listCollapsed && !isNarrow"
+        type="button"
+        class="chats-page__list-rail"
+        title="Развернуть список чатов"
+        aria-label="Развернуть список чатов"
+        @click="toggleListCollapsed"
+      >
+        <ChevronRight :size="18" />
+      </button>
+
+
+      <aside v-if="!(listCollapsed && !isNarrow)" class="chats-page__list-pane">
 
         <div class="chats-page__list-toolbar">
           <NTabs
@@ -450,6 +471,16 @@ onUnmounted(() => {
               @click="transferInboxOpen = true"
             >
               Уведомления
+            </NButton>
+            <NButton
+              v-if="!isNarrow"
+              quaternary
+              size="small"
+              title="Свернуть список чатов"
+              aria-label="Свернуть список чатов"
+              @click="toggleListCollapsed"
+            >
+              <template #icon><ChevronLeft :size="16" /></template>
             </NButton>
           </NSpace>
         </div>
@@ -746,7 +777,7 @@ onUnmounted(() => {
           :won-status-id="wonStatusId"
           :lost-status-id="lostStatusId"
         />
-        <ChatsNotificationsPane v-else />
+        <ChatsNotificationsPane v-else :embedded="!!store.currentChat" />
       </aside>
 
     </div>
@@ -821,6 +852,7 @@ onUnmounted(() => {
 
 .chats-page__list-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
@@ -828,17 +860,31 @@ onUnmounted(() => {
 }
 
 .chats-page__list-toolbar .chats-page__tabs {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
   margin-bottom: 0;
 }
 
 .chats-page__list-actions {
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .chats-page__tabs {
   margin-bottom: 12px;
+}
+
+/* Узкая колонка списка: не даём длинным подписям наезжать друг на друга. */
+.chats-page__tabs :deep(.n-tabs-tab) {
+  font-size: 0.75rem;
+  padding-left: 6px;
+  padding-right: 6px;
+  white-space: nowrap;
+}
+
+.chats-page__tabs :deep(.n-tabs-tab .n-tabs-tab__label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 
@@ -867,10 +913,36 @@ onUnmounted(() => {
   grid-template-columns: minmax(240px, 280px) 1fr minmax(340px, 400px);
 }
 
+.chats-page__split--list-collapsed {
+  grid-template-columns: 40px 1fr minmax(320px, 360px);
+}
+
+.chats-page__split--list-collapsed.chats-page__split--deal-open {
+  grid-template-columns: 40px 1fr minmax(340px, 400px);
+}
+
+.chats-page__list-rail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12px;
+  border: none;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chats-page__list-rail:hover {
+  background: var(--app-surface-elevated);
+  color: var(--app-accent);
+}
+
 .chats-page__split--deal-open .chats-page__tabs :deep(.n-tabs-tab) {
   font-size: 0.75rem;
-  padding-left: 8px;
-  padding-right: 8px;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .chats-page__contact-link,

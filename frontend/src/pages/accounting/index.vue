@@ -6,7 +6,11 @@ import {
   NCollapseItem,
   NDataTable,
   NEmpty,
+  NForm,
+  NFormItem,
   NInput,
+  NInputNumber,
+  NModal,
   NPagination,
   NSelect,
   NSpin,
@@ -15,15 +19,17 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Calculator, Download, Eye, RefreshCw } from 'lucide-vue-next'
+import { Calculator, Download, Eye, Plus, RefreshCw } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
   assignAccountingUnitOwner,
+  createAccountingUnit,
   downloadAccountingRegistry,
   downloadRequirementPdf,
   listAccountingOrders,
   listAccountingRequirements,
+  listAccountingUnitCategories,
   listAccountingUnitOwners,
   listAccountingUnits,
   saveBlob,
@@ -32,6 +38,7 @@ import type {
   AccountingOrderLineBrief,
   AccountingRequirement,
   AccountingUnit,
+  AccountingUnitCategory,
   AccountingUnitOrder,
   AccountingUnitOrderGroup,
   AccountingUnitOwnerRow,
@@ -69,6 +76,83 @@ const reqSearch = ref('')
 const unitOwners = ref<AccountingUnitOwnerRow[]>([])
 const accountantOptions = ref<SelectOption[]>([])
 const savingUnitId = ref<number | null>(null)
+
+const categories = ref<AccountingUnitCategory[]>([])
+const categoryOptions = computed<SelectOption[]>(() =>
+  categories.value.map((cat) => ({
+    label:
+      cat.base_rate_percent != null
+        ? `${cat.label} · базовая ${cat.base_rate_percent}%`
+        : cat.label,
+    value: cat.code,
+  })),
+)
+
+interface CreateUnitForm {
+  inn: string
+  kpp: string
+  name: string
+  category_code: string | null
+  commission_rate_percent: number | null
+}
+
+function emptyCreateForm(): CreateUnitForm {
+  return { inn: '', kpp: '', name: '', category_code: null, commission_rate_percent: null }
+}
+
+const createOpen = ref(false)
+const createSaving = ref(false)
+const createForm = ref<CreateUnitForm>(emptyCreateForm())
+
+function openCreateUnit(): void {
+  createForm.value = emptyCreateForm()
+  createOpen.value = true
+}
+
+async function submitCreateUnit(): Promise<void> {
+  const form = createForm.value
+  const inn = form.inn.trim()
+  const kpp = form.kpp.trim()
+  const name = form.name.trim()
+  if (!/^\d{10}$|^\d{12}$/.test(inn)) {
+    message.warning('ИНН должен содержать 10 или 12 цифр')
+    return
+  }
+  if (!/^\d{9}$/.test(kpp)) {
+    message.warning('КПП должен содержать 9 цифр')
+    return
+  }
+  if (!name) {
+    message.warning('Укажите название лавки')
+    return
+  }
+  if (!form.category_code) {
+    message.warning('Выберите тип компании')
+    return
+  }
+  if (form.commission_rate_percent == null || form.commission_rate_percent < 0) {
+    message.warning('Укажите процент')
+    return
+  }
+  createSaving.value = true
+  try {
+    await createAccountingUnit({
+      inn,
+      kpp,
+      name,
+      category_code: form.category_code,
+      commission_rate_percent: form.commission_rate_percent,
+    })
+    message.success('Лавка добавлена')
+    createOpen.value = false
+    await loadUnits()
+    if (isChief.value) await loadUnitOwners()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось добавить лавку')
+  } finally {
+    createSaving.value = false
+  }
+}
 
 const downloadingRegistryId = ref<number | null>(null)
 const downloadingReqId = ref<number | null>(null)
@@ -434,8 +518,16 @@ watch([requirementsPage, reqSupplierInn], () => {
   if (activeTab.value === 'requirements') void loadRequirements()
 })
 
+async function loadCategories(): Promise<void> {
+  try {
+    categories.value = await listAccountingUnitCategories()
+  } catch {
+    categories.value = []
+  }
+}
+
 onMounted(async () => {
-  await refreshAll()
+  await Promise.all([refreshAll(), loadCategories()])
 })
 
 onUnmounted(() => {
@@ -450,12 +542,20 @@ onUnmounted(() => {
         <Calculator :size="22" />
         Бухгалтерия
       </h1>
-      <NButton :loading="loading" @click="refreshAll">
-        <template #icon>
-          <RefreshCw :size="16" />
-        </template>
-        Обновить
-      </NButton>
+      <div class="accounting-page__header-actions">
+        <NButton v-if="isChief" type="primary" @click="openCreateUnit">
+          <template #icon>
+            <Plus :size="16" />
+          </template>
+          Добавить лавку
+        </NButton>
+        <NButton :loading="loading" @click="refreshAll">
+          <template #icon>
+            <RefreshCw :size="16" />
+          </template>
+          Обновить
+        </NButton>
+      </div>
     </header>
 
     <AppCard>
@@ -588,6 +688,63 @@ onUnmounted(() => {
       preview-kind="spreadsheet"
       @close="closeRegistryPreview"
     />
+
+    <NModal
+      v-model:show="createOpen"
+      preset="card"
+      title="Новая лавка"
+      style="width: 480px; max-width: 92vw"
+    >
+      <NForm label-placement="top" @submit.prevent="submitCreateUnit">
+        <NFormItem label="ИНН" required>
+          <NInput
+            v-model:value="createForm.inn"
+            placeholder="10 или 12 цифр"
+            :allow-input="(v: string) => /^\d*$/.test(v)"
+            maxlength="12"
+          />
+        </NFormItem>
+        <NFormItem label="КПП" required>
+          <NInput
+            v-model:value="createForm.kpp"
+            placeholder="9 цифр"
+            :allow-input="(v: string) => /^\d*$/.test(v)"
+            maxlength="9"
+          />
+        </NFormItem>
+        <NFormItem label="Название" required>
+          <NInput v-model:value="createForm.name" placeholder="Название лавки" />
+        </NFormItem>
+        <NFormItem label="Тип компании" required>
+          <NSelect
+            v-model:value="createForm.category_code"
+            :options="categoryOptions"
+            placeholder="Выберите тип"
+          />
+        </NFormItem>
+        <NFormItem label="Процент комиссии" required>
+          <NInputNumber
+            v-model:value="createForm.commission_rate_percent"
+            :min="0"
+            :max="100"
+            :precision="2"
+            :step="0.1"
+            placeholder="Например, 2.7"
+            style="width: 100%"
+          >
+            <template #suffix>%</template>
+          </NInputNumber>
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <div class="accounting-page__modal-actions">
+          <NButton @click="createOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="createSaving" @click="submitCreateUnit">
+            Добавить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>
 
@@ -604,6 +761,19 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.accounting-page__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accounting-page__modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .accounting-page__title {

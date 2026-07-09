@@ -11,7 +11,14 @@ export interface AccountingUnit {
   kpp?: string | null
   name?: string | null
   category_code?: string | null
+  commission_rate_percent?: number | null
   is_active: boolean
+}
+
+export interface AccountingUnitCategory {
+  code: string
+  label: string
+  base_rate_percent?: number | null
 }
 
 export interface AccountingOrderLineBrief {

@@ -13,11 +13,14 @@ from app.modules.accounting.schemas import (
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
+    AccountingUnitCategoriesResponse,
+    AccountingUnitCreateRequest,
     AccountingUnitListResponse,
     AccountingUnitOrdersResponse,
     AccountingUnitOwnerListResponse,
     AccountingUnitOwnerRow,
     AccountingUnitOwnerUpdateRequest,
+    AccountingUnitResponse,
 )
 from app.modules.accounting.service import AccountingService
 from app.modules.db.models.user import User
@@ -52,6 +55,23 @@ async def list_accounting_units(
     service: Annotated[AccountingService, Depends(_service)],
 ) -> AccountingUnitListResponse:
     return await service.list_units(actor)
+
+
+@router.get("/units/categories", response_model=AccountingUnitCategoriesResponse)
+async def list_accounting_unit_categories(
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingUnitCategoriesResponse:
+    return service.list_categories()
+
+
+@router.post("/units", response_model=AccountingUnitResponse)
+async def create_accounting_unit(
+    body: AccountingUnitCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingUnitResponse:
+    return await service.create_unit(actor, body)
 
 
 @router.get("/orders", response_model=AccountingUnitOrdersResponse)

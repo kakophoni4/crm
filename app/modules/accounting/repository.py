@@ -299,3 +299,15 @@ class AccountingRepository:
             select(OptUnit).where(OptUnit.inn == inn, OptUnit.is_active.is_(True)),
         )
         return result.scalar_one_or_none()
+
+    async def get_unit_by_inn_any(self, inn: str) -> OptUnit | None:
+        result = await self._session.execute(
+            select(OptUnit).where(OptUnit.inn == inn),
+        )
+        return result.scalar_one_or_none()
+
+    async def add_unit(self, unit: OptUnit) -> OptUnit:
+        self._session.add(unit)
+        await self._session.flush()
+        await self._session.refresh(unit)
+        return unit

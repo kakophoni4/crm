@@ -21,6 +21,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { listTelephonyAccounts } from '@/features/telephony/api'
 import { useAuthStore } from '@/shared/store/auth'
 import { useThemeStore, type ThemePreference } from '@/shared/store/theme'
+import BrandMark from './BrandMark.vue'
 
 defineProps<{
   collapsed: boolean
@@ -288,7 +289,9 @@ watch(
   >
     <NDrawerContent body-content-style="padding: 0">
       <div class="app-sidebar app-sidebar--drawer">
-        <div class="app-sidebar__brand">ХУИтРИКС</div>
+        <div class="app-sidebar__brand">
+          <BrandMark />
+        </div>
         <NMenu
           :value="activeKey"
           :options="menuOptions"
@@ -320,7 +323,9 @@ watch(
     @collapse="emit('toggle')"
     @expand="emit('toggle')"
   >
-    <div class="app-sidebar__brand">ХУИтРИКС</div>
+    <div class="app-sidebar__brand" :class="{ 'app-sidebar__brand--collapsed': collapsed }">
+      <BrandMark :collapsed="collapsed" />
+    </div>
     <NMenu :value="activeKey" :options="menuOptions" @update:value="onMenuUpdate" />
     <div class="app-sidebar__theme">
       <span class="app-sidebar__theme-label">Тема</span>
@@ -341,10 +346,17 @@ watch(
 }
 
 .app-sidebar__brand {
-  padding: 16px 20px;
-  font-weight: 700;
-  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  height: var(--app-topbar-height);
+  padding: 0 16px;
   border-bottom: 1px solid var(--app-border);
+  overflow: hidden;
+}
+
+.app-sidebar__brand--collapsed {
+  padding: 0;
+  justify-content: center;
 }
 
 .app-sidebar__theme {

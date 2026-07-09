@@ -413,9 +413,10 @@ watch(
         ref="textareaRef"
         v-model="text"
         class="message-input__textarea"
-        rows="2"
+        rows="1"
         :disabled="disabled"
-        :placeholder="placeholder ?? 'Сообщение… (Enter — отправить, Shift+Enter — новая строка)'"
+        :placeholder="placeholder ?? 'Сообщение…'"
+        title="Enter — отправить, Shift+Enter — новая строка"
         aria-label="Текст сообщения"
         @keydown="onKeydown"
         @paste="onPaste"
@@ -448,7 +449,7 @@ watch(
 .message-input--drag-over {
   outline: 2px dashed var(--app-accent);
   outline-offset: -4px;
-  background: var(--app-accent-soft, #e8f3ff);
+  background: var(--app-accent-soft);
 }
 
 .message-input--disabled {
@@ -465,7 +466,7 @@ watch(
   padding: 7px 9px;
   border-left: 3px solid var(--app-accent);
   border-radius: 8px;
-  background: var(--app-surface-elevated, #eee);
+  background: var(--app-surface-elevated);
 }
 
 .message-input__reply-body {
@@ -516,7 +517,7 @@ watch(
   font-size: 0.8rem;
   padding: 2px 8px;
   border-radius: var(--app-control-radius, 8px);
-  background: var(--app-surface-elevated, #eee);
+  background: var(--app-surface-elevated);
 }
 
 .message-input__file-remove {
@@ -546,7 +547,7 @@ watch(
   padding: 10px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
-  background: var(--app-surface-elevated, #f4f4f5);
+  background: var(--app-surface-elevated);
 }
 
 .message-input__quick-replies-head {
@@ -626,7 +627,7 @@ watch(
 
 .message-input__quick-delete:hover {
   color: var(--app-danger);
-  background: rgba(208, 48, 80, 0.12);
+  background: var(--app-danger-soft);
 }
 
 .message-input__quick-input,
@@ -660,17 +661,16 @@ watch(
   display: block;
   width: 100%;
   min-width: 0;
-  min-height: 56px;
+  min-height: 42px;
   max-height: 160px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-control-radius, 8px);
-  background: var(--app-surface-elevated, #f4f4f5);
+  background: var(--app-surface-elevated);
   color: var(--app-text);
   font: inherit;
-  font-family: inherit, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
-  line-height: 1.5;
+  line-height: 1.4;
   resize: vertical;
   box-sizing: border-box;
 }
@@ -682,7 +682,7 @@ watch(
 .message-input__textarea:focus {
   outline: none;
   border-color: var(--app-accent);
-  box-shadow: 0 0 0 2px var(--app-accent-soft, rgba(32, 128, 240, 0.2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 22%, transparent);
 }
 
 .message-input__textarea:disabled {

@@ -556,9 +556,8 @@ onUnmounted(() => {
 
 <style scoped>
 .tasks-page {
-  padding: 16px;
-  max-width: 1280px;
-  margin: 0 auto;
+  width: 100%;
+  padding-bottom: 16px;
 }
 
 .tasks-header {
