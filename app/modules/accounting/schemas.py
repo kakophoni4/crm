@@ -28,6 +28,48 @@ class AccountingUnitListResponse(BaseModel):
     is_chief: bool
 
 
+class AccountingOrderLineBrief(BaseModel):
+    line_id: int
+    line_no: int
+    document_date: date
+    amount: Decimal
+    document_number: str | None = None
+
+
+class AccountingUnitOrderItem(BaseModel):
+    order_id: int
+    lead_id: int
+    order_no: int
+    crm_id: str
+    status: str
+    payment_status: str
+    amount_paid: Decimal
+    commission_due: Decimal
+    lavka_line_volume: Decimal
+    line_count: int
+    lines: list[AccountingOrderLineBrief] = Field(default_factory=list)
+    buyer_inn: str
+    buyer_name: str | None = None
+    source_filename: str | None = None
+    manager_user_id: int | None = None
+    manager_full_name: str | None = None
+    contact_name: str | None = None
+    submitted_at: datetime | None = None
+    created_at: datetime
+
+
+class AccountingUnitOrderGroup(BaseModel):
+    unit: AccountingUnitResponse
+    orders: list[AccountingUnitOrderItem] = Field(default_factory=list)
+
+
+class AccountingUnitOrdersResponse(BaseModel):
+    items: list[AccountingUnitOrderGroup]
+    total: int
+    limit: int
+    offset: int
+
+
 class AccountingOrderLineItem(BaseModel):
     line_id: int
     line_no: int
@@ -118,3 +160,26 @@ class AccountingAssignmentListResponse(BaseModel):
 
 class AccountingAssignmentUpdateRequest(BaseModel):
     unit_ids: list[int] = Field(default_factory=list)
+
+
+class AccountingAccountantOption(BaseModel):
+    user_id: int
+    full_name: str
+
+
+class AccountingUnitOwnerRow(BaseModel):
+    unit_id: int
+    inn: str
+    name: str | None = None
+    category_code: str | None = None
+    accountant_user_id: int | None = None
+    accountant_full_name: str | None = None
+
+
+class AccountingUnitOwnerListResponse(BaseModel):
+    items: list[AccountingUnitOwnerRow]
+    accountants: list[AccountingAccountantOption]
+
+
+class AccountingUnitOwnerUpdateRequest(BaseModel):
+    accountant_user_id: int | None = None

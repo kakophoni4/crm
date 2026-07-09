@@ -2,7 +2,10 @@
 import type { DataTableColumns, SelectOption } from 'naive-ui'
 import {
   NButton,
+  NCollapse,
+  NCollapseItem,
   NDataTable,
+  NEmpty,
   NInput,
   NPagination,
   NSelect,
@@ -16,24 +19,26 @@ import { Calculator, Download, RefreshCw } from 'lucide-vue-next'
 import { computed, h, onMounted, ref, watch } from 'vue'
 
 import {
+  assignAccountingUnitOwner,
   downloadAccountingRegistry,
   downloadRequirementPdf,
-  listAccountingAssignments,
   listAccountingOrders,
   listAccountingRequirements,
+  listAccountingUnitOwners,
   listAccountingUnits,
   saveBlob,
-  updateAccountingAssignments,
 } from '@/features/accounting/api'
 import type {
-  AccountingAssignment,
-  AccountingOrderLine,
   AccountingRequirement,
   AccountingUnit,
+  AccountingUnitOrder,
+  AccountingUnitOrderGroup,
+  AccountingUnitOwnerRow,
 } from '@/features/accounting/types'
 import {
-  OPT_PAYMENT_STATUS_LABELS,
   OPT_STATUS_LABELS,
+  formatAccountingMoney,
+  formatAccountingPayment,
 } from '@/features/accounting/types'
 import { AppError } from '@/shared/api/http'
 import AppCard from '@/shared/ui/AppCard.vue'
@@ -42,41 +47,36 @@ const message = useMessage()
 
 const loading = ref(false)
 const activeTab = ref('orders')
-const units = ref<AccountingUnit[]>([])
 const isChief = ref(false)
-const assignments = ref<AccountingAssignment[]>([])
+const units = ref<AccountingUnit[]>([])
 
-const orders = ref<AccountingOrderLine[]>([])
+const orderGroups = ref<AccountingUnitOrderGroup[]>([])
 const ordersTotal = ref(0)
 const ordersPage = ref(1)
-const ordersPageSize = 50
+const ordersPageSize = 20
 const orderSupplierInn = ref<string | null>(null)
 const orderStatus = ref<string | null>(null)
 const orderSearch = ref('')
+const expandedLavki = ref<string[]>([])
 
 const requirements = ref<AccountingRequirement[]>([])
 const requirementsTotal = ref(0)
 const requirementsPage = ref(1)
 const requirementsPageSize = 50
 const reqSupplierInn = ref<string | null>(null)
-const reqStatus = ref<string | null>(null)
 const reqSearch = ref('')
+
+const unitOwners = ref<AccountingUnitOwnerRow[]>([])
+const accountantOptions = ref<SelectOption[]>([])
+const savingUnitId = ref<number | null>(null)
 
 const downloadingRegistryId = ref<number | null>(null)
 const downloadingReqId = ref<number | null>(null)
-const savingAssignmentUserId = ref<number | null>(null)
 
 const unitOptions = computed<SelectOption[]>(() =>
   units.value.map((unit) => ({
     label: unit.name ? `${unit.name} (${unit.inn})` : unit.inn,
     value: unit.inn,
-  })),
-)
-
-const unitIdOptions = computed<SelectOption[]>(() =>
-  units.value.map((unit) => ({
-    label: unit.name ? `${unit.name} (${unit.inn})` : unit.inn,
-    value: unit.id,
   })),
 )
 
@@ -88,21 +88,13 @@ const orderStatusOptions: SelectOption[] = [
   { label: 'Черновик', value: 'draft' },
 ]
 
-function formatMoney(value: number): string {
-  return new Intl.NumberFormat('ru-RU', {
-    style: 'currency',
-    currency: 'RUB',
-    maximumFractionDigits: 2,
-  }).format(value)
-}
-
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—'
   return new Date(value).toLocaleString('ru-RU')
 }
 
-function supplierLabel(supplier: { inn: string; name?: string | null }): string {
-  return supplier.name ? `${supplier.name} · ${supplier.inn}` : supplier.inn
+function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
+  return unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
 }
 
 async function loadUnits(): Promise<void> {
@@ -121,8 +113,11 @@ async function loadOrders(): Promise<void> {
       limit: ordersPageSize,
       offset: (ordersPage.value - 1) * ordersPageSize,
     })
-    orders.value = data.items
+    orderGroups.value = data.items
     ordersTotal.value = data.total
+    if (expandedLavki.value.length === 0 && data.items.length > 0) {
+      expandedLavki.value = [data.items[0].unit.inn]
+    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
   } finally {
@@ -135,7 +130,6 @@ async function loadRequirements(): Promise<void> {
   try {
     const data = await listAccountingRequirements({
       supplier_inn: reqSupplierInn.value || undefined,
-      status: reqStatus.value || undefined,
       q: reqSearch.value.trim() || undefined,
       limit: requirementsPageSize,
       offset: (requirementsPage.value - 1) * requirementsPageSize,
@@ -149,13 +143,17 @@ async function loadRequirements(): Promise<void> {
   }
 }
 
-async function loadAssignments(): Promise<void> {
+async function loadUnitOwners(): Promise<void> {
   if (!isChief.value) return
   try {
-    const data = await listAccountingAssignments()
-    assignments.value = data.items
+    const data = await listAccountingUnitOwners()
+    unitOwners.value = data.items
+    accountantOptions.value = data.accountants.map((item) => ({
+      label: item.full_name,
+      value: item.user_id,
+    }))
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить назначения')
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить лавки')
   }
 }
 
@@ -165,17 +163,17 @@ async function refreshAll(): Promise<void> {
     await loadUnits()
     if (activeTab.value === 'orders') await loadOrders()
     else if (activeTab.value === 'requirements') await loadRequirements()
-    else await loadAssignments()
+    else await loadUnitOwners()
   } finally {
     loading.value = false
   }
 }
 
-async function onDownloadRegistry(row: AccountingOrderLine): Promise<void> {
-  downloadingRegistryId.value = row.order_id
+async function onDownloadRegistry(order: AccountingUnitOrder): Promise<void> {
+  downloadingRegistryId.value = order.order_id
   try {
-    const blob = await downloadAccountingRegistry(row.order_id)
-    const filename = row.source_filename || `registry_${row.crm_id}.xlsx`
+    const blob = await downloadAccountingRegistry(order.order_id)
+    const filename = order.source_filename || `registry_${order.crm_id}.xlsx`
     saveBlob(blob, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось скачать реестр')
@@ -196,100 +194,122 @@ async function onDownloadRequirement(row: AccountingRequirement): Promise<void> 
   }
 }
 
-async function onAssignmentChange(userId: number, unitIds: number[]): Promise<void> {
-  savingAssignmentUserId.value = userId
+async function onAssignUnit(row: AccountingUnitOwnerRow, value: number | null): Promise<void> {
+  savingUnitId.value = row.unit_id
   try {
-    const updated = await updateAccountingAssignments(userId, unitIds)
-    const idx = assignments.value.findIndex((item) => item.user_id === userId)
-    if (idx >= 0) assignments.value[idx] = updated
-    message.success('Назначения сохранены')
+    const updated = await assignAccountingUnitOwner(row.unit_id, value)
+    const idx = unitOwners.value.findIndex((item) => item.unit_id === row.unit_id)
+    if (idx >= 0) unitOwners.value[idx] = updated
+    unitOwners.value = [...unitOwners.value].sort((a, b) => {
+      const aKey = a.accountant_user_id == null ? 0 : 1
+      const bKey = b.accountant_user_id == null ? 0 : 1
+      if (aKey !== bKey) return aKey - bKey
+      return (a.name || a.inn).localeCompare(b.name || b.inn, 'ru')
+    })
+    message.success('Назначение сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
   } finally {
-    savingAssignmentUserId.value = null
+    savingUnitId.value = null
   }
 }
 
-const orderColumns = computed<DataTableColumns<AccountingOrderLine>>(() => [
-  {
-    title: 'Дата',
-    key: 'created_at',
-    width: 140,
-    render: (row) => formatDate(row.created_at),
-  },
-  {
-    title: 'Сделка / заявка',
-    key: 'lead_id',
-    width: 130,
-    render: (row) => `№${row.lead_id} · З${row.order_no}`,
-  },
-  {
-    title: 'Лавка',
-    key: 'supplier',
-    minWidth: 200,
-    render: (row) => supplierLabel(row.supplier),
-  },
-  {
-    title: 'Покупатель',
-    key: 'buyer',
-    minWidth: 180,
-    render: (row) => row.buyer_name || row.buyer_inn,
-  },
-  {
-    title: 'Сумма строки',
-    key: 'amount',
-    width: 130,
-    render: (row) => formatMoney(row.amount),
-  },
-  {
-    title: 'Статус',
-    key: 'status',
-    width: 110,
-    render: (row) =>
-      h(
-        NTag,
-        { size: 'small', type: row.status === 'submitted' ? 'success' : 'default' },
-        { default: () => OPT_STATUS_LABELS[row.status] || row.status },
-      ),
-  },
-  {
-    title: 'Оплата',
-    key: 'payment_status',
-    width: 110,
-    render: (row) => OPT_PAYMENT_STATUS_LABELS[row.payment_status] || row.payment_status,
-  },
-  {
-    title: 'Менеджер',
-    key: 'manager_full_name',
-    minWidth: 160,
-    render: (row) => row.manager_full_name || '—',
-  },
-  {
-    title: 'Контакт',
-    key: 'contact_name',
-    minWidth: 140,
-    render: (row) => row.contact_name || '—',
-  },
-  {
-    title: 'Реестр',
-    key: 'registry',
-    width: 110,
-    render: (row) =>
-      h(
-        NButton,
-        {
-          size: 'small',
-          quaternary: true,
-          loading: downloadingRegistryId.value === row.order_id,
-          onClick: () => onDownloadRegistry(row),
-        },
-        {
-          icon: () => h(Download, { size: 14 }),
-          default: () => 'XLSX',
-        },
-      ),
-  },
-])
+function orderColumns(): DataTableColumns<AccountingUnitOrder> {
+  return [
+    {
+      type: 'expand',
+      expandable: (row) => row.line_count > 1,
+      renderExpand: (row) =>
+        h(
+          'div',
+          { class: 'accounting-page__lines' },
+          row.lines.map((line) =>
+            h('div', { class: 'accounting-page__line', key: line.line_id }, [
+              h('span', `Строка ${line.line_no}`),
+              h('span', formatDate(line.document_date)),
+              h('span', formatAccountingMoney(line.amount)),
+              line.document_number ? h('span', `№ ${line.document_number}`) : null,
+            ]),
+          ),
+        ),
+    },
+    {
+      title: 'Дата',
+      key: 'created_at',
+      width: 130,
+      render: (row) => formatDate(row.created_at),
+    },
+    {
+      title: 'Сделка / заявка',
+      key: 'lead_id',
+      width: 120,
+      render: (row) => `№${row.lead_id} · З${row.order_no}`,
+    },
+    {
+      title: 'Файл',
+      key: 'source_filename',
+      minWidth: 140,
+      ellipsis: { tooltip: true },
+      render: (row) => row.source_filename || row.crm_id,
+    },
+    {
+      title: 'Покупатель',
+      key: 'buyer_name',
+      minWidth: 160,
+      ellipsis: { tooltip: true },
+      render: (row) => row.buyer_name || row.buyer_inn,
+    },
+    {
+      title: 'Объём по лавке',
+      key: 'lavka_line_volume',
+      width: 130,
+      render: (row) => formatAccountingMoney(row.lavka_line_volume),
+    },
+    {
+      title: 'Статус',
+      key: 'status',
+      width: 90,
+      render: (row) =>
+        h(
+          NTag,
+          { size: 'small', type: row.status === 'submitted' ? 'success' : 'default' },
+          { default: () => OPT_STATUS_LABELS[row.status] || row.status },
+        ),
+    },
+    {
+      title: 'Оплата',
+      key: 'payment_status',
+      width: 150,
+      render: (row) =>
+        formatAccountingPayment(row.amount_paid, row.commission_due, row.payment_status),
+    },
+    {
+      title: 'Менеджер',
+      key: 'manager_full_name',
+      minWidth: 120,
+      render: (row) => row.manager_full_name || '—',
+    },
+    {
+      title: 'Реестр',
+      key: 'registry',
+      width: 90,
+      render: (row) =>
+        h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            loading: downloadingRegistryId.value === row.order_id,
+            onClick: () => onDownloadRegistry(row),
+          },
+          {
+            icon: () => h(Download, { size: 14 }),
+            default: () => 'XLSX',
+          },
+        ),
+    },
+  ]
+}
 
 const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() => [
   {
@@ -302,7 +322,8 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     title: 'Лавка',
     key: 'supplier',
     minWidth: 200,
-    render: (row) => supplierLabel(row.supplier),
+    render: (row) =>
+      row.supplier.name ? `${row.supplier.name} · ${row.supplier.inn}` : row.supplier.inn,
   },
   {
     title: 'Требование',
@@ -342,14 +363,14 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
 watch(activeTab, async (tab) => {
   if (tab === 'orders') await loadOrders()
   else if (tab === 'requirements') await loadRequirements()
-  else await loadAssignments()
+  else await loadUnitOwners()
 })
 
 watch([ordersPage, orderSupplierInn, orderStatus], () => {
   if (activeTab.value === 'orders') void loadOrders()
 })
 
-watch([requirementsPage, reqSupplierInn, reqStatus], () => {
+watch([requirementsPage, reqSupplierInn], () => {
   if (activeTab.value === 'requirements') void loadRequirements()
 })
 
@@ -361,16 +382,10 @@ onMounted(async () => {
 <template>
   <div class="accounting-page">
     <header class="accounting-page__header">
-      <div>
-        <h1 class="accounting-page__title">
-          <Calculator :size="22" />
-          Бухгалтерия
-        </h1>
-        <p class="accounting-page__subtitle">
-          Заявки и реестры по лавкам, требования от внешних сервисов. Менеджер указан для связи по
-          каждой заявке.
-        </p>
-      </div>
+      <h1 class="accounting-page__title">
+        <Calculator :size="22" />
+        Бухгалтерия
+      </h1>
       <NButton :loading="loading" @click="refreshAll">
         <template #icon>
           <RefreshCw :size="16" />
@@ -407,14 +422,33 @@ onMounted(async () => {
             <NButton type="primary" @click="loadOrders">Найти</NButton>
           </div>
           <NSpin :show="loading">
-            <NDataTable
-              :columns="orderColumns"
-              :data="orders"
-              :bordered="false"
-              :scroll-x="1200"
-              size="small"
-            />
-            <div class="accounting-page__pagination">
+            <NEmpty v-if="!loading && orderGroups.length === 0" description="Нет заявок" />
+            <NCollapse v-else v-model:expanded-names="expandedLavki">
+              <NCollapseItem
+                v-for="group in orderGroups"
+                :key="group.unit.inn"
+                :name="group.unit.inn"
+              >
+                <template #header>
+                  <div class="accounting-page__lavka-header">
+                    <span class="accounting-page__lavka-title">{{ lavkaTitle(group.unit) }}</span>
+                    <NTag size="small" :bordered="false">
+                      {{ group.orders.length }}
+                      {{ group.orders.length === 1 ? 'заявка' : 'заявок' }}
+                    </NTag>
+                  </div>
+                </template>
+                <NDataTable
+                  :columns="orderColumns()"
+                  :data="group.orders"
+                  :bordered="false"
+                  :row-key="(row: AccountingUnitOrder) => row.order_id"
+                  size="small"
+                  :scroll-x="1100"
+                />
+              </NCollapseItem>
+            </NCollapse>
+            <div v-if="ordersTotal > ordersPageSize" class="accounting-page__pagination">
               <NPagination
                 v-model:page="ordersPage"
                 :page-size="ordersPageSize"
@@ -426,14 +460,6 @@ onMounted(async () => {
 
         <NTabPane name="requirements" tab="Требования">
           <div class="accounting-page__filters">
-            <NSelect
-              v-model:value="reqSupplierInn"
-              :options="unitOptions"
-              clearable
-              filterable
-              placeholder="Лавка"
-              style="min-width: 260px"
-            />
             <NInput
               v-model:value="reqSearch"
               clearable
@@ -462,22 +488,35 @@ onMounted(async () => {
         </NTabPane>
 
         <NTabPane v-if="isChief" name="assignments" tab="Назначения лавок">
-          <p class="accounting-page__hint">
-            Главный бухгалтер видит все лавки. Здесь можно ограничить доступ других бухгалтеров —
-            пока список пуст, обычный бухгалтер не увидит заявки.
-          </p>
-          <div v-for="item in assignments" :key="item.user_id" class="accounting-page__assignment">
-            <div class="accounting-page__assignment-name">{{ item.user_full_name }}</div>
-            <NSelect
-              :value="item.unit_ids"
-              :options="unitIdOptions"
-              multiple
-              filterable
-              placeholder="Лавки бухгалтера"
-              :loading="savingAssignmentUserId === item.user_id"
-              @update:value="(value) => onAssignmentChange(item.user_id, value as number[])"
+          <NSpin :show="loading">
+            <NEmpty
+              v-if="!loading && unitOwners.length === 0"
+              description="Нет активных лавок"
             />
-          </div>
+            <div v-else class="accounting-page__owners">
+              <div
+                v-for="row in unitOwners"
+                :key="row.unit_id"
+                class="accounting-page__owner-row"
+                :class="{ 'accounting-page__owner-row--unassigned': row.accountant_user_id == null }"
+              >
+                <div class="accounting-page__owner-lavka">
+                  <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
+                  <span class="accounting-page__owner-inn">{{ row.inn }}</span>
+                </div>
+                <NSelect
+                  :value="row.accountant_user_id"
+                  :options="accountantOptions"
+                  clearable
+                  filterable
+                  placeholder="Бухгалтер"
+                  :loading="savingUnitId === row.unit_id"
+                  style="min-width: 260px"
+                  @update:value="(value) => onAssignUnit(row, value as number | null)"
+                />
+              </div>
+            </div>
+          </NSpin>
         </NTabPane>
       </NTabs>
     </AppCard>
@@ -495,7 +534,7 @@ onMounted(async () => {
 .accounting-page__header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
 }
 
@@ -505,13 +544,6 @@ onMounted(async () => {
   gap: 8px;
   margin: 0;
   font-size: 1.35rem;
-}
-
-.accounting-page__subtitle {
-  margin: 6px 0 0;
-  color: var(--app-text-muted);
-  font-size: 0.9rem;
-  max-width: 720px;
 }
 
 .accounting-page__filters {
@@ -527,21 +559,65 @@ onMounted(async () => {
   margin-top: 12px;
 }
 
-.accounting-page__hint {
-  margin: 0 0 12px;
-  color: var(--app-text-muted);
-  font-size: 0.85rem;
-}
-
-.accounting-page__assignment {
-  display: grid;
-  grid-template-columns: minmax(160px, 220px) 1fr;
-  gap: 12px;
+.accounting-page__lavka-header {
+  display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 10px;
+  min-width: 0;
 }
 
-.accounting-page__assignment-name {
+.accounting-page__lavka-title {
   font-weight: 600;
+}
+
+.accounting-page__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px 40px;
+}
+
+.accounting-page__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
+
+.accounting-page__owners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accounting-page__owner-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 320px);
+  gap: 16px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--app-surface-muted, rgba(0, 0, 0, 0.02));
+}
+
+.accounting-page__owner-row--unassigned {
+  background: rgba(250, 173, 20, 0.08);
+}
+
+.accounting-page__owner-lavka {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.accounting-page__owner-name {
+  font-weight: 600;
+}
+
+.accounting-page__owner-inn {
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
 }
 </style>

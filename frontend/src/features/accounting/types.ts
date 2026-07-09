@@ -14,26 +14,39 @@ export interface AccountingUnit {
   is_active: boolean
 }
 
-export interface AccountingOrderLine {
+export interface AccountingOrderLineBrief {
   line_id: number
   line_no: number
+  document_date: string
+  amount: number
+  document_number?: string | null
+}
+
+export interface AccountingUnitOrder {
   order_id: number
   lead_id: number
   order_no: number
   crm_id: string
   status: string
   payment_status: string
-  supplier: AccountingSupplier
+  amount_paid: number
+  commission_due: number
+  lavka_line_volume: number
+  line_count: number
+  lines: AccountingOrderLineBrief[]
   buyer_inn: string
   buyer_name?: string | null
-  document_date: string
-  amount: number
+  source_filename?: string | null
   manager_user_id?: number | null
   manager_full_name?: string | null
   contact_name?: string | null
-  source_filename?: string | null
   submitted_at?: string | null
   created_at: string
+}
+
+export interface AccountingUnitOrderGroup {
+  unit: AccountingUnit
+  orders: AccountingUnitOrder[]
 }
 
 export interface AccountingRequirement {
@@ -50,10 +63,18 @@ export interface AccountingRequirement {
   created_at: string
 }
 
-export interface AccountingAssignment {
+export interface AccountingAccountantOption {
   user_id: number
-  user_full_name: string
-  unit_ids: number[]
+  full_name: string
+}
+
+export interface AccountingUnitOwnerRow {
+  unit_id: number
+  inn: string
+  name?: string | null
+  category_code?: string | null
+  accountant_user_id?: number | null
+  accountant_full_name?: string | null
 }
 
 export const OPT_STATUS_LABELS: Record<string, string> = {
@@ -64,8 +85,22 @@ export const OPT_STATUS_LABELS: Record<string, string> = {
   failed: 'ошибка',
 }
 
-export const OPT_PAYMENT_STATUS_LABELS: Record<string, string> = {
-  unpaid: 'не оплачена',
-  partial: 'частично',
-  paid: 'оплачена',
+export function formatAccountingPayment(
+  amountPaid: number,
+  commissionDue: number,
+  paymentStatus: string,
+): string {
+  if (paymentStatus === 'paid' || (commissionDue > 0 && amountPaid >= commissionDue)) {
+    return 'оплачена'
+  }
+  if (amountPaid <= 0) return 'не оплачена'
+  return `${formatAccountingMoney(amountPaid)} / ${formatAccountingMoney(commissionDue)}`
+}
+
+export function formatAccountingMoney(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 2,
+  }).format(value)
 }

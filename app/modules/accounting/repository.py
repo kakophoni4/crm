@@ -151,6 +151,50 @@ class AccountingRepository:
         result = await self._session.execute(stmt)
         return list(result.all())
 
+    async def list_order_lines_all(
+        self,
+        **filters: Any,
+    ) -> list[tuple[LeadOptOrderLine, LeadOptOrder, Lead, str | None, int | None, str | None]]:
+        result = await self._session.execute(self._order_lines_query(**filters))
+        return list(result.all())
+
+    async def list_unit_owner_rows(self) -> list[tuple[OptUnit, int | None, str | None]]:
+        result = await self._session.execute(
+            select(OptUnit, User.id, User.full_name)
+            .outerjoin(
+                OptAccountantUnitAssignment,
+                OptAccountantUnitAssignment.unit_id == OptUnit.id,
+            )
+            .outerjoin(User, User.id == OptAccountantUnitAssignment.user_id)
+            .where(OptUnit.is_active.is_(True))
+            .order_by(OptUnit.name, OptUnit.inn),
+        )
+        return list(result.all())
+
+    async def set_unit_owner(
+        self,
+        unit_id: int,
+        accountant_user_id: int | None,
+        *,
+        assigned_by: int,
+    ) -> None:
+        existing = await self._session.execute(
+            select(OptAccountantUnitAssignment).where(
+                OptAccountantUnitAssignment.unit_id == unit_id,
+            ),
+        )
+        for row in existing.scalars().all():
+            await self._session.delete(row)
+        if accountant_user_id is not None:
+            self._session.add(
+                OptAccountantUnitAssignment(
+                    user_id=accountant_user_id,
+                    unit_id=unit_id,
+                    assigned_by=assigned_by,
+                ),
+            )
+        await self._session.flush()
+
     async def get_order_for_registry(self, order_id: int) -> LeadOptOrder | None:
         from sqlalchemy.orm import selectinload
 

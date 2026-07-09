@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting.repository import AccountingRepository
 from app.modules.accounting.schemas import (
+    AccountingAccountantOption,
     AccountingAssignmentItem,
     AccountingAssignmentListResponse,
+    AccountingOrderLineBrief,
     AccountingOrderLineItem,
     AccountingOrderLineListResponse,
     AccountingRequirementIngestRequest,
@@ -20,10 +22,16 @@ from app.modules.accounting.schemas import (
     AccountingRequirementResponse,
     AccountingSupplierResponse,
     AccountingUnitListResponse,
+    AccountingUnitOrderGroup,
+    AccountingUnitOrderItem,
+    AccountingUnitOrdersResponse,
+    AccountingUnitOwnerListResponse,
+    AccountingUnitOwnerRow,
     AccountingUnitResponse,
 )
 from app.modules.db.models.enums import UserRole
 from app.modules.db.models.opt_requirement import OptRequirement
+from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
 from app.modules.leads.opt.registry_export import build_registry_workbook
@@ -74,6 +82,98 @@ class AccountingService:
                 for unit in visible
             ],
         )
+
+    async def list_orders_by_units(
+        self,
+        actor: User,
+        *,
+        supplier_inn: str | None,
+        status: str | None,
+        manager_user_id: int | None,
+        date_from: date | None,
+        date_to: date | None,
+        q: str | None,
+        limit: int,
+        offset: int,
+    ) -> AccountingUnitOrdersResponse:
+        supplier_inns = await self._visible_supplier_inns(actor)
+        filters = {
+            "supplier_inns": supplier_inns,
+            "supplier_inn": supplier_inn,
+            "status": status,
+            "manager_user_id": manager_user_id,
+            "date_from": date_from,
+            "date_to": date_to,
+            "q": q,
+        }
+        rows = await self._repo.list_order_lines_all(**filters)
+        unit_cache: dict[str, OptUnit | None] = {}
+        groups: dict[str, dict[int, AccountingUnitOrderItem]] = {}
+        unit_meta: dict[str, AccountingUnitResponse] = {}
+
+        for line, order, _lead, contact_name, manager_id, manager_name in rows:
+            inn = line.supplier_inn
+            if inn not in unit_cache:
+                unit_cache[inn] = await self._repo.get_unit_by_inn(inn)
+            unit_row = unit_cache[inn]
+            if inn not in unit_meta:
+                unit_meta[inn] = AccountingUnitResponse(
+                    id=unit_row.id if unit_row else 0,
+                    inn=inn,
+                    kpp=line.supplier_kpp or (unit_row.kpp if unit_row else None),
+                    name=line.supplier_name or (unit_row.name if unit_row else None),
+                    category_code=unit_row.category_code if unit_row else None,
+                    is_active=unit_row.is_active if unit_row else True,
+                )
+            order_map = groups.setdefault(inn, {})
+            if order.id not in order_map:
+                commission_due = Decimal(str(order.commission_due or 0))
+                amount_paid = Decimal(str(order.amount_paid or 0))
+                order_map[order.id] = AccountingUnitOrderItem(
+                    order_id=order.id,
+                    lead_id=order.lead_id,
+                    order_no=order.order_no,
+                    crm_id=order.crm_id,
+                    status=order.status,
+                    payment_status=order.payment_status or "unpaid",
+                    amount_paid=amount_paid,
+                    commission_due=commission_due,
+                    lavka_line_volume=Decimal("0"),
+                    line_count=0,
+                    lines=[],
+                    buyer_inn=order.buyer_inn,
+                    buyer_name=order.buyer_name,
+                    source_filename=order.source_filename,
+                    manager_user_id=manager_id,
+                    manager_full_name=manager_name,
+                    contact_name=contact_name,
+                    submitted_at=order.submitted_at,
+                    created_at=order.created_at,
+                )
+            item = order_map[order.id]
+            item.lines.append(
+                AccountingOrderLineBrief(
+                    line_id=line.id,
+                    line_no=line.line_no,
+                    document_date=line.document_date,
+                    amount=Decimal(str(line.amount)),
+                    document_number=line.document_number,
+                ),
+            )
+            item.line_count = len(item.lines)
+            item.lavka_line_volume += Decimal(str(line.amount))
+
+        grouped: list[AccountingUnitOrderGroup] = []
+        for inn, order_map in groups.items():
+            orders = sorted(order_map.values(), key=lambda row: row.created_at, reverse=True)
+            grouped.append(
+                AccountingUnitOrderGroup(unit=unit_meta[inn], orders=orders),
+            )
+        grouped.sort(key=lambda row: (row.unit.name or row.unit.inn).casefold())
+
+        total = len(grouped)
+        page = grouped[offset : offset + limit]
+        return AccountingUnitOrdersResponse(items=page, total=total, limit=limit, offset=offset)
 
     async def list_order_lines(
         self,
@@ -272,6 +372,68 @@ class AccountingService:
                 )
                 for user in users
             ],
+        )
+
+    async def list_unit_owners(self, actor: User) -> AccountingUnitOwnerListResponse:
+        if not self._is_chief(actor):
+            raise PermissionDenied()
+        accountants = await self._repo.list_accountant_users()
+        rows = await self._repo.list_unit_owner_rows()
+        deduped: dict[int, AccountingUnitOwnerRow] = {}
+        for unit, accountant_id, accountant_name in rows:
+            if unit.id in deduped:
+                continue
+            deduped[unit.id] = AccountingUnitOwnerRow(
+                unit_id=unit.id,
+                inn=unit.inn,
+                name=unit.name,
+                category_code=unit.category_code,
+                accountant_user_id=accountant_id,
+                accountant_full_name=accountant_name,
+            )
+        items = sorted(
+            deduped.values(),
+            key=lambda row: (
+                0 if row.accountant_user_id is None else 1,
+                (row.name or row.inn).casefold(),
+            ),
+        )
+        return AccountingUnitOwnerListResponse(
+            items=items,
+            accountants=[
+                AccountingAccountantOption(user_id=user.id, full_name=user.full_name)
+                for user in accountants
+            ],
+        )
+
+    async def assign_unit_owner(
+        self,
+        actor: User,
+        unit_id: int,
+        accountant_user_id: int | None,
+    ) -> AccountingUnitOwnerRow:
+        if not self._is_chief(actor):
+            raise PermissionDenied()
+        units = await self._repo.get_units_by_ids([unit_id])
+        unit = units.get(unit_id)
+        if unit is None:
+            raise NotFound(message="Лавка не найдена")
+        accountant_name: str | None = None
+        if accountant_user_id is not None:
+            accountants = await self._repo.list_accountant_users()
+            target = next((user for user in accountants if user.id == accountant_user_id), None)
+            if target is None:
+                raise ValidationError(message="Бухгалтер не найден")
+            accountant_name = target.full_name
+        await self._repo.set_unit_owner(unit_id, accountant_user_id, assigned_by=actor.id)
+        await self._session.commit()
+        return AccountingUnitOwnerRow(
+            unit_id=unit.id,
+            inn=unit.inn,
+            name=unit.name,
+            category_code=unit.category_code,
+            accountant_user_id=accountant_user_id,
+            accountant_full_name=accountant_name,
         )
 
     async def update_assignments(

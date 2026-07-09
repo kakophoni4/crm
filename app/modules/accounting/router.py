@@ -10,11 +10,14 @@ from app.modules.accounting.schemas import (
     AccountingAssignmentListResponse,
     AccountingAssignmentItem,
     AccountingAssignmentUpdateRequest,
-    AccountingOrderLineListResponse,
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
     AccountingUnitListResponse,
+    AccountingUnitOrdersResponse,
+    AccountingUnitOwnerListResponse,
+    AccountingUnitOwnerRow,
+    AccountingUnitOwnerUpdateRequest,
 )
 from app.modules.accounting.service import AccountingService
 from app.modules.db.models.user import User
@@ -51,7 +54,7 @@ async def list_accounting_units(
     return await service.list_units(actor)
 
 
-@router.get("/orders", response_model=AccountingOrderLineListResponse)
+@router.get("/orders", response_model=AccountingUnitOrdersResponse)
 async def list_accounting_orders(
     actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
     service: Annotated[AccountingService, Depends(_service)],
@@ -63,12 +66,12 @@ async def list_accounting_orders(
     q: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> AccountingOrderLineListResponse:
+) -> AccountingUnitOrdersResponse:
     from datetime import date as date_cls
 
     parsed_from = date_cls.fromisoformat(date_from) if date_from else None
     parsed_to = date_cls.fromisoformat(date_to) if date_to else None
-    return await service.list_order_lines(
+    return await service.list_orders_by_units(
         actor,
         supplier_inn=supplier_inn,
         status=status,
@@ -205,6 +208,24 @@ async def ingest_accounting_requirement_multipart(
         metadata=metadata,
     )
     return await service.ingest_requirement(body, pdf_bytes=pdf_bytes, pdf_filename=pdf_filename)
+
+
+@router.get("/assignments/units", response_model=AccountingUnitOwnerListResponse)
+async def list_accounting_unit_owners(
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingUnitOwnerListResponse:
+    return await service.list_unit_owners(actor)
+
+
+@router.put("/assignments/units/{unit_id}", response_model=AccountingUnitOwnerRow)
+async def assign_accounting_unit_owner(
+    unit_id: int,
+    body: AccountingUnitOwnerUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingUnitOwnerRow:
+    return await service.assign_unit_owner(actor, unit_id, body.accountant_user_id)
 
 
 @router.get("/assignments", response_model=AccountingAssignmentListResponse)

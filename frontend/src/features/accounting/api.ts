@@ -1,8 +1,9 @@
 import type {
-  AccountingAssignment,
-  AccountingOrderLine,
+  AccountingAccountantOption,
   AccountingRequirement,
   AccountingUnit,
+  AccountingUnitOrderGroup,
+  AccountingUnitOwnerRow,
 } from '@/features/accounting/types'
 import { http } from '@/shared/api/http'
 
@@ -22,9 +23,9 @@ export async function listAccountingOrders(params: {
   q?: string
   limit?: number
   offset?: number
-}): Promise<{ items: AccountingOrderLine[]; total: number; limit: number; offset: number }> {
+}): Promise<{ items: AccountingUnitOrderGroup[]; total: number; limit: number; offset: number }> {
   const { data } = await http.get<{
-    items: AccountingOrderLine[]
+    items: AccountingUnitOrderGroup[]
     total: number
     limit: number
     offset: number
@@ -62,18 +63,25 @@ export async function downloadRequirementPdf(requirementId: number): Promise<Blo
   return data
 }
 
-export async function listAccountingAssignments(): Promise<{ items: AccountingAssignment[] }> {
-  const { data } = await http.get<{ items: AccountingAssignment[] }>('/accounting/assignments')
+export async function listAccountingUnitOwners(): Promise<{
+  items: AccountingUnitOwnerRow[]
+  accountants: AccountingAccountantOption[]
+}> {
+  const { data } = await http.get<{
+    items: AccountingUnitOwnerRow[]
+    accountants: AccountingAccountantOption[]
+  }>('/accounting/assignments/units')
   return data
 }
 
-export async function updateAccountingAssignments(
-  userId: number,
-  unitIds: number[],
-): Promise<AccountingAssignment> {
-  const { data } = await http.put<AccountingAssignment>(`/accounting/assignments/${userId}`, {
-    unit_ids: unitIds,
-  })
+export async function assignAccountingUnitOwner(
+  unitId: number,
+  accountantUserId: number | null,
+): Promise<AccountingUnitOwnerRow> {
+  const { data } = await http.put<AccountingUnitOwnerRow>(
+    `/accounting/assignments/units/${unitId}`,
+    { accountant_user_id: accountantUserId },
+  )
   return data
 }
 
