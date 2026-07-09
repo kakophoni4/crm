@@ -81,7 +81,7 @@ const unitIdOptions = computed<SelectOption[]>(() =>
 )
 
 const orderStatusOptions: SelectOption[] = [
-  { label: 'Все статусы', value: null },
+  { label: 'Все статусы', value: '' },
   { label: 'В 1С', value: 'submitted' },
   { label: 'В очереди', value: 'queued' },
   { label: 'Ошибка', value: 'failed' },
