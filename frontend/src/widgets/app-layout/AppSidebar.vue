@@ -319,7 +319,7 @@ watch(
     :collapsed-width="collapsedWidth"
     :width="sidebarWidth"
     class="app-sidebar"
-    show-trigger="bar"
+    show-trigger="arrow-circle"
     @collapse="emit('toggle')"
     @expand="emit('toggle')"
   >

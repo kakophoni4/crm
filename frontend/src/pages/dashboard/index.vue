@@ -251,8 +251,7 @@ onMounted(async () => {
 
 <style scoped>
 .dashboard-page {
-  max-width: 1200px;
-  margin: 0 auto;
+  width: 100%;
   padding-bottom: 16px;
 }
 

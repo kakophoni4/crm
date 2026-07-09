@@ -1,7 +1,7 @@
 :root {
   --app-sidebar-width: 240px;
   --app-topbar-height: 56px;
-  --app-content-padding: 24px;
+  --app-content-padding: 16px;
   --app-control-radius: 8px;
   --app-bg: #f5f6f8;
   --app-surface: #ffffff;

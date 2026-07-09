@@ -35,7 +35,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
 
 import { useWindowSize } from '@vueuse/core'
-import { ArrowLeft, ChevronLeft, ChevronRight, MessageSquare, X } from 'lucide-vue-next'
+import { ArrowLeft, MessageSquare, X } from 'lucide-vue-next'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -100,14 +100,6 @@ const router = useRouter()
 const { width } = useWindowSize()
 const isNarrow = computed(() => width.value < CHATS_NARROW_BREAKPOINT)
 const narrowPane = ref<'list' | 'chat'>('list')
-
-const LIST_COLLAPSED_KEY = 'chats:listCollapsed'
-const listCollapsed = ref(localStorage.getItem(LIST_COLLAPSED_KEY) === '1')
-
-function toggleListCollapsed(): void {
-  listCollapsed.value = !listCollapsed.value
-  localStorage.setItem(LIST_COLLAPSED_KEY, listCollapsed.value ? '1' : '0')
-}
 
 const message = useMessage()
 const chatListSearchRef = ref<InstanceType<typeof NInput> | null>(null)
@@ -425,23 +417,10 @@ onUnmounted(() => {
         'chats-page__split--show-list': isNarrow && narrowPane === 'list',
         'chats-page__split--show-chat': isNarrow && narrowPane === 'chat',
         'chats-page__split--deal-open': Boolean(store.currentChat) && !isNarrow,
-        'chats-page__split--list-collapsed': listCollapsed && !isNarrow,
       }"
     >
 
-      <button
-        v-if="listCollapsed && !isNarrow"
-        type="button"
-        class="chats-page__list-rail"
-        title="Развернуть список чатов"
-        aria-label="Развернуть список чатов"
-        @click="toggleListCollapsed"
-      >
-        <ChevronRight :size="18" />
-      </button>
-
-
-      <aside v-if="!(listCollapsed && !isNarrow)" class="chats-page__list-pane">
+      <aside class="chats-page__list-pane">
 
         <div class="chats-page__list-toolbar">
           <NTabs
@@ -471,16 +450,6 @@ onUnmounted(() => {
               @click="transferInboxOpen = true"
             >
               Уведомления
-            </NButton>
-            <NButton
-              v-if="!isNarrow"
-              quaternary
-              size="small"
-              title="Свернуть список чатов"
-              aria-label="Свернуть список чатов"
-              @click="toggleListCollapsed"
-            >
-              <template #icon><ChevronLeft :size="16" /></template>
             </NButton>
           </NSpace>
         </div>
@@ -843,11 +812,12 @@ onUnmounted(() => {
 .chats-page {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - var(--app-topbar-height) - var(--app-content-padding));
-  max-height: calc(100dvh - var(--app-topbar-height) - var(--app-content-padding));
+  height: calc(100dvh - var(--app-topbar-height));
+  max-height: calc(100dvh - var(--app-topbar-height));
   min-height: 480px;
   overflow: hidden;
-  margin-top: calc(-1 * var(--app-content-padding) / 2);
+  /* Чат занимает всю область контента: гасим внешние отступы layout (24px). */
+  margin: calc(-1 * var(--app-content-padding));
 }
 
 .chats-page__list-toolbar {
@@ -899,9 +869,9 @@ onUnmounted(() => {
 
   gap: 0;
 
-  border: 1px solid var(--app-border);
+  border: none;
 
-  border-radius: 8px;
+  border-radius: 0;
 
   overflow: hidden;
 
@@ -911,32 +881,6 @@ onUnmounted(() => {
 
 .chats-page__split--deal-open {
   grid-template-columns: minmax(240px, 280px) 1fr minmax(340px, 400px);
-}
-
-.chats-page__split--list-collapsed {
-  grid-template-columns: 40px 1fr minmax(320px, 360px);
-}
-
-.chats-page__split--list-collapsed.chats-page__split--deal-open {
-  grid-template-columns: 40px 1fr minmax(340px, 400px);
-}
-
-.chats-page__list-rail {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 12px;
-  border: none;
-  border-right: 1px solid var(--app-border);
-  background: var(--app-surface);
-  color: var(--app-text-muted);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.chats-page__list-rail:hover {
-  background: var(--app-surface-elevated);
-  color: var(--app-accent);
 }
 
 .chats-page__split--deal-open .chats-page__tabs :deep(.n-tabs-tab) {

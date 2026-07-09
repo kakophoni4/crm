@@ -280,8 +280,7 @@ watch(
 
 <style scoped>
 .contacts-page {
-  max-width: 1280px;
-  margin: 0 auto;
+  width: 100%;
   padding-bottom: 16px;
   box-sizing: border-box;
 }
