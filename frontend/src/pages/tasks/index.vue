@@ -315,78 +315,13 @@ async function applyMove(
   if (!source || !target) return
   if (task.status === status && source.items.indexOf(task) === index) return
 
+  const snapshot = board.value.columns.map((c) => ({ ...c, items: [...c.items] }))
   const moved: DepartmentTask = { ...task, status }
   source.items = source.items.filter((t) => t.id !== task.id)
   const targetItems = target.items.filter((t) => t.id !== task.id)
   targetItems.splice(Math.min(index, targetItems.length), 0, moved)
   target.items = targetItems
 
-  try {
-    await moveTask(task.id, status, index)
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось переместить задачу')
-    await loadBoard()
-  }
-}
-
-function onDragStart(task: DepartmentTask, event: DragEvent): void {
-  draggingTask.value = task
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', String(task.id))
-  }
-}
-
-function onDragEnd(): void {
-  draggingTask.value = null
-  dragOverStatus.value = null
-}
-
-function onColumnDragOver(status: string, event: DragEvent): void {
-  if (!draggingTask.value) return
-  event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-  dragOverStatus.value = status
-}
-
-function computeDropIndex(container: HTMLElement, clientY: number, draggedId: number): number {
-  const cards = Array.from(
-    container.querySelectorAll<HTMLElement>('[data-task-card]'),
-  ).filter((el) => el.dataset.taskId !== String(draggedId))
-  for (let i = 0; i < cards.length; i += 1) {
-    const rect = cards[i].getBoundingClientRect()
-    if (clientY < rect.top + rect.height / 2) return i
-  }
-  return cards.length
-}
-
-async function onColumnDrop(status: TaskStatus, event: DragEvent): Promise<void> {
-  event.preventDefault()
-  const task = draggingTask.value
-  onDragEnd()
-  if (!task || !board.value) return
-  const container = event.currentTarget as HTMLElement
-  const index = computeDropIndex(container, event.clientY, task.id)
-  await applyMove(task, status, index)
-}
-
-async function applyMove(
-  task: DepartmentTask,
-  status: TaskStatus,
-  index: number,
-): Promise<void> {
-  if (!board.value) return
-  const fromStatus = task.status
-  const snapshot = board.value.columns.map((c) => ({ ...c, items: [...c.items] }))
-  const source = board.value.columns.find((c) => c.status === fromStatus)
-  const target = board.value.columns.find((c) => c.status === status)
-  if (source) source.items = source.items.filter((t) => t.id !== task.id)
-  if (target) {
-    const moved = { ...task, status }
-    const arr = [...target.items]
-    arr.splice(Math.min(index, arr.length), 0, moved)
-    target.items = arr
-  }
   try {
     suppressNextWsRefresh()
     await moveTask(task.id, status, index)
