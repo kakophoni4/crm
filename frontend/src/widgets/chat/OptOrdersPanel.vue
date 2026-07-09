@@ -27,6 +27,7 @@ import {
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
+import { useChatsStore } from '@/features/chats/store'
 import type { OptOrder, OptOrderLine } from '@/features/leads/opt-types'
 import {
   OPT_PAYMENT_RECIPIENT_OPTIONS,
@@ -47,6 +48,7 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
+const store = useChatsStore()
 const loading = ref(false)
 const uploading = ref(false)
 const deletingId = ref<number | null>(null)
@@ -326,7 +328,7 @@ watch(needsPolling, (active) => {
 })
 
 watch(
-  () => props.leadId,
+  () => [props.leadId, store.optOrdersRefreshNonce] as const,
   () => {
     selectedOrderId.value = null
     stopPolling()

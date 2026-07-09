@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from app.modules.leads.opt.mole_client import _normalize_mole_status
 from app.modules.leads.opt.service import OptOrderService
 from app.modules.leads.opt.vat import split_vat_included
 
@@ -64,3 +65,9 @@ def test_extract_line_numbers_accepts_crmid() -> None:
         },
     )
     assert mapping == {"crm-line-abc": "СА-000000042"}
+
+
+def test_normalize_mole_status_accepts_cyrillic_ok() -> None:
+    assert _normalize_mole_status("ОК") == "OK"
+    assert _normalize_mole_status("ок") == "OK"
+    assert _normalize_mole_status("OK") == "OK"

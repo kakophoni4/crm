@@ -77,6 +77,11 @@ export const useChatsStore = defineStore('chats', () => {
   const updatingLeadStatus = ref(false)
   const creatingLead = ref(false)
   const updatingLeadFields = ref(false)
+  const optOrdersRefreshNonce = ref(0)
+
+  function bumpOptOrdersRefresh(): void {
+    optOrdersRefreshNonce.value += 1
+  }
 
   /** Bumps on each openChat(); stale async results are ignored. */
   let openChatSeq = 0
@@ -1020,6 +1025,8 @@ export const useChatsStore = defineStore('chats', () => {
     currentChatId,
     currentChat,
     selectedLeadId,
+    optOrdersRefreshNonce,
+    bumpOptOrdersRefresh,
     messages,
     messagesLoading,
     loadingOlderMessages,

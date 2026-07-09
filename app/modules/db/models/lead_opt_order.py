@@ -35,6 +35,13 @@ class LeadOptOrder(Base):
     buyer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_message_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_attachment_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     payment_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unpaid")
     total_volume: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     commission_due: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")

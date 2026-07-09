@@ -14,12 +14,15 @@ from app.modules.db.models.user import User
 from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
 from app.modules.leads.opt.requisites import ensure_unit_requisites, resolve_buyer_requisites
+from app.modules.leads.opt.fingerprint import compute_application_fingerprint
 from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
 from app.modules.leads.opt.schemas import (
+    OptAttachmentProbeResponse,
     OptCounterpartyResponse,
+    OptOrderExistingRef,
     OptOrderLineResponse,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
@@ -36,6 +39,39 @@ from app.shared.settings import get_settings
 logger = structlog.get_logger(__name__)
 
 OPT_SERVICE_NAME = "ОПТ"
+
+_SPREADSHEET_MIMES = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+)
+_SPREADSHEET_EXTS = (".xlsx", ".xls")
+
+
+def _looks_like_spreadsheet(filename: str | None, content_type: str | None) -> bool:
+    if content_type:
+        lowered = content_type.lower()
+        if any(token in lowered for token in ("spreadsheet", "ms-excel", "excel")):
+            return True
+    if filename:
+        name = filename.lower()
+        if any(name.endswith(ext) for ext in _SPREADSHEET_EXTS):
+            return True
+    return False
+
+
+def _existing_order_ref(order: LeadOptOrder) -> OptOrderExistingRef:
+    return OptOrderExistingRef(
+        lead_id=order.lead_id,
+        order_id=order.id,
+        order_no=order.order_no,
+    )
+
+
+def duplicate_order_message(order: LeadOptOrder) -> str:
+    return (
+        f"Такая заявка уже существует по сделке №{order.lead_id}, "
+        f"заявка №{order.order_no}"
+    )
 
 
 class OptOrderService:
@@ -181,6 +217,108 @@ class OptOrderService:
         lead.custom_fields = fields
         await self._leads.update_lead_fields(lead.id, custom_fields=fields)
 
+    async def _read_chat_attachment(
+        self,
+        actor: User,
+        *,
+        lead: Lead,
+        chat_id: int,
+        message_id: int,
+        attachment_index: int,
+    ) -> tuple[bytes, str]:
+        from app.modules.chats.messages import ChatMessagesService
+
+        if lead.chat_id is None or lead.chat_id != chat_id:
+            raise ValidationError(message="Файл не относится к чату этой сделки")
+
+        messages = ChatMessagesService(self._session)
+        content, _content_type, filename = await messages.get_attachment(
+            actor,
+            chat_id,
+            message_id,
+            attachment_index,
+        )
+        return content, filename or "application.xlsx"
+
+    async def probe_chat_attachment(
+        self,
+        actor: User,
+        lead_id: int,
+        *,
+        chat_id: int,
+        message_id: int,
+        attachment_index: int,
+    ) -> OptAttachmentProbeResponse:
+        lead = await self._get_lead_for_actor(actor, lead_id)
+        content, filename = await self._read_chat_attachment(
+            actor,
+            lead=lead,
+            chat_id=chat_id,
+            message_id=message_id,
+            attachment_index=attachment_index,
+        )
+
+        existing = await self._repo.get_order_by_source_attachment(message_id, attachment_index)
+        if existing is not None:
+            return OptAttachmentProbeResponse(
+                is_application=True,
+                existing_order=_existing_order_ref(existing),
+            )
+
+        if not _looks_like_spreadsheet(filename, None):
+            return OptAttachmentProbeResponse(is_application=False)
+
+        try:
+            parsed = parse_application_workbook(content)
+        except ValidationError:
+            return OptAttachmentProbeResponse(is_application=False)
+
+        fingerprint = compute_application_fingerprint(parsed)
+        existing_fp = await self._repo.get_order_by_content_fingerprint(fingerprint)
+        if existing_fp is not None:
+            return OptAttachmentProbeResponse(
+                is_application=True,
+                buyer_inn=parsed.buyer_inn,
+                line_count=len(parsed.lines),
+                existing_order=_existing_order_ref(existing_fp),
+            )
+
+        return OptAttachmentProbeResponse(
+            is_application=True,
+            buyer_inn=parsed.buyer_inn,
+            line_count=len(parsed.lines),
+        )
+
+    async def upload_from_chat_attachment(
+        self,
+        actor: User,
+        lead_id: int,
+        *,
+        chat_id: int,
+        message_id: int,
+        attachment_index: int,
+    ) -> OptOrderResponse:
+        lead = await self._get_lead_for_actor(actor, lead_id)
+        existing = await self._repo.get_order_by_source_attachment(message_id, attachment_index)
+        if existing is not None:
+            raise ValidationError(message=duplicate_order_message(existing))
+
+        content, filename = await self._read_chat_attachment(
+            actor,
+            lead=lead,
+            chat_id=chat_id,
+            message_id=message_id,
+            attachment_index=attachment_index,
+        )
+        return await self.upload_application(
+            actor,
+            lead_id,
+            filename=filename,
+            content=content,
+            source_message_id=message_id,
+            source_attachment_index=attachment_index,
+        )
+
     async def upload_application(
         self,
         actor: User,
@@ -188,8 +326,18 @@ class OptOrderService:
         *,
         filename: str,
         content: bytes,
+        source_message_id: int | None = None,
+        source_attachment_index: int | None = None,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
+
+        if source_message_id is not None and source_attachment_index is not None:
+            existing = await self._repo.get_order_by_source_attachment(
+                source_message_id,
+                source_attachment_index,
+            )
+            if existing is not None:
+                raise ValidationError(message=duplicate_order_message(existing))
 
         if await self._repo.lead_has_pending_submission(lead.id):
             raise ValidationError(
@@ -200,6 +348,11 @@ class OptOrderService:
             )
 
         parsed = parse_application_workbook(content)
+        content_fingerprint = compute_application_fingerprint(parsed)
+        existing_fp = await self._repo.get_order_by_content_fingerprint(content_fingerprint)
+        if existing_fp is not None:
+            raise ValidationError(message=duplicate_order_message(existing_fp))
+
         buyer_inn = parsed.buyer_inn
         buyer_kpp, buyer_name = await resolve_buyer_requisites(self._repo, buyer_inn)
 
@@ -251,6 +404,9 @@ class OptOrderService:
             source_filename=filename,
             created_by=actor.id,
             lines=line_payloads,
+            source_message_id=source_message_id,
+            source_attachment_index=source_attachment_index,
+            content_fingerprint=content_fingerprint,
         )
         await self._ensure_lead_service_opt(lead)
         await self._session.commit()

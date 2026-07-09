@@ -10,10 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.user import User
 from app.modules.leads.opt.schemas import (
+    OptAttachmentProbeRequest,
+    OptAttachmentProbeResponse,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
     OptOrderResponse,
     OptSendRegistryResponse,
+    OptUploadFromAttachmentRequest,
 )
 from app.modules.leads.opt.service import OptOrderService
 from app.modules.rbac.permissions import Permission
@@ -34,6 +37,45 @@ async def list_opt_orders(
     service: Annotated[OptOrderService, Depends(_service)],
 ) -> OptOrderListResponse:
     return await service.list_orders(actor, lead_id)
+
+
+@router.post(
+    "/leads/{lead_id}/opt-orders/probe-attachment",
+    response_model=OptAttachmentProbeResponse,
+)
+async def probe_opt_chat_attachment(
+    lead_id: int,
+    body: OptAttachmentProbeRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptAttachmentProbeResponse:
+    return await service.probe_chat_attachment(
+        actor,
+        lead_id,
+        chat_id=body.chat_id,
+        message_id=body.message_id,
+        attachment_index=body.attachment_index,
+    )
+
+
+@router.post(
+    "/leads/{lead_id}/opt-orders/upload-from-attachment",
+    status_code=201,
+    response_model=OptOrderResponse,
+)
+async def upload_opt_from_chat_attachment(
+    lead_id: int,
+    body: OptUploadFromAttachmentRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptOrderResponse:
+    return await service.upload_from_chat_attachment(
+        actor,
+        lead_id,
+        chat_id=body.chat_id,
+        message_id=body.message_id,
+        attachment_index=body.attachment_index,
+    )
 
 
 @router.post(

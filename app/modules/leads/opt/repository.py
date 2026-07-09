@@ -180,6 +180,40 @@ class OptOrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_order_by_source_attachment(
+        self,
+        message_id: int,
+        attachment_index: int,
+    ) -> LeadOptOrder | None:
+        result = await self._session.execute(
+            select(LeadOptOrder)
+            .where(
+                LeadOptOrder.source_message_id == message_id,
+                LeadOptOrder.source_attachment_index == attachment_index,
+            )
+            .options(
+                selectinload(LeadOptOrder.lines),
+                selectinload(LeadOptOrder.payments),
+            ),
+        )
+        return result.scalar_one_or_none()
+
+    async def get_order_by_content_fingerprint(self, fingerprint: str) -> LeadOptOrder | None:
+        result = await self._session.execute(
+            select(LeadOptOrder)
+            .where(
+                LeadOptOrder.content_fingerprint == fingerprint,
+                LeadOptOrder.status.in_(("queued", "submitting", "submitted")),
+            )
+            .options(
+                selectinload(LeadOptOrder.lines),
+                selectinload(LeadOptOrder.payments),
+            )
+            .order_by(LeadOptOrder.id.desc())
+            .limit(1),
+        )
+        return result.scalar_one_or_none()
+
     async def next_order_no(self, lead_id: int) -> int:
         result = await self._session.execute(
             select(func.coalesce(func.max(LeadOptOrder.order_no), 0)).where(
@@ -199,6 +233,9 @@ class OptOrderRepository:
         source_filename: str | None,
         created_by: int,
         lines: list[dict[str, object]],
+        source_message_id: int | None = None,
+        source_attachment_index: int | None = None,
+        content_fingerprint: str | None = None,
     ) -> LeadOptOrder:
         order_no = await self.next_order_no(lead_id)
         order = LeadOptOrder(
@@ -210,6 +247,9 @@ class OptOrderRepository:
             buyer_name=buyer_name,
             status="queued",
             source_filename=source_filename,
+            source_message_id=source_message_id,
+            source_attachment_index=source_attachment_index,
+            content_fingerprint=content_fingerprint,
             created_by=created_by,
         )
         self._session.add(order)

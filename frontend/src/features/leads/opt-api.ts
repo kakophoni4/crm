@@ -1,4 +1,4 @@
-import type { OptOrder, OptOrderListResponse } from '@/features/leads/opt-types'
+import type { OptAttachmentProbeResult, OptOrder, OptOrderListResponse } from '@/features/leads/opt-types'
 import { http } from '@/shared/api/http'
 
 export async function listOptOrders(leadId: number): Promise<OptOrder[]> {
@@ -12,6 +12,28 @@ export async function uploadOptApplication(leadId: number, file: File): Promise<
   const { data } = await http.post<OptOrder>(`/leads/${leadId}/opt-orders/upload`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+  return data
+}
+
+export async function probeOptChatAttachment(
+  leadId: number,
+  body: { chat_id: number; message_id: number; attachment_index: number },
+): Promise<OptAttachmentProbeResult> {
+  const { data } = await http.post(
+    `/leads/${leadId}/opt-orders/probe-attachment`,
+    body,
+  )
+  return data
+}
+
+export async function uploadOptFromChatAttachment(
+  leadId: number,
+  body: { chat_id: number; message_id: number; attachment_index: number },
+): Promise<OptOrder> {
+  const { data } = await http.post<OptOrder>(
+    `/leads/${leadId}/opt-orders/upload-from-attachment`,
+    body,
+  )
   return data
 }
 

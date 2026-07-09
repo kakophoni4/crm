@@ -16,6 +16,11 @@ class MoleApiError(AppError):
         super().__init__(code="mole_api_error", message=message, status=502, details=details)
 
 
+def _normalize_mole_status(raw: object) -> str:
+    text = str(raw or "").strip().upper()
+    return text.translate(str.maketrans({"О": "O", "К": "K", "о": "O", "к": "K"}))
+
+
 async def post_opt_order(payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     base = settings.mole_api_base_url.strip().rstrip("/")
@@ -61,7 +66,7 @@ async def post_opt_order(payload: dict[str, Any]) -> dict[str, Any]:
             details={"http_status": response.status_code, "body": body},
         )
 
-    status = str(body.get("Статус") or body.get("Status") or "").upper()
+    status = _normalize_mole_status(body.get("Статус") or body.get("Status"))
     if status != "OK":
         raise MoleApiError(
             message="1С не подтвердила заявку (Статус != OK)",

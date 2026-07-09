@@ -92,3 +92,28 @@ class OptOrderListResponse(BaseModel):
 class OptSendRegistryResponse(BaseModel):
     message_id: int
     chat_id: int
+
+
+class OptOrderExistingRef(BaseModel):
+    lead_id: int
+    order_id: int
+    order_no: int
+
+
+class OptAttachmentProbeRequest(BaseModel):
+    chat_id: int
+    message_id: int
+    attachment_index: int = Field(ge=0)
+
+
+class OptAttachmentProbeResponse(BaseModel):
+    is_application: bool
+    buyer_inn: str | None = None
+    line_count: int | None = None
+    existing_order: OptOrderExistingRef | None = None
+
+
+class OptUploadFromAttachmentRequest(BaseModel):
+    chat_id: int
+    message_id: int
+    attachment_index: int = Field(ge=0)

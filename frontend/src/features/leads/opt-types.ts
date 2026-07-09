@@ -32,6 +32,19 @@ export interface OptPayment {
   created_at: string
 }
 
+export interface OptOrderExistingRef {
+  lead_id: number
+  order_id: number
+  order_no: number
+}
+
+export interface OptAttachmentProbeResult {
+  is_application: boolean
+  buyer_inn?: string | null
+  line_count?: number | null
+  existing_order?: OptOrderExistingRef | null
+}
+
 export interface OptOrder {
   id: number
   lead_id: number

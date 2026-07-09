@@ -9,6 +9,7 @@ import type { ChatMessage } from '@/entities/chat/types'
 import { formatOnBehalfLabel } from '@/entities/contact/on-behalf-label'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
 import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
+import OptAttachmentBar from '@/widgets/chat/OptAttachmentBar.vue'
 import { isAttachmentPlaceholderText } from '@/features/chats/message-preview'
 
 const props = defineProps<{
@@ -238,12 +239,16 @@ watch(
                 </div>
                 <p v-if="shouldShowMessageText(msg)" class="message-list__text">{{ msg.text }}</p>
                 <div v-if="msg.attachments?.length" class="message-list__attachments">
-                  <MessageAttachment
-                    v-for="(att, i) in msg.attachments"
-                    :key="i"
-                    :att="att"
-                    eager
-                  />
+                  <template v-for="(att, i) in msg.attachments" :key="i">
+                    <MessageAttachment :att="att" eager />
+                    <OptAttachmentBar
+                      v-if="msg.direction === 'inbound'"
+                      :chat-id="chatId"
+                      :message-id="msg.id"
+                      :attachment-index="i"
+                      :attachment="att"
+                    />
+                  </template>
                 </div>
                 <footer class="message-list__meta">
                   <span :title="formatFullDateTime(msg.created_at)">
