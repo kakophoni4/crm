@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.chat import Chat
-from app.modules.db.models.enums import ChatStatus, UserRole
+from app.modules.db.models.enums import ChatStatus
 from app.modules.db.models.user import User
 from app.modules.leads.repository import LeadRepository
 from app.modules.leads.service import LeadService
@@ -24,6 +24,13 @@ class ContactWorkspaceResult:
     created_lead: bool
 
 
+def _department_fallback_group_id(ctx: ScopeContext) -> int | None:
+    dept_groups = set(ctx.department_group_ids)
+    if dept_groups:
+        return min(dept_groups)
+    return None
+
+
 async def resolve_workspace_group_id(
     session: AsyncSession,
     *,
@@ -31,7 +38,6 @@ async def resolve_workspace_group_id(
     ctx: ScopeContext,
     requested_group_id: int | None,
 ) -> int:
-    role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
     scope_groups = visible_group_ids(ctx)
 
     if requested_group_id is not None:
@@ -42,18 +48,33 @@ async def resolve_workspace_group_id(
         return requested_group_id
 
     actor_groups = await list_user_group_ids(session, actor.id)
+    if actor.group_id is not None:
+        actor_groups = sorted(set(actor_groups) | {int(actor.group_id)})
+
+    if scope_groups == SCOPE_ALL:
+        if actor_groups:
+            return actor_groups[0]
+        dept_group = _department_fallback_group_id(ctx)
+        if dept_group is not None:
+            return dept_group
+        raise ValidationError(message="Укажите группу для создания диалога")
+
     if isinstance(scope_groups, set) and scope_groups:
         preferred = [gid for gid in actor_groups if gid in scope_groups]
         if preferred:
             return preferred[0]
-        if role == UserRole.ADMIN:
-            raise ValidationError(message="Specify workspace_group_id for admin contact workspace")
         return min(scope_groups)
 
     if actor_groups:
         return actor_groups[0]
 
-    raise ValidationError(message="Cannot open workspace without an assigned group")
+    dept_group = _department_fallback_group_id(ctx)
+    if dept_group is not None:
+        return dept_group
+
+    raise ValidationError(
+        message="Нет назначенной группы — обратитесь к руководителю или администратору",
+    )
 
 
 async def ensure_offline_workspace(

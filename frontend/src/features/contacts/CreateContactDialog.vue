@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { NButton, NForm, NFormItem, NInput, NModal, useMessage } from 'naive-ui'
-import { ref, watch } from 'vue'
+import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
 
 import type { Contact } from '@/entities/contact/types'
+import { listGroups } from '@/features/admin/api'
 import { createContact } from '@/features/contacts/api'
 import { AppError } from '@/shared/api/http'
 import { normalizeRussianPhone } from '@/shared/lib/phone'
+import { useAuthStore } from '@/shared/store/auth'
 
 const props = withDefaults(
   defineProps<{
@@ -31,13 +34,52 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
+const auth = useAuthStore()
 const creating = ref(false)
+const groupsLoading = ref(false)
+const workspaceGroupId = ref<number | null>(null)
+const groupOptions = ref<SelectOption[]>([])
 const form = ref({
   full_name: '',
   phone: '',
   email: '',
   telegram_username: '',
 })
+
+const showGroupSelect = computed(
+  () => props.openWorkspace && (groupOptions.value.length > 1 || auth.isAdmin || auth.isSenior),
+)
+
+function defaultWorkspaceGroupId(): number | null {
+  const user = auth.user
+  if (!user) return null
+  if (user.group_ids.length === 1) return user.group_ids[0]
+  if (user.group_id != null) return user.group_id
+  return null
+}
+
+async function loadWorkspaceGroups(): Promise<void> {
+  if (!props.openWorkspace) {
+    groupOptions.value = []
+    return
+  }
+  groupsLoading.value = true
+  try {
+    const departmentId = props.departmentId ?? auth.user?.department_id ?? undefined
+    const groups = await listGroups(departmentId)
+    groupOptions.value = groups.map((group) => ({
+      label: group.name,
+      value: group.id,
+    }))
+    if (workspaceGroupId.value == null && groupOptions.value.length === 1) {
+      workspaceGroupId.value = Number(groupOptions.value[0]?.value)
+    }
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить группы')
+  } finally {
+    groupsLoading.value = false
+  }
+}
 
 function resetForm(phone = ''): void {
   form.value = {
@@ -46,6 +88,7 @@ function resetForm(phone = ''): void {
     email: '',
     telegram_username: '',
   }
+  workspaceGroupId.value = defaultWorkspaceGroupId()
 }
 
 watch(
@@ -53,6 +96,7 @@ watch(
   (visible) => {
     if (!visible) return
     resetForm(props.initialPhone?.trim() ?? '')
+    void loadWorkspaceGroups()
   },
 )
 
@@ -80,6 +124,11 @@ async function submit(): Promise<void> {
     return
   }
 
+  if (props.openWorkspace && workspaceGroupId.value == null) {
+    message.warning('Выберите группу для диалога')
+    return
+  }
+
   creating.value = true
   try {
     const telegram = form.value.telegram_username.trim().replace(/^@/, '')
@@ -91,6 +140,7 @@ async function submit(): Promise<void> {
       assigned_department_id: props.departmentId,
       source: props.source,
       open_workspace: props.openWorkspace,
+      workspace_group_id: workspaceGroupId.value,
       custom_fields: props.source === 'telephony' ? { source: 'telephony' } : undefined,
     })
     message.success('Контакт создан')
@@ -115,6 +165,15 @@ async function submit(): Promise<void> {
     @update:show="emit('update:show', $event)"
   >
     <NForm size="small" @submit.prevent="submit">
+      <NFormItem v-if="showGroupSelect" label="Группа" required>
+        <NSelect
+          v-model:value="workspaceGroupId"
+          :options="groupOptions"
+          :loading="groupsLoading"
+          placeholder="Выберите группу"
+          clearable
+        />
+      </NFormItem>
       <NFormItem label="Имя" required>
         <NInput
           v-model:value="form.full_name"
