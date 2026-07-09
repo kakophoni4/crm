@@ -629,6 +629,7 @@ class OptOrderService:
         except Exception:
             logger.warning("opt_submit_dequeue_failed", order_id=order.id, exc_info=True)
         await self._repo.delete_order(order)
+        await self._repo.renumber_orders_for_lead(lead_id_value)
         await self._session.commit()
         await publish(
             "opt.order.deleted",

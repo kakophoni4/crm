@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.modules.chats.timeutil import utc_now
 
-from sqlalchemy import delete, select, func
+from sqlalchemy import delete, select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -236,11 +236,27 @@ class OptOrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def renumber_orders_for_lead(self, lead_id: int) -> None:
+        """Dense 1..N numbering by created_at (after deletes gaps are closed)."""
+        result = await self._session.execute(
+            select(LeadOptOrder.id)
+            .where(LeadOptOrder.lead_id == lead_id)
+            .order_by(LeadOptOrder.created_at.asc(), LeadOptOrder.id.asc()),
+        )
+        order_ids = [int(row[0]) for row in result.all()]
+        for idx, order_id in enumerate(order_ids, start=1):
+            await self._session.execute(
+                update(LeadOptOrder)
+                .where(LeadOptOrder.id == order_id)
+                .values(order_no=idx),
+            )
+        await self._session.flush()
+
     async def next_order_no(self, lead_id: int) -> int:
         result = await self._session.execute(
-            select(func.coalesce(func.max(LeadOptOrder.order_no), 0)).where(
-                LeadOptOrder.lead_id == lead_id,
-            ),
+            select(func.count())
+            .select_from(LeadOptOrder)
+            .where(LeadOptOrder.lead_id == lead_id),
         )
         return int(result.scalar_one()) + 1
 
