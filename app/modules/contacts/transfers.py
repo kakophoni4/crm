@@ -85,12 +85,9 @@ class ContactGroupTransfersService:
         return actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
 
     def _initial_state(self, actor: User, *, force: bool) -> TransferStatus:
-        role = self._actor_role(actor)
-        if force and role in (UserRole.ADMIN, UserRole.SENIOR):
-            return TransferStatus.ACCEPTED
-        if role in (UserRole.ADMIN, UserRole.SENIOR):
-            return TransferStatus.PENDING_RECIPIENT
-        return TransferStatus.PENDING_SENIOR
+        # All transfers apply immediately; senior/admin use force to reassign cards they do not own.
+        _ = (actor, force)
+        return TransferStatus.ACCEPTED
 
     async def _get_active_transfer(
         self,
@@ -347,8 +344,8 @@ class ContactGroupTransfersService:
             expires_at=now + TRANSFER_TTL,
         )
         if state == TransferStatus.ACCEPTED:
-            transfer.senior_user_id = actor.id
-            transfer.senior_decided_at = now
+            transfer.senior_user_id = actor.id if role in (UserRole.ADMIN, UserRole.SENIOR) else None
+            transfer.senior_decided_at = now if transfer.senior_user_id is not None else None
             transfer.recipient_decided_at = now
             await reassign_owner(
                 self._session,
@@ -362,9 +359,6 @@ class ContactGroupTransfersService:
                     chat=transfer_chat,
                     target_group=target_group,
                 )
-        elif state == TransferStatus.PENDING_RECIPIENT and role == UserRole.SENIOR:
-            transfer.senior_user_id = actor.id
-            transfer.senior_decided_at = now
 
         self._session.add(transfer)
         try:

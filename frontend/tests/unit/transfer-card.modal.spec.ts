@@ -58,7 +58,7 @@ describe('transfer card modal', () => {
 
   it('uses card transfer hint for user role', () => {
 
-    expect(transferHintForRole('user')).toContain('старшему на согласование')
+    expect(transferHintForRole('user')).toContain('сразу перейдёт')
 
   })
 

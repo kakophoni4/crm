@@ -59,28 +59,47 @@ async def test_contact_transfer_full_flow(
         json={"to_user_id": op2_id, "comment": "vacation handoff"},
     )
     assert req.status_code == 201, req.text
-    transfer_id = req.json()["id"]
-    assert req.json()["state"] == "pending_senior"
-
-    approve = await client.post(
-        f"/api/v1/contact-transfers/{transfer_id}/approve",
-        headers=ownership_senior_headers,
-    )
-    assert approve.status_code == 200, approve.text
-    assert approve.json()["state"] == "pending_recipient"
-
-    accept = await client.post(
-        f"/api/v1/contact-transfers/{transfer_id}/accept",
-        headers=ownership_op2_headers,
-    )
-    assert accept.status_code == 200, accept.text
-    assert accept.json()["state"] == "accepted"
+    assert req.json()["state"] == "accepted"
 
     detail = await client.get(f"/api/v1/contacts/{contact_id}", headers=ownership_op2_headers)
     assert detail.status_code == 200, detail.text
     ownership = detail.json()["group_ownership"]
     row = next(item for item in ownership if item["group_id"] == group_id)
     assert row["owner_user_id"] == op2_id
+
+
+@pytest.mark.asyncio
+async def test_senior_force_assigns_card_to_self(
+    client: AsyncClient,
+    db_ready: None,
+    ownership_org: dict[str, object],
+    ownership_senior_headers: dict[str, str],
+    test_settings: Settings,
+) -> None:
+    group_id = int(ownership_org["group_id"])
+    contact_id = int(ownership_org["contact_ids"][0])
+    user_ids = ownership_org["user_ids"]
+    assert isinstance(user_ids, dict)
+    op1_id = user_ids["owner.op1@crm.local"]
+    senior_id = user_ids["owner.senior@crm.local"]
+
+    await _ensure_owner(test_settings, contact_id, group_id, op1_id)
+
+    response = await client.post(
+        f"/api/v1/contacts/{contact_id}/groups/{group_id}/transfers",
+        headers=ownership_senior_headers,
+        json={"to_user_id": senior_id, "force": True},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["state"] == "accepted"
+    assert body["to_user_id"] == senior_id
+
+    detail = await client.get(f"/api/v1/contacts/{contact_id}", headers=ownership_senior_headers)
+    assert detail.status_code == 200, detail.text
+    ownership = detail.json()["group_ownership"]
+    row = next(item for item in ownership if item["group_id"] == group_id)
+    assert row["owner_user_id"] == senior_id
 
 
 @pytest.mark.asyncio
@@ -492,16 +511,7 @@ async def test_contact_transfer_does_not_affect_other_group(
         json={"to_user_id": op2_id},
     )
     assert req.status_code == 201, req.text
-    transfer_id = req.json()["id"]
-
-    await client.post(
-        f"/api/v1/contact-transfers/{transfer_id}/approve",
-        headers=ownership_senior_headers,
-    )
-    await client.post(
-        f"/api/v1/contact-transfers/{transfer_id}/accept",
-        headers=ownership_op2_headers,
-    )
+    assert req.json()["state"] == "accepted"
 
     detail = await client.get(f"/api/v1/contacts/{contact_id}", headers=ownership_op1_headers)
     assert detail.status_code == 200
@@ -514,7 +524,7 @@ async def test_contact_transfer_does_not_affect_other_group(
 
 
 @pytest.mark.asyncio
-async def test_list_contact_transfers_by_state(
+async def test_list_contact_transfers_includes_completed_transfer(
     client: AsyncClient,
     db_ready: None,
     ownership_org: dict[str, object],
@@ -531,11 +541,13 @@ async def test_list_contact_transfers_by_state(
 
     await _ensure_owner(test_settings, contact_id, group_id, op1_id)
 
-    await client.post(
+    created = await client.post(
         f"/api/v1/contacts/{contact_id}/groups/{group_id}/transfers",
         headers=ownership_op1_headers,
         json={"to_user_id": op2_id},
     )
+    assert created.status_code == 201, created.text
+    transfer_id = created.json()["id"]
 
     senior_inbox = await client.get(
         "/api/v1/contact-transfers",
@@ -543,9 +555,17 @@ async def test_list_contact_transfers_by_state(
         params={"state": "pending_senior", "group_id": group_id},
     )
     assert senior_inbox.status_code == 200, senior_inbox.text
-    items = senior_inbox.json()["items"]
-    assert any(item["contact_id"] == contact_id for item in items)
-    matched = next(item for item in items if item["contact_id"] == contact_id)
+    assert not any(item["id"] == transfer_id for item in senior_inbox.json()["items"])
+
+    completed = await client.get(
+        "/api/v1/contact-transfers",
+        headers=ownership_senior_headers,
+        params={"state": "accepted", "group_id": group_id},
+    )
+    assert completed.status_code == 200, completed.text
+    items = completed.json()["items"]
+    matched = next(item for item in items if item["id"] == transfer_id)
+    assert matched["contact_id"] == contact_id
     assert matched.get("contact_name")
     assert matched.get("group_name")
     assert matched.get("from_user_name")
@@ -572,7 +592,7 @@ async def test_legacy_chat_transfer_routes_removed(
 
 
 @pytest.mark.asyncio
-async def test_parallel_transfer_request_one_active_only(
+async def test_parallel_transfer_requests_both_succeed(
     client: AsyncClient,
     db_ready: None,
     ownership_org: dict[str, object],
@@ -597,5 +617,4 @@ async def test_parallel_transfer_request_one_active_only(
         return response.status_code
 
     statuses = await asyncio.gather(_request_transfer(), _request_transfer())
-    assert statuses.count(201) == 1
-    assert statuses.count(409) == 1
+    assert statuses.count(201) == 2

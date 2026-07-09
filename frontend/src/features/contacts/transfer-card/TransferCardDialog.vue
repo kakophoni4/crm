@@ -66,8 +66,10 @@ const scopeLine = computed(() => {
 const excludedRecipientIds = computed(() => {
   const ids = new Set<number>()
   if (props.cardOwnerUserId != null) ids.add(props.cardOwnerUserId)
-  const me = auth.user?.id
-  if (me != null) ids.add(me)
+  if (!canAssignInGroup.value) {
+    const me = auth.user?.id
+    if (me != null) ids.add(me)
+  }
   return ids
 })
 
@@ -192,11 +194,7 @@ async function submit(): Promise<void> {
         selectedGroupId.value !== props.groupId ? selectedGroupId.value : undefined,
       force: canAssignInGroup.value,
     })
-    message.success(
-      canAssignInGroup.value
-        ? 'Карточка назначена выбранному сотруднику'
-        : 'Запрос на передачу карточки отправлен',
-    )
+    message.success('Карточка назначена выбранному сотруднику')
     emit('transferred')
     emit('update:show', false)
   } catch (err) {
