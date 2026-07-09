@@ -7,6 +7,7 @@ import {
   NDataTable,
   NEmpty,
   NInput,
+  NModal,
   NPagination,
   NSelect,
   NSpin,
@@ -15,7 +16,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Calculator, Download, RefreshCw } from 'lucide-vue-next'
+import { Calculator, Download, Eye, RefreshCw } from 'lucide-vue-next'
 import { computed, h, onMounted, ref, watch } from 'vue'
 
 import {
@@ -29,6 +30,7 @@ import {
   saveBlob,
 } from '@/features/accounting/api'
 import type {
+  AccountingOrderLineBrief,
   AccountingRequirement,
   AccountingUnit,
   AccountingUnitOrder,
@@ -72,6 +74,31 @@ const savingUnitId = ref<number | null>(null)
 
 const downloadingRegistryId = ref<number | null>(null)
 const downloadingReqId = ref<number | null>(null)
+const previewOpen = ref(false)
+const previewOrder = ref<AccountingUnitOrder | null>(null)
+
+const linePreviewColumns = computed<DataTableColumns<AccountingOrderLineBrief>>(() => [
+  { title: '№', key: 'line_no', width: 48 },
+  {
+    title: 'Дата документа',
+    key: 'document_date',
+    width: 120,
+    render: (row) => formatDocumentDate(row.document_date),
+  },
+  {
+    title: 'Сумма',
+    key: 'amount',
+    width: 120,
+    align: 'right',
+    render: (row) => formatAccountingMoney(row.amount),
+  },
+  {
+    title: 'Док. 1С',
+    key: 'document_number',
+    minWidth: 120,
+    render: (row) => row.document_number || '—',
+  },
+])
 
 const unitOptions = computed<SelectOption[]>(() =>
   units.value.map((unit) => ({
@@ -91,6 +118,26 @@ const orderStatusOptions: SelectOption[] = [
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—'
   return new Date(value).toLocaleString('ru-RU')
+}
+
+function formatDocumentDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString('ru-RU')
+}
+
+function orderRefLabel(order: AccountingUnitOrder): string {
+  return `Заявка №${order.order_no} · сделка №${order.lead_id}`
+}
+
+function registryPreviewText(order: AccountingUnitOrder): string {
+  return `Реестр по заявке №${order.order_no} сделки №${order.lead_id}.`
+}
+
+function openPreview(order: AccountingUnitOrder): void {
+  previewOrder.value = order
+  previewOpen.value = true
 }
 
 function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
@@ -214,36 +261,52 @@ async function onAssignUnit(row: AccountingUnitOwnerRow, value: number | null): 
   }
 }
 
+function renderLinesTable(lines: AccountingOrderLineBrief[]) {
+  return h('table', { class: 'accounting-page__lines-table' }, [
+    h('thead', [
+      h('tr', [
+        h('th', '№'),
+        h('th', 'Дата'),
+        h('th', 'Сумма'),
+        h('th', 'Док. 1С'),
+      ]),
+    ]),
+    h(
+      'tbody',
+      lines.map((line) =>
+        h('tr', { key: line.line_id }, [
+          h('td', String(line.line_no)),
+          h('td', formatDocumentDate(line.document_date)),
+          h('td', formatAccountingMoney(line.amount)),
+          h('td', line.document_number || '—'),
+        ]),
+      ),
+    ),
+  ])
+}
+
 function orderColumns(): DataTableColumns<AccountingUnitOrder> {
   return [
     {
       type: 'expand',
-      expandable: (row) => row.line_count > 1,
-      renderExpand: (row) =>
-        h(
-          'div',
-          { class: 'accounting-page__lines' },
-          row.lines.map((line) =>
-            h('div', { class: 'accounting-page__line', key: line.line_id }, [
-              h('span', `Строка ${line.line_no}`),
-              h('span', formatDate(line.document_date)),
-              h('span', formatAccountingMoney(line.amount)),
-              line.document_number ? h('span', `№ ${line.document_number}`) : null,
-            ]),
-          ),
-        ),
+      expandable: (row) => row.line_count > 0,
+      renderExpand: (row) => renderLinesTable(row.lines),
     },
     {
-      title: 'Дата',
+      title: 'Дата загрузки',
       key: 'created_at',
       width: 130,
       render: (row) => formatDate(row.created_at),
     },
     {
-      title: 'Сделка / заявка',
+      title: 'Заявка',
       key: 'lead_id',
-      width: 120,
-      render: (row) => `№${row.lead_id} · З${row.order_no}`,
+      width: 150,
+      render: (row) =>
+        h('div', { class: 'accounting-page__deal-cell' }, [
+          h('span', { class: 'accounting-page__deal-main' }, `Заявка №${row.order_no}`),
+          h('span', { class: 'accounting-page__deal-sub' }, `сделка №${row.lead_id}`),
+        ]),
     },
     {
       title: 'Файл',
@@ -292,21 +355,35 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
     {
       title: 'Реестр',
       key: 'registry',
-      width: 90,
+      width: 150,
       render: (row) =>
-        h(
-          NButton,
-          {
-            size: 'small',
-            quaternary: true,
-            loading: downloadingRegistryId.value === row.order_id,
-            onClick: () => onDownloadRegistry(row),
-          },
-          {
-            icon: () => h(Download, { size: 14 }),
-            default: () => 'XLSX',
-          },
-        ),
+        h('div', { class: 'accounting-page__registry-actions' }, [
+          h(
+            NButton,
+            {
+              size: 'small',
+              quaternary: true,
+              onClick: () => openPreview(row),
+            },
+            {
+              icon: () => h(Eye, { size: 14 }),
+              default: () => 'Просмотр',
+            },
+          ),
+          h(
+            NButton,
+            {
+              size: 'small',
+              quaternary: true,
+              loading: downloadingRegistryId.value === row.order_id,
+              onClick: () => onDownloadRegistry(row),
+            },
+            {
+              icon: () => h(Download, { size: 14 }),
+              default: () => 'XLSX',
+            },
+          ),
+        ]),
     },
   ]
 }
@@ -520,6 +597,54 @@ onMounted(async () => {
         </NTabPane>
       </NTabs>
     </AppCard>
+
+    <NModal
+      v-model:show="previewOpen"
+      preset="card"
+      :title="previewOrder ? `Предпросмотр · ${orderRefLabel(previewOrder)}` : 'Предпросмотр реестра'"
+      style="max-width: 720px"
+      @after-leave="previewOrder = null"
+    >
+      <template v-if="previewOrder">
+        <p class="accounting-page__preview-text">{{ registryPreviewText(previewOrder) }}</p>
+        <p v-if="previewOrder.source_filename" class="accounting-page__preview-meta">
+          Файл: {{ previewOrder.source_filename }}
+        </p>
+        <p class="accounting-page__preview-meta">
+          Покупатель: {{ previewOrder.buyer_name || previewOrder.buyer_inn }}
+        </p>
+        <p class="accounting-page__preview-meta">
+          Менеджер: {{ previewOrder.manager_full_name || '—' }}
+        </p>
+        <p class="accounting-page__preview-meta">
+          Оплата:
+          {{
+            formatAccountingPayment(
+              previewOrder.amount_paid,
+              previewOrder.commission_due,
+              previewOrder.payment_status,
+            )
+          }}
+        </p>
+        <NDataTable
+          size="small"
+          :columns="linePreviewColumns"
+          :data="previewOrder.lines"
+          :bordered="true"
+          :pagination="false"
+          :max-height="360"
+        />
+      </template>
+      <template v-if="previewOrder" #footer>
+        <NButton
+          type="primary"
+          :loading="downloadingRegistryId === previewOrder.order_id"
+          @click="onDownloadRegistry(previewOrder)"
+        >
+          Скачать реестр XLSX
+        </NButton>
+      </template>
+    </NModal>
   </div>
 </template>
 
@@ -570,18 +695,60 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-.accounting-page__lines {
+.accounting-page__deal-cell {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px 12px 40px;
+  gap: 2px;
 }
 
-.accounting-page__line {
+.accounting-page__deal-main {
+  font-weight: 500;
+}
+
+.accounting-page__deal-sub {
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+}
+
+.accounting-page__registry-actions {
   display: flex;
+  gap: 4px;
   flex-wrap: wrap;
-  gap: 12px;
+}
+
+.accounting-page__lines-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0 8px 36px;
+  max-width: calc(100% - 36px);
   font-size: 0.8rem;
+}
+
+.accounting-page__lines-table th,
+.accounting-page__lines-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--n-border-color, rgba(0, 0, 0, 0.08));
+}
+
+.accounting-page__lines-table th {
+  color: var(--app-text-muted);
+  font-weight: 500;
+}
+
+.accounting-page__lines-table td:nth-child(3) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.accounting-page__preview-text {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.accounting-page__preview-meta {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
   color: var(--app-text-muted);
 }
 
