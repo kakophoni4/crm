@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Text, func
+from sqlalchemy import BigInteger, Boolean, Numeric, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.modules.db.models.base import Base
