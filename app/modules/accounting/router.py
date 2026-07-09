@@ -19,7 +19,7 @@ from app.modules.accounting.schemas import (
 from app.modules.accounting.service import AccountingService
 from app.modules.db.models.user import User
 from app.modules.rbac.permissions import Permission
-from app.shared.db import get_session
+from app.shared.db import get_db
 from app.shared.exceptions import PermissionDenied
 from app.shared.security.permissions import requires_permission
 from app.shared.settings import settings
@@ -29,7 +29,7 @@ from urllib.parse import quote
 router = APIRouter(prefix="/api/v1/accounting", tags=["accounting"])
 
 
-def _service(session: Annotated[AsyncSession, Depends(get_session)]) -> AccountingService:
+def _service(session: Annotated[AsyncSession, Depends(get_db)]) -> AccountingService:
     return AccountingService(session)
 
 
