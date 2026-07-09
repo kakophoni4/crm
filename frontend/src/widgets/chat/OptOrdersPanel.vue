@@ -97,7 +97,7 @@ const hasPendingSubmission = computed(() =>
 )
 
 function canDeleteOrder(order: OptOrder): boolean {
-  return order.status !== 'submitted' && order.payments.length === 0
+  return order.payments.length === 0
 }
 
 function canAdjustCommission(order: OptOrder): boolean {
@@ -706,10 +706,16 @@ onUnmounted(() => {
           <p class="opt-orders__meta">
             Файл: {{ deleteTarget.source_filename || deleteTarget.crm_id }}
           </p>
+          <p v-if="deleteTarget.status === 'submitted'" class="opt-orders__meta opt-orders__meta--warning">
+            Заявка уже отправлена в 1С. Удаление затронет только CRM — запись в 1С останется.
+          </p>
         </template>
         <template v-else>
           <p class="opt-orders__preview-text">
             Это действие необратимо. Заявка и все связанные строки будут удалены без восстановления.
+          </p>
+          <p v-if="deleteTarget.status === 'submitted'" class="opt-orders__meta opt-orders__meta--warning">
+            Запись в 1С не удаляется автоматически.
           </p>
         </template>
       </template>
@@ -883,6 +889,11 @@ onUnmounted(() => {
   color: var(--app-text-muted);
   margin-top: 2px;
   word-break: break-all;
+}
+
+.opt-orders__meta--warning {
+  color: var(--n-warning-color);
+  margin-top: 8px;
 }
 
 .opt-orders__facts {
