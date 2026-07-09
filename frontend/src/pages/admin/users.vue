@@ -53,7 +53,7 @@ const form = ref({
   username: '',
   full_name: '',
   password: '',
-  role: 'user' as 'user' | 'senior' | 'admin',
+  role: 'user' as 'user' | 'senior' | 'admin' | 'accountant',
   group_ids: [] as number[],
   department_id: null as number | null,
   set_as_department_head: false,
@@ -75,6 +75,7 @@ const roleOptions = computed<SelectOption[]>(() =>
     : [
         { label: 'Оператор', value: 'user' },
         { label: 'Старший', value: 'senior' },
+        { label: 'Бухгалтер', value: 'accountant' },
         { label: 'Администратор', value: 'admin' },
       ],
 )
@@ -277,7 +278,7 @@ function openEdit(row: AdminUser): void {
 watch(
   () => form.value.role,
   (role) => {
-    if (role === 'admin') {
+    if (role === 'admin' || role === 'accountant') {
       form.value.group_ids = []
       form.value.department_id = null
       form.value.set_as_department_head = false
@@ -332,7 +333,7 @@ async function load(): Promise<void> {
   }
 }
 
-function validateForm(role: 'user' | 'senior' | 'admin'): string | null {
+function validateForm(role: 'user' | 'senior' | 'admin' | 'accountant'): string | null {
   if (!editing.value) {
     if (!form.value.username.trim() || !form.value.password) {
       return 'Заполните логин и пароль'

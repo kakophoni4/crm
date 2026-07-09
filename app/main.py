@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.modules.analytics.router import router as analytics_router
+from app.modules.accounting.router import router as accounting_router
 from app.modules.auth.router import router as auth_router
 from app.modules.bots.router import router as bots_router
 from app.modules.chats.router import router as chats_router
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(storage_public_router)
     app.include_router(tasks_router)
     app.include_router(analytics_router)
+    app.include_router(accounting_router)
 
     def _health_checks(
         db_ok: bool,

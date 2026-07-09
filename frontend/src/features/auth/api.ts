@@ -1,6 +1,6 @@
 import { http } from '@/shared/api/http'
 
-export type UserRole = 'user' | 'senior' | 'admin'
+export type UserRole = 'user' | 'senior' | 'admin' | 'accountant'
 
 export interface AuthUserSummary {
   id: number

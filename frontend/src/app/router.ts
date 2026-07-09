@@ -40,7 +40,11 @@ const routes: RouteRecordRaw[] = [
 
     path: '/',
 
-    redirect: '/chats',
+    redirect: () => {
+      const auth = useAuthStore()
+      if (auth.isAccountant) return '/accounting'
+      return '/chats'
+    },
 
   },
 
@@ -145,6 +149,18 @@ const routes: RouteRecordRaw[] = [
         name: 'tasks',
 
         component: () => import('@/pages/tasks/index.vue'),
+
+      },
+
+      {
+
+        path: 'accounting',
+
+        name: 'accounting',
+
+        component: () => import('@/pages/accounting/index.vue'),
+
+        meta: { requiresAccounting: true },
 
       },
 
@@ -361,7 +377,8 @@ router.beforeEach(async (to) => {
       const auth = useAuthStore()
       await auth.hydrate()
       if (auth.isAuthenticated) {
-        const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/chats'
+        const defaultRedirect = auth.isAccountant ? '/accounting' : '/chats'
+        const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : defaultRedirect
         return redirect
       }
     }
@@ -384,6 +401,36 @@ router.beforeEach(async (to) => {
 
     if (role !== 'admin' && role !== 'senior') return { name: 'contacts' }
 
+  }
+
+
+
+  const needsAccounting = to.matched.some((r) => r.meta.requiresAccounting)
+
+  if (needsAccounting) {
+
+    const auth = useAuthStore()
+
+    await auth.ensureSession()
+
+    if (!auth.isAuthenticated) return { name: 'login' }
+
+    if (!auth.canAccounting) return { name: 'contacts' }
+
+  }
+
+
+
+  const authForRole = useAuthStore()
+
+  await authForRole.ensureSession()
+
+  if (
+    authForRole.isAccountant &&
+    !to.meta.public &&
+    !needsAccounting
+  ) {
+    return { name: 'accounting' }
   }
 
 

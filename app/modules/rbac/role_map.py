@@ -92,10 +92,23 @@ _SENIOR_PERMISSIONS: frozenset[Permission] = (
 
 _ADMIN_PERMISSIONS: frozenset[Permission] = ALL_PERMISSIONS
 
+_ACCOUNTANT_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.PROFILE_PASSWORD_UPDATE,
+        Permission.PROFILE_FULL_NAME_UPDATE,
+        Permission.PROFILE_PRESENCE_UPDATE,
+        Permission.PROFILE_AVAILABILITY_UPDATE,
+        Permission.FILES_DOWNLOAD,
+        Permission.ACCOUNTING_READ,
+        Permission.ACCOUNTING_MANAGE,
+    }
+)
+
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.USER: _USER_PERMISSIONS,
     UserRole.SENIOR: _SENIOR_PERMISSIONS,
     UserRole.ADMIN: _ADMIN_PERMISSIONS,
+    UserRole.ACCOUNTANT: _ACCOUNTANT_PERMISSIONS,
 }
 
 

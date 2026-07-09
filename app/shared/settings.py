@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     mole_api_password: str = ""
     opt_vat_rate_percent: float = 20.0
 
+    # External service token for POST /accounting/requirements/ingest
+    accounting_ingest_token: str = ""
+
     @field_validator("sentry_traces_sample_rate")
     @classmethod
     def validate_traces_sample_rate(cls, value: float) -> float:

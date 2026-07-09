@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   Bot,
+  Calculator,
   FolderOpen,
   CheckSquare,
   LayoutDashboard,
@@ -62,6 +63,16 @@ async function refreshTelephonyVisibility(): Promise<void> {
 }
 
 const menuOptions = computed(() => {
+  if (auth.isAccountant) {
+    return [
+      {
+        label: 'Бухгалтерия',
+        key: 'accounting',
+        icon: () => h(NIcon, null, { default: () => h(Calculator) }),
+      },
+    ]
+  }
+
   const items = [
   {
     label: 'Чаты',
@@ -142,6 +153,14 @@ const menuOptions = computed(() => {
     })
   }
 
+  if (auth.canAccounting) {
+    items.push({
+      label: 'Бухгалтерия',
+      key: 'accounting',
+      icon: () => h(NIcon, null, { default: () => h(Calculator) }),
+    })
+  }
+
   return items
 })
 
@@ -150,6 +169,7 @@ const activeKey = computed(() => {
   if (route.name === 'contacts' || route.name === 'contact-detail') return 'contacts'
   if (route.name === 'storage') return 'storage'
   if (route.name === 'tasks') return 'tasks'
+  if (route.name === 'accounting') return 'accounting'
   if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
   if (route.name === 'group-escalation') return 'group-escalation'
@@ -180,6 +200,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'tasks') {
     void router.push({ name: 'tasks' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'accounting') {
+    void router.push({ name: 'accounting' })
     emit('closeDrawer')
     return
   }

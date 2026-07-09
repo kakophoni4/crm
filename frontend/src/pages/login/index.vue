@@ -55,8 +55,9 @@ async function onSubmit(): Promise<void> {
   loading.value = true
   try {
     await auth.login(model.value.username.trim(), model.value.password)
+    const defaultRedirect = auth.isAccountant ? '/accounting' : '/chats'
     const redirect =
-      typeof route.query.redirect === 'string' ? route.query.redirect : '/chats'
+      typeof route.query.redirect === 'string' ? route.query.redirect : defaultRedirect
     await router.replace(redirect)
   } catch (err) {
     const text =

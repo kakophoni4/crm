@@ -87,6 +87,10 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!accessToken.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isSenior = computed(() => user.value?.role === 'senior')
+  const isAccountant = computed(() => user.value?.role === 'accountant')
+  const canAccounting = computed(
+    () => user.value?.permissions.includes('accounting.read') === true,
+  )
   const canViewHistoryActor = computed(
     () => isAdmin.value || isSenior.value,
   )
@@ -214,6 +218,8 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isAdmin,
     isSenior,
+    isAccountant,
+    canAccounting,
     canViewHistoryActor,
     login,
     logout,

@@ -108,5 +108,9 @@ class Permission(StrEnum):
     TASKS_READ = "tasks.read"
     TASKS_MANAGE = "tasks.manage"
 
+    # Accounting (OPT cabinet for accountants)
+    ACCOUNTING_READ = "accounting.read"
+    ACCOUNTING_MANAGE = "accounting.manage"
+
 
 ALL_PERMISSIONS: frozenset[Permission] = frozenset(Permission)

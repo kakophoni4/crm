@@ -172,6 +172,12 @@ class UserService:
                         details={"group_ids": senior_groups, "department_id": department_id},
                     )
             return senior_groups, department_id
+        if role == UserRole.ACCOUNTANT:
+            if normalized or body.department_id is not None:
+                raise ValidationError(
+                    message="Accountant must not be assigned to a group or department",
+                )
+            return [], None
         raise PermissionDenied()
 
     async def list_users(
@@ -276,6 +282,10 @@ class UserService:
             self._ensure_can_create_role(actor, body.role)
             target.role = body.role
             if body.role == UserRole.ADMIN:
+                target.group_id = None
+                target.department_id = None
+                await set_user_group_memberships(self._session, target.id, [])
+            elif body.role == UserRole.ACCOUNTANT:
                 target.group_id = None
                 target.department_id = None
                 await set_user_group_memberships(self._session, target.id, [])
