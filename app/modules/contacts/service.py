@@ -11,6 +11,7 @@ from app.modules.contacts.activity_timeline import build_contact_activity
 from app.modules.contacts.diff import audit_diff_payload, diff_snapshots, snapshot_contact, to_jsonb
 from app.modules.contacts.group_ownership import load_group_ownership
 from app.modules.contacts.linked_bots import load_contact_linked_bots
+from app.modules.contacts.ownership import ensure_manual_create_assignment
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.schemas import (
     AuditEntryResponse,
@@ -118,7 +119,7 @@ class ContactService:
         actor: User,
         body: ContactCreateRequest,
     ) -> ContactMutationResult:
-        await self._ctx(actor)
+        ctx = await self._ctx(actor)
         status = body.status or ContactStatus.NEW
         contact = Contact(
             full_name=body.full_name,
@@ -133,6 +134,12 @@ class ContactService:
             created_by=actor.id,
         )
         created = await self._repo.create(contact)
+        await ensure_manual_create_assignment(
+            self._session,
+            contact_id=created.id,
+            actor=actor,
+            ctx=ctx,
+        )
         return ContactMutationResult(
             contact=created,
             audit_payload={"after": snapshot_contact(created)},

@@ -31,6 +31,18 @@ const listContactsMock = vi.fn()
 
 vi.mock('@/features/contacts/api', () => ({
   listContacts: (...args: unknown[]) => listContactsMock(...args),
+  createContact: vi.fn(),
+}))
+
+vi.mock('@/features/contacts/CreateContactDialog.vue', () => ({
+  default: defineComponent({
+    name: 'CreateContactDialog',
+    props: ['show'],
+    emits: ['update:show', 'created'],
+    setup() {
+      return () => null
+    },
+  }),
 }))
 
 vi.mock('@/shared/lib/query-invalidation', () => ({
@@ -51,7 +63,7 @@ function mountContactsPage(role: 'admin' | 'user' = 'admin') {
       department_id: 1,
       group_id: null,
       presence: 'online',
-      permissions: ['contacts.read'],
+      permissions: ['contacts.read', 'contacts.create'],
     },
   })
 
@@ -98,6 +110,29 @@ describe('contacts list page', () => {
 
     expect(wrapper.text()).toContain('Иван Петров')
     expect(wrapper.text()).not.toContain('TG user ID')
+    wrapper.unmount()
+  })
+
+  it('shows create button when user can create contacts', async () => {
+    const wrapper = mountContactsPage('admin')
+    const auth = useAuthStore()
+    auth.$patch({
+      user: {
+        ...auth.user!,
+        permissions: ['contacts.read', 'contacts.create'],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Создать контакт')
+    wrapper.unmount()
+  })
+
+  it('hides create button without contacts.create permission', async () => {
+    const wrapper = mountContactsPage('user')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Создать контакт')
     wrapper.unmount()
   })
 

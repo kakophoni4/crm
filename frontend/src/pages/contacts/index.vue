@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { UserPlus } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 import {
   NButton,
   NDataTable,
+  NIcon,
   NInput,
   NSelect,
   NSpace,
@@ -14,9 +16,10 @@ import { useRouter } from 'vue-router'
 
 import type { Contact, ContactStatus } from '@/entities/contact/types'
 import { CONTACT_STATUS_FILTER_OPTIONS, contactStatusLabel } from '@/entities/contact/types'
+import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
 import { listContacts } from '@/features/contacts/api'
 import { AppError } from '@/shared/api/http'
-import { onContactsInvalidate } from '@/shared/lib/query-invalidation'
+import { invalidateContactsQueries, onContactsInvalidate } from '@/shared/lib/query-invalidation'
 import AppCard from '@/shared/ui/AppCard.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -25,6 +28,7 @@ const message = useMessage()
 const auth = useAuthStore()
 
 const loading = ref(false)
+const createDialogVisible = ref(false)
 const rows = ref<Contact[]>([])
 const nextCursor = ref<string | null>(null)
 const cursorStack = ref<(string | undefined)[]>([undefined])
@@ -39,6 +43,15 @@ const showContactPrivateFields = computed(
 )
 
 const showTelegramUserId = computed(() => auth.isAdmin)
+
+const canCreateContact = computed(
+  () => auth.user?.permissions.includes('contacts.create') === true,
+)
+
+function onContactCreated(contact: Contact): void {
+  invalidateContactsQueries()
+  void router.push({ name: 'contact-detail', params: { id: contact.id } })
+}
 
 const columns = computed<DataTableColumns<Contact>>(() => {
   const base: DataTableColumns<Contact> = [
@@ -199,6 +212,16 @@ watch(
   <section class="contacts-page">
     <header class="contacts-page__header">
       <h1 class="contacts-page__title">Контакты</h1>
+      <NButton
+        v-if="canCreateContact"
+        type="primary"
+        @click="createDialogVisible = true"
+      >
+        <template #icon>
+          <NIcon><UserPlus /></NIcon>
+        </template>
+        Создать контакт
+      </NButton>
     </header>
 
     <AppCard class="contacts-page__panel">
@@ -240,6 +263,12 @@ watch(
         </div>
       </NSpin>
     </AppCard>
+
+    <CreateContactDialog
+      v-model:show="createDialogVisible"
+      source="manual"
+      @created="onContactCreated"
+    />
   </section>
 </template>
 
@@ -252,6 +281,11 @@ watch(
 }
 
 .contacts-page__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 

@@ -8,16 +8,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.timeutil import utc_now
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
-from app.modules.db.models.enums import UserAvailability, UserStatus
+from app.modules.db.models.enums import UserAvailability, UserRole, UserStatus
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
+from app.modules.users.memberships import list_user_group_ids
+from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_group_ids
 from app.shared.settings import settings
 
 ASSIGNMENT_AUTO_ROUND_ROBIN = "auto_round_robin"
 ASSIGNMENT_AUTO_FIRST_RESPONDER = "auto_first_responder"
 ASSIGNMENT_AUTO_RANDOM_AVAILABLE = "auto_random_available"
+ASSIGNMENT_MANUAL_CREATE = "manual_create"
 ASSIGNMENT_MANUAL_TRANSFER = "manual_transfer"
 ASSIGNMENT_USER_REMOVAL_REBALANCE = "user_removal_rebalance"
 
@@ -267,6 +270,43 @@ async def reassign_owner(
     await session.flush()
     await session.refresh(assignment)
     return assignment
+
+
+async def ensure_manual_create_assignment(
+    session: AsyncSession,
+    *,
+    contact_id: int,
+    actor: User,
+    ctx: ScopeContext,
+) -> None:
+    """Make a manually created contact visible in the actor's scope."""
+    role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+    if role == UserRole.ADMIN:
+        return
+
+    group_ids = visible_group_ids(ctx)
+    if group_ids == SCOPE_ALL or not isinstance(group_ids, set) or not group_ids:
+        return
+
+    actor_groups = await list_user_group_ids(session, actor.id)
+    preferred = [gid for gid in actor_groups if gid in group_ids]
+    group_id = preferred[0] if preferred else min(group_ids)
+
+    existing = await get_assignment(session, contact_id, group_id)
+    if existing is not None:
+        return
+
+    now = utc_now()
+    session.add(
+        ContactGroupAssignment(
+            contact_id=contact_id,
+            group_id=group_id,
+            owner_user_id=actor.id,
+            assigned_at=now,
+            assignment_source=ASSIGNMENT_MANUAL_CREATE,
+        ),
+    )
+    await session.flush()
 
 
 def ownership_v2_enabled() -> bool:
