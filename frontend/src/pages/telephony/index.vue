@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, UserPlus, Volume2, Wifi } from 'lucide-vue-next'
-import { NButton, NIcon, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NIcon, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'

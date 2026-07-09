@@ -312,7 +312,7 @@ async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
   }
 }
 
-function openCommissionModal(order: OptOrder): void {
+function openCommissionModal(): void {
   commissionForm.value = {
     direction: 'decrease',
     amount: null,
@@ -622,7 +622,7 @@ onUnmounted(() => {
               v-if="canAdjustCommission(selectedOrder)"
               size="small"
               quaternary
-              @click="openCommissionModal(selectedOrder)"
+              @click="openCommissionModal()"
             >
               Изменить к оплате
             </NButton>
