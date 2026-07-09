@@ -23,6 +23,12 @@ fi
 echo "Seeding opt_units from $SQL ..."
 compose exec -T postgres psql -U "${POSTGRES_USER:-crm}" -d "${POSTGRES_DB:-crm}" < "$SQL"
 
+PARK_SQL="$ROOT/scripts/deploy/seed-opt-park-categories.sql"
+if [[ -f "$PARK_SQL" ]]; then
+  echo "Applying park categories/rates from $PARK_SQL ..."
+  compose exec -T postgres psql -U "${POSTGRES_USER:-crm}" -d "${POSTGRES_DB:-crm}" < "$PARK_SQL"
+fi
+
 TEST_SQL="$ROOT/scripts/fixtures/seed-opt-test-lavki.sql"
 if [[ -f "$TEST_SQL" ]]; then
   echo "Seeding NAVEL test lavki from $TEST_SQL ..."
@@ -31,4 +37,8 @@ fi
 
 echo "Done. Lavki count:"
 compose exec -T postgres psql -U "${POSTGRES_USER:-crm}" -d "${POSTGRES_DB:-crm}" -c \
-  "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE category_code = 'TECH') AS tech FROM opt_units;"
+  "SELECT COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE category_code = 'TECH' AND commission_rate_percent IS NULL) AS tech_default,
+          COUNT(*) FILTER (WHERE category_code = 'O') AS optima,
+          COUNT(*) FILTER (WHERE category_code = 'L') AS absolut
+   FROM opt_units;"

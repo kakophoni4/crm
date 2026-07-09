@@ -32,6 +32,16 @@ def test_payment_status_partial_and_paid() -> None:
     assert payment_status(Decimal("100"), Decimal("100")) == "paid"
 
 
+def test_rate_percent_for_unit_prefers_custom_rate() -> None:
+    from types import SimpleNamespace
+
+    from app.modules.leads.opt.tariffs import OPT_CATEGORY_TECH, rate_percent_for_unit
+
+    unit = SimpleNamespace(commission_rate_percent=1.1, category_code=OPT_CATEGORY_TECH)
+    assert rate_percent_for_unit(unit, category_code=OPT_CATEGORY_TECH) == Decimal("1.1")
+    assert rate_percent_for_unit(None, category_code=OPT_CATEGORY_TECH) == Decimal("1.3")
+
+
 def test_commission_base_from_breakdown() -> None:
     breakdown = {
         "TECH": {

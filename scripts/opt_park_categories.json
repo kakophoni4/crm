@@ -1,0 +1,93 @@
+[
+  {
+    "inn": "9731112362",
+    "name": "ООО \"Глория\"",
+    "category_label": "Абсолют",
+    "category_code": "L",
+    "commission_rate_percent": 3.5
+  },
+  {
+    "inn": "9718148521",
+    "name": "ООО \"Лифт Комплекс\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "7743359603",
+    "name": "ООО \"К-Пласт\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "7724774530",
+    "name": "ООО \"Лорриплюс\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "9731112429",
+    "name": "ООО \"Пионер\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "9729097741",
+    "name": "ООО \"Континент\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "7734474261",
+    "name": "ООО \"Кохер\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "7708721010",
+    "name": "ООО \"Рысь\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "9731112323",
+    "name": "ООО \"Афина\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  },
+  {
+    "inn": "9729355449",
+    "name": "ООО \"Паром\"",
+    "category_label": "Техничка",
+    "category_code": "TECH",
+    "commission_rate_percent": 1.1
+  },
+  {
+    "inn": "5011036907",
+    "name": "ООО \"ТЭК\"",
+    "category_label": "Техничка",
+    "category_code": "TECH",
+    "commission_rate_percent": 1.1
+  },
+  {
+    "inn": "9718078916",
+    "name": "ООО \"Илиона\"",
+    "category_label": "Техничка",
+    "category_code": "TECH",
+    "commission_rate_percent": 1.1
+  },
+  {
+    "inn": "9719029573",
+    "name": "ООО \"Дир Партс\"",
+    "category_label": "Техничка",
+    "category_code": "TECH",
+    "commission_rate_percent": 1.1
+  }
+]

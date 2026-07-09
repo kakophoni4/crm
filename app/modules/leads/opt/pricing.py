@@ -8,7 +8,7 @@ from app.modules.db.models.opt_unit import OptUnit
 from app.modules.leads.opt.tariffs import (
     CATEGORY_LABELS,
     normalize_category_code,
-    rate_percent_for_category,
+    rate_percent_for_unit,
 )
 
 
@@ -17,19 +17,22 @@ def compute_order_pricing(
     units_by_inn: dict[str, OptUnit],
 ) -> tuple[Decimal, Decimal, dict[str, dict[str, float]]]:
     volume_by_category: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    rate_by_category: dict[str, Decimal] = {}
 
     for line in lines:
         inn = str(line.supplier_inn)
         unit = units_by_inn.get(inn)
         category = normalize_category_code(unit.category_code if unit else None)
         volume_by_category[category] += Decimal(str(line.amount))
+        if category not in rate_by_category:
+            rate_by_category[category] = rate_percent_for_unit(unit, category_code=category)
 
     total_volume = Decimal("0")
     total_commission = Decimal("0")
     breakdown: dict[str, dict[str, float]] = {}
 
     for category, volume in sorted(volume_by_category.items()):
-        rate = rate_percent_for_category(category)
+        rate = rate_by_category[category]
         commission = (volume * rate / Decimal("100")).quantize(Decimal("0.01"))
         total_volume += volume
         total_commission += commission

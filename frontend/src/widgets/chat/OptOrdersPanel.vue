@@ -750,7 +750,7 @@ onUnmounted(() => {
             <NRadioGroup v-model:value="commissionForm.direction">
               <NSpace>
                 <NRadio value="decrease">Скидка (−)</NRadio>
-                <NRadio value="increase">Штраф (+)</NRadio>
+                <NRadio value="increase">Доначисление (+)</NRadio>
               </NSpace>
             </NRadioGroup>
           </NFormItem>
