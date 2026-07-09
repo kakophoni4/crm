@@ -98,10 +98,6 @@ function formatDocumentDate(value: string | null | undefined): string {
   return parsed.toLocaleDateString('ru-RU')
 }
 
-function orderRefLabel(order: AccountingUnitOrder): string {
-  return `Заявка №${order.order_no} · сделка №${order.lead_id}`
-}
-
 function registryFilename(order: AccountingUnitOrder): string {
   const raw = order.source_filename || `registry_${order.crm_id}.xlsx`
   return raw.endsWith('.xlsx') ? raw : `${raw}.xlsx`
