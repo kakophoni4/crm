@@ -8,7 +8,6 @@ import { useAuthStore } from '@/shared/store/auth'
 import { useThemeStore } from '@/shared/store/theme'
 import { disconnectContactsRealtime } from '@/shared/realtime/contacts-ws'
 import BrandMark from './BrandMark.vue'
-import BrandMark from './BrandMark.vue'
 
 defineEmits<{
   toggleSidebar: []
