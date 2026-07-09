@@ -58,8 +58,8 @@ export interface TaskUpdateBody {
 }
 
 export const TASK_TYPE_COLORS: Record<TaskType, string> = {
-  urgent: '#d03050',
-  high: '#f0a020',
-  normal: '#2080f0',
-  low: '#909399',
+  urgent: '#dc2626',
+  high: '#d97706',
+  normal: '#2563eb',
+  low: '#6b7280',
 }

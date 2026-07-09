@@ -13,17 +13,21 @@ import {
   NUpload,
   useMessage,
 } from 'naive-ui'
-import { Copy, Link2, Trash2, Upload } from 'lucide-vue-next'
+import { Copy, Download, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
 import { computed, h, onMounted, ref } from 'vue'
 
 import {
   createVaultShareLink,
   deleteVaultFile,
   downloadGroupFile,
+  downloadVaultFile,
+  getVaultFileContent,
   listGroupFileGroups,
   listGroupFiles,
   listVaultFiles,
+  renameVaultFile,
   revokeShareLink,
+  updateVaultFileContent,
   uploadVaultFile,
   type GroupChatFile,
   type VaultFile,
@@ -53,11 +57,23 @@ const previewBlobUrl = ref<string | null>(null)
 const previewName = ref('')
 const previewOpen = ref(false)
 
+const previewMime = ref('')
 const previewKind = computed(() =>
   previewName.value
-    ? resolveAttachmentPreviewKind({ name: previewName.value, mime: '' })
+    ? resolveAttachmentPreviewKind({ name: previewName.value, mime: previewMime.value })
     : 'unsupported',
 )
+
+const renameModalOpen = ref(false)
+const renameTarget = ref<VaultFile | null>(null)
+const renameValue = ref('')
+const renameLoading = ref(false)
+
+const editModalOpen = ref(false)
+const editTarget = ref<VaultFile | null>(null)
+const editContent = ref('')
+const editLoading = ref(false)
+const editSaving = ref(false)
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('ru-RU')
@@ -131,6 +147,112 @@ async function onDeleteVault(row: VaultFile): Promise<void> {
   }
 }
 
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+async function onDownloadVault(row: VaultFile): Promise<void> {
+  try {
+    const blob = await downloadVaultFile(row.id)
+    triggerBlobDownload(blob, row.original_name)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать файл')
+  }
+}
+
+function openRenameModal(row: VaultFile): void {
+  renameTarget.value = row
+  renameValue.value = row.original_name
+  renameModalOpen.value = true
+}
+
+async function submitRename(): Promise<void> {
+  if (!renameTarget.value) return
+  const name = renameValue.value.trim()
+  if (!name) {
+    message.error('Имя файла не может быть пустым')
+    return
+  }
+  renameLoading.value = true
+  try {
+    await renameVaultFile(renameTarget.value.id, name)
+    message.success('Файл переименован')
+    renameModalOpen.value = false
+    await loadVault()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось переименовать')
+  } finally {
+    renameLoading.value = false
+  }
+}
+
+async function openEditModal(row: VaultFile): Promise<void> {
+  editTarget.value = row
+  editContent.value = ''
+  editModalOpen.value = true
+  editLoading.value = true
+  try {
+    const data = await getVaultFileContent(row.id)
+    if (!data.editable) {
+      message.warning('Этот файл нельзя редактировать как текст')
+      editModalOpen.value = false
+      return
+    }
+    editContent.value = data.content
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось открыть файл')
+    editModalOpen.value = false
+  } finally {
+    editLoading.value = false
+  }
+}
+
+async function submitEdit(): Promise<void> {
+  if (!editTarget.value) return
+  editSaving.value = true
+  try {
+    await updateVaultFileContent(editTarget.value.id, editContent.value)
+    message.success('Файл сохранён')
+    editModalOpen.value = false
+    await loadVault()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
+  } finally {
+    editSaving.value = false
+  }
+}
+
+const EDITABLE_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'csv', 'tsv', 'log', 'json', 'xml', 'yaml', 'yml',
+  'html', 'htm', 'css', 'scss', 'js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'java',
+  'c', 'cpp', 'h', 'hpp', 'go', 'rs', 'rb', 'php', 'sh', 'bat', 'ps1', 'sql',
+  'ini', 'conf', 'cfg', 'toml', 'env', 'rst',
+])
+
+function isEditable(row: VaultFile): boolean {
+  if (row.size_bytes > 1_000_000) return false
+  const mime = (row.mime_type || '').toLowerCase()
+  if (mime.startsWith('text/')) return true
+  if (
+    ['application/json', 'application/xml', 'application/x-yaml', 'application/javascript'].includes(
+      mime,
+    )
+  ) {
+    return true
+  }
+  const ext = row.original_name.includes('.')
+    ? row.original_name.split('.').pop()!.toLowerCase()
+    : ''
+  return EDITABLE_EXTENSIONS.has(ext)
+}
+
 function openShareModal(row: VaultFile): void {
   shareTarget.value = row
   shareExpiresHours.value = 168
@@ -180,6 +302,7 @@ async function previewGroupFile(row: GroupChatFile): Promise<void> {
     if (previewBlobUrl.value) URL.revokeObjectURL(previewBlobUrl.value)
     previewBlobUrl.value = URL.createObjectURL(blob)
     previewName.value = row.original_name
+    previewMime.value = row.mime_type || ''
     previewOpen.value = true
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось открыть файл')
@@ -214,9 +337,38 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
   {
     title: '',
     key: 'actions',
-    width: 180,
+    width: 260,
     render: (row) =>
-      h(NSpace, { size: 4 }, () => [
+      h(NSpace, { size: 4, wrap: false }, () => [
+        h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            title: 'Скачать',
+            onClick: () => onDownloadVault(row),
+          },
+          { icon: () => h(Download, { size: 14 }) },
+        ),
+        ...(isEditable(row)
+          ? [
+              h(
+                NButton,
+                {
+                  size: 'small',
+                  quaternary: true,
+                  title: 'Редактировать',
+                  onClick: () => openEditModal(row),
+                },
+                { icon: () => h(Pencil, { size: 14 }) },
+              ),
+            ]
+          : []),
+        h(
+          NButton,
+          { size: 'small', quaternary: true, title: 'Переименовать', onClick: () => openRenameModal(row) },
+          { default: () => 'Имя' },
+        ),
         h(
           NButton,
           { size: 'small', quaternary: true, onClick: () => openShareModal(row) },
@@ -224,7 +376,7 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
         ),
         h(
           NButton,
-          { size: 'small', quaternary: true, type: 'error', onClick: () => onDeleteVault(row) },
+          { size: 'small', quaternary: true, type: 'error', title: 'Удалить', onClick: () => onDeleteVault(row) },
           { icon: () => h(Trash2, { size: 14 }) },
         ),
       ]),
@@ -391,6 +543,54 @@ onMounted(async () => {
       </NSpace>
     </NModal>
 
+    <NModal
+      v-model:show="renameModalOpen"
+      preset="card"
+      title="Переименовать файл"
+      style="width: 420px"
+    >
+      <NSpace vertical>
+        <NInput
+          v-model:value="renameValue"
+          placeholder="Новое имя файла"
+          @keyup.enter="submitRename"
+        />
+        <NButton type="primary" :loading="renameLoading" block @click="submitRename">
+          Сохранить
+        </NButton>
+      </NSpace>
+    </NModal>
+
+    <NModal
+      v-model:show="editModalOpen"
+      preset="card"
+      :title="`Редактирование: ${editTarget?.original_name ?? ''}`"
+      style="width: 80vw; max-width: 900px"
+    >
+      <NSpin :show="editLoading">
+        <NInput
+          v-model:value="editContent"
+          type="textarea"
+          :autosize="{ minRows: 16, maxRows: 28 }"
+          placeholder="Содержимое файла"
+          class="editor-textarea"
+        />
+      </NSpin>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="editModalOpen = false">Отмена</NButton>
+          <NButton
+            type="primary"
+            :loading="editSaving"
+            :disabled="editLoading"
+            @click="submitEdit"
+          >
+            Сохранить
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
     <NModal v-model:show="previewOpen" preset="card" :title="previewName" style="width: 80vw">
       <img
         v-if="previewBlobUrl && previewKind === 'image'"
@@ -438,13 +638,13 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
 }
 
 .hint,
 .empty-hint {
-  color: var(--n-text-color-3);
-  font-size: 13px;
+  color: var(--app-text-muted);
+  font-size: 0.8125rem;
 }
 
 .preview-img {
@@ -458,5 +658,11 @@ onMounted(async () => {
   width: 100%;
   height: 70vh;
   border: none;
+}
+
+.editor-textarea :deep(textarea) {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

@@ -45,3 +45,31 @@ class FilesService:
             raise NotFound(message="File not found")
         data, content_type = await get_file_storage().get_bytes(row.storage_key)
         return data, content_type, row.original_name
+
+    async def rename(self, file_id: int, *, original_name: str) -> UploadedFile:
+        row = await self.get_by_id(file_id)
+        if row is None:
+            raise NotFound(message="File not found")
+        row.original_name = original_name
+        await self._session.flush()
+        await self._session.refresh(row)
+        return row
+
+    async def replace_content(
+        self,
+        file_id: int,
+        *,
+        data: bytes,
+        mime_type: str | None = None,
+    ) -> UploadedFile:
+        row = await self.get_by_id(file_id)
+        if row is None:
+            raise NotFound(message="File not found")
+        content_type = mime_type or row.mime_type or "application/octet-stream"
+        await get_file_storage().upload_bytes(row.storage_key, data, content_type)
+        row.size_bytes = len(data)
+        if mime_type:
+            row.mime_type = mime_type
+        await self._session.flush()
+        await self._session.refresh(row)
+        return row

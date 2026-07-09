@@ -131,7 +131,7 @@ function copyUrl(): void {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: var(--n-body-color);
+  background: var(--app-bg);
 }
 
 .share-upload-page :deep(.app-card) {
@@ -141,22 +141,22 @@ function copyUrl(): void {
 
 .lead {
   margin: 0 0 16px;
-  color: var(--n-text-color-3);
-  font-size: 14px;
+  color: var(--app-text-muted);
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
 .file-meta {
   margin: 0;
-  font-size: 13px;
-  color: var(--n-text-color-2);
+  font-size: 0.8125rem;
+  color: var(--app-text-muted);
 }
 
 .result {
   margin-top: 8px;
   padding: 12px;
   border-radius: 8px;
-  background: var(--n-action-color);
+  background: var(--app-surface-elevated);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -164,12 +164,12 @@ function copyUrl(): void {
 
 .result-label {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
 .result-url {
   word-break: break-all;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 </style>

@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.scope_loader import ScopeLoader
-from app.modules.db.models.group import Group
+from app.modules.db.models.chat import Chat
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.contact import Contact
+from app.modules.db.models.group import Group
 from app.modules.db.models.enums import MessageDirection, UserRole
 from app.modules.db.models.file_share_link import FileShareLink
 from app.modules.db.models.file_vault_item import FileVaultItem
@@ -28,6 +29,7 @@ from app.modules.storage.schemas import (
     PublicShareInfoResponse,
     ShareLinkCreateRequest,
     ShareLinkResponse,
+    VaultFileContentResponse,
     VaultFileListResponse,
     VaultFileResponse,
 )
@@ -36,6 +38,36 @@ from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.shared.security.passwords import hash_password, verify_password
 from app.shared.settings import get_settings
 from app.shared.storage import get_file_storage
+
+
+_EDITABLE_TEXT_EXTENSIONS = frozenset(
+    {
+        "txt", "md", "markdown", "csv", "tsv", "log", "json", "xml", "yaml", "yml",
+        "html", "htm", "css", "scss", "js", "ts", "jsx", "tsx", "vue", "py", "java",
+        "c", "cpp", "h", "hpp", "go", "rs", "rb", "php", "sh", "bat", "ps1", "sql",
+        "ini", "conf", "cfg", "toml", "env", "rst",
+    },
+)
+
+_MAX_EDITABLE_BYTES = 1_000_000
+
+
+def _is_editable_text_file(*, original_name: str, mime_type: str, size_bytes: int) -> bool:
+    if size_bytes > _MAX_EDITABLE_BYTES:
+        return False
+    mime = (mime_type or "").lower()
+    if mime.startswith("text/"):
+        return True
+    editable_mimes = {
+        "application/json",
+        "application/xml",
+        "application/x-yaml",
+        "application/javascript",
+    }
+    if mime in editable_mimes:
+        return True
+    ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    return ext in _EDITABLE_TEXT_EXTENSIONS
 
 
 class StorageService:
@@ -146,6 +178,98 @@ class StorageService:
             except Exception:
                 pass
             await self._repo.delete_uploaded_file(uploaded.id)
+
+    async def _owned_vault_upload(
+        self,
+        actor: User,
+        vault_id: int,
+    ) -> tuple[FileVaultItem, UploadedFile]:
+        item = await self._repo.get_vault_item(vault_id)
+        if item is None or item.owner_user_id != actor.id:
+            raise NotFound(message="File not found")
+        uploaded = await self._repo.get_uploaded_file(item.file_id)
+        if uploaded is None:
+            raise NotFound(message="File not found")
+        return item, uploaded
+
+    def _vault_response(self, item: FileVaultItem, uploaded: UploadedFile) -> VaultFileResponse:
+        return VaultFileResponse(
+            id=item.id,
+            file_id=uploaded.id,
+            original_name=uploaded.original_name,
+            mime_type=uploaded.mime_type,
+            size_bytes=uploaded.size_bytes,
+            created_at=item.created_at,
+            share_links=[],
+        )
+
+    async def get_vault_file_bytes(
+        self,
+        actor: User,
+        vault_id: int,
+    ) -> tuple[bytes, str, str]:
+        _item, uploaded = await self._owned_vault_upload(actor, vault_id)
+        data, content_type = await get_file_storage().get_bytes(uploaded.storage_key)
+        return data, content_type, uploaded.original_name
+
+    async def get_vault_file_content(
+        self,
+        actor: User,
+        vault_id: int,
+    ) -> VaultFileContentResponse:
+        item, uploaded = await self._owned_vault_upload(actor, vault_id)
+        editable = _is_editable_text_file(
+            original_name=uploaded.original_name,
+            mime_type=uploaded.mime_type,
+            size_bytes=uploaded.size_bytes,
+        )
+        content = ""
+        if editable:
+            data, _content_type = await get_file_storage().get_bytes(uploaded.storage_key)
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                editable = False
+        return VaultFileContentResponse(
+            id=item.id,
+            file_id=uploaded.id,
+            original_name=uploaded.original_name,
+            mime_type=uploaded.mime_type,
+            size_bytes=uploaded.size_bytes,
+            editable=editable,
+            content=content,
+        )
+
+    async def rename_vault_file(
+        self,
+        actor: User,
+        vault_id: int,
+        *,
+        original_name: str,
+    ) -> VaultFileResponse:
+        item, uploaded = await self._owned_vault_upload(actor, vault_id)
+        name = original_name.strip()
+        if not name:
+            raise ValidationError(message="Имя файла не может быть пустым")
+        uploaded = await self._files.rename(uploaded.id, original_name=name)
+        return self._vault_response(item, uploaded)
+
+    async def update_vault_file_content(
+        self,
+        actor: User,
+        vault_id: int,
+        *,
+        data: bytes,
+    ) -> VaultFileResponse:
+        item, uploaded = await self._owned_vault_upload(actor, vault_id)
+        if not _is_editable_text_file(
+            original_name=uploaded.original_name,
+            mime_type=uploaded.mime_type,
+            size_bytes=len(data),
+        ):
+            raise ValidationError(message="Этот тип файла нельзя редактировать как текст")
+        uploaded = await self._files.replace_content(uploaded.id, data=data)
+        return self._vault_response(item, uploaded)
 
     async def create_share_link(
         self,

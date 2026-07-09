@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.tasks.types import TaskType
+from app.modules.tasks.types import TaskStatus, TaskType
 
 
 class TaskCreateRequest(BaseModel):
@@ -26,6 +26,13 @@ class TaskUpdateRequest(BaseModel):
     task_type: TaskType | None = None
     assignee_id: int | None = Field(default=None, gt=0)
     due_at: datetime | None = None
+
+
+class TaskMoveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: TaskStatus
+    position: int = Field(default=0, ge=0)
 
 
 class TaskUserBrief(BaseModel):

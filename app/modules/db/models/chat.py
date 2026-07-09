@@ -91,5 +91,5 @@ class Chat(Base):
     )
     messages: Mapped[list[ChatMessage]] = relationship(
         back_populates="chat",
-        lazy="selectin",
+        lazy="select",
     )

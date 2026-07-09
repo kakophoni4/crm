@@ -11,6 +11,7 @@ from app.modules.tasks.schemas import (
     TaskBoardResponse,
     TaskCreateRequest,
     TaskListResponse,
+    TaskMoveRequest,
     TaskResponse,
     TaskUpdateRequest,
 )
@@ -63,6 +64,19 @@ async def update_task(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:
     result = await service.update(actor, task_id, body)
+    await db.commit()
+    return result
+
+
+@router.post("/{task_id}/move", response_model=TaskResponse)
+async def move_task(
+    task_id: int,
+    body: TaskMoveRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    result = await service.move(actor, task_id, body)
     await db.commit()
     return result
 

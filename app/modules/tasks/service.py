@@ -16,6 +16,7 @@ from app.modules.tasks.schemas import (
     TaskBoardResponse,
     TaskCreateRequest,
     TaskListResponse,
+    TaskMoveRequest,
     TaskResponse,
     TaskUpdateRequest,
     TaskUserBrief,
@@ -174,31 +175,33 @@ class TaskService:
             await self._ensure_department_access(ctx, dept_id)
             dept_ids = [dept_id]
 
-        rows = await self._repo.list_for_departments(dept_ids)
-        responses = await self._build_responses(rows)
+        active_rows = await self._repo.list_for_departments(dept_ids)
+        closed_rows = await self._repo.list_closed_for_departments(dept_ids, limit=50)
+        responses = await self._build_responses([*active_rows, *closed_rows])
         by_status: dict[str, list[TaskResponse]] = {
             TaskStatus.OPEN.value: [],
             TaskStatus.DONE_PENDING.value: [],
+            TaskStatus.CLOSED.value: [],
         }
         for item in responses:
             if item.status in by_status:
                 by_status[item.status].append(item)
 
-        for status_key in by_status:
-            by_status[status_key].sort(
-                key=lambda t: (
-                    TASK_TYPE_SORT_ORDER.get(TaskType(t.task_type), 99),
-                    t.due_at.timestamp() if t.due_at else float("inf"),
-                    -t.id,
-                ),
-            )
-
         columns = [
-            TaskBoardColumn(status=TaskStatus.OPEN.value, label="В работе", items=by_status[TaskStatus.OPEN.value]),
+            TaskBoardColumn(
+                status=TaskStatus.OPEN.value,
+                label="В работе",
+                items=by_status[TaskStatus.OPEN.value],
+            ),
             TaskBoardColumn(
                 status=TaskStatus.DONE_PENDING.value,
                 label="На проверке",
                 items=by_status[TaskStatus.DONE_PENDING.value],
+            ),
+            TaskBoardColumn(
+                status=TaskStatus.CLOSED.value,
+                label="Готово",
+                items=by_status[TaskStatus.CLOSED.value],
             ),
         ]
         task_types = [
@@ -247,11 +250,9 @@ class TaskService:
         )
         row = await self._repo.create(row)
         response = (await self._build_responses([row]))[0]
-        await publish(
-            TASK_CREATED,
-            self._event_payload(row),
-            scope={"user_id": row.assignee_id},
-        )
+        payload = self._event_payload(row)
+        await publish(TASK_CREATED, payload, scope={"user_id": row.assignee_id})
+        await publish(TASK_CREATED, payload, scope={"department_id": row.department_id})
         return response
 
     async def update(self, actor: User, task_id: int, body: TaskUpdateRequest) -> TaskResponse:
@@ -288,6 +289,47 @@ class TaskService:
             self._event_payload(task),
             scope={"department_id": task.department_id},
         )
+        return response
+
+    async def move(self, actor: User, task_id: int, body: TaskMoveRequest) -> TaskResponse:
+        if not self._is_senior_or_admin(actor):
+            raise PermissionDenied(message="Управлять доской может только старший оператор")
+        target = body.status
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        now = datetime.now(UTC)
+
+        if target == TaskStatus.OPEN:
+            task.status = TaskStatus.OPEN.value
+            task.completed_at = None
+            task.completed_by = None
+            task.confirmed_at = None
+            task.confirmed_by = None
+        elif target == TaskStatus.DONE_PENDING:
+            task.status = TaskStatus.DONE_PENDING.value
+            if task.completed_at is None:
+                task.completed_at = now
+                task.completed_by = actor.id
+            task.confirmed_at = None
+            task.confirmed_by = None
+        else:
+            task.status = TaskStatus.CLOSED.value
+            if task.completed_at is None:
+                task.completed_at = now
+                task.completed_by = actor.id
+            task.confirmed_at = now
+            task.confirmed_by = actor.id
+
+        # Ручной порядок нужен только для активных колонок; закрытые сортируются по дате.
+        if target != TaskStatus.CLOSED:
+            await self._repo.reorder_column(task, status=task.status, position=body.position)
+        task = await self._repo.save(task)
+        response = (await self._build_responses([task]))[0]
+        payload = self._event_payload(task)
+        await publish(TASK_UPDATED, payload, scope={"user_id": task.assignee_id})
+        await publish(TASK_UPDATED, payload, scope={"department_id": task.department_id})
         return response
 
     async def complete(self, actor: User, task_id: int) -> TaskResponse:

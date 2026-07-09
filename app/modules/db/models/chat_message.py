@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import BigInteger, Computed, ForeignKey, Text, func
+from sqlalchemy import BigInteger, Computed, ForeignKey, Index, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 
 class ChatMessage(Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        Index("ix_messages_chat_id_id", "chat_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     chat_id: Mapped[int] = mapped_column(

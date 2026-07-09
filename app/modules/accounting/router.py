@@ -59,7 +59,6 @@ async def list_accounting_orders(
     actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
     service: Annotated[AccountingService, Depends(_service)],
     supplier_inn: Annotated[str | None, Query()] = None,
-    status: Annotated[str | None, Query()] = None,
     manager_user_id: Annotated[int | None, Query()] = None,
     date_from: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
     date_to: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
@@ -74,7 +73,6 @@ async def list_accounting_orders(
     return await service.list_orders_by_units(
         actor,
         supplier_inn=supplier_inn,
-        status=status,
         manager_user_id=manager_user_id,
         date_from=parsed_from,
         date_to=parsed_to,

@@ -263,21 +263,24 @@ watch(
 
 <style scoped>
 .group-escalation__header {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .group-escalation__header h1 {
   margin: 0 0 4px;
   font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .group-escalation__sub {
   margin: 0;
-  opacity: 0.75;
+  color: var(--app-text-muted);
 }
 
 .group-escalation__sub--warn {
-  color: #d03050;
+  color: var(--app-danger);
 }
 
 .group-escalation__picker {

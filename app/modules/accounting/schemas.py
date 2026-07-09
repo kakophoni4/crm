@@ -56,6 +56,7 @@ class AccountingUnitOrderItem(BaseModel):
     contact_name: str | None = None
     submitted_at: datetime | None = None
     created_at: datetime
+    submission_error: str | None = None
 
 
 class AccountingUnitOrderGroup(BaseModel):

@@ -59,6 +59,13 @@ export const lightThemeOverrides: GlobalThemeOverrides = {
     ...sharedOverrides.common,
     bodyColor: '#f5f6f8',
     cardColor: '#ffffff',
+    primaryColor: '#2563eb',
+    primaryColorHover: '#1d4ed8',
+    primaryColorPressed: '#1e40af',
+    primaryColorSuppl: '#1d4ed8',
+    successColor: '#16a34a',
+    warningColor: '#d97706',
+    errorColor: '#dc2626',
   },
 }
 
@@ -68,6 +75,13 @@ export const darkThemeOverrides: GlobalThemeOverrides = {
     ...sharedOverrides.common,
     bodyColor: '#0f1117',
     cardColor: '#161b22',
+    primaryColor: '#58a6ff',
+    primaryColorHover: '#79b8ff',
+    primaryColorPressed: '#388bfd',
+    primaryColorSuppl: '#79b8ff',
+    successColor: '#3fb950',
+    warningColor: '#d29922',
+    errorColor: '#f85149',
   },
   Input: {
     ...sharedOverrides.Input,

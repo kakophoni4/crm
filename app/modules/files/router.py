@@ -7,11 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.hmac_util import verify_outbound
 from app.modules.bots.repository import BotRepository
+from app.modules.db.models.enums import UserRole
 from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
 from app.modules.rbac.permissions import Permission
 from app.shared.db import get_db
-from app.shared.exceptions import AppError, AuthenticationRequired, NotFound
+from app.shared.exceptions import AppError, AuthenticationRequired, NotFound, PermissionDenied
 from app.shared.security.permissions import requires_permission
 from app.shared.settings import get_settings
 from app.shared.upload_limits import max_upload_bytes_for
@@ -59,9 +60,16 @@ async def upload_file(
 @router.get("/{file_id}")
 async def download_file(
     file_id: int,
-    _actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
     service: Annotated[FilesService, Depends(_files_service)],
 ) -> Response:
+    row = await service.get_by_id(file_id)
+    if row is None:
+        raise NotFound(message="File not found")
+    role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+    is_privileged = role in (UserRole.SENIOR, UserRole.ADMIN)
+    if row.uploaded_by is not None and row.uploaded_by != actor.id and not is_privileged:
+        raise PermissionDenied(message="Файл недоступен")
     data, content_type, filename = await service.get_bytes(file_id)
     from urllib.parse import quote
 

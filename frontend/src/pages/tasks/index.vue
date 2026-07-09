@@ -25,13 +25,16 @@ import {
   deleteTask,
   getTaskBoard,
   listMyTasks,
+  moveTask,
   reopenTask,
   type DepartmentTask,
   type TaskBoard,
+  type TaskStatus,
   type TaskType,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS } from '@/features/tasks/types'
 import { AppError } from '@/shared/api/http'
+import { peekCached, setCached } from '@/shared/lib/stale-cache'
 import {
   connectTasksRealtime,
   onTasksEvent,
@@ -59,6 +62,9 @@ const board = ref<TaskBoard | null>(null)
 const deptUsers = ref<AdminUser[]>([])
 const departments = ref<Department[]>([])
 const selectedDeptId = ref<number | null>(null)
+
+const draggingTask = ref<DepartmentTask | null>(null)
+const dragOverStatus = ref<string | null>(null)
 
 const createOpen = ref(false)
 const createLoading = ref(false)
@@ -103,11 +109,16 @@ function typeColor(type: string): string {
   return TASK_TYPE_COLORS[type as TaskType] ?? '#909399'
 }
 
+const MINE_CACHE_KEY = 'tasks:mine'
+const boardCacheKey = computed(() => `tasks:board:${selectedDeptId.value ?? 'all'}`)
+
 async function loadMine(): Promise<void> {
-  loading.value = true
+  // Спиннер показываем только если совсем нет данных — иначе обновляем в фоне.
+  if (!myTasks.value.length) loading.value = true
   try {
     const data = await listMyTasks()
     myTasks.value = data.items
+    setCached(MINE_CACHE_KEY, data.items)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить задачи')
   } finally {
@@ -117,11 +128,12 @@ async function loadMine(): Promise<void> {
 
 async function loadBoard(): Promise<void> {
   if (!isManager.value) return
-  loading.value = true
+  if (!board.value) loading.value = true
   try {
     board.value = await getTaskBoard(
       isAdmin.value && selectedDeptId.value != null ? selectedDeptId.value : undefined,
     )
+    setCached(boardCacheKey.value, board.value)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить доску')
   } finally {
@@ -250,21 +262,181 @@ async function onDelete(task: DepartmentTask): Promise<void> {
   }
 }
 
+function onDragStart(task: DepartmentTask, event: DragEvent): void {
+  draggingTask.value = task
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(task.id))
+  }
+}
+
+function onDragEnd(): void {
+  draggingTask.value = null
+  dragOverStatus.value = null
+}
+
+function onColumnDragOver(status: string, event: DragEvent): void {
+  if (!draggingTask.value) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverStatus.value = status
+}
+
+function computeDropIndex(container: HTMLElement, task: DepartmentTask, clientY: number): number {
+  const cards = [...container.querySelectorAll<HTMLElement>('[data-task-card]')].filter(
+    (el) => el.dataset.taskId !== String(task.id),
+  )
+  for (let i = 0; i < cards.length; i += 1) {
+    const rect = cards[i].getBoundingClientRect()
+    if (clientY < rect.top + rect.height / 2) return i
+  }
+  return cards.length
+}
+
+async function onColumnDrop(status: TaskStatus, event: DragEvent): Promise<void> {
+  event.preventDefault()
+  const task = draggingTask.value
+  const container = event.currentTarget as HTMLElement
+  onDragEnd()
+  if (!task || !board.value) return
+  const index = computeDropIndex(container, task, event.clientY)
+  await applyMove(task, status, index)
+}
+
+async function applyMove(
+  task: DepartmentTask,
+  status: TaskStatus,
+  index: number,
+): Promise<void> {
+  if (!board.value) return
+  const cols = board.value.columns
+  const source = cols.find((c) => c.status === task.status)
+  const target = cols.find((c) => c.status === status)
+  if (!source || !target) return
+  if (task.status === status && source.items.indexOf(task) === index) return
+
+  const moved: DepartmentTask = { ...task, status }
+  source.items = source.items.filter((t) => t.id !== task.id)
+  const targetItems = target.items.filter((t) => t.id !== task.id)
+  targetItems.splice(Math.min(index, targetItems.length), 0, moved)
+  target.items = targetItems
+
+  try {
+    await moveTask(task.id, status, index)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось переместить задачу')
+    await loadBoard()
+  }
+}
+
+function onDragStart(task: DepartmentTask, event: DragEvent): void {
+  draggingTask.value = task
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(task.id))
+  }
+}
+
+function onDragEnd(): void {
+  draggingTask.value = null
+  dragOverStatus.value = null
+}
+
+function onColumnDragOver(status: string, event: DragEvent): void {
+  if (!draggingTask.value) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverStatus.value = status
+}
+
+function computeDropIndex(container: HTMLElement, clientY: number, draggedId: number): number {
+  const cards = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-task-card]'),
+  ).filter((el) => el.dataset.taskId !== String(draggedId))
+  for (let i = 0; i < cards.length; i += 1) {
+    const rect = cards[i].getBoundingClientRect()
+    if (clientY < rect.top + rect.height / 2) return i
+  }
+  return cards.length
+}
+
+async function onColumnDrop(status: TaskStatus, event: DragEvent): Promise<void> {
+  event.preventDefault()
+  const task = draggingTask.value
+  onDragEnd()
+  if (!task || !board.value) return
+  const container = event.currentTarget as HTMLElement
+  const index = computeDropIndex(container, event.clientY, task.id)
+  await applyMove(task, status, index)
+}
+
+async function applyMove(
+  task: DepartmentTask,
+  status: TaskStatus,
+  index: number,
+): Promise<void> {
+  if (!board.value) return
+  const fromStatus = task.status
+  const snapshot = board.value.columns.map((c) => ({ ...c, items: [...c.items] }))
+  const source = board.value.columns.find((c) => c.status === fromStatus)
+  const target = board.value.columns.find((c) => c.status === status)
+  if (source) source.items = source.items.filter((t) => t.id !== task.id)
+  if (target) {
+    const moved = { ...task, status }
+    const arr = [...target.items]
+    arr.splice(Math.min(index, arr.length), 0, moved)
+    target.items = arr
+  }
+  try {
+    suppressNextWsRefresh()
+    await moveTask(task.id, status, index)
+  } catch (err) {
+    board.value.columns = snapshot
+    message.error(err instanceof AppError ? err.message : 'Не удалось переместить задачу')
+    await loadBoard()
+  }
+}
+
 let unsubTasks: (() => void) | null = null
+let wsRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let suppressWsUntil = 0
+
+function suppressNextWsRefresh(): void {
+  // Skip the WS-triggered reload caused by our own optimistic action.
+  suppressWsUntil = Date.now() + 2500
+}
+
+function scheduleWsRefresh(): void {
+  if (wsRefreshTimer) return
+  wsRefreshTimer = setTimeout(() => {
+    wsRefreshTimer = null
+    if (Date.now() < suppressWsUntil) return
+    void refresh()
+  }, 800)
+}
 
 onMounted(async () => {
+  const cachedMine = peekCached<DepartmentTask[]>(MINE_CACHE_KEY)
+  if (cachedMine) myTasks.value = cachedMine
+  const cachedBoard = peekCached<TaskBoard>(boardCacheKey.value)
+  if (cachedBoard) board.value = cachedBoard
+  if (cachedMine || cachedBoard) loading.value = false
+
   await loadDepartments()
   await loadUsers()
   await refresh()
   await connectTasksRealtime()
   unsubTasks = onTasksEvent((topic, payload) => {
-    message.info(showTaskNotification(topic, payload))
-    void refresh()
+    if (topic === 'task.created' || topic === 'task.due_soon') {
+      message.info(showTaskNotification(topic, payload))
+    }
+    scheduleWsRefresh()
   })
 })
 
 onUnmounted(() => {
   unsubTasks?.()
+  if (wsRefreshTimer) clearTimeout(wsRefreshTimer)
 })
 </script>
 
@@ -291,49 +463,84 @@ onUnmounted(() => {
               @update:value="onBoardDepartmentChange"
             />
           </div>
+          <p class="kanban-hint">Перетаскивайте карточки между колонками, чтобы менять статус.</p>
           <NSpin :show="loading">
             <div v-if="board" class="kanban">
-              <div v-for="col in board.columns" :key="col.status" class="kanban-col">
-                <h3 class="kanban-col-title">{{ col.label }} ({{ col.items.length }})</h3>
-                <div v-for="task in col.items" :key="task.id" class="task-card">
-                  <div class="task-card-head">
-                    <NTag :color="{ color: typeColor(task.task_type), textColor: '#fff' }" size="small">
-                      {{ task.task_type_label }}
-                    </NTag>
-                    <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
-                    <NTag v-else-if="task.due_soon" type="warning" size="small">Скоро срок</NTag>
+              <div
+                v-for="col in board.columns"
+                :key="col.status"
+                class="kanban-col"
+                :class="{ 'kanban-col--over': dragOverStatus === col.status }"
+              >
+                <h3 class="kanban-col-title">
+                  <span class="kanban-col-dot" :class="`kanban-col-dot--${col.status}`" />
+                  {{ col.label }}
+                  <span class="kanban-col-count">{{ col.items.length }}</span>
+                </h3>
+                <div
+                  class="kanban-cards"
+                  @dragover="onColumnDragOver(col.status, $event)"
+                  @drop="onColumnDrop(col.status as TaskStatus, $event)"
+                >
+                  <div
+                    v-for="task in col.items"
+                    :key="task.id"
+                    class="task-card task-card--draggable"
+                    :class="{ 'task-card--dragging': draggingTask?.id === task.id }"
+                    data-task-card
+                    :data-task-id="task.id"
+                    draggable="true"
+                    @dragstart="onDragStart(task, $event)"
+                    @dragend="onDragEnd"
+                  >
+                    <div class="task-card-head">
+                      <NTag
+                        :color="{ color: typeColor(task.task_type), textColor: '#fff' }"
+                        size="small"
+                      >
+                        {{ task.task_type_label }}
+                      </NTag>
+                      <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
+                      <NTag v-else-if="task.due_soon" type="warning" size="small">Скоро срок</NTag>
+                    </div>
+                    <p class="task-card-title">{{ task.title }}</p>
+                    <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
+                    <p v-if="showAllDepartments" class="task-card-meta">
+                      Отдел: {{ departmentMap[task.department_id] ?? task.department_id }}
+                    </p>
+                    <p class="task-card-meta">Исполнитель: {{ task.assignee?.full_name ?? '—' }}</p>
+                    <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
+                    <NSpace size="small" class="task-card-actions">
+                      <NButton
+                        v-if="task.status === 'done_pending'"
+                        size="tiny"
+                        type="primary"
+                        @click="onConfirm(task)"
+                      >
+                        <template #icon><Check :size="12" /></template>
+                        Подтвердить
+                      </NButton>
+                      <NButton
+                        v-if="task.status === 'done_pending'"
+                        size="tiny"
+                        @click="onReopen(task)"
+                      >
+                        <template #icon><RotateCcw :size="12" /></template>
+                        Вернуть
+                      </NButton>
+                      <NButton
+                        v-if="task.status !== 'closed'"
+                        size="tiny"
+                        quaternary
+                        type="error"
+                        @click="onDelete(task)"
+                      >
+                        <template #icon><Trash2 :size="12" /></template>
+                      </NButton>
+                    </NSpace>
                   </div>
-                  <p class="task-card-title">{{ task.title }}</p>
-                  <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
-                  <p v-if="showAllDepartments" class="task-card-meta">
-                    Отдел: {{ departmentMap[task.department_id] ?? task.department_id }}
-                  </p>
-                  <p class="task-card-meta">Исполнитель: {{ task.assignee?.full_name ?? '—' }}</p>
-                  <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
-                  <NSpace size="small" class="task-card-actions">
-                    <NButton
-                      v-if="task.status === 'done_pending'"
-                      size="tiny"
-                      type="primary"
-                      @click="onConfirm(task)"
-                    >
-                      <template #icon><Check :size="12" /></template>
-                      Подтвердить
-                    </NButton>
-                    <NButton
-                      v-if="task.status === 'done_pending'"
-                      size="tiny"
-                      @click="onReopen(task)"
-                    >
-                      <template #icon><RotateCcw :size="12" /></template>
-                      Вернуть
-                    </NButton>
-                    <NButton size="tiny" quaternary type="error" @click="onDelete(task)">
-                      <template #icon><Trash2 :size="12" /></template>
-                    </NButton>
-                  </NSpace>
+                  <p v-if="!col.items.length" class="kanban-empty">Перетащите задачу сюда</p>
                 </div>
-                <p v-if="!col.items.length" class="kanban-empty">Нет задач</p>
               </div>
             </div>
           </NSpin>
@@ -437,30 +644,91 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
+.kanban-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+
 .kanban {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
   gap: 16px;
   align-items: start;
 }
 
+@media (max-width: 900px) {
+  .kanban {
+    grid-template-columns: 1fr;
+  }
+}
+
 .kanban-col {
-  background: var(--n-action-color);
-  border-radius: 10px;
+  background: var(--app-surface-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-control-radius);
   padding: 12px;
-  min-height: 200px;
+  min-height: 240px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.kanban-col--over {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
 }
 
 .kanban-col-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 12px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--app-text-muted);
+}
+
+.kanban-col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--app-text-muted);
+}
+
+.kanban-col-dot--open {
+  background: var(--app-accent);
+}
+
+.kanban-col-dot--done_pending {
+  background: var(--app-warning);
+}
+
+.kanban-col-dot--closed {
+  background: var(--app-success);
+}
+
+.kanban-col-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+
+.kanban-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
 }
 
 .kanban-empty,
 .empty-hint {
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
   font-size: 13px;
+  text-align: center;
+  padding: 24px 8px;
+  border: 1px dashed var(--app-border);
+  border-radius: var(--app-control-radius);
 }
 
 .task-list {
@@ -471,11 +739,26 @@ onUnmounted(() => {
 }
 
 .task-card {
-  border: 1px solid var(--n-border-color);
-  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-control-radius);
   padding: 12px;
-  background: var(--n-color);
-  margin-bottom: 10px;
+  background: var(--app-surface);
+}
+
+.task-card--draggable {
+  cursor: grab;
+}
+
+.task-card--draggable:active {
+  cursor: grabbing;
+}
+
+.task-card--dragging {
+  opacity: 0.45;
+}
+
+.task-card:hover {
+  border-color: var(--app-accent);
 }
 
 .task-card-head {
@@ -494,14 +777,14 @@ onUnmounted(() => {
 .task-card-desc {
   margin: 0 0 8px;
   font-size: 13px;
-  color: var(--n-text-color-2);
+  color: var(--app-text-muted);
   white-space: pre-wrap;
 }
 
 .task-card-meta {
   margin: 0 0 4px;
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
 }
 
 .task-card-actions {

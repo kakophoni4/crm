@@ -7,7 +7,6 @@ import {
   NDataTable,
   NEmpty,
   NInput,
-  NModal,
   NPagination,
   NSelect,
   NSpin,
@@ -17,7 +16,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Calculator, Download, Eye, RefreshCw } from 'lucide-vue-next'
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
   assignAccountingUnitOwner,
@@ -38,12 +37,12 @@ import type {
   AccountingUnitOwnerRow,
 } from '@/features/accounting/types'
 import {
-  OPT_STATUS_LABELS,
   formatAccountingMoney,
   formatAccountingPayment,
 } from '@/features/accounting/types'
 import { AppError } from '@/shared/api/http'
 import AppCard from '@/shared/ui/AppCard.vue'
+import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
 
@@ -57,7 +56,6 @@ const ordersTotal = ref(0)
 const ordersPage = ref(1)
 const ordersPageSize = 20
 const orderSupplierInn = ref<string | null>(null)
-const orderStatus = ref<string | null>(null)
 const orderSearch = ref('')
 const expandedLavki = ref<string[]>([])
 
@@ -76,29 +74,10 @@ const downloadingRegistryId = ref<number | null>(null)
 const downloadingReqId = ref<number | null>(null)
 const previewOpen = ref(false)
 const previewOrder = ref<AccountingUnitOrder | null>(null)
-
-const linePreviewColumns = computed<DataTableColumns<AccountingOrderLineBrief>>(() => [
-  { title: '№', key: 'line_no', width: 48 },
-  {
-    title: 'Дата документа',
-    key: 'document_date',
-    width: 120,
-    render: (row) => formatDocumentDate(row.document_date),
-  },
-  {
-    title: 'Сумма',
-    key: 'amount',
-    width: 120,
-    align: 'right',
-    render: (row) => formatAccountingMoney(row.amount),
-  },
-  {
-    title: 'Док. 1С',
-    key: 'document_number',
-    minWidth: 120,
-    render: (row) => row.document_number || '—',
-  },
-])
+const previewBlob = ref<Blob | null>(null)
+const previewBlobUrl = ref<string | null>(null)
+const previewLoading = ref(false)
+const previewLabel = ref('Реестр.xlsx')
 
 const unitOptions = computed<SelectOption[]>(() =>
   units.value.map((unit) => ({
@@ -106,14 +85,6 @@ const unitOptions = computed<SelectOption[]>(() =>
     value: unit.inn,
   })),
 )
-
-const orderStatusOptions: SelectOption[] = [
-  { label: 'Все статусы', value: '' },
-  { label: 'В 1С', value: 'submitted' },
-  { label: 'В очереди', value: 'queued' },
-  { label: 'Ошибка', value: 'failed' },
-  { label: 'Черновик', value: 'draft' },
-]
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—'
@@ -131,13 +102,41 @@ function orderRefLabel(order: AccountingUnitOrder): string {
   return `Заявка №${order.order_no} · сделка №${order.lead_id}`
 }
 
-function registryPreviewText(order: AccountingUnitOrder): string {
-  return `Реестр по заявке №${order.order_no} сделки №${order.lead_id}.`
+function registryFilename(order: AccountingUnitOrder): string {
+  const raw = order.source_filename || `registry_${order.crm_id}.xlsx`
+  return raw.endsWith('.xlsx') ? raw : `${raw}.xlsx`
 }
 
-function openPreview(order: AccountingUnitOrder): void {
+function clearPreviewBlob(): void {
+  if (previewBlobUrl.value) {
+    URL.revokeObjectURL(previewBlobUrl.value)
+    previewBlobUrl.value = null
+  }
+  previewBlob.value = null
+}
+
+function closeRegistryPreview(): void {
+  previewOpen.value = false
+  previewOrder.value = null
+  clearPreviewBlob()
+}
+
+async function openPreview(order: AccountingUnitOrder): Promise<void> {
   previewOrder.value = order
+  previewLabel.value = registryFilename(order)
   previewOpen.value = true
+  previewLoading.value = true
+  clearPreviewBlob()
+  try {
+    const blob = await downloadAccountingRegistry(order.order_id)
+    previewBlob.value = blob
+    previewBlobUrl.value = URL.createObjectURL(blob)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить реестр')
+    closeRegistryPreview()
+  } finally {
+    previewLoading.value = false
+  }
 }
 
 function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
@@ -155,7 +154,6 @@ async function loadOrders(): Promise<void> {
   try {
     const data = await listAccountingOrders({
       supplier_inn: orderSupplierInn.value || undefined,
-      status: orderStatus.value || undefined,
       q: orderSearch.value.trim() || undefined,
       limit: ordersPageSize,
       offset: (ordersPage.value - 1) * ordersPageSize,
@@ -329,17 +327,6 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
       render: (row) => formatAccountingMoney(row.lavka_line_volume),
     },
     {
-      title: 'Статус',
-      key: 'status',
-      width: 90,
-      render: (row) =>
-        h(
-          NTag,
-          { size: 'small', type: row.status === 'submitted' ? 'success' : 'default' },
-          { default: () => OPT_STATUS_LABELS[row.status] || row.status },
-        ),
-    },
-    {
       title: 'Оплата',
       key: 'payment_status',
       width: 150,
@@ -443,7 +430,7 @@ watch(activeTab, async (tab) => {
   else await loadUnitOwners()
 })
 
-watch([ordersPage, orderSupplierInn, orderStatus], () => {
+watch([ordersPage, orderSupplierInn], () => {
   if (activeTab.value === 'orders') void loadOrders()
 })
 
@@ -453,6 +440,10 @@ watch([requirementsPage, reqSupplierInn], () => {
 
 onMounted(async () => {
   await refreshAll()
+})
+
+onUnmounted(() => {
+  clearPreviewBlob()
 })
 </script>
 
@@ -482,12 +473,6 @@ onMounted(async () => {
               filterable
               placeholder="Лавка"
               style="min-width: 260px"
-            />
-            <NSelect
-              v-model:value="orderStatus"
-              :options="orderStatusOptions"
-              placeholder="Статус"
-              style="width: 160px"
             />
             <NInput
               v-model:value="orderSearch"
@@ -598,53 +583,15 @@ onMounted(async () => {
       </NTabs>
     </AppCard>
 
-    <NModal
-      v-model:show="previewOpen"
-      preset="card"
-      :title="previewOrder ? `Предпросмотр · ${orderRefLabel(previewOrder)}` : 'Предпросмотр реестра'"
-      style="max-width: 720px"
-      @after-leave="previewOrder = null"
-    >
-      <template v-if="previewOrder">
-        <p class="accounting-page__preview-text">{{ registryPreviewText(previewOrder) }}</p>
-        <p v-if="previewOrder.source_filename" class="accounting-page__preview-meta">
-          Файл: {{ previewOrder.source_filename }}
-        </p>
-        <p class="accounting-page__preview-meta">
-          Покупатель: {{ previewOrder.buyer_name || previewOrder.buyer_inn }}
-        </p>
-        <p class="accounting-page__preview-meta">
-          Менеджер: {{ previewOrder.manager_full_name || '—' }}
-        </p>
-        <p class="accounting-page__preview-meta">
-          Оплата:
-          {{
-            formatAccountingPayment(
-              previewOrder.amount_paid,
-              previewOrder.commission_due,
-              previewOrder.payment_status,
-            )
-          }}
-        </p>
-        <NDataTable
-          size="small"
-          :columns="linePreviewColumns"
-          :data="previewOrder.lines"
-          :bordered="true"
-          :pagination="false"
-          :max-height="360"
-        />
-      </template>
-      <template v-if="previewOrder" #footer>
-        <NButton
-          type="primary"
-          :loading="downloadingRegistryId === previewOrder.order_id"
-          @click="onDownloadRegistry(previewOrder)"
-        >
-          Скачать реестр XLSX
-        </NButton>
-      </template>
-    </NModal>
+    <AttachmentPreviewModal
+      :open="previewOpen"
+      :loading="previewLoading"
+      :label="previewLabel"
+      :blob-url="previewBlobUrl"
+      :blob="previewBlob"
+      preview-kind="spreadsheet"
+      @close="closeRegistryPreview"
+    />
   </div>
 </template>
 
@@ -653,14 +600,14 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 16px 20px 24px;
+  padding-bottom: 16px;
 }
 
 .accounting-page__header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
 }
 
 .accounting-page__title {
@@ -668,13 +615,17 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 1.35rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .accounting-page__filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -728,7 +679,7 @@ onMounted(async () => {
 .accounting-page__lines-table td {
   padding: 6px 10px;
   text-align: left;
-  border-bottom: 1px solid var(--n-border-color, rgba(0, 0, 0, 0.08));
+  border-bottom: 1px solid var(--app-border);
 }
 
 .accounting-page__lines-table th {
@@ -739,17 +690,6 @@ onMounted(async () => {
 .accounting-page__lines-table td:nth-child(3) {
   text-align: right;
   white-space: nowrap;
-}
-
-.accounting-page__preview-text {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
-}
-
-.accounting-page__preview-meta {
-  margin: 0 0 6px;
-  font-size: 0.85rem;
-  color: var(--app-text-muted);
 }
 
 .accounting-page__owners {
@@ -765,11 +705,11 @@ onMounted(async () => {
   align-items: center;
   padding: 10px 12px;
   border-radius: 8px;
-  background: var(--app-surface-muted, rgba(0, 0, 0, 0.02));
+  background: var(--app-surface-elevated);
 }
 
 .accounting-page__owner-row--unassigned {
-  background: rgba(250, 173, 20, 0.08);
+  background: var(--app-warning-soft);
 }
 
 .accounting-page__owner-lavka {

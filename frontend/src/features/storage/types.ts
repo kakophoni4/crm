@@ -25,6 +25,16 @@ export interface VaultFileList {
   total: number
 }
 
+export interface VaultFileContent {
+  id: number
+  file_id: number
+  original_name: string
+  mime_type: string
+  size_bytes: number
+  editable: boolean
+  content: string
+}
+
 export interface GroupChatFile {
   id: number
   group_id: number

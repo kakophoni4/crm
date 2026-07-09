@@ -8,6 +8,7 @@ import type {
   ShareLink,
   ShareLinkCreateBody,
   VaultFile,
+  VaultFileContent,
   VaultFileList,
 } from './types'
 
@@ -20,6 +21,7 @@ export type {
   ShareLink,
   ShareLinkCreateBody,
   VaultFile,
+  VaultFileContent,
   VaultFileList,
 } from './types'
 
@@ -43,6 +45,36 @@ export async function uploadVaultFile(file: File): Promise<VaultFile> {
 
 export async function deleteVaultFile(vaultId: number): Promise<void> {
   await http.delete(`/storage/vault/${vaultId}`)
+}
+
+export async function downloadVaultFile(vaultId: number): Promise<Blob> {
+  const { data } = await http.get<Blob>(`/storage/vault/${vaultId}/download`, {
+    responseType: 'blob',
+  })
+  return data
+}
+
+export async function renameVaultFile(
+  vaultId: number,
+  originalName: string,
+): Promise<VaultFile> {
+  const { data } = await http.patch<VaultFile>(`/storage/vault/${vaultId}`, {
+    original_name: originalName,
+  })
+  return data
+}
+
+export async function getVaultFileContent(vaultId: number): Promise<VaultFileContent> {
+  const { data } = await http.get<VaultFileContent>(`/storage/vault/${vaultId}/content`)
+  return data
+}
+
+export async function updateVaultFileContent(
+  vaultId: number,
+  content: string,
+): Promise<VaultFile> {
+  const { data } = await http.put<VaultFile>(`/storage/vault/${vaultId}/content`, { content })
+  return data
 }
 
 export async function createVaultShareLink(

@@ -42,6 +42,7 @@ export interface AccountingUnitOrder {
   contact_name?: string | null
   submitted_at?: string | null
   created_at: string
+  submission_error?: string | null
 }
 
 export interface AccountingUnitOrderGroup {

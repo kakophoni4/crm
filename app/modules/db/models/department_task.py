@@ -22,6 +22,7 @@ class DepartmentTask(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     task_type: Mapped[str] = mapped_column(String(32), nullable=False, server_default="normal")
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="open")
+    position: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_by: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="RESTRICT"),

@@ -19,7 +19,6 @@ export async function listAccountingUnits(): Promise<{
 
 export async function listAccountingOrders(params: {
   supplier_inn?: string
-  status?: string
   q?: string
   limit?: number
   offset?: number

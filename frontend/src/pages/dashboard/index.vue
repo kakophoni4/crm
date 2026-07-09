@@ -6,7 +6,11 @@ import { computed, h, onMounted, ref } from 'vue'
 
 import { getCrmDashboardSummary } from '@/features/leads/api'
 import type { CrmDashboardSummary, OperatorDashboardKpi, PipelineStatusCount } from '@/features/leads/types'
+import { getCached, peekCached, setCached } from '@/shared/lib/stale-cache'
 import AppCard from '@/shared/ui/AppCard.vue'
+
+const DASHBOARD_CACHE_KEY = 'dashboard:summary'
+const DASHBOARD_FRESH_MS = 60_000
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -121,10 +125,20 @@ const kpiItems = computed(() => {
 })
 
 onMounted(async () => {
+  const cached = peekCached<CrmDashboardSummary>(DASHBOARD_CACHE_KEY)
+  if (cached) {
+    summary.value = cached
+    loading.value = false
+  }
+  // Если данные ещё свежие — не дёргаем сеть повторно.
+  if (getCached<CrmDashboardSummary>(DASHBOARD_CACHE_KEY, DASHBOARD_FRESH_MS)) return
   try {
-    summary.value = await getCrmDashboardSummary()
+    const data = await getCrmDashboardSummary()
+    summary.value = data
+    setCached(DASHBOARD_CACHE_KEY, data)
+    error.value = null
   } catch {
-    error.value = 'Не удалось загрузить сводку ХУИтРИКС'
+    if (!summary.value) error.value = 'Не удалось загрузить сводку ХУИтРИКС'
   } finally {
     loading.value = false
   }
@@ -239,7 +253,7 @@ onMounted(async () => {
 .dashboard-page {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 8px clamp(16px, 3vw, 28px) 40px;
+  padding-bottom: 16px;
 }
 
 .dashboard-page__hero {
@@ -272,9 +286,9 @@ onMounted(async () => {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  color: var(--app-accent, #58a6ff);
-  background: color-mix(in srgb, var(--app-accent, #58a6ff) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--app-accent, #58a6ff) 28%, transparent);
+  color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-accent) 28%, transparent);
 }
 
 .dashboard-page__alert {
@@ -356,24 +370,24 @@ onMounted(async () => {
 }
 
 .dashboard-kpi__card:hover {
-  border-color: color-mix(in srgb, var(--app-accent, #58a6ff) 35%, var(--app-border));
+  border-color: color-mix(in srgb, var(--app-accent) 35%, var(--app-border));
   box-shadow:
     0 1px 0 color-mix(in srgb, var(--app-text) 6%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--app-accent, #58a6ff) 12%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--app-accent) 12%, transparent);
 }
 
 .dashboard-kpi__card--success:hover {
-  border-color: color-mix(in srgb, #3fb950 40%, var(--app-border));
+  border-color: color-mix(in srgb, var(--app-success) 40%, var(--app-border));
   box-shadow:
     0 1px 0 color-mix(in srgb, var(--app-text) 6%, transparent),
-    0 0 0 1px color-mix(in srgb, #3fb950 14%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--app-success) 14%, transparent);
 }
 
 .dashboard-kpi__card--danger:hover {
-  border-color: color-mix(in srgb, #f85149 40%, var(--app-border));
+  border-color: color-mix(in srgb, var(--app-danger) 40%, var(--app-border));
   box-shadow:
     0 1px 0 color-mix(in srgb, var(--app-text) 6%, transparent),
-    0 0 0 1px color-mix(in srgb, #f85149 14%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--app-danger) 14%, transparent);
 }
 
 .dashboard-kpi__icon {
@@ -385,18 +399,18 @@ onMounted(async () => {
   height: 40px;
   margin-top: 2px;
   border-radius: 11px;
-  background: color-mix(in srgb, var(--app-accent, #58a6ff) 12%, transparent);
-  color: var(--app-accent, #58a6ff);
+  background: color-mix(in srgb, var(--app-accent) 12%, transparent);
+  color: var(--app-accent);
 }
 
 .dashboard-kpi__icon--success {
-  background: color-mix(in srgb, #3fb950 16%, transparent);
-  color: #3fb950;
+  background: color-mix(in srgb, var(--app-success) 16%, transparent);
+  color: var(--app-success);
 }
 
 .dashboard-kpi__icon--danger {
-  background: color-mix(in srgb, #f85149 16%, transparent);
-  color: #f85149;
+  background: color-mix(in srgb, var(--app-danger) 16%, transparent);
+  color: var(--app-danger);
 }
 
 .dashboard-kpi__body {
@@ -471,13 +485,13 @@ onMounted(async () => {
 }
 
 .dashboard-team__won {
-  color: #3fb950;
+  color: var(--app-success);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .dashboard-team__lost {
-  color: #f85149;
+  color: var(--app-danger);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -551,8 +565,8 @@ onMounted(async () => {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--app-text);
-  background: color-mix(in srgb, var(--app-accent, #58a6ff) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--app-accent, #58a6ff) 28%, transparent);
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-accent) 28%, transparent);
 }
 
 .dashboard-pipeline__track {
@@ -567,8 +581,8 @@ onMounted(async () => {
   border-radius: 999px;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--app-accent, #58a6ff) 88%, #fff) 0%,
-    var(--app-accent, #58a6ff) 100%
+    color-mix(in srgb, var(--app-accent) 88%, #ffffff) 0%,
+    var(--app-accent) 100%
   );
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }

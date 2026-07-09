@@ -859,8 +859,8 @@ onUnmounted(() => {
 }
 
 .opt-orders__tab--active {
-  border-color: var(--app-accent, #2080f0);
-  background: color-mix(in srgb, var(--app-accent, #2080f0) 8%, transparent);
+  border-color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent) 8%, transparent);
 }
 
 .opt-orders__tab-no {
@@ -931,13 +931,13 @@ onUnmounted(() => {
 }
 
 .opt-orders__doc-no {
-  color: var(--app-accent, #2080f0);
+  color: var(--app-accent);
   font-weight: 600;
 }
 
 .opt-orders__error {
   margin: 0;
-  color: #d03050;
+  color: var(--app-danger);
   font-size: 0.8rem;
 }
 
@@ -955,8 +955,8 @@ onUnmounted(() => {
 .opt-orders__quote {
   margin: 0 0 12px;
   padding: 10px 12px;
-  border-left: 3px solid var(--app-accent, #2080f0);
-  background: var(--app-surface-2, rgba(0, 0, 0, 0.03));
+  border-left: 3px solid var(--app-accent);
+  background: var(--app-surface-elevated);
   font-size: 0.9rem;
 }
 

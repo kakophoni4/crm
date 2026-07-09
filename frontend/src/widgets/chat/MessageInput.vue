@@ -446,7 +446,7 @@ watch(
 }
 
 .message-input--drag-over {
-  outline: 2px dashed var(--app-accent, #2080f0);
+  outline: 2px dashed var(--app-accent);
   outline-offset: -4px;
   background: var(--app-accent-soft, #e8f3ff);
 }
@@ -463,7 +463,7 @@ watch(
   gap: 8px;
   margin-bottom: 8px;
   padding: 7px 9px;
-  border-left: 3px solid var(--app-accent, #2080f0);
+  border-left: 3px solid var(--app-accent);
   border-radius: 8px;
   background: var(--app-surface-elevated, #eee);
 }
@@ -588,7 +588,7 @@ watch(
 
 .message-input__quick-item:hover,
 .message-input__quick-item:focus-visible {
-  border-color: var(--app-accent, #2080f0);
+  border-color: var(--app-accent);
   outline: none;
 }
 
@@ -625,7 +625,7 @@ watch(
 }
 
 .message-input__quick-delete:hover {
-  color: #d03050;
+  color: var(--app-danger);
   background: rgba(208, 48, 80, 0.12);
 }
 
@@ -681,7 +681,7 @@ watch(
 
 .message-input__textarea:focus {
   outline: none;
-  border-color: var(--app-accent, #2080f0);
+  border-color: var(--app-accent);
   box-shadow: 0 0 0 2px var(--app-accent-soft, rgba(32, 128, 240, 0.2));
 }
 

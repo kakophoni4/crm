@@ -282,7 +282,7 @@ watch(
 .contacts-page {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 8px clamp(12px, 2.5vw, 24px) 40px;
+  padding-bottom: 16px;
   box-sizing: border-box;
 }
 
@@ -360,6 +360,6 @@ watch(
 }
 
 .contacts-page__table :deep(.n-data-table-tr:hover) {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: color-mix(in srgb, var(--app-text) 4%, transparent);
 }
 </style>

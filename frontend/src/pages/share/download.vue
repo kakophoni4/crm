@@ -102,29 +102,29 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: var(--n-body-color);
+  background: var(--app-bg);
 }
 
 .share-page :deep(.app-card) {
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
 }
 
 .file-name {
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 600;
   margin: 0 0 8px;
   word-break: break-word;
 }
 
 .meta {
-  color: var(--n-text-color-3);
-  font-size: 13px;
+  color: var(--app-text-muted);
+  font-size: 0.8125rem;
   margin: 4px 0;
 }
 
 .error {
-  color: var(--n-error-color);
+  color: var(--app-danger);
   margin-top: 12px;
 }
 

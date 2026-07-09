@@ -484,8 +484,10 @@ watch(
 
 .contact-detail__title {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .contact-detail__form {
@@ -561,7 +563,7 @@ watch(
 
 :deep(.contact-lead-comment__item) {
   padding: 8px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--app-border);
 }
 
 :deep(.contact-lead-comment__item:first-child) {

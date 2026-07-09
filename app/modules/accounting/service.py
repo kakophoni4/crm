@@ -39,6 +39,8 @@ from app.modules.rbac.permissions import Permission
 from app.modules.rbac.role_map import has_permission
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 
+_ACCOUNTING_ORDER_STATUS = "submitted"
+
 
 class AccountingService:
     def __init__(self, session: AsyncSession) -> None:
@@ -88,7 +90,6 @@ class AccountingService:
         actor: User,
         *,
         supplier_inn: str | None,
-        status: str | None,
         manager_user_id: int | None,
         date_from: date | None,
         date_to: date | None,
@@ -100,7 +101,7 @@ class AccountingService:
         filters = {
             "supplier_inns": supplier_inns,
             "supplier_inn": supplier_inn,
-            "status": status,
+            "status": _ACCOUNTING_ORDER_STATUS,
             "manager_user_id": manager_user_id,
             "date_from": date_from,
             "date_to": date_to,
@@ -121,7 +122,8 @@ class AccountingService:
                     id=unit_row.id if unit_row else 0,
                     inn=inn,
                     kpp=line.supplier_kpp or (unit_row.kpp if unit_row else None),
-                    name=line.supplier_name or (unit_row.name if unit_row else None),
+                    name=(unit_row.name if unit_row and unit_row.name else None)
+                    or line.supplier_name,
                     category_code=unit_row.category_code if unit_row else None,
                     is_active=unit_row.is_active if unit_row else True,
                 )
@@ -149,6 +151,7 @@ class AccountingService:
                     contact_name=contact_name,
                     submitted_at=order.submitted_at,
                     created_at=order.created_at,
+                    submission_error=order.submission_error,
                 )
             item = order_map[order.id]
             item.lines.append(
@@ -180,7 +183,6 @@ class AccountingService:
         actor: User,
         *,
         supplier_inn: str | None,
-        status: str | None,
         manager_user_id: int | None,
         date_from: date | None,
         date_to: date | None,
@@ -192,7 +194,7 @@ class AccountingService:
         filters = {
             "supplier_inns": supplier_inns,
             "supplier_inn": supplier_inn,
-            "status": status,
+            "status": _ACCOUNTING_ORDER_STATUS,
             "manager_user_id": manager_user_id,
             "date_from": date_from,
             "date_to": date_to,
@@ -248,7 +250,7 @@ class AccountingService:
         if not await self._repo.order_visible_for_supplier_inns(order_id, supplier_inns):
             raise NotFound(message="Заявка не найдена")
         order = await self._repo.get_order_for_registry(order_id)
-        if order is None:
+        if order is None or order.status != _ACCOUNTING_ORDER_STATUS:
             raise NotFound(message="Заявка не найдена")
         content = build_registry_workbook(order, sorted(order.lines, key=lambda row: row.line_no))
         filename = order.source_filename or f"registry_{order.crm_id}.xlsx"

@@ -362,7 +362,7 @@ watch(
 
 .message-list__bubble--out {
   background: var(--app-accent-soft, #e8f3ff);
-  border-color: color-mix(in srgb, var(--app-accent, #2080f0) 28%, var(--app-border));
+  border-color: color-mix(in srgb, var(--app-accent) 28%, var(--app-border));
 }
 
 .message-list__bubble--in {
@@ -370,7 +370,7 @@ watch(
 }
 
 .message-list__row--failed .message-list__bubble {
-  border-color: #d03050;
+  border-color: var(--app-danger);
   box-shadow: 0 0 0 1px rgba(208, 48, 80, 0.35);
 }
 
@@ -384,9 +384,9 @@ watch(
 .message-list__quote {
   margin-bottom: 6px;
   padding: 5px 8px;
-  border-left: 3px solid var(--app-accent, #2080f0);
+  border-left: 3px solid var(--app-accent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--app-accent, #2080f0) 10%, transparent);
+  background: color-mix(in srgb, var(--app-accent) 10%, transparent);
   color: var(--app-text-muted);
   font-size: 0.8rem;
   line-height: 1.3;
@@ -434,8 +434,8 @@ watch(
 }
 
 .message-list__reply:hover {
-  color: var(--app-accent, #2080f0);
-  border-color: var(--app-accent, #2080f0);
+  color: var(--app-accent);
+  border-color: var(--app-accent);
 }
 
 .message-list__attachments {

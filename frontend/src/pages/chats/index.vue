@@ -964,7 +964,7 @@ onUnmounted(() => {
 
 .chats-page__list-item:hover {
 
-  background: var(--app-surface-elevated, #f4f4f5);
+  background: var(--app-surface-elevated);
 
 }
 
@@ -972,7 +972,7 @@ onUnmounted(() => {
 
 .chats-page__list-item--active {
 
-  background: var(--app-accent-soft, #e8f3ff);
+  background: var(--app-accent-soft);
 
 }
 
@@ -982,7 +982,7 @@ onUnmounted(() => {
 
 .chats-page__list-item--needs-response {
 
-  box-shadow: inset 3px 0 0 var(--app-accent, #2080f0);
+  box-shadow: inset 3px 0 0 var(--app-accent);
 
 }
 
@@ -990,7 +990,7 @@ onUnmounted(() => {
 
 .chats-page__list-item--needs-response {
 
-  box-shadow: inset 3px 0 0 #d03050;
+  box-shadow: inset 3px 0 0 var(--app-danger);
 
 }
 
@@ -1185,7 +1185,7 @@ onUnmounted(() => {
   gap: 12px;
   padding: 12px;
   border-radius: 8px;
-  background: var(--app-surface-2, rgba(255, 255, 255, 0.04));
+  background: var(--app-surface-elevated);
   border: 1px solid var(--app-border);
 }
 
@@ -1303,7 +1303,7 @@ onUnmounted(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-text) 15%, transparent);
 }
 
 .chats-page__status-option-label {

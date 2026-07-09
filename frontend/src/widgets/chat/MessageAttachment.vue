@@ -258,7 +258,7 @@ onUnmounted(() => {
 }
 
 .message-attachment--failed {
-  color: #d03050;
+  color: var(--app-danger);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -304,7 +304,7 @@ onUnmounted(() => {
 
 .message-attachment__doc-icon {
   flex-shrink: 0;
-  color: var(--app-accent, #2080f0);
+  color: var(--app-accent);
 }
 
 .message-attachment__doc-name {

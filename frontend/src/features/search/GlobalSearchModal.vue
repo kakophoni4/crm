@@ -323,7 +323,7 @@ function isMessageItem(
 }
 
 .global-search-modal__error {
-  color: var(--n-error-color, #d03050);
+  color: var(--app-danger);
 }
 
 .global-search-modal__results {

@@ -22,6 +22,28 @@ class VaultFileListResponse(BaseModel):
     total: int
 
 
+class VaultFileRenameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    original_name: str = Field(min_length=1, max_length=512)
+
+
+class VaultFileContentResponse(BaseModel):
+    id: int
+    file_id: int
+    original_name: str
+    mime_type: str
+    size_bytes: int
+    editable: bool
+    content: str
+
+
+class VaultFileContentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(max_length=1_000_000)
+
+
 class ShareLinkCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -268,8 +268,8 @@ onUnmounted(() => {
   text-align: left;
   font: inherit;
   color: inherit;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--app-surface-elevated);
+  border: 1px solid var(--app-border);
   border-radius: 8px;
   cursor: default;
   box-sizing: border-box;
@@ -280,7 +280,7 @@ onUnmounted(() => {
 }
 
 .chats-notifications-pane__row--click:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: color-mix(in srgb, var(--app-text) 7%, var(--app-surface-elevated));
 }
 
 .chats-notifications-pane__time {

@@ -46,8 +46,51 @@ class TaskRepository:
             if not department_ids:
                 return []
             stmt = stmt.where(DepartmentTask.department_id.in_(department_ids))
-        result = await self._session.execute(stmt.order_by(DepartmentTask.created_at.desc()))
+        result = await self._session.execute(
+            stmt.order_by(DepartmentTask.position.asc(), DepartmentTask.id.desc()),
+        )
         return list(result.scalars().all())
+
+    async def list_closed_for_departments(
+        self,
+        department_ids: list[int] | None,
+        *,
+        limit: int = 50,
+    ) -> list[DepartmentTask]:
+        stmt = select(DepartmentTask).where(DepartmentTask.status == TaskStatus.CLOSED.value)
+        if department_ids is not None:
+            if not department_ids:
+                return []
+            stmt = stmt.where(DepartmentTask.department_id.in_(department_ids))
+        result = await self._session.execute(
+            stmt.order_by(
+                DepartmentTask.confirmed_at.desc().nullslast(),
+                DepartmentTask.id.desc(),
+            ).limit(limit),
+        )
+        return list(result.scalars().all())
+
+    async def reorder_column(
+        self,
+        moved: DepartmentTask,
+        *,
+        status: str,
+        position: int,
+    ) -> None:
+        result = await self._session.execute(
+            select(DepartmentTask)
+            .where(
+                DepartmentTask.department_id == moved.department_id,
+                DepartmentTask.status == status,
+                DepartmentTask.id != moved.id,
+            )
+            .order_by(DepartmentTask.position.asc(), DepartmentTask.id.desc()),
+        )
+        siblings = list(result.scalars().all())
+        index = max(0, min(position, len(siblings)))
+        siblings.insert(index, moved)
+        for pos, row in enumerate(siblings):
+            row.position = pos
 
     async def list_for_assignee(self, assignee_id: int) -> list[DepartmentTask]:
         result = await self._session.execute(

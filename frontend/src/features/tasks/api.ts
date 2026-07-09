@@ -4,6 +4,7 @@ import type {
   DepartmentTask,
   TaskBoard,
   TaskCreateBody,
+  TaskStatus,
   TaskUpdateBody,
 } from './types'
 
@@ -11,6 +12,7 @@ export type {
   DepartmentTask,
   TaskBoard,
   TaskCreateBody,
+  TaskStatus,
   TaskType,
   TaskUpdateBody,
 } from './types'
@@ -34,6 +36,15 @@ export async function createTask(body: TaskCreateBody): Promise<DepartmentTask> 
 
 export async function updateTask(taskId: number, body: TaskUpdateBody): Promise<DepartmentTask> {
   const { data } = await http.patch<DepartmentTask>(`/tasks/${taskId}`, body)
+  return data
+}
+
+export async function moveTask(
+  taskId: number,
+  status: TaskStatus,
+  position: number,
+): Promise<DepartmentTask> {
+  const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/move`, { status, position })
   return data
 }
 

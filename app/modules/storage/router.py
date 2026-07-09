@@ -14,7 +14,10 @@ from app.modules.storage.schemas import (
     GroupChatFileListResponse,
     ShareLinkCreateRequest,
     ShareLinkResponse,
+    VaultFileContentResponse,
+    VaultFileContentUpdateRequest,
     VaultFileListResponse,
+    VaultFileRenameRequest,
     VaultFileResponse,
 )
 from app.modules.storage.service import StorageService
@@ -73,6 +76,61 @@ async def upload_vault_file(
         original_name=file.filename or "file",
         mime_type=mime,
     )
+    await db.commit()
+    return result
+
+
+@router.get("/vault/{vault_id}/download")
+async def download_vault_file(
+    vault_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> Response:
+    data, content_type, filename = await service.get_vault_file_bytes(actor, vault_id)
+    ascii_name = filename.encode("ascii", "ignore").decode() or "file"
+    headers = {
+        "Content-Disposition": (
+            f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+        ),
+    }
+    return Response(content=data, media_type=content_type, headers=headers)
+
+
+@router.get("/vault/{vault_id}/content", response_model=VaultFileContentResponse)
+async def get_vault_file_content(
+    vault_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> VaultFileContentResponse:
+    return await service.get_vault_file_content(actor, vault_id)
+
+
+@router.put("/vault/{vault_id}/content", response_model=VaultFileResponse)
+async def update_vault_file_content(
+    vault_id: int,
+    body: VaultFileContentUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VaultFileResponse:
+    result = await service.update_vault_file_content(
+        actor,
+        vault_id,
+        data=body.content.encode("utf-8"),
+    )
+    await db.commit()
+    return result
+
+
+@router.patch("/vault/{vault_id}", response_model=VaultFileResponse)
+async def rename_vault_file(
+    vault_id: int,
+    body: VaultFileRenameRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VaultFileResponse:
+    result = await service.rename_vault_file(actor, vault_id, original_name=body.original_name)
     await db.commit()
     return result
 
