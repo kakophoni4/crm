@@ -27,7 +27,7 @@ export async function listAccountingUnitCategories(): Promise<AccountingUnitCate
 
 export interface CreateAccountingUnitPayload {
   inn: string
-  kpp: string
+  kpp?: string | null
   name: string
   category_code: string
   commission_rate_percent: number

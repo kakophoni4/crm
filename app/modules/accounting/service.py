@@ -131,7 +131,7 @@ class AccountingService:
 
         unit = OptUnit(
             inn=inn,
-            kpp=body.kpp.strip(),
+            kpp=body.kpp,
             name=body.name.strip(),
             category_code=category_code,
             commission_rate_percent=body.commission_rate_percent,

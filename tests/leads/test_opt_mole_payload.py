@@ -54,6 +54,25 @@ def test_build_mole_payload_matches_1c_contract() -> None:
     assert row["СуммаБезНДС"] == 262293.33
 
 
+def test_build_mole_payload_omits_kpp_when_missing() -> None:
+    order = _Order()
+    order.buyer_kpp = None
+    order.lines[0].supplier_kpp = None
+
+    payload = OptOrderService._build_mole_payload(order)  # type: ignore[arg-type]
+
+    assert payload["Покупатель"] == {
+        "ИНН": "5507266215",
+        "Наименование": "НАВЕЛ КО ООО",
+    }
+    assert "КПП" not in payload["Покупатель"]
+    assert payload["Реестр"][0]["Поставщик"] == {
+        "ИНН": "7743622734",
+        "Наименование": "СПЕЦАВТОТРАНССЕРВИС ООО",
+    }
+    assert "КПП" not in payload["Реестр"][0]["Поставщик"]
+
+
 def test_extract_line_numbers_accepts_crmid() -> None:
     mapping = OptOrderService._extract_line_numbers(
         {

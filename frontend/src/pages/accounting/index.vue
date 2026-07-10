@@ -118,7 +118,7 @@ async function submitCreateUnit(): Promise<void> {
     message.warning('ИНН должен содержать 10 или 12 цифр')
     return
   }
-  if (!/^\d{9}$/.test(kpp)) {
+  if (kpp && !/^\d{9}$/.test(kpp)) {
     message.warning('КПП должен содержать 9 цифр')
     return
   }
@@ -138,7 +138,7 @@ async function submitCreateUnit(): Promise<void> {
   try {
     await createAccountingUnit({
       inn,
-      kpp,
+      ...(kpp ? { kpp } : {}),
       name,
       category_code: form.category_code,
       commission_rate_percent: form.commission_rate_percent,
@@ -704,10 +704,10 @@ onUnmounted(() => {
             maxlength="12"
           />
         </NFormItem>
-        <NFormItem label="КПП" required>
+        <NFormItem label="КПП">
           <NInput
             v-model:value="createForm.kpp"
-            placeholder="9 цифр"
+            placeholder="9 цифр (необязательно)"
             :allow-input="(v: string) => /^\d*$/.test(v)"
             maxlength="9"
           />

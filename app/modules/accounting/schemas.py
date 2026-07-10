@@ -41,7 +41,7 @@ class AccountingUnitCategoriesResponse(BaseModel):
 
 class AccountingUnitCreateRequest(BaseModel):
     inn: str = Field(min_length=10, max_length=12)
-    kpp: str = Field(min_length=9, max_length=9)
+    kpp: str | None = None
     name: str = Field(min_length=1, max_length=512)
     category_code: str = Field(min_length=1, max_length=16)
     commission_rate_percent: Decimal = Field(ge=0, le=100)
@@ -56,8 +56,12 @@ class AccountingUnitCreateRequest(BaseModel):
 
     @field_validator("kpp")
     @classmethod
-    def _validate_kpp(cls, value: str) -> str:
+    def _validate_kpp(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = value.strip()
+        if not cleaned:
+            return None
         if not cleaned.isdigit() or len(cleaned) != 9:
             raise ValueError("КПП должен содержать 9 цифр")
         return cleaned

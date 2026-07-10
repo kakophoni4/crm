@@ -459,20 +459,27 @@ class OptOrderService:
         assert refreshed is not None
         return self._to_response(refreshed)
 
+    @staticmethod
+    def _mole_party(*, inn: str, kpp: str | None, name: str) -> dict[str, str]:
+        party: dict[str, str] = {"ИНН": inn, "Наименование": name}
+        if kpp:
+            party["КПП"] = kpp
+        return party
+
     def _build_mole_payload(self, order: LeadOptOrder) -> dict[str, Any]:
-        if not order.buyer_kpp or not order.buyer_name:
+        if not order.buyer_name:
             raise ValidationError(
                 message=(
-                    "Для отправки в 1С нужны КПП и наименование покупателя по этой заявке "
+                    "Для отправки в 1С нужно наименование покупателя "
                     f"(ИНН {order.buyer_inn})"
                 ),
             )
 
         registry: list[dict[str, Any]] = []
         for line in sorted(order.lines, key=lambda row: row.line_no):
-            if not line.supplier_kpp or not line.supplier_name:
+            if not line.supplier_name:
                 raise ValidationError(
-                    message=f"Для лавки {line.supplier_inn} не заполнены КПП/наименование",
+                    message=f"Для лавки {line.supplier_inn} не заполнено наименование",
                 )
             doc_date = line.document_date
             if isinstance(doc_date, date):
@@ -482,11 +489,11 @@ class OptOrderService:
             registry.append(
                 {
                     "CRMid": line.crm_id,
-                    "Поставщик": {
-                        "ИНН": line.supplier_inn,
-                        "КПП": line.supplier_kpp,
-                        "Наименование": line.supplier_name,
-                    },
+                    "Поставщик": self._mole_party(
+                        inn=line.supplier_inn,
+                        kpp=line.supplier_kpp,
+                        name=line.supplier_name,
+                    ),
                     "ДатаДокумента": date_text,
                     "Сумма": float(line.amount),
                     "СуммаНДС": float(line.vat_amount),
@@ -496,11 +503,11 @@ class OptOrderService:
 
         return {
             "CRMid": order.crm_id,
-            "Покупатель": {
-                "ИНН": order.buyer_inn,
-                "КПП": order.buyer_kpp,
-                "Наименование": order.buyer_name,
-            },
+            "Покупатель": self._mole_party(
+                inn=order.buyer_inn,
+                kpp=order.buyer_kpp,
+                name=order.buyer_name,
+            ),
             "Реестр": registry,
         }
 
@@ -572,20 +579,23 @@ class OptOrderService:
         await self._publish_status(order)
 
     async def _ensure_order_requisites(self, order: LeadOptOrder) -> None:
-        if not order.buyer_kpp or not order.buyer_name:
+        if not order.buyer_name or not order.buyer_kpp:
             kpp, name = await resolve_buyer_requisites(self._repo, order.buyer_inn)
-            if kpp and name:
-                order.buyer_kpp = kpp
+            if name and not order.buyer_name:
                 order.buyer_name = name
+            if kpp and not order.buyer_kpp:
+                order.buyer_kpp = kpp
         for line in order.lines:
-            if line.supplier_kpp and line.supplier_name:
+            if line.supplier_name and line.supplier_kpp:
                 continue
             unit = await self._repo.get_unit_by_inn(line.supplier_inn)
             if unit is None:
                 continue
             unit = await ensure_unit_requisites(self._repo, unit)
-            line.supplier_kpp = unit.kpp
-            line.supplier_name = unit.name
+            if unit.name and not line.supplier_name:
+                line.supplier_name = unit.name
+            if unit.kpp and not line.supplier_kpp:
+                line.supplier_kpp = unit.kpp
 
     async def submit_order_worker(self, order_id: int) -> None:
         order = await self._repo.get_order(order_id)

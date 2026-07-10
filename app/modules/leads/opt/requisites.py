@@ -11,11 +11,11 @@ async def resolve_buyer_requisites(
     buyer_inn: str,
 ) -> tuple[str | None, str | None]:
     kpp, name = lookup_buyer_by_inn(buyer_inn)
-    if kpp and name:
+    if name:
         return kpp, name
 
     buyer = await repo.get_buyer_by_inn(buyer_inn)
-    if buyer and buyer.kpp and buyer.name:
+    if buyer and buyer.name:
         return buyer.kpp, buyer.name
 
     party = await lookup_party_by_inn(buyer_inn)
@@ -27,7 +27,7 @@ async def resolve_buyer_requisites(
 
 
 async def ensure_unit_requisites(repo: OptOrderRepository, unit: OptUnit) -> OptUnit:
-    if unit.kpp and unit.name:
+    if unit.name:
         return unit
 
     party = await lookup_party_by_inn(unit.inn)
