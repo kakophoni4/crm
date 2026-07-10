@@ -110,7 +110,7 @@ class OptOrderRepository:
             order,
             *order.lines,
             *order.payments,
-            *getattr(order, "commission_history", []) or [],
+            *order.commission_history,
         ]
         for obj in related:
             if obj in self._session:
