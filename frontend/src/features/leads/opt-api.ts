@@ -1,9 +1,25 @@
-import type { OptAttachmentProbeResult, OptOrder, OptOrderListResponse } from '@/features/leads/opt-types'
+import type {
+  OptAttachmentProbeResult,
+  OptOrder,
+  OptOrderListResponse,
+  OptOrderRegistryListResponse,
+} from '@/features/leads/opt-types'
 import { http } from '@/shared/api/http'
 
 export async function listOptOrders(leadId: number): Promise<OptOrder[]> {
   const { data } = await http.get<OptOrderListResponse>(`/leads/${leadId}/opt-orders`)
   return data.items
+}
+
+export async function listOptOrdersRegistry(params?: {
+  department_id?: number
+  group_id?: number
+  payment_status?: string
+  offset?: number
+  limit?: number
+}): Promise<OptOrderRegistryListResponse> {
+  const { data } = await http.get<OptOrderRegistryListResponse>('/opt-orders', { params })
+  return data
 }
 
 export async function uploadOptApplication(leadId: number, file: File): Promise<OptOrder> {
@@ -56,6 +72,17 @@ export async function deleteOptOrder(leadId: number, orderId: number): Promise<v
   await http.delete(`/leads/${leadId}/opt-orders/${orderId}`)
 }
 
+export async function deleteOptOrderLine(
+  leadId: number,
+  orderId: number,
+  lineId: number,
+): Promise<OptOrder> {
+  const { data } = await http.delete<OptOrder>(
+    `/leads/${leadId}/opt-orders/${orderId}/lines/${lineId}`,
+  )
+  return data
+}
+
 export async function sendOptRegistryToClient(
   leadId: number,
   orderId: number,
@@ -73,6 +100,18 @@ export async function downloadOptRegistry(leadId: number, orderId: number): Prom
   return data
 }
 
+export async function downloadOptPaymentDocument(
+  leadId: number,
+  orderId: number,
+  paymentId: number,
+): Promise<Blob> {
+  const { data } = await http.get<Blob>(
+    `/leads/${leadId}/opt-orders/${orderId}/payments/${paymentId}/document`,
+    { responseType: 'blob' },
+  )
+  return data
+}
+
 export async function addOptOrderPayment(
   leadId: number,
   orderId: number,
@@ -81,6 +120,7 @@ export async function addOptOrderPayment(
     paid_at: string
     payment_type: 'card' | 'crypto' | 'wire' | 'cash'
     recipient: 'orange' | 'beneficiary'
+    document_file_id?: number | null
   },
 ): Promise<OptOrder> {
   const { data } = await http.post<OptOrder>(

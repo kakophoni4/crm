@@ -30,6 +30,11 @@ class LeadOptOrderPayment(Base):
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     payment_type: Mapped[str] = mapped_column(Text, nullable=False)
     recipient: Mapped[str] = mapped_column(Text, nullable=False)
+    document_file_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("uploaded_files.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_by: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="RESTRICT"),

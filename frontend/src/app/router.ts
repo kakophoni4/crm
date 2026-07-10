@@ -154,6 +154,16 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'applications',
+
+        name: 'applications',
+
+        component: () => import('@/pages/applications/index.vue'),
+
+      },
+
+      {
+
         path: 'accounting',
 
         name: 'accounting',

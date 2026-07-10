@@ -11,6 +11,9 @@ from app.modules.db.models.base import Base
 
 if TYPE_CHECKING:
     from app.modules.db.models.lead import Lead
+    from app.modules.db.models.lead_opt_order_commission_history import (
+        LeadOptOrderCommissionHistory,
+    )
     from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
     from app.modules.db.models.user import User
 
@@ -85,6 +88,13 @@ class LeadOptOrder(Base):
         back_populates="order",
         lazy="selectin",
         order_by="LeadOptOrderPayment.paid_at",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    commission_history: Mapped[list[LeadOptOrderCommissionHistory]] = relationship(
+        back_populates="order",
+        lazy="selectin",
+        order_by="LeadOptOrderCommissionHistory.created_at.desc()",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )

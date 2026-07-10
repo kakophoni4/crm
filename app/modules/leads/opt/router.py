@@ -15,6 +15,7 @@ from app.modules.leads.opt.schemas import (
     OptCommissionAdjustRequest,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
+    OptOrderRegistryListResponse,
     OptOrderResponse,
     OptSendRegistryResponse,
     OptUploadFromAttachmentRequest,
@@ -29,6 +30,26 @@ router = APIRouter(prefix="/api/v1", tags=["leads-opt"])
 
 def _service(db: Annotated[AsyncSession, Depends(get_db)]) -> OptOrderService:
     return OptOrderService(db)
+
+
+@router.get("/opt-orders", response_model=OptOrderRegistryListResponse)
+async def list_opt_orders_registry(
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    department_id: int | None = None,
+    group_id: int | None = None,
+    payment_status: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> OptOrderRegistryListResponse:
+    return await service.list_registry(
+        actor,
+        department_id=department_id,
+        group_id=group_id,
+        payment_status=payment_status,
+        offset=max(0, offset),
+        limit=min(max(1, limit), 100),
+    )
 
 
 @router.get("/leads/{lead_id}/opt-orders", response_model=OptOrderListResponse)
@@ -113,6 +134,46 @@ async def add_opt_order_payment(
     service: Annotated[OptOrderService, Depends(_service)],
 ) -> OptOrderResponse:
     return await service.add_payment(actor, lead_id, order_id, body)
+
+
+@router.get("/leads/{lead_id}/opt-orders/{order_id}/payments/{payment_id}/document")
+async def download_opt_payment_document(
+    lead_id: int,
+    order_id: int,
+    payment_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> Response:
+    content, content_type, filename = await service.get_payment_document(
+        actor,
+        lead_id,
+        order_id,
+        payment_id,
+    )
+    ascii_name = filename.encode("ascii", "ignore").decode() or "payment-document"
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+            ),
+        },
+    )
+
+
+@router.delete(
+    "/leads/{lead_id}/opt-orders/{order_id}/lines/{line_id}",
+    response_model=OptOrderResponse,
+)
+async def delete_opt_order_line(
+    lead_id: int,
+    order_id: int,
+    line_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptOrderResponse:
+    return await service.delete_line(actor, lead_id, order_id, line_id)
 
 
 @router.patch(

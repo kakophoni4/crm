@@ -68,6 +68,7 @@ import { useStatusesStore } from '@/features/statuses/store'
 
 import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDialog.vue'
 import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
+import ChatPaymentsSidePanel from '@/widgets/chat/ChatPaymentsSidePanel.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
 
 import { AppError } from '@/shared/api/http'
@@ -142,7 +143,7 @@ const contactClientLabel = computed(() =>
   formatContactClientLabel(store.currentChat?.contact_client_label),
 )
 
-type RightPaneTab = 'deal' | 'notifications'
+type RightPaneTab = 'deal' | 'payments' | 'notifications'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
 const listTabsForPane = computed(() => {
@@ -708,6 +709,7 @@ onUnmounted(() => {
             :disabled="store.isInputBlocked"
             :department-id="store.currentChat.assigned_department_id"
             :group-id="store.currentChat.assigned_group_id ?? store.currentChat.card_owner_group_id"
+            :chat-id="store.currentChat.id"
             :reply-to="replyToMessage"
             @cancel-reply="replyToMessage = null"
             @send="onSend"
@@ -736,6 +738,7 @@ onUnmounted(() => {
           class="chats-page__right-tabs"
         >
           <NTab name="deal" tab="Сделки" />
+          <NTab name="payments" tab="Оплаты" />
           <NTab name="notifications" tab="Уведомления" />
         </NTabs>
         <ChatDealSidePanel
@@ -745,6 +748,10 @@ onUnmounted(() => {
           :lead-status-options="leadStatusOptions"
           :won-status-id="wonStatusId"
           :lost-status-id="lostStatusId"
+        />
+        <ChatPaymentsSidePanel
+          v-else-if="store.currentChat && rightPaneTab === 'payments'"
+          :chat="store.currentChat"
         />
         <ChatsNotificationsPane v-else :embedded="!!store.currentChat" />
       </aside>

@@ -11,6 +11,7 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.user import User
+from sqlalchemy.orm import selectinload
 from app.modules.leads.access import actor_can_access_lead
 from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
 from app.modules.leads.opt.requisites import ensure_unit_requisites, resolve_buyer_requisites
@@ -21,12 +22,15 @@ from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
 from app.modules.leads.opt.schemas import (
     OptAttachmentProbeResponse,
+    OptCommissionHistoryItem,
     OptCounterpartyResponse,
     OptOrderExistingRef,
     OptOrderLineResponse,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
     OptCommissionAdjustRequest,
+    OptOrderRegistryItem,
+    OptOrderRegistryListResponse,
     OptOrderResponse,
     OptPaymentResponse,
     OptVolumeCategoryBreakdown,
@@ -99,7 +103,12 @@ class OptOrderService:
             raise NotFound(message="OPT order not found")
         return order
 
-    def _to_response(self, order: LeadOptOrder) -> OptOrderResponse:
+    def _to_response(
+        self,
+        order: LeadOptOrder,
+        *,
+        document_names: dict[int, str] | None = None,
+    ) -> OptOrderResponse:
         commission_due = Decimal(str(order.commission_due or 0))
         commission_adjustment = Decimal(str(order.commission_adjustment or 0))
         commission_base = commission_base_from_breakdown(order.volume_by_category)
@@ -118,6 +127,8 @@ class OptOrderService:
                         rate_percent=Decimal(str(row.get("rate_percent", 0))),
                         commission=Decimal(str(row.get("commission", 0))),
                     )
+        names = document_names or {}
+        history_rows = getattr(order, "commission_history", None) or []
         return OptOrderResponse(
             id=order.id,
             lead_id=order.lead_id,
@@ -167,10 +178,56 @@ class OptOrderService:
                     payment_type=payment.payment_type,
                     recipient=payment.recipient,
                     created_at=payment.created_at,
+                    document_file_id=payment.document_file_id,
+                    document_name=(
+                        names.get(payment.document_file_id)
+                        if payment.document_file_id is not None
+                        else None
+                    ),
                 )
                 for payment in sorted(order.payments, key=lambda row: row.paid_at)
             ],
+            commission_history=[
+                OptCommissionHistoryItem(
+                    id=row.id,
+                    old_commission_due=Decimal(str(row.old_commission_due)),
+                    new_commission_due=Decimal(str(row.new_commission_due)),
+                    delta=Decimal(str(row.delta)),
+                    direction=row.direction,
+                    changed_by=row.changed_by,
+                    changed_by_name=row.changer.full_name if row.changer is not None else None,
+                    created_at=row.created_at,
+                )
+                for row in sorted(history_rows, key=lambda item: item.created_at, reverse=True)
+            ],
         )
+
+    async def _document_names_for_orders(
+        self,
+        orders: list[LeadOptOrder],
+    ) -> dict[int, str]:
+        file_ids = {
+            payment.document_file_id
+            for order in orders
+            for payment in order.payments
+            if payment.document_file_id is not None
+        }
+        if not file_ids:
+            return {}
+        from sqlalchemy import select
+
+        from app.modules.db.models.uploaded_file import UploadedFile
+
+        result = await self._session.execute(
+            select(UploadedFile.id, UploadedFile.original_name).where(
+                UploadedFile.id.in_(file_ids),
+            ),
+        )
+        return {int(row[0]): str(row[1]) for row in result.all()}
+
+    async def _to_response_async(self, order: LeadOptOrder) -> OptOrderResponse:
+        names = await self._document_names_for_orders([order])
+        return self._to_response(order, document_names=names)
 
     async def add_payment(
         self,
@@ -185,6 +242,10 @@ class OptOrderService:
             raise ValidationError(
                 message=f"Сумма оплаты превышает остаток ({remaining.quantize(Decimal('0.01'))} ₽)",
             )
+        if body.document_file_id is not None:
+            uploaded = await self._repo.get_uploaded_file(body.document_file_id)
+            if uploaded is None:
+                raise ValidationError(message="Файл платёжного документа не найден")
         await self._repo.add_payment(
             order,
             amount=body.amount,
@@ -192,11 +253,12 @@ class OptOrderService:
             payment_type=body.payment_type,
             recipient=body.recipient,
             created_by=actor.id,
+            document_file_id=body.document_file_id,
         )
         await self._session.commit()
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
-        return self._to_response(refreshed)
+        return await self._to_response_async(refreshed)
 
     async def adjust_commission(
         self,
@@ -228,11 +290,169 @@ class OptOrderService:
                 message="Сумма к оплате не может быть меньше уже оплаченной суммы",
             )
 
-        await self._repo.apply_commission_adjustment(order, delta=delta)
+        await self._repo.apply_commission_adjustment(
+            order,
+            delta=delta,
+            changed_by=actor.id,
+        )
         await self._session.commit()
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
-        return self._to_response(refreshed)
+        return await self._to_response_async(refreshed)
+
+    async def delete_line(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+        line_id: int,
+    ) -> OptOrderResponse:
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        if len(order.lines) <= 1:
+            raise ValidationError(
+                message="Нельзя удалить единственную фактуру — удалите всю заявку",
+            )
+        line = next((row for row in order.lines if row.id == line_id), None)
+        if line is None:
+            raise NotFound(message="Фактура не найдена")
+
+        await self._repo.delete_line(order, line_id)
+        await self._session.commit()
+        refreshed = await self._repo.get_order(order.id)
+        assert refreshed is not None
+        return await self._to_response_async(refreshed)
+
+    async def get_payment_document(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+        payment_id: int,
+    ) -> tuple[bytes, str, str]:
+        from app.modules.files.service import FilesService
+
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        payment = next((row for row in order.payments if row.id == payment_id), None)
+        if payment is None or payment.document_file_id is None:
+            raise NotFound(message="Платёжный документ не найден")
+        files = FilesService(self._session)
+        return await files.get_bytes(payment.document_file_id)
+
+    async def list_registry(
+        self,
+        actor: User,
+        *,
+        department_id: int | None = None,
+        group_id: int | None = None,
+        payment_status: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> OptOrderRegistryListResponse:
+        from sqlalchemy import func, select
+
+        from app.modules.db.models.contact import Contact
+        from app.modules.db.models.department import Department
+        from app.modules.db.models.group import Group
+        from app.modules.db.models.lead import Lead
+        from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids
+
+        ctx = await self._scope_loader.load(actor)
+        scoped = visible_group_ids(ctx)
+        if scoped != SCOPE_ALL and not scoped:
+            return OptOrderRegistryListResponse(items=[], total=0)
+
+        filters = []
+        if scoped != SCOPE_ALL:
+            filters.append(Lead.group_id.in_(scoped))
+        if department_id is not None:
+            filters.append(Group.department_id == department_id)
+        if group_id is not None:
+            filters.append(Lead.group_id == group_id)
+        if payment_status:
+            filters.append(LeadOptOrder.payment_status == payment_status)
+
+        count_stmt = (
+            select(func.count())
+            .select_from(LeadOptOrder)
+            .join(Lead, Lead.id == LeadOptOrder.lead_id)
+            .join(Group, Group.id == Lead.group_id)
+        )
+        if filters:
+            count_stmt = count_stmt.where(*filters)
+        total = int((await self._session.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(
+                LeadOptOrder,
+                Lead.chat_id,
+                Lead.contact_id,
+                Lead.group_id,
+                Contact.full_name,
+                Group.name,
+                Group.department_id,
+                Department.name,
+            )
+            .join(Lead, Lead.id == LeadOptOrder.lead_id)
+            .join(Group, Group.id == Lead.group_id)
+            .outerjoin(Department, Department.id == Group.department_id)
+            .outerjoin(Contact, Contact.id == Lead.contact_id)
+            .options(
+                selectinload(LeadOptOrder.lines),
+                selectinload(LeadOptOrder.payments),
+            )
+        )
+        if filters:
+            stmt = stmt.where(*filters)
+
+        result = await self._session.execute(
+            stmt.order_by(LeadOptOrder.created_at.desc(), LeadOptOrder.id.desc())
+            .offset(offset)
+            .limit(limit),
+        )
+        items: list[OptOrderRegistryItem] = []
+        for (
+            order,
+            chat_id,
+            contact_id,
+            order_group_id,
+            contact_name,
+            group_name,
+            dept_id,
+            dept_name,
+        ) in result.all():
+            commission_due = Decimal(str(order.commission_due or 0))
+            amount_paid = Decimal(str(order.amount_paid or 0))
+            remaining = max(Decimal("0"), commission_due - amount_paid).quantize(Decimal("0.01"))
+            items.append(
+                OptOrderRegistryItem(
+                    id=order.id,
+                    lead_id=order.lead_id,
+                    order_no=order.order_no,
+                    chat_id=chat_id,
+                    contact_id=contact_id,
+                    contact_name=contact_name,
+                    group_id=order_group_id,
+                    group_name=group_name,
+                    department_id=dept_id,
+                    department_name=dept_name,
+                    status=order.status,
+                    payment_status=order.payment_status or "unpaid",
+                    total_volume=Decimal(str(order.total_volume or 0)),
+                    commission_due=commission_due,
+                    amount_paid=amount_paid,
+                    amount_remaining=remaining,
+                    buyer=OptCounterpartyResponse(
+                        inn=order.buyer_inn,
+                        kpp=order.buyer_kpp,
+                        name=order.buyer_name,
+                    ),
+                    source_filename=order.source_filename,
+                    created_at=order.created_at,
+                    lines_count=len(order.lines),
+                    payments_count=len(order.payments),
+                ),
+            )
+        return OptOrderRegistryListResponse(items=items, total=total)
 
     @staticmethod
     async def assert_lead_won_payment_allowed(
@@ -247,7 +467,10 @@ class OptOrderService:
     async def list_orders(self, actor: User, lead_id: int) -> OptOrderListResponse:
         await self._get_lead_for_actor(actor, lead_id)
         orders = await self._repo.list_orders_for_lead(lead_id)
-        return OptOrderListResponse(items=[self._to_response(order) for order in orders])
+        names = await self._document_names_for_orders(orders)
+        return OptOrderListResponse(
+            items=[self._to_response(order, document_names=names) for order in orders],
+        )
 
     async def _ensure_lead_service_opt(self, lead: Lead) -> None:
         fields = dict(lead.custom_fields or {})

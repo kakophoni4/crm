@@ -11,9 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
+from app.modules.db.models.lead_opt_order_commission_history import (
+    LeadOptOrderCommissionHistory,
+)
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_unit import OptUnit
+from app.modules.db.models.uploaded_file import UploadedFile
 from app.modules.leads.opt.pricing import (
     commission_base_from_breakdown,
     compute_order_pricing,
@@ -78,6 +82,9 @@ class OptOrderRepository:
             .options(
                 selectinload(LeadOptOrder.lines),
                 selectinload(LeadOptOrder.payments),
+                selectinload(LeadOptOrder.commission_history).selectinload(
+                    LeadOptOrderCommissionHistory.changer,
+                ),
             )
             .order_by(LeadOptOrder.order_no.asc()),
         )
@@ -90,13 +97,21 @@ class OptOrderRepository:
             .options(
                 selectinload(LeadOptOrder.lines),
                 selectinload(LeadOptOrder.payments),
+                selectinload(LeadOptOrder.commission_history).selectinload(
+                    LeadOptOrderCommissionHistory.changer,
+                ),
             ),
         )
         return result.scalar_one_or_none()
 
     async def delete_order(self, order: LeadOptOrder) -> None:
         """Delete order via DB CASCADE; expunge ORM graph to avoid nulling child FKs on flush."""
-        related = [order, *order.lines, *order.payments]
+        related = [
+            order,
+            *order.lines,
+            *order.payments,
+            *getattr(order, "commission_history", []) or [],
+        ]
         for obj in related:
             if obj in self._session:
                 self._session.expunge(obj)
@@ -130,7 +145,13 @@ class OptOrderRepository:
             commission_due,
         )
 
-    async def apply_commission_adjustment(self, order: LeadOptOrder, *, delta: Decimal) -> None:
+    async def apply_commission_adjustment(
+        self,
+        order: LeadOptOrder,
+        *,
+        delta: Decimal,
+        changed_by: int,
+    ) -> LeadOptOrderCommissionHistory:
         if delta == 0:
             raise ValueError("delta must be non-zero")
         current_adjustment = Decimal(str(order.commission_adjustment or 0))
@@ -140,11 +161,23 @@ class OptOrderRepository:
             base_commission = (
                 Decimal(str(order.commission_due or 0)) - current_adjustment
             ).quantize(Decimal("0.01"))
+        old_due = Decimal(str(order.commission_due or 0)).quantize(Decimal("0.01"))
         new_due = (base_commission + new_adjustment).quantize(Decimal("0.01"))
         amount_paid = Decimal(str(order.amount_paid or 0))
         order.commission_adjustment = float(new_adjustment)
         order.commission_due = float(new_due)
         order.payment_status = payment_status(amount_paid, new_due)
+        history = LeadOptOrderCommissionHistory(
+            order_id=order.id,
+            old_commission_due=float(old_due),
+            new_commission_due=float(new_due),
+            delta=float(delta),
+            direction="increase" if delta > 0 else "decrease",
+            changed_by=changed_by,
+        )
+        self._session.add(history)
+        await self._session.flush()
+        return history
 
     async def add_payment(
         self,
@@ -155,6 +188,7 @@ class OptOrderRepository:
         payment_type: str,
         recipient: str,
         created_by: int,
+        document_file_id: int | None = None,
     ) -> LeadOptOrderPayment:
         payment = LeadOptOrderPayment(
             order_id=order.id,
@@ -163,6 +197,7 @@ class OptOrderRepository:
             payment_type=payment_type,
             recipient=recipient,
             created_by=created_by,
+            document_file_id=document_file_id,
         )
         self._session.add(payment)
         await self._session.flush()
@@ -170,6 +205,33 @@ class OptOrderRepository:
         order.amount_paid = float(paid_total)
         order.payment_status = payment_status(paid_total, Decimal(str(order.commission_due)))
         return payment
+
+    async def get_uploaded_file(self, file_id: int) -> UploadedFile | None:
+        result = await self._session.execute(
+            select(UploadedFile).where(UploadedFile.id == file_id),
+        )
+        return result.scalar_one_or_none()
+
+    async def get_payment(self, payment_id: int) -> LeadOptOrderPayment | None:
+        result = await self._session.execute(
+            select(LeadOptOrderPayment).where(LeadOptOrderPayment.id == payment_id),
+        )
+        return result.scalar_one_or_none()
+
+    async def delete_line(self, order: LeadOptOrder, line_id: int) -> None:
+        line = next((row for row in order.lines if row.id == line_id), None)
+        if line is None:
+            raise ValueError("line not found")
+        if len(order.lines) <= 1:
+            raise ValueError("cannot delete last line")
+        await self._session.execute(
+            delete(LeadOptOrderLine).where(LeadOptOrderLine.id == line_id),
+        )
+        await self._session.flush()
+        await self._session.refresh(order, attribute_names=["lines"])
+        for idx, remaining in enumerate(sorted(order.lines, key=lambda row: row.line_no), start=1):
+            remaining.line_no = idx
+        await self.apply_pricing_snapshot(order)
 
     _PENDING_SUBMISSION_STATUSES = frozenset({"draft", "queued", "submitting", "failed"})
 

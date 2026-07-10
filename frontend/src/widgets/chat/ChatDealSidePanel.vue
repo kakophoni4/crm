@@ -3,6 +3,7 @@ import {
   NButton,
   NInput,
   NInputNumber,
+  NModal,
   NSelect,
   NSpace,
   NSpin,
@@ -30,6 +31,7 @@ import {
   readLeadDealFields,
 } from '@/features/leads/order-fields'
 import { serviceOptionsForBot } from '@/features/leads/service-types'
+import { leadCommentItems } from '@/features/leads/comments'
 import type { LeadDetail, LeadListItem } from '@/features/leads/types'
 import { useChatsStore } from '@/features/chats/store'
 import OptOrdersPanel from '@/widgets/chat/OptOrdersPanel.vue'
@@ -68,6 +70,7 @@ const quantity = ref<number | null>(null)
 const cost = ref<number | null>(null)
 const costPrice = ref<number | null>(null)
 const commentDraft = ref('')
+const commentsOpen = ref(false)
 const optPaymentsReady = ref(true)
 
 const serviceOptions = computed<SelectOption[]>(() => {
@@ -77,6 +80,10 @@ const serviceOptions = computed<SelectOption[]>(() => {
 })
 
 const isOptService = computed(() => service.value === 'ОПТ')
+
+const leadComments = computed(() =>
+  leadDetail.value ? leadCommentItems(leadDetail.value) : [],
+)
 
 const canCloseWon = computed(
   () => hasSelectedOpenLead.value && (!isOptService.value || optPaymentsReady.value),
@@ -248,6 +255,13 @@ watch(
     void loadLeadDetail(id)
   },
   { immediate: true },
+)
+
+watch(
+  () => store.optOrdersRefreshNonce,
+  () => {
+    void refreshOptPaymentGate(selectedLeadId.value)
+  },
 )
 
 async function persistOrderFields(): Promise<void> {
@@ -476,24 +490,71 @@ async function saveLeadComment(): Promise<void> {
             </div>
           </div>
 
-          <div v-if="hasSelectedOpenLead" class="deal-side__field deal-side__field--stacked">
+          <div v-if="leadDetail" class="deal-side__field deal-side__field--stacked">
+            <span class="deal-side__label">Комментарии</span>
             <div class="deal-side__value">
-            <NInput
-              v-model:value="commentDraft"
-              type="textarea"
-              :autosize="{ minRows: 2, maxRows: 5 }"
-              placeholder="Новый комментарий..."
-              @keydown.ctrl.enter.prevent="saveLeadComment"
-            />
-            <NButton size="small" quaternary :loading="savingFields" @click="saveLeadComment">
-              Добавить комментарий
-            </NButton>
+              <div v-if="leadComments.length" class="deal-side__comments">
+                <div
+                  v-for="item in leadComments.slice(-3)"
+                  :key="item.id"
+                  class="deal-side__comment"
+                >
+                  <p>{{ item.body }}</p>
+                  <span>{{ new Date(item.created_at).toLocaleString('ru-RU') }}</span>
+                </div>
+                <NButton
+                  v-if="leadComments.length > 3"
+                  size="tiny"
+                  quaternary
+                  @click="commentsOpen = true"
+                >
+                  Все комментарии ({{ leadComments.length }})
+                </NButton>
+              </div>
+              <p v-else class="deal-side__hint">Комментариев пока нет</p>
+              <template v-if="hasSelectedOpenLead">
+                <NInput
+                  v-model:value="commentDraft"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 5 }"
+                  placeholder="Новый комментарий..."
+                  @keydown.ctrl.enter.prevent="saveLeadComment"
+                />
+                <NSpace>
+                  <NButton size="small" quaternary :loading="savingFields" @click="saveLeadComment">
+                    Добавить комментарий
+                  </NButton>
+                  <NButton
+                    v-if="leadComments.length"
+                    size="small"
+                    quaternary
+                    @click="commentsOpen = true"
+                  >
+                    Открыть все
+                  </NButton>
+                </NSpace>
+              </template>
             </div>
           </div>
         </template>
       </div>
       </NSpin>
     </div>
+
+    <NModal
+      v-model:show="commentsOpen"
+      preset="card"
+      title="Комментарии к сделке"
+      style="max-width: 480px"
+    >
+      <ul v-if="leadComments.length" class="deal-side__comments-modal">
+        <li v-for="item in leadComments" :key="item.id">
+          <p>{{ item.body }}</p>
+          <span>{{ new Date(item.created_at).toLocaleString('ru-RU') }}</span>
+        </li>
+      </ul>
+      <p v-else class="deal-side__hint">Комментариев пока нет</p>
+    </NModal>
   </section>
 </template>
 
@@ -620,5 +681,54 @@ async function saveLeadComment(): Promise<void> {
 
 .deal-side__empty p {
   margin: 0;
+}
+
+.deal-side__comments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deal-side__comment {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-border) 35%, transparent);
+}
+
+.deal-side__comment p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}
+
+.deal-side__comment span,
+.deal-side__comments-modal span {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
+}
+
+.deal-side__comments-modal {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.deal-side__comments-modal li {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.deal-side__comments-modal p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

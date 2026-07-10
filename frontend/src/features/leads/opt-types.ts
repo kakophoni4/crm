@@ -30,6 +30,19 @@ export interface OptPayment {
   payment_type: 'card' | 'crypto' | 'wire' | 'cash'
   recipient: 'orange' | 'beneficiary'
   created_at: string
+  document_file_id?: number | null
+  document_name?: string | null
+}
+
+export interface OptCommissionHistoryItem {
+  id: number
+  old_commission_due: number
+  new_commission_due: number
+  delta: number
+  direction: 'increase' | 'decrease' | string
+  changed_by: number
+  changed_by_name?: string | null
+  created_at: string
 }
 
 export interface OptOrderExistingRef {
@@ -66,10 +79,40 @@ export interface OptOrder {
   created_at: string
   lines: OptOrderLine[]
   payments: OptPayment[]
+  commission_history?: OptCommissionHistoryItem[]
 }
 
 export interface OptOrderListResponse {
   items: OptOrder[]
+}
+
+export interface OptOrderRegistryItem {
+  id: number
+  lead_id: number
+  order_no: number
+  chat_id?: number | null
+  contact_id?: number | null
+  contact_name?: string | null
+  group_id: number
+  group_name?: string | null
+  department_id?: number | null
+  department_name?: string | null
+  status: string
+  payment_status: string
+  total_volume: number
+  commission_due: number
+  amount_paid: number
+  amount_remaining: number
+  buyer: OptCounterparty
+  source_filename?: string | null
+  created_at: string
+  lines_count: number
+  payments_count: number
+}
+
+export interface OptOrderRegistryListResponse {
+  items: OptOrderRegistryItem[]
+  total: number
 }
 
 export const OPT_PAYMENT_TYPE_OPTIONS = [

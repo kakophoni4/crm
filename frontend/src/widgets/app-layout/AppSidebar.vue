@@ -2,6 +2,7 @@
 import {
   Bot,
   Calculator,
+  ClipboardList,
   FolderOpen,
   CheckSquare,
   LayoutDashboard,
@@ -86,6 +87,11 @@ const menuOptions = computed(() => {
     icon: () => h(NIcon, null, { default: () => h(Users) }),
   },
   {
+    label: 'Заявки',
+    key: 'applications',
+    icon: () => h(NIcon, null, { default: () => h(ClipboardList) }),
+  },
+  {
     label: 'Хранилище',
     key: 'storage',
     icon: () => h(NIcon, null, { default: () => h(FolderOpen) }),
@@ -168,6 +174,7 @@ const menuOptions = computed(() => {
 const activeKey = computed(() => {
   if (route.name === 'chats') return 'chats'
   if (route.name === 'contacts' || route.name === 'contact-detail') return 'contacts'
+  if (route.name === 'applications') return 'applications'
   if (route.name === 'storage') return 'storage'
   if (route.name === 'tasks') return 'tasks'
   if (route.name === 'accounting') return 'accounting'
@@ -191,6 +198,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'contacts') {
     void router.push({ name: 'contacts' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'applications') {
+    void router.push({ name: 'applications' })
     emit('closeDrawer')
     return
   }

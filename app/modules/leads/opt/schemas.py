@@ -39,6 +39,8 @@ class OptPaymentResponse(BaseModel):
     payment_type: str
     recipient: str
     created_at: datetime
+    document_file_id: int | None = None
+    document_name: str | None = None
 
 
 class OptOrderPaymentCreateRequest(BaseModel):
@@ -46,11 +48,23 @@ class OptOrderPaymentCreateRequest(BaseModel):
     paid_at: datetime
     payment_type: Literal["card", "crypto", "wire", "cash"]
     recipient: Literal["orange", "beneficiary"]
+    document_file_id: int | None = None
 
 
 class OptCommissionAdjustRequest(BaseModel):
     amount: Decimal = Field(gt=0)
     direction: Literal["increase", "decrease"]
+
+
+class OptCommissionHistoryItem(BaseModel):
+    id: int
+    old_commission_due: Decimal
+    new_commission_due: Decimal
+    delta: Decimal
+    direction: str
+    changed_by: int
+    changed_by_name: str | None = None
+    created_at: datetime
 
 
 class OptOrderResponse(BaseModel):
@@ -74,6 +88,7 @@ class OptOrderResponse(BaseModel):
     created_at: datetime
     lines: list[OptOrderLineResponse] = Field(default_factory=list)
     payments: list[OptPaymentResponse] = Field(default_factory=list)
+    commission_history: list[OptCommissionHistoryItem] = Field(default_factory=list)
 
     @field_validator("volume_by_category", mode="before")
     @classmethod
@@ -94,6 +109,35 @@ class OptOrderResponse(BaseModel):
 
 class OptOrderListResponse(BaseModel):
     items: list[OptOrderResponse]
+
+
+class OptOrderRegistryItem(BaseModel):
+    id: int
+    lead_id: int
+    order_no: int
+    chat_id: int | None = None
+    contact_id: int | None = None
+    contact_name: str | None = None
+    group_id: int
+    group_name: str | None = None
+    department_id: int | None = None
+    department_name: str | None = None
+    status: str
+    payment_status: str
+    total_volume: Decimal
+    commission_due: Decimal
+    amount_paid: Decimal
+    amount_remaining: Decimal
+    buyer: OptCounterpartyResponse
+    source_filename: str | None = None
+    created_at: datetime
+    lines_count: int = 0
+    payments_count: int = 0
+
+
+class OptOrderRegistryListResponse(BaseModel):
+    items: list[OptOrderRegistryItem]
+    total: int
 
 
 class OptSendRegistryResponse(BaseModel):

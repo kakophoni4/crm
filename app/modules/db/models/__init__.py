@@ -38,6 +38,9 @@ from app.modules.db.models.group_escalation_settings import GroupEscalationSetti
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_comment import LeadComment
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
+from app.modules.db.models.lead_opt_order_commission_history import (
+    LeadOptOrderCommissionHistory,
+)
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
@@ -89,6 +92,7 @@ __all__ = [
     "LeadComment",
     "LeadOptOrder",
     "LeadOptOrderLine",
+    "LeadOptOrderCommissionHistory",
     "LeadOptOrderPayment",
     "MessageDirection",
     "MessageKind",

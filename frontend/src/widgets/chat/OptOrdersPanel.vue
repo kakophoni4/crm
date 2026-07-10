@@ -25,12 +25,15 @@ import {
   addOptOrderPayment,
   adjustOptOrderCommission,
   deleteOptOrder,
+  deleteOptOrderLine,
+  downloadOptPaymentDocument,
   downloadOptRegistry,
   listOptOrders,
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
 import { useChatsStore } from '@/features/chats/store'
+import { uploadFile } from '@/features/chats/api'
 import type { OptOrder, OptOrderLine } from '@/features/leads/opt-types'
 import {
   OPT_PAYMENT_RECIPIENT_OPTIONS,
@@ -68,6 +71,13 @@ const deleteStep = ref<1 | 2>(1)
 const deleteTarget = ref<OptOrder | null>(null)
 const savingPayment = ref(false)
 const savingCommission = ref(false)
+const deletingLineId = ref<number | null>(null)
+const uploadingDocument = ref(false)
+const historyOpen = ref(false)
+const paymentDocument = ref<{
+  file_id: number
+  name: string
+} | null>(null)
 const commissionForm = ref({
   direction: 'decrease' as 'increase' | 'decrease',
   amount: null as number | null,
@@ -151,6 +161,26 @@ const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
         ? h('span', { class: 'opt-orders__doc-no' }, row.document_number)
         : '—',
   },
+  {
+    title: '',
+    key: 'actions',
+    width: 72,
+    render: (row) => {
+      const order = selectedOrder.value
+      if (!order || order.lines.length <= 1 || props.disabled) return null
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          type: 'error',
+          quaternary: true,
+          loading: deletingLineId.value === row.id,
+          onClick: () => void onDeleteLine(row),
+        },
+        { default: () => 'Удал.' },
+      )
+    },
+  },
 ])
 
 function paymentTagType(status: string): 'default' | 'success' | 'error' | 'warning' {
@@ -176,7 +206,26 @@ function openPaymentModal(order: OptOrder): void {
     payment_type: 'wire',
     recipient: 'orange',
   }
+  paymentDocument.value = null
   paymentOpen.value = true
+}
+
+async function onPaymentDocumentUpload(options: { file: UploadFileInfo }): Promise<void> {
+  const raw = options.file.file
+  if (raw == null) return
+  uploadingDocument.value = true
+  try {
+    const uploaded = await uploadFile(raw)
+    paymentDocument.value = {
+      file_id: uploaded.id,
+      name: uploaded.name ?? raw.name,
+    }
+    message.success('Документ прикреплён')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить документ')
+  } finally {
+    uploadingDocument.value = false
+  }
 }
 
 async function onSavePayment(): Promise<void> {
@@ -192,17 +241,56 @@ async function onSavePayment(): Promise<void> {
       paid_at: new Date(paymentForm.value.paid_at).toISOString(),
       payment_type: paymentForm.value.payment_type,
       recipient: paymentForm.value.recipient,
+      document_file_id: paymentDocument.value?.file_id ?? null,
     })
     orders.value = orders.value
       .map((row) => (row.id === updated.id ? updated : row))
       .sort((a, b) => a.order_no - b.order_no)
     paymentOpen.value = false
+    paymentDocument.value = null
     emit('paymentsChanged')
     message.success('Оплата записана')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось записать оплату')
   } finally {
     savingPayment.value = false
+  }
+}
+
+async function onDeleteLine(line: OptOrderLine): Promise<void> {
+  if (!selectedOrder.value || props.leadId == null) return
+  deletingLineId.value = line.id
+  try {
+    const updated = await deleteOptOrderLine(props.leadId, selectedOrder.value.id, line.id)
+    orders.value = orders.value
+      .map((row) => (row.id === updated.id ? updated : row))
+      .sort((a, b) => a.order_no - b.order_no)
+    emit('paymentsChanged')
+    message.success('Фактура удалена, сумма пересчитана')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось удалить фактуру')
+  } finally {
+    deletingLineId.value = null
+  }
+}
+
+async function onDownloadPaymentDocument(paymentId: number): Promise<void> {
+  if (!selectedOrder.value || props.leadId == null) return
+  try {
+    const blob = await downloadOptPaymentDocument(
+      props.leadId,
+      selectedOrder.value.id,
+      paymentId,
+    )
+    const payment = selectedOrder.value.payments.find((row) => row.id === paymentId)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = payment?.document_name || `payment-${paymentId}`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать документ')
   }
 }
 
@@ -570,6 +658,42 @@ onUnmounted(() => {
                 <span>{{ new Date(payment.paid_at).toLocaleString('ru-RU') }}</span>
                 <span>{{ optPaymentTypeLabel(payment.payment_type) }}</span>
                 <span>{{ optPaymentRecipientLabel(payment.recipient) }}</span>
+                <NButton
+                  v-if="payment.document_file_id"
+                  size="tiny"
+                  quaternary
+                  @click="onDownloadPaymentDocument(payment.id)"
+                >
+                  {{ payment.document_name || 'Документ' }}
+                </NButton>
+                <span v-else class="opt-orders__meta">без документа</span>
+              </li>
+            </ul>
+          </div>
+
+          <div
+            v-if="selectedOrder.commission_history?.length"
+            class="opt-orders__history"
+          >
+            <div class="opt-orders__history-head">
+              <h4 class="opt-orders__subheading">История суммы к оплате</h4>
+              <NButton size="tiny" quaternary @click="historyOpen = true">Все</NButton>
+            </div>
+            <ul class="opt-orders__history-list">
+              <li
+                v-for="item in selectedOrder.commission_history.slice(0, 3)"
+                :key="item.id"
+              >
+                <span>
+                  {{ formatMoney(item.old_commission_due) }} →
+                  {{ formatMoney(item.new_commission_due) }} ₽
+                  ({{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
+                  {{ formatMoney(Math.abs(item.delta)) }} ₽)
+                </span>
+                <span class="opt-orders__meta">
+                  {{ item.changed_by_name || `user #${item.changed_by}` }} ·
+                  {{ new Date(item.created_at).toLocaleString('ru-RU') }}
+                </span>
               </li>
             </ul>
           </div>
@@ -802,6 +926,23 @@ onUnmounted(() => {
         <NFormItem label="Кому">
           <NSelect v-model:value="paymentForm.recipient" :options="OPT_PAYMENT_RECIPIENT_OPTIONS" />
         </NFormItem>
+        <NFormItem label="Платёжный документ">
+          <div class="opt-orders__doc-upload">
+            <NUpload
+              :show-file-list="false"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.heic"
+              :disabled="uploadingDocument"
+              @change="onPaymentDocumentUpload"
+            >
+              <NButton size="small" :loading="uploadingDocument">
+                {{ paymentDocument ? 'Заменить файл' : 'Прикрепить чек / ПП / скрин' }}
+              </NButton>
+            </NUpload>
+            <p v-if="paymentDocument" class="opt-orders__meta">
+              {{ paymentDocument.name }}
+            </p>
+          </div>
+        </NFormItem>
       </NForm>
       <template #footer>
         <div class="opt-orders__modal-footer">
@@ -809,6 +950,29 @@ onUnmounted(() => {
           <NButton type="primary" :loading="savingPayment" @click="onSavePayment">Сохранить</NButton>
         </div>
       </template>
+    </NModal>
+
+    <NModal
+      v-model:show="historyOpen"
+      preset="card"
+      title="История изменений суммы к оплате"
+      style="max-width: 560px"
+    >
+      <ul v-if="selectedOrder?.commission_history?.length" class="opt-orders__history-list">
+        <li v-for="item in selectedOrder.commission_history" :key="item.id">
+          <span>
+            {{ formatMoney(item.old_commission_due) }} →
+            {{ formatMoney(item.new_commission_due) }} ₽
+            ({{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
+            {{ formatMoney(Math.abs(item.delta)) }} ₽)
+          </span>
+          <span class="opt-orders__meta">
+            {{ item.changed_by_name || `user #${item.changed_by}` }} ·
+            {{ new Date(item.created_at).toLocaleString('ru-RU') }}
+          </span>
+        </li>
+      </ul>
+      <NEmpty v-else description="Изменений пока нет" />
     </NModal>
   </section>
 </template>
@@ -1004,6 +1168,37 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.opt-orders__history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.opt-orders__history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.opt-orders__history-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.opt-orders__doc-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
 }
 
 .opt-orders__adjustment {
