@@ -27,7 +27,7 @@ async def resolve_buyer_requisites(
 
 
 async def ensure_unit_requisites(repo: OptOrderRepository, unit: OptUnit) -> OptUnit:
-    if unit.name:
+    if unit.name and unit.kpp:
         return unit
 
     party = await lookup_party_by_inn(unit.inn)
@@ -36,7 +36,7 @@ async def ensure_unit_requisites(repo: OptOrderRepository, unit: OptUnit) -> Opt
 
     await repo.update_unit_requisites(
         unit,
-        kpp=party.kpp,
-        name=party.name if party.name else None,
+        kpp=party.kpp if not unit.kpp else unit.kpp,
+        name=party.name if not unit.name else unit.name,
     )
     return unit

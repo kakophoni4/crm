@@ -586,7 +586,27 @@ class OptOrderService:
             if kpp and not order.buyer_kpp:
                 order.buyer_kpp = kpp
         for line in order.lines:
-            if line.supplier_name and line.supplier_kpp:
+            if line.supplier_kpp and line.supplier_name:
+                continue
+            unit = await self._repo.get_unit_by_inn(line.supplier_inn)
+            if unit is None:
+                continue
+            unit = await ensure_unit_requisites(self._repo, unit)
+            if unit.name and not line.supplier_name:
+                line.supplier_name = unit.name
+            if unit.kpp and not line.supplier_kpp:
+                line.supplier_kpp = unit.kpp
+
+    async def _hydrate_registry_requisites(self, order: LeadOptOrder) -> None:
+        if not order.buyer_kpp or not order.buyer_name:
+            kpp, name = await resolve_buyer_requisites(self._repo, order.buyer_inn)
+            if name and not order.buyer_name:
+                order.buyer_name = name
+            if kpp and not order.buyer_kpp:
+                order.buyer_kpp = kpp
+
+        for line in order.lines:
+            if line.supplier_kpp and line.supplier_name:
                 continue
             unit = await self._repo.get_unit_by_inn(line.supplier_inn)
             if unit is None:
@@ -663,6 +683,7 @@ class OptOrderService:
         if lead.chat_id is None:
             raise ValidationError(message="У сделки нет чата — отправка клиенту недоступна")
 
+        await self._hydrate_registry_requisites(order)
         content, filename = self._registry_bytes(order)
         files = FilesService(self._session)
         uploaded = await files.create_upload(
@@ -706,4 +727,5 @@ class OptOrderService:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
         if order.status != "submitted":
             raise ValidationError(message="Реестр доступен после успешной отправки в 1С")
+        await self._hydrate_registry_requisites(order)
         return self._registry_bytes(order)
