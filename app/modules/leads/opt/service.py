@@ -728,4 +728,5 @@ class OptOrderService:
         if order.status != "submitted":
             raise ValidationError(message="Реестр доступен после успешной отправки в 1С")
         await self._hydrate_registry_requisites(order)
+        await self._session.commit()
         return self._registry_bytes(order)
