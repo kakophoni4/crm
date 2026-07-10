@@ -10,10 +10,10 @@ from app.modules.leads.opt.vat import split_vat_included
 
 
 def test_split_vat_included_matches_registry_sample() -> None:
-    total, vat, wo_vat = split_vat_included(Decimal("314752"), rate_percent=Decimal("20"))
+    total, vat, wo_vat = split_vat_included(Decimal("314752"), rate_percent=Decimal("22"))
     assert total == Decimal("314752.00")
-    assert vat == Decimal("52458.67")
-    assert wo_vat == Decimal("262293.33")
+    assert vat == Decimal("56758.56")
+    assert wo_vat == Decimal("257993.44")
 
 
 def test_parse_test_fixture_workbook() -> None:

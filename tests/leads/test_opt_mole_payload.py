@@ -29,7 +29,7 @@ class _Order:
 
 
 def test_build_mole_payload_matches_1c_contract() -> None:
-    total, vat, wo_vat = split_vat_included(Decimal("314752"), rate_percent=Decimal("20"))
+    total, vat, wo_vat = split_vat_included(Decimal("314752"), rate_percent=Decimal("22"))
     line = _Order.lines[0]
     line.amount = float(total)
     line.vat_amount = float(vat)
@@ -50,8 +50,8 @@ def test_build_mole_payload_matches_1c_contract() -> None:
     assert row["Поставщик"]["ИНН"] == "7743622734"
     assert row["ДатаДокумента"] == "2025-01-22"
     assert row["Сумма"] == 314752.0
-    assert row["СуммаНДС"] == 52458.67
-    assert row["СуммаБезНДС"] == 262293.33
+    assert row["СуммаНДС"] == 56758.56
+    assert row["СуммаБезНДС"] == 257993.44
 
 
 def test_build_mole_payload_omits_kpp_when_missing() -> None:

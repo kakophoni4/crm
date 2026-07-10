@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     mole_api_timeout_seconds: float = 60.0
     mole_api_username: str = ""
     mole_api_password: str = ""
-    opt_vat_rate_percent: float = 20.0
+    opt_vat_rate_percent: float = 22.0
 
     # External service token for POST /accounting/requirements/ingest
     accounting_ingest_token: str = ""
