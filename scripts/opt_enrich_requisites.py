@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Fetch KPP + legal name from FNS EGRUL for all lavki and known buyers.
 
+Dev/local: updates scripts/opt_units_vane.json and seed SQL (not the live DB).
+
+For the live database on VPS use:
+  docker exec crm-staging-api python scripts/opt_enrich_db_units.py --only-missing
+
 Usage:
   py scripts/opt_enrich_requisites.py
   py scripts/opt_enrich_requisites.py --only-missing
