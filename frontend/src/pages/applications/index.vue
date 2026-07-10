@@ -46,7 +46,6 @@ const selected = ref<OptOrderRegistryItem | null>(null)
 const detailOrder = ref<OptOrder | null>(null)
 
 const paymentStatusOptions = [
-  { label: 'Все статусы оплаты', value: null },
   { label: 'Не оплачена', value: 'unpaid' },
   { label: 'Частично', value: 'partial' },
   { label: 'Оплачена', value: 'paid' },
@@ -227,6 +226,7 @@ onMounted(() => {
         <NSelect
           v-model:value="paymentStatusFilter"
           :options="paymentStatusOptions"
+          placeholder="Все статусы оплаты"
           style="width: 200px"
           size="small"
           clearable
