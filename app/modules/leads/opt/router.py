@@ -39,6 +39,7 @@ async def list_opt_orders_registry(
     department_id: int | None = None,
     group_id: int | None = None,
     payment_status: str | None = None,
+    open_only: bool = False,
     offset: int = 0,
     limit: int = 50,
 ) -> OptOrderRegistryListResponse:
@@ -47,6 +48,7 @@ async def list_opt_orders_registry(
         department_id=department_id,
         group_id=group_id,
         payment_status=payment_status,
+        open_only=open_only,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
     )

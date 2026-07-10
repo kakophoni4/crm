@@ -168,14 +168,15 @@ class OptOrderRepository:
         order.commission_due = float(new_due)
         order.payment_status = payment_status(amount_paid, new_due)
         history = LeadOptOrderCommissionHistory(
-            order_id=order.id,
             old_commission_due=float(old_due),
             new_commission_due=float(new_due),
             delta=float(delta),
             direction="increase" if delta > 0 else "decrease",
             changed_by=changed_by,
         )
-        self._session.add(history)
+        # Append via relationship so an already-loaded collection stays in sync
+        # (session.add alone leaves selectin-loaded history stale until expire).
+        order.commission_history.append(history)
         await self._session.flush()
         return history
 

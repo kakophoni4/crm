@@ -653,10 +653,11 @@ onUnmounted(() => {
             <NButton type="primary" @click="loadRequirements">Найти</NButton>
             <NButton
               :loading="syncingRequirements"
+              title="Опционально: синхронизация и так идёт каждый час автоматически"
               @click="onSyncRequirements"
             >
               <template #icon><RefreshCw :size="16" /></template>
-              Забрать из СБИС
+              Забрать из СБИС сейчас
             </NButton>
           </div>
           <NSpin :show="loading">

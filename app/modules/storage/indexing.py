@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.chat import Chat
@@ -20,6 +21,8 @@ async def index_message_attachments(session: AsyncSession, *, message_id: int) -
     message = await session.get(ChatMessage, message_id)
     if message is None:
         return
+    # Raw SQL updates (download worker) bypass the identity map — always reload.
+    await session.refresh(message)
     chat = await session.get(Chat, message.chat_id)
     if chat is None or chat.assigned_group_id is None:
         return
@@ -84,3 +87,44 @@ async def index_message_attachments(session: AsyncSession, *, message_id: int) -
                 attachment_index=idx,
                 error=str(exc),
             )
+
+
+async def backfill_group_chat_files(session: AsyncSession, *, limit: int = 300) -> int:
+    """Index ready chat attachments that never made it into group_chat_files."""
+    result = await session.execute(
+        text(
+            """
+            SELECT m.id
+            FROM messages m
+            JOIN chats c ON c.id = m.chat_id
+            WHERE c.assigned_group_id IS NOT NULL
+              AND jsonb_typeof(m.attachments) = 'array'
+              AND jsonb_array_length(m.attachments) > 0
+              AND EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(m.attachments) AS att
+                WHERE coalesce(att->>'status', 'ready') = 'ready'
+                  AND nullif(att->>'storage_key', '') IS NOT NULL
+              )
+              AND (
+                SELECT count(*)::int
+                FROM group_chat_files g
+                WHERE g.message_id = m.id
+              ) < (
+                SELECT count(*)::int
+                FROM jsonb_array_elements(m.attachments) AS att
+                WHERE coalesce(att->>'status', 'ready') = 'ready'
+                  AND nullif(att->>'storage_key', '') IS NOT NULL
+              )
+            ORDER BY m.id DESC
+            LIMIT :limit
+            """
+        ),
+        {"limit": limit},
+    )
+    message_ids = [int(row[0]) for row in result.all()]
+    for message_id in message_ids:
+        await index_message_attachments(session, message_id=message_id)
+    if message_ids:
+        logger.info("group_chat_files_backfill", indexed_messages=len(message_ids))
+    return len(message_ids)

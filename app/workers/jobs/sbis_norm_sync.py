@@ -48,7 +48,8 @@ async def process_sbis_norm_sync(_job_type: str, _payload: dict[str, object]) ->
         await redis.delete(_LOCK_KEY)
 
 
-async def schedule_sbis_norm_sync_if_due() -> None:
+async def schedule_sbis_norm_sync_if_due(*, force: bool = False) -> None:
+    """Enqueue hourly pull when due. Manual UI sync bypasses this scheduler."""
     settings = get_settings()
     if not settings.sbis_norm_sync_enabled:
         return
@@ -57,6 +58,8 @@ async def schedule_sbis_norm_sync_if_due() -> None:
 
     redis = get_redis()
     ttl = max(int(settings.sbis_norm_sync_interval_seconds), 60)
+    if force:
+        await redis.delete(_SCHEDULE_KEY)
     acquired = await redis.set(_SCHEDULE_KEY, "1", nx=True, ex=ttl)
     if not acquired:
         return
@@ -64,3 +67,9 @@ async def schedule_sbis_norm_sync_if_due() -> None:
     from app.workers.jobs.queue import enqueue
 
     await enqueue(SBIS_NORM_SYNC_JOB_TYPE, {})
+    logger.info("sbis_norm_sync_scheduled", interval_seconds=ttl, force=force)
+
+
+async def bootstrap_sbis_norm_sync() -> None:
+    """Run first pull soon after worker start, then hourly via periodic scheduler."""
+    await schedule_sbis_norm_sync_if_due(force=True)

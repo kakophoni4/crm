@@ -1,110 +1,419 @@
 <script setup lang="ts">
-import { NEmpty, NSpin } from 'naive-ui'
-import { computed, ref, watch } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import {
+  NButton,
+  NDataTable,
+  NDatePicker,
+  NEmpty,
+  NForm,
+  NFormItem,
+  NInputNumber,
+  NModal,
+  NSelect,
+  NSpin,
+  NTag,
+  NUpload,
+  useMessage,
+} from 'naive-ui'
+import type { UploadFileInfo } from 'naive-ui'
+import { computed, h, onMounted, ref, watch } from 'vue'
 
 import type { ChatDetail } from '@/entities/chat/types'
-import {
-  getCachedLeadDetail,
-  getChatDealsSnapshot,
-} from '@/features/chats/deals-cache'
-import { getLead, listContactLeads } from '@/features/leads/api'
-import { readLeadDealFields } from '@/features/leads/order-fields'
 import { useChatsStore } from '@/features/chats/store'
-import OptOrdersPanel from '@/widgets/chat/OptOrdersPanel.vue'
+import {
+  addOptOrderPayment,
+  downloadOptRegistry,
+  listOptOrders,
+  listOptOrdersRegistry,
+} from '@/features/leads/opt-api'
+import type { OptOrder, OptOrderLine, OptOrderRegistryItem } from '@/features/leads/opt-types'
+import {
+  OPT_PAYMENT_RECIPIENT_OPTIONS,
+  OPT_PAYMENT_TYPE_OPTIONS,
+  optPaymentStatusLabel,
+} from '@/features/leads/opt-types'
+import { uploadFile } from '@/features/chats/api'
+import { AppError } from '@/shared/api/http'
 
-const props = defineProps<{
+defineProps<{
   chat: ChatDetail | null
 }>()
 
 const store = useChatsStore()
-const loading = ref(false)
-const isOpt = ref(false)
+const message = useMessage()
 
-const leadId = computed(() => store.selectedLeadId)
-const hasOpenLead = computed(() => {
-  if (leadId.value == null) return false
-  const detail = getCachedLeadDetail(leadId.value)
-  return detail != null && detail.closed_at == null
+const loading = ref(false)
+const items = ref<OptOrderRegistryItem[]>([])
+const total = ref(0)
+
+const paymentOpen = ref(false)
+const paymentTarget = ref<OptOrderRegistryItem | null>(null)
+const savingPayment = ref(false)
+const uploadingDocument = ref(false)
+const paymentDocument = ref<{ file_id: number; name: string } | null>(null)
+const paymentForm = ref<{
+  amount: number | null
+  paid_at: number
+  payment_type: 'card' | 'crypto' | 'wire' | 'cash'
+  recipient: 'orange' | 'beneficiary'
+}>({
+  amount: null,
+  paid_at: Date.now(),
+  payment_type: 'wire',
+  recipient: 'orange',
 })
 
-async function refreshLeadService(): Promise<void> {
-  if (props.chat == null || leadId.value == null) {
-    isOpt.value = false
-    return
-  }
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewOrder = ref<OptOrder | null>(null)
+const downloadingRegistry = ref(false)
+
+const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
+  {
+    title: '№',
+    key: 'line_no',
+    width: 48,
+  },
+  {
+    title: 'Поставщик',
+    key: 'supplier',
+    ellipsis: { tooltip: true },
+    render: (row) => row.supplier.name || `ИНН ${row.supplier.inn}`,
+  },
+  {
+    title: 'Документ',
+    key: 'document_number',
+    render: (row) =>
+      row.document_number
+        ? h('span', row.document_number)
+        : h('span', { class: 'payments-side__muted' }, '—'),
+  },
+  {
+    title: 'Сумма',
+    key: 'amount',
+    align: 'right',
+    render: (row) => `${formatMoney(row.amount)} ₽`,
+  },
+])
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
+function paymentTagType(status: string): 'default' | 'success' | 'error' | 'warning' {
+  if (status === 'paid') return 'success'
+  if (status === 'partial') return 'warning'
+  return 'error'
+}
+
+function clientLabel(row: OptOrderRegistryItem): string {
+  return row.contact_name || row.buyer.name || `ИНН ${row.buyer.inn}`
+}
+
+async function loadItems(): Promise<void> {
   loading.value = true
   try {
-    let detail = getCachedLeadDetail(leadId.value)
-    if (detail == null) {
-      detail = await getLead(leadId.value)
-    }
-    const fields = readLeadDealFields(detail.custom_fields)
-    isOpt.value = fields.order?.service?.toString() === 'ОПТ'
-  } catch {
-    isOpt.value = false
+    const data = await listOptOrdersRegistry({
+      payment_status: 'unpaid,partial',
+      open_only: true,
+      limit: 100,
+      offset: 0,
+    })
+    items.value = data.items
+    total.value = data.total
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить оплаты')
+    items.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
 }
 
-watch(
-  () => [props.chat?.id, leadId.value, store.optOrdersRefreshNonce] as const,
-  () => {
-    void refreshLeadService()
-  },
-  { immediate: true },
-)
+function openPayment(row: OptOrderRegistryItem): void {
+  paymentTarget.value = row
+  paymentForm.value = {
+    amount: row.amount_remaining > 0 ? row.amount_remaining : null,
+    paid_at: Date.now(),
+    payment_type: 'wire',
+    recipient: 'orange',
+  }
+  paymentDocument.value = null
+  paymentOpen.value = true
+}
+
+async function onPaymentDocumentUpload(options: { file: UploadFileInfo }): Promise<void> {
+  const raw = options.file.file
+  if (raw == null) return
+  uploadingDocument.value = true
+  try {
+    const uploaded = await uploadFile(raw)
+    paymentDocument.value = {
+      file_id: uploaded.id,
+      name: uploaded.name ?? raw.name,
+    }
+    message.success('Документ прикреплён')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить документ')
+  } finally {
+    uploadingDocument.value = false
+  }
+}
+
+async function onSavePayment(): Promise<void> {
+  const target = paymentTarget.value
+  if (target == null) return
+  if (paymentForm.value.amount == null || paymentForm.value.amount <= 0) {
+    message.warning('Укажите сумму оплаты')
+    return
+  }
+  savingPayment.value = true
+  try {
+    const updated = await addOptOrderPayment(target.lead_id, target.id, {
+      amount: paymentForm.value.amount,
+      paid_at: new Date(paymentForm.value.paid_at).toISOString(),
+      payment_type: paymentForm.value.payment_type,
+      recipient: paymentForm.value.recipient,
+      document_file_id: paymentDocument.value?.file_id ?? null,
+    })
+    paymentOpen.value = false
+    paymentDocument.value = null
+    paymentTarget.value = null
+    store.bumpOptOrdersRefresh()
+    if (updated.payment_status === 'paid') {
+      items.value = items.value.filter((row) => row.id !== updated.id)
+      total.value = Math.max(0, total.value - 1)
+    } else {
+      items.value = items.value.map((row) =>
+        row.id === updated.id
+          ? {
+              ...row,
+              payment_status: updated.payment_status,
+              commission_due: updated.commission_due,
+              amount_paid: updated.amount_paid,
+              amount_remaining: updated.amount_remaining,
+              payments_count: updated.payments.length,
+            }
+          : row,
+      )
+    }
+    message.success('Оплата записана')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось записать оплату')
+  } finally {
+    savingPayment.value = false
+  }
+}
+
+async function openPreview(row: OptOrderRegistryItem): Promise<void> {
+  previewOpen.value = true
+  previewLoading.value = true
+  previewOrder.value = null
+  try {
+    const orders = await listOptOrders(row.lead_id)
+    previewOrder.value = orders.find((order) => order.id === row.id) ?? null
+    if (previewOrder.value == null) {
+      message.warning('Заявка не найдена')
+      previewOpen.value = false
+    }
+  } catch (err) {
+    previewOpen.value = false
+    message.error(err instanceof AppError ? err.message : 'Не удалось открыть заявку')
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function onDownloadRegistry(): Promise<void> {
+  const order = previewOrder.value
+  if (order == null || order.status !== 'submitted') {
+    message.warning('Реестр ещё не готов')
+    return
+  }
+  downloadingRegistry.value = true
+  try {
+    const blob = await downloadOptRegistry(order.lead_id, order.id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `реестр-сделка-${order.lead_id}-заявка-${order.order_no}.xlsx`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать реестр')
+  } finally {
+    downloadingRegistry.value = false
+  }
+}
 
 watch(
-  () => props.chat?.id,
-  async (chatId) => {
-    if (chatId == null || props.chat?.contact_id == null) return
-    if (store.selectedLeadId != null) return
-    const snapshot = getChatDealsSnapshot(chatId)
-    if (snapshot?.preferredLeadId != null) {
-      await store.selectLead(snapshot.preferredLeadId)
-      return
-    }
-    try {
-      const leads = await listContactLeads(props.chat.contact_id, {
-        group_id: props.chat.assigned_group_id ?? undefined,
-        open_only: true,
-        limit: 20,
-      })
-      const preferred = leads.items[0]?.id ?? null
-      if (preferred != null) await store.selectLead(preferred)
-    } catch {
-      /* ignore */
-    }
+  () => store.optOrdersRefreshNonce,
+  () => {
+    void loadItems()
   },
-  { immediate: true },
 )
+
+onMounted(() => {
+  void loadItems()
+})
 </script>
 
 <template>
   <section class="payments-side">
     <header class="payments-side__header">
       <h2 class="payments-side__title">Оплаты</h2>
+      <p class="payments-side__subtitle">
+        Неоплаченные и частично оплаченные заявки
+        <template v-if="total"> · {{ total }}</template>
+      </p>
     </header>
+
     <div class="payments-side__scroll">
       <NSpin :show="loading">
-        <div v-if="!chat" class="payments-side__empty">Выберите чат</div>
-        <div v-else-if="leadId == null" class="payments-side__empty">
-          Выберите сделку во вкладке «Сделки»
-        </div>
-        <template v-else-if="isOpt">
-          <OptOrdersPanel
-            :lead-id="leadId"
-            :disabled="!hasOpenLead"
-            @payments-changed="store.bumpOptOrdersRefresh()"
-          />
-        </template>
         <NEmpty
-          v-else
-          description="Оплаты доступны для сделок с услугой ОПТ"
+          v-if="!loading && !items.length"
+          description="Нет активных заявок к оплате"
         />
+        <ul v-else class="payments-side__list">
+          <li v-for="row in items" :key="row.id" class="payments-side__card">
+            <div class="payments-side__card-top">
+              <div>
+                <strong>Сделка №{{ row.lead_id }} · заявка {{ row.order_no }}</strong>
+                <p class="payments-side__client">{{ clientLabel(row) }}</p>
+              </div>
+              <NTag size="small" :type="paymentTagType(row.payment_status)" :bordered="false">
+                {{ optPaymentStatusLabel(row.payment_status) }}
+              </NTag>
+            </div>
+            <dl class="payments-side__facts">
+              <div>
+                <dt>К оплате</dt>
+                <dd>{{ formatMoney(row.commission_due) }} ₽</dd>
+              </div>
+              <div>
+                <dt>Оплачено</dt>
+                <dd>{{ formatMoney(row.amount_paid) }} ₽</dd>
+              </div>
+              <div>
+                <dt>Остаток</dt>
+                <dd>{{ formatMoney(row.amount_remaining) }} ₽</dd>
+              </div>
+            </dl>
+            <div class="payments-side__actions">
+              <NButton size="small" type="primary" @click="openPayment(row)">
+                Внести оплату
+              </NButton>
+              <NButton size="small" quaternary @click="openPreview(row)">
+                Предпросмотр
+              </NButton>
+            </div>
+          </li>
+        </ul>
       </NSpin>
     </div>
+
+    <NModal
+      v-model:show="paymentOpen"
+      preset="card"
+      title="Записать оплату"
+      style="max-width: 420px"
+    >
+      <p v-if="paymentTarget" class="payments-side__modal-meta">
+        Сделка №{{ paymentTarget.lead_id }} · заявка {{ paymentTarget.order_no }} ·
+        остаток {{ formatMoney(paymentTarget.amount_remaining) }} ₽
+      </p>
+      <NForm label-placement="top">
+        <NFormItem label="Сумма оплаты">
+          <NInputNumber
+            v-model:value="paymentForm.amount"
+            :min="0.01"
+            :precision="2"
+            style="width: 100%"
+          />
+        </NFormItem>
+        <NFormItem label="Когда оплачено">
+          <NDatePicker v-model:value="paymentForm.paid_at" type="datetime" style="width: 100%" />
+        </NFormItem>
+        <NFormItem label="Тип оплаты">
+          <NSelect v-model:value="paymentForm.payment_type" :options="OPT_PAYMENT_TYPE_OPTIONS" />
+        </NFormItem>
+        <NFormItem label="Кому">
+          <NSelect v-model:value="paymentForm.recipient" :options="OPT_PAYMENT_RECIPIENT_OPTIONS" />
+        </NFormItem>
+        <NFormItem label="Платёжный документ">
+          <div class="payments-side__doc-upload">
+            <NUpload
+              :show-file-list="false"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.heic"
+              :disabled="uploadingDocument"
+              @change="onPaymentDocumentUpload"
+            >
+              <NButton size="small" :loading="uploadingDocument">
+                {{ paymentDocument ? 'Заменить файл' : 'Прикрепить чек / ПП / скрин' }}
+              </NButton>
+            </NUpload>
+            <p v-if="paymentDocument" class="payments-side__muted">{{ paymentDocument.name }}</p>
+          </div>
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <div class="payments-side__modal-footer">
+          <NButton @click="paymentOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="savingPayment" @click="onSavePayment">
+            Сохранить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="previewOpen"
+      preset="card"
+      :title="
+        previewOrder
+          ? `Предпросмотр · сделка №${previewOrder.lead_id} · заявка ${previewOrder.order_no}`
+          : 'Предпросмотр'
+      "
+      style="max-width: 720px"
+    >
+      <NSpin :show="previewLoading">
+        <template v-if="previewOrder">
+          <p class="payments-side__modal-meta">
+            {{ previewOrder.source_filename || previewOrder.crm_id }} ·
+            к оплате {{ formatMoney(previewOrder.commission_due) }} ₽ ·
+            остаток {{ formatMoney(previewOrder.amount_remaining) }} ₽
+          </p>
+          <h4 class="payments-side__section-title">Заявка</h4>
+          <NDataTable
+            size="small"
+            :columns="lineColumns"
+            :data="previewOrder.lines"
+            :bordered="true"
+            :pagination="false"
+            :max-height="280"
+          />
+          <h4 class="payments-side__section-title">Реестр</h4>
+          <p class="payments-side__modal-meta">
+            Реестр по заявке №{{ previewOrder.order_no }} сделки №{{ previewOrder.lead_id }}.
+          </p>
+          <NButton
+            size="small"
+            :disabled="previewOrder.status !== 'submitted'"
+            :loading="downloadingRegistry"
+            @click="onDownloadRegistry"
+          >
+            {{
+              previewOrder.status === 'submitted'
+                ? 'Скачать реестр (xlsx)'
+                : 'Реестр ещё формируется'
+            }}
+          </NButton>
+        </template>
+      </NSpin>
+    </NModal>
   </section>
 </template>
 
@@ -130,6 +439,12 @@ watch(
   font-weight: 700;
 }
 
+.payments-side__subtitle {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
+
 .payments-side__scroll {
   flex: 1;
   min-height: 0;
@@ -140,8 +455,81 @@ watch(
   padding-bottom: 16px;
 }
 
-.payments-side__empty {
+.payments-side__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.payments-side__card {
+  padding: 12px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+  background: var(--n-color);
+}
+
+.payments-side__card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.payments-side__client {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
   color: var(--app-text-muted);
-  font-size: 0.9rem;
+}
+
+.payments-side__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.payments-side__facts dt {
+  font-size: 0.7rem;
+  color: var(--app-text-muted);
+}
+
+.payments-side__facts dd {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.payments-side__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.payments-side__modal-meta,
+.payments-side__muted {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
+
+.payments-side__section-title {
+  margin: 14px 0 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.payments-side__doc-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.payments-side__modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

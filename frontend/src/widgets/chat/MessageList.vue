@@ -443,7 +443,10 @@ watch(
   margin-top: 4px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .message-list__empty {

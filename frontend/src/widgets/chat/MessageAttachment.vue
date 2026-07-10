@@ -246,6 +246,7 @@ onUnmounted(() => {
 <style scoped>
 .message-attachment-wrap {
   display: block;
+  max-width: min(180px, 100%);
 }
 
 .message-attachment {
@@ -265,10 +266,12 @@ onUnmounted(() => {
 }
 
 .message-attachment__image {
-  max-width: 100%;
-  max-height: 280px;
-  border-radius: 8px;
   display: block;
+  width: 180px;
+  height: 180px;
+  max-width: 100%;
+  object-fit: cover;
+  border-radius: 8px;
   cursor: zoom-in;
 }
 

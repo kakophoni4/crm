@@ -47,6 +47,8 @@ import { AppError } from '@/shared/api/http'
 const props = defineProps<{
   leadId: number | null
   disabled?: boolean
+  /** Prefer selecting this order after load (e.g. from applications list). */
+  initialOrderId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -365,7 +367,10 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
   try {
     const items = await listOptOrders(props.leadId)
     orders.value = [...items].sort((a, b) => a.order_no - b.order_no)
-    selectedOrderId.value = pickSelectedOrder(orders.value, selectedOrderId.value)
+    selectedOrderId.value = pickSelectedOrder(
+      orders.value,
+      selectedOrderId.value ?? props.initialOrderId ?? null,
+    )
   } catch (err) {
     if (!options?.silent) {
       message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
@@ -501,7 +506,7 @@ watch(needsPolling, (active) => {
 })
 
 watch(
-  () => [props.leadId, store.optOrdersRefreshNonce] as const,
+  () => [props.leadId, store.optOrdersRefreshNonce, props.initialOrderId] as const,
   () => {
     selectedOrderId.value = null
     stopPolling()

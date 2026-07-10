@@ -296,6 +296,8 @@ class OptOrderService:
             changed_by=actor.id,
         )
         await self._session.commit()
+        # Expire so get_order reloads history (+ changer) instead of identity-map cache.
+        self._session.expire(order, ["commission_history"])
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
         return await self._to_response_async(refreshed)
@@ -345,6 +347,7 @@ class OptOrderService:
         department_id: int | None = None,
         group_id: int | None = None,
         payment_status: str | None = None,
+        open_only: bool = False,
         offset: int = 0,
         limit: int = 50,
     ) -> OptOrderRegistryListResponse:
@@ -369,7 +372,13 @@ class OptOrderService:
         if group_id is not None:
             filters.append(Lead.group_id == group_id)
         if payment_status:
-            filters.append(LeadOptOrder.payment_status == payment_status)
+            statuses = [part.strip() for part in payment_status.split(",") if part.strip()]
+            if len(statuses) == 1:
+                filters.append(LeadOptOrder.payment_status == statuses[0])
+            elif statuses:
+                filters.append(LeadOptOrder.payment_status.in_(statuses))
+        if open_only:
+            filters.append(Lead.closed_at.is_(None))
 
         count_stmt = (
             select(func.count())

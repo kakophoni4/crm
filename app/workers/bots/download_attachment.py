@@ -65,7 +65,14 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
 
         att = dict(attachments[attachment_index])
         url = att.get("url")
-        if not url or att.get("status") == "ready":
+        if att.get("status") == "ready":
+            # Download already done earlier, but index may have been rolled back.
+            from app.modules.storage.indexing import index_message_attachments
+
+            await index_message_attachments(session, message_id=message_id)
+            await session.commit()
+            return
+        if not url:
             return
 
         try:
@@ -99,10 +106,11 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
                 text("UPDATE messages SET attachments = CAST(:att AS jsonb) WHERE id = :mid"),
                 {"att": json.dumps(attachments), "mid": message_id},
             )
-            await session.commit()
             from app.modules.storage.indexing import index_message_attachments
 
+            # Index before commit so group_chat_files is persisted with the ready attachment.
             await index_message_attachments(session, message_id=message_id)
+            await session.commit()
             attachment_scope = await chat_event_scope(session, chat_id)
             await publish(
                 CHAT_MESSAGE_ATTACHMENT_READY,

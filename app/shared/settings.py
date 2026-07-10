@@ -121,8 +121,8 @@ class Settings(BaseSettings):
     sbis_norm_api_base_url: str = ""
     sbis_norm_api_token: str = ""
     sbis_norm_api_timeout_seconds: float = 60.0
-    sbis_norm_sync_enabled: bool = False
-    sbis_norm_sync_interval_seconds: int = 300
+    sbis_norm_sync_enabled: bool = True
+    sbis_norm_sync_interval_seconds: int = 3600
     sbis_norm_sync_batch_limit: int = 50
     # Token expected from sbis-norm webhook (REQUIREMENTS_WEBHOOK_TOKEN on their side)
     sbis_norm_webhook_token: str = ""

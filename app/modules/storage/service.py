@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +39,8 @@ from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.shared.security.passwords import hash_password, verify_password
 from app.shared.settings import get_settings
 from app.shared.storage import get_file_storage
+
+logger = structlog.get_logger(__name__)
 
 
 _EDITABLE_TEXT_EXTENSIONS = frozenset(
@@ -403,6 +406,7 @@ class StorageService:
         return frozenset(await list_user_group_ids(self._session, actor.id))
 
     async def list_group_file_groups(self, actor: User) -> GroupChatFileGroupsResponse:
+        await self._maybe_backfill_group_files()
         group_ids = await self._actor_group_ids(actor)
         summaries = await self._repo.list_group_summaries(group_ids)
         return GroupChatFileGroupsResponse(
@@ -415,6 +419,27 @@ class StorageService:
                 for group_id, name, count in summaries
             ],
         )
+
+    async def _maybe_backfill_group_files(self) -> None:
+        """Catch up inbound files that were downloaded but never indexed."""
+        try:
+            from app.shared.redis import get_redis
+            from app.modules.storage.indexing import backfill_group_chat_files
+
+            redis = get_redis()
+            acquired = await redis.set(
+                "crm:storage:group-files:backfill-on-read",
+                "1",
+                nx=True,
+                ex=120,
+            )
+            if not acquired:
+                return
+            count = await backfill_group_chat_files(self._session, limit=200)
+            if count:
+                logger.info("group_chat_files_backfill_on_read", indexed_messages=count)
+        except Exception:
+            logger.warning("group_chat_files_backfill_on_read_failed", exc_info=True)
 
     async def list_group_files(
         self,
@@ -436,11 +461,26 @@ class StorageService:
             limit=limit,
         )
         contact_names = await self._load_contact_names_for_chats({row.chat_id for row in items})
+        user_names = await self._load_user_names(
+            {row.sender_user_id for row in items if row.sender_user_id is not None},
+        )
         responses = [
-            self._to_group_file_response(row, contact_names.get(row.chat_id))
+            self._to_group_file_response(
+                row,
+                contact_names.get(row.chat_id),
+                user_names.get(row.sender_user_id) if row.sender_user_id is not None else None,
+            )
             for row in items
         ]
         return GroupChatFileListResponse(items=responses, total=total)
+
+    async def _load_user_names(self, user_ids: set[int]) -> dict[int, str]:
+        if not user_ids:
+            return {}
+        result = await self._session.execute(
+            select(User.id, User.full_name).where(User.id.in_(user_ids)),
+        )
+        return {int(row[0]): str(row[1]) for row in result.all() if row[1]}
 
     async def _load_contact_names_for_chats(
         self,
@@ -459,7 +499,19 @@ class StorageService:
         self,
         row: GroupChatFile,
         contact_name: str | None,
+        sender_user_name: str | None = None,
     ) -> GroupChatFileResponse:
+        display_name = row.sender_display_name
+        if row.direction == "outbound" and sender_user_name:
+            display_name = sender_user_name
+        elif row.direction == "inbound" and contact_name:
+            display_name = contact_name
+        elif not display_name or display_name in ("Оператор", "Клиент"):
+            if row.direction == "inbound":
+                display_name = contact_name or "Клиент"
+            else:
+                display_name = sender_user_name or display_name or "Оператор"
+
         return GroupChatFileResponse(
             id=row.id,
             group_id=row.group_id,
@@ -471,7 +523,7 @@ class StorageService:
             mime_type=row.mime_type,
             size_bytes=row.size_bytes,
             direction=row.direction,
-            sender_display_name=row.sender_display_name,
+            sender_display_name=display_name,
             sender_user_id=row.sender_user_id,
             sender_contact_id=row.sender_contact_id,
             created_at=row.created_at,

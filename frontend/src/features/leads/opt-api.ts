@@ -15,6 +15,7 @@ export async function listOptOrdersRegistry(params?: {
   department_id?: number
   group_id?: number
   payment_status?: string
+  open_only?: boolean
   offset?: number
   limit?: number
 }): Promise<OptOrderRegistryListResponse> {

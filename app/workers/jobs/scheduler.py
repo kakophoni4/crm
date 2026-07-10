@@ -24,6 +24,7 @@ _HEALTH_LOCK_KEY = "crm:bots:health_checks:scheduled"
 
 async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) -> None:
     from app.modules.leads.opt.queue import schedule_opt_submit_if_pending
+    from app.workers.jobs.backfill_group_files import backfill_group_chat_files_job
     from app.workers.jobs.purge_shares import purge_expired_share_links
     from app.workers.jobs.task_reminders import task_due_reminders
     from app.workers.bots.health_check import schedule_all_health_checks
@@ -46,6 +47,7 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     await task_due_reminders("task_due_reminders", {})
     await schedule_opt_submit_if_pending()
     await schedule_sbis_norm_sync_if_due()
+    await backfill_group_chat_files_job("backfill_group_chat_files", {})
 
 
 async def _scheduler_loop() -> None:
@@ -69,8 +71,8 @@ async def _scheduler_loop() -> None:
 
 def start_scheduler() -> None:
     global _scheduler_task
-    if not settings.ownership_v2:
-        return
+    # Always run: sbis-norm hourly sync, share purge, opt submit, etc.
+    # Ownership-specific jobs no-op when ownership_v2 is off.
     if _scheduler_task is not None and not _scheduler_task.done():
         return
     _scheduler_task = asyncio.create_task(_scheduler_loop(), name="crm-jobs-scheduler")

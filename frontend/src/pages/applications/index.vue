@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DataTableColumns } from 'naive-ui'
+import type { DataTableColumns, DataTableRowKey } from 'naive-ui'
 import {
   NButton,
   NDataTable,
@@ -7,7 +7,6 @@ import {
   NModal,
   NPagination,
   NSelect,
-  NSpin,
   NTag,
   useMessage,
 } from 'naive-ui'
@@ -16,16 +15,13 @@ import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { listDepartments, type Department } from '@/features/admin/api'
-import { listOptOrders, listOptOrdersRegistry } from '@/features/leads/opt-api'
-import type { OptOrder, OptOrderRegistryItem } from '@/features/leads/opt-types'
-import {
-  optPaymentStatusLabel,
-  optPaymentTypeLabel,
-  optPaymentRecipientLabel,
-} from '@/features/leads/opt-types'
+import { listOptOrdersRegistry } from '@/features/leads/opt-api'
+import type { OptOrderRegistryItem } from '@/features/leads/opt-types'
+import { optPaymentStatusLabel } from '@/features/leads/opt-types'
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
+import OptOrdersPanel from '@/widgets/chat/OptOrdersPanel.vue'
 
 const message = useMessage()
 const router = useRouter()
@@ -41,9 +37,7 @@ const selectedDeptKey = ref<string>('all')
 const departments = ref<Department[]>([])
 
 const detailOpen = ref(false)
-const detailLoading = ref(false)
 const selected = ref<OptOrderRegistryItem | null>(null)
-const detailOrder = ref<OptOrder | null>(null)
 
 const paymentStatusOptions = [
   { label: 'Не оплачена', value: 'unpaid' },
@@ -76,7 +70,9 @@ const groupedByDepartment = computed(() => {
   const groups = new Map<string, { label: string; rows: OptOrderRegistryItem[] }>()
   for (const row of items.value) {
     const key = row.department_id != null ? String(row.department_id) : 'none'
-    const label = row.department_name || (row.department_id != null ? `Отдел #${row.department_id}` : 'Без отдела')
+    const label =
+      row.department_name ||
+      (row.department_id != null ? `Отдел #${row.department_id}` : 'Без отдела')
     if (!groups.has(key)) groups.set(key, { label, rows: [] })
     groups.get(key)!.rows.push(row)
   }
@@ -122,18 +118,18 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => [
         { default: () => optPaymentStatusLabel(row.payment_status) },
       ),
   },
-  {
-    title: '',
-    key: 'actions',
-    width: 100,
-    render: (row) =>
-      h(
-        NButton,
-        { size: 'tiny', quaternary: true, onClick: () => void openDetail(row) },
-        { default: () => 'Открыть' },
-      ),
-  },
 ])
+
+function rowKey(row: OptOrderRegistryItem): DataTableRowKey {
+  return row.id
+}
+
+function rowProps(row: OptOrderRegistryItem) {
+  return {
+    style: 'cursor: pointer',
+    onClick: () => openDetail(row),
+  }
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -159,19 +155,13 @@ async function load(): Promise<void> {
   }
 }
 
-async function openDetail(row: OptOrderRegistryItem): Promise<void> {
+function openDetail(row: OptOrderRegistryItem): void {
   selected.value = row
   detailOpen.value = true
-  detailLoading.value = true
-  detailOrder.value = null
-  try {
-    const orders = await listOptOrders(row.lead_id)
-    detailOrder.value = orders.find((item) => item.id === row.id) ?? null
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявку')
-  } finally {
-    detailLoading.value = false
-  }
+}
+
+function onDetailPaymentsChanged(): void {
+  void load()
 }
 
 function goToChat(): void {
@@ -248,6 +238,8 @@ onMounted(() => {
             size="small"
             :columns="columns"
             :data="group.rows"
+            :row-key="rowKey"
+            :row-props="rowProps"
             :bordered="false"
             :pagination="false"
           />
@@ -267,64 +259,37 @@ onMounted(() => {
       v-model:show="detailOpen"
       preset="card"
       :title="selected ? `Сделка №${selected.lead_id} · заявка №${selected.order_no}` : 'Заявка'"
-      style="max-width: 720px"
+      class="applications-page__modal"
+      style="width: min(960px, 96vw)"
     >
-      <NSpin :show="detailLoading">
-        <template v-if="selected">
-          <dl class="applications-page__facts">
-            <div>
-              <dt>Клиент</dt>
-              <dd>{{ selected.contact_name || '—' }}</dd>
-            </div>
-            <div>
-              <dt>Покупатель</dt>
-              <dd>{{ selected.buyer.name || `ИНН ${selected.buyer.inn}` }}</dd>
-            </div>
-            <div>
-              <dt>Отдел / группа</dt>
-              <dd>
-                {{ selected.department_name || '—' }} /
-                {{ selected.group_name || `Группа #${selected.group_id}` }}
-              </dd>
-            </div>
-            <div>
-              <dt>К оплате</dt>
-              <dd>{{ formatMoney(selected.commission_due) }} ₽</dd>
-            </div>
-            <div>
-              <dt>Оплачено</dt>
-              <dd>{{ formatMoney(selected.amount_paid) }} ₽</dd>
-            </div>
-            <div>
-              <dt>Остаток</dt>
-              <dd>{{ formatMoney(selected.amount_remaining) }} ₽</dd>
-            </div>
-          </dl>
+      <template v-if="selected">
+        <dl class="applications-page__facts">
+          <div>
+            <dt>Клиент</dt>
+            <dd>{{ selected.contact_name || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Покупатель</dt>
+            <dd>{{ selected.buyer.name || `ИНН ${selected.buyer.inn}` }}</dd>
+          </div>
+          <div>
+            <dt>Отдел / группа</dt>
+            <dd>
+              {{ selected.department_name || '—' }} /
+              {{ selected.group_name || `Группа #${selected.group_id}` }}
+            </dd>
+          </div>
+        </dl>
 
-          <template v-if="detailOrder">
-            <h3 class="applications-page__section">Фактуры ({{ detailOrder.lines.length }})</h3>
-            <ul class="applications-page__list">
-              <li v-for="line in detailOrder.lines" :key="line.id">
-                №{{ line.line_no }} · {{ line.supplier.name || line.supplier.inn }} ·
-                {{ formatMoney(line.amount) }} ₽
-                <span v-if="line.document_number"> · док. {{ line.document_number }}</span>
-              </li>
-            </ul>
+        <div class="applications-page__panel">
+          <OptOrdersPanel
+            :lead-id="selected.lead_id"
+            :initial-order-id="selected.id"
+            @payments-changed="onDetailPaymentsChanged"
+          />
+        </div>
+      </template>
 
-            <h3 class="applications-page__section">Оплаты ({{ detailOrder.payments.length }})</h3>
-            <ul v-if="detailOrder.payments.length" class="applications-page__list">
-              <li v-for="payment in detailOrder.payments" :key="payment.id">
-                {{ formatMoney(payment.amount) }} ₽ ·
-                {{ optPaymentTypeLabel(payment.payment_type) }} ·
-                {{ optPaymentRecipientLabel(payment.recipient) }} ·
-                {{ new Date(payment.paid_at).toLocaleString('ru-RU') }}
-                <span v-if="payment.document_name"> · {{ payment.document_name }}</span>
-              </li>
-            </ul>
-            <p v-else class="applications-page__muted">Оплат пока нет</p>
-          </template>
-        </template>
-      </NSpin>
       <template #footer>
         <div class="applications-page__footer">
           <NButton @click="detailOpen = false">Закрыть</NButton>
@@ -397,7 +362,7 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px 14px;
-  margin: 0 0 16px;
+  margin: 0 0 14px;
 }
 
 .applications-page__facts dt {
@@ -410,31 +375,23 @@ onMounted(() => {
   font-weight: 600;
 }
 
-.applications-page__section {
-  margin: 14px 0 8px;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.applications-page__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.85rem;
-}
-
-.applications-page__muted {
-  margin: 0;
-  color: var(--app-text-muted);
-  font-size: 0.85rem;
+.applications-page__panel {
+  max-height: min(70vh, 720px);
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .applications-page__footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+:deep(.n-data-table-tr) {
+  transition: background 0.12s ease;
+}
+
+:deep(.n-data-table-tr:hover) {
+  background: color-mix(in srgb, var(--app-accent, #3b82f6) 8%, transparent);
 }
 </style>

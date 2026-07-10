@@ -17,7 +17,6 @@ import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/co
 import { isMessageSendShortcut } from '@/widgets/chat/message-input-hotkeys'
 import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
 import VaultFilePickerModal from '@/widgets/chat/VaultFilePickerModal.vue'
-import ChatDialogStorageModal from '@/widgets/chat/ChatDialogStorageModal.vue'
 
 const props = defineProps<{
   disabled?: boolean
@@ -50,7 +49,6 @@ const creatingQuickReply = ref(false)
 const newQuickReplyTitle = ref('')
 const newQuickReplyBody = ref('')
 const vaultPickerOpen = ref(false)
-const dialogStorageOpen = ref(false)
 let quickReplySearchTimer: number | null = null
 
 const quickReplyQuery = computed(() => text.value.trim())
@@ -85,11 +83,6 @@ function onVaultFileSelect(file: { file_id: number; name: string; mime?: string 
 function openVaultPicker(): void {
   if (props.disabled) return
   vaultPickerOpen.value = true
-}
-
-function openDialogStorage(): void {
-  if (props.disabled || props.chatId == null) return
-  dialogStorageOpen.value = true
 }
 
 async function addFile(file: File): Promise<void> {
@@ -412,17 +405,14 @@ watch(
             <template #icon><Paperclip :size="18" /></template>
           </NButton>
         </NUpload>
-        <NButton quaternary :disabled="disabled" aria-label="Из хранилища" @click="openVaultPicker">
-          <template #icon><FolderOpen :size="18" /></template>
-        </NButton>
         <NButton
           quaternary
-          :disabled="disabled || chatId == null"
-          aria-label="Хранилище диалога"
-          title="Хранилище диалога"
-          @click="openDialogStorage"
+          :disabled="disabled"
+          aria-label="Хранилище"
+          title="Хранилище / файлы диалога"
+          @click="openVaultPicker"
         >
-          Хранилище
+          <template #icon><FolderOpen :size="18" /></template>
         </NButton>
       </div>
 
@@ -450,9 +440,8 @@ watch(
         <template #icon><Send :size="16" /></template>
       </NButton>
     </div>
-    <VaultFilePickerModal v-model:show="vaultPickerOpen" @select="onVaultFileSelect" />
-    <ChatDialogStorageModal
-      v-model:show="dialogStorageOpen"
+    <VaultFilePickerModal
+      v-model:show="vaultPickerOpen"
       :chat-id="chatId ?? null"
       @select="onVaultFileSelect"
     />
