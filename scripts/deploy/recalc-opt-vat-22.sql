@@ -1,9 +1,8 @@
 -- Пересчёт НДС в строках OPT-заявок: 20% -> 22% (сумма с НДС не меняется).
 --
--- 1) Сначала посмотреть, сколько строк затронуто:
---    docker exec -i crm-staging-postgres psql -U crm -d crm < scripts/deploy/recalc-opt-vat-22.sql
---
--- 2) Если ок — раскомментировать UPDATE в конце файла и выполнить снова.
+-- Автоматически выполняется миграцией alembic 0069_opt_vat_22_recalc при деплое.
+-- Этот файл — для ручной проверки/повтора:
+--   docker exec -i crm-staging-postgres psql -U crm -d crm < scripts/deploy/recalc-opt-vat-22.sql
 
 \echo '=== Строки с НДС ~20% (будут пересчитаны) ==='
 SELECT COUNT(*) AS lines_to_fix
