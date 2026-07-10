@@ -200,7 +200,7 @@ const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
 ])
 
 const previewLineColumns = computed<DataTableColumns<OptOrderLine>>(() =>
-  lineColumns.value.filter((col) => col.key !== 'actions'),
+  lineColumns.value.filter((col) => !('key' in col) || col.key !== 'actions'),
 )
 
 function openPreview(tab: 'application' | 'commission' | 'payments' = 'application'): void {
