@@ -117,6 +117,16 @@ class Settings(BaseSettings):
     # External service token for POST /accounting/requirements/ingest
     accounting_ingest_token: str = ""
 
+    # sbis-norm FNS requirements pull (http://host:8000/api/sbis/requirements/)
+    sbis_norm_api_base_url: str = ""
+    sbis_norm_api_token: str = ""
+    sbis_norm_api_timeout_seconds: float = 60.0
+    sbis_norm_sync_enabled: bool = False
+    sbis_norm_sync_interval_seconds: int = 300
+    sbis_norm_sync_batch_limit: int = 50
+    # Token expected from sbis-norm webhook (REQUIREMENTS_WEBHOOK_TOKEN on their side)
+    sbis_norm_webhook_token: str = ""
+
     @field_validator("sentry_traces_sample_rate")
     @classmethod
     def validate_traces_sample_rate(cls, value: float) -> float:

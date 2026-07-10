@@ -13,8 +13,13 @@ def register_crm_job_workers() -> None:
     register_handler(PERIODIC_JOB_TYPE, run_periodic_maintenance)
     from app.modules.leads.opt.queue import OPT_SUBMIT_JOB_TYPE
     from app.workers.jobs.opt_submit import process_opt_submit_queue
+    from app.workers.jobs.sbis_norm_sync import (
+        SBIS_NORM_SYNC_JOB_TYPE,
+        process_sbis_norm_sync,
+    )
 
     register_handler(OPT_SUBMIT_JOB_TYPE, process_opt_submit_queue)
+    register_handler(SBIS_NORM_SYNC_JOB_TYPE, process_sbis_norm_sync)
 
 
 def start_crm_jobs() -> None:

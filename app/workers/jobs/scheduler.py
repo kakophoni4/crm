@@ -29,6 +29,7 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     from app.workers.bots.health_check import schedule_all_health_checks
     from app.workers.escalation import escalation_scan
     from app.workers.jobs.purge_leads import LEAD_PURGE_JOB_TYPE, purge_expired_leads
+    from app.workers.jobs.sbis_norm_sync import schedule_sbis_norm_sync_if_due
     from app.workers.transfer_expire import transfer_expire_scan
 
     await escalation_scan()
@@ -44,6 +45,7 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     await purge_expired_share_links("purge_expired_share_links", {})
     await task_due_reminders("task_due_reminders", {})
     await schedule_opt_submit_if_pending()
+    await schedule_sbis_norm_sync_if_due()
 
 
 async def _scheduler_loop() -> None:

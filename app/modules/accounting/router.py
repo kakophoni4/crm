@@ -13,6 +13,8 @@ from app.modules.accounting.schemas import (
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
+    AccountingRequirementSyncResponse,
+    AccountingRequirementWebhookPayload,
     AccountingUnitCategoriesResponse,
     AccountingUnitCreateRequest,
     AccountingUnitListResponse,
@@ -29,7 +31,7 @@ from app.shared.db import get_db
 from app.shared.exceptions import PermissionDenied
 from app.shared.security.permissions import requires_permission
 from app.shared.settings import settings
-from fastapi import APIRouter, File, Form, Query
+from fastapi import APIRouter, File, Form, Query, Request
 from urllib.parse import quote
 
 router = APIRouter(prefix="/api/v1/accounting", tags=["accounting"])
@@ -47,6 +49,24 @@ async def _require_ingest_token(
         raise PermissionDenied(message="Ingest token is not configured")
     if (x_accounting_ingest_token or "").strip() != expected:
         raise PermissionDenied(message="Invalid ingest token")
+
+
+async def _require_sbis_webhook_token(request: Request) -> None:
+    expected = (settings.sbis_norm_webhook_token or "").strip()
+    if not expected:
+        # Fall back to API token if webhook token not set separately
+        expected = (settings.sbis_norm_api_token or "").strip()
+    if not expected:
+        raise PermissionDenied(message="Webhook token is not configured")
+
+    api_key = (request.headers.get("X-API-Key") or "").strip()
+    auth = (request.headers.get("Authorization") or "").strip()
+    bearer = ""
+    if auth.lower().startswith("bearer "):
+        bearer = auth[7:].strip()
+    provided = api_key or bearer
+    if provided != expected:
+        raise PermissionDenied(message="Invalid webhook token")
 
 
 @router.get("/units", response_model=AccountingUnitListResponse)
@@ -157,6 +177,53 @@ async def download_requirement_pdf(
                 f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
             ),
         },
+    )
+
+
+@router.post(
+    "/requirements/sync",
+    response_model=AccountingRequirementSyncResponse,
+)
+async def sync_accounting_requirements(
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AccountingRequirementSyncResponse:
+    del actor
+    from app.modules.accounting.sbis_norm_sync import sync_unsynced_requirements
+
+    result = await sync_unsynced_requirements(db)
+    await db.commit()
+    return AccountingRequirementSyncResponse(
+        fetched=result.fetched,
+        created=result.created,
+        existing=result.existing,
+        failed=result.failed,
+        marked_synced=result.marked_synced,
+        errors=result.errors[:20],
+    )
+
+
+@router.post(
+    "/requirements/webhook",
+    response_model=AccountingRequirementSyncResponse,
+    dependencies=[Depends(_require_sbis_webhook_token)],
+)
+async def sbis_norm_requirements_webhook(
+    body: AccountingRequirementWebhookPayload,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AccountingRequirementSyncResponse:
+    """Push from sbis-norm after scanner save (meta only → CRM pulls file)."""
+    from app.modules.accounting.sbis_norm_sync import sync_requirement_by_id
+
+    result = await sync_requirement_by_id(db, body.id, mark=True)
+    await db.commit()
+    return AccountingRequirementSyncResponse(
+        fetched=result.fetched,
+        created=result.created,
+        existing=result.existing,
+        failed=result.failed,
+        marked_synced=result.marked_synced,
+        errors=result.errors[:20],
     )
 
 

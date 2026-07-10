@@ -391,14 +391,31 @@ class AccountingService:
             except (binascii.Error, ValueError) as exc:
                 raise ValidationError(message="Некорректный pdf_base64") from exc
         if raw_pdf:
-            if not raw_pdf.startswith(b"%PDF"):
-                raise ValidationError(message="Файл должен быть PDF")
+            filename = pdf_filename or body.pdf_filename or "requirement.pdf"
+            mime_type = "application/octet-stream"
+            meta_mime = (body.metadata or {}).get("mime_type")
+            if isinstance(meta_mime, str) and meta_mime.strip():
+                mime_type = meta_mime.strip()
+            elif raw_pdf.startswith(b"%PDF"):
+                mime_type = "application/pdf"
+            elif raw_pdf.startswith(b"PK"):
+                mime_type = "application/zip"
+            else:
+                stripped = raw_pdf.lstrip()
+                if stripped.startswith(b"<?xml") or stripped.startswith(b"<"):
+                    mime_type = "application/xml"
+                elif filename.lower().endswith(".pdf"):
+                    mime_type = "application/pdf"
+                elif filename.lower().endswith(".zip"):
+                    mime_type = "application/zip"
+                elif filename.lower().endswith(".xml"):
+                    mime_type = "application/xml"
             files = FilesService(self._session)
             uploaded = await files.create_upload(
                 uploaded_by=None,
                 data=raw_pdf,
-                original_name=pdf_filename or body.pdf_filename or "requirement.pdf",
-                mime_type="application/pdf",
+                original_name=filename,
+                mime_type=mime_type,
             )
             file_id = uploaded.id
 

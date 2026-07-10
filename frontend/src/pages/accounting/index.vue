@@ -33,6 +33,7 @@ import {
   listAccountingUnitOwners,
   listAccountingUnits,
   saveBlob,
+  syncAccountingRequirements,
 } from '@/features/accounting/api'
 import type {
   AccountingOrderLineBrief,
@@ -54,6 +55,7 @@ import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 const message = useMessage()
 
 const loading = ref(false)
+const syncingRequirements = ref(false)
 const activeTab = ref('orders')
 const isChief = ref(false)
 const units = ref<AccountingUnit[]>([])
@@ -265,6 +267,29 @@ async function loadRequirements(): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить требования')
   } finally {
     loading.value = false
+  }
+}
+
+async function onSyncRequirements(): Promise<void> {
+  syncingRequirements.value = true
+  try {
+    const result = await syncAccountingRequirements()
+    const parts = [
+      `забрано ${result.fetched}`,
+      `новых ${result.created}`,
+      `уже было ${result.existing}`,
+      `ошибок ${result.failed}`,
+    ]
+    if (result.failed > 0 && result.errors.length) {
+      message.warning(`${parts.join(', ')}. ${result.errors[0]}`)
+    } else {
+      message.success(parts.join(', '))
+    }
+    await loadRequirements()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось синхронизировать требования')
+  } finally {
+    syncingRequirements.value = false
   }
 }
 
@@ -626,6 +651,13 @@ onUnmounted(() => {
               @keyup.enter="loadRequirements"
             />
             <NButton type="primary" @click="loadRequirements">Найти</NButton>
+            <NButton
+              :loading="syncingRequirements"
+              @click="onSyncRequirements"
+            >
+              <template #icon><RefreshCw :size="16" /></template>
+              Забрать из СБИС
+            </NButton>
           </div>
           <NSpin :show="loading">
             <NDataTable

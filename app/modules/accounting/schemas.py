@@ -196,6 +196,30 @@ class AccountingRequirementIngestResponse(BaseModel):
     created: bool
 
 
+class AccountingRequirementWebhookPayload(BaseModel):
+    """Push payload from sbis-norm (meta only, no file)."""
+
+    id: int
+    inn: str | None = None
+    document_date: str | None = None
+    sbis_doc_id: str | None = None
+    sbis_stage_id: str | None = None
+    doc_title: str | None = None
+    content_sha256: str | None = None
+    storage_file_name: str | None = None
+    created_at: str | None = None
+    file_url_hint: str | None = None
+
+
+class AccountingRequirementSyncResponse(BaseModel):
+    fetched: int
+    created: int
+    existing: int
+    failed: int
+    marked_synced: int
+    errors: list[str] = Field(default_factory=list)
+
+
 class AccountingAssignmentItem(BaseModel):
     user_id: int
     user_full_name: str

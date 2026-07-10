@@ -85,6 +85,25 @@ export async function downloadRequirementPdf(requirementId: number): Promise<Blo
   return data
 }
 
+export async function syncAccountingRequirements(): Promise<{
+  fetched: number
+  created: number
+  existing: number
+  failed: number
+  marked_synced: number
+  errors: string[]
+}> {
+  const { data } = await http.post<{
+    fetched: number
+    created: number
+    existing: number
+    failed: number
+    marked_synced: number
+    errors: string[]
+  }>('/accounting/requirements/sync')
+  return data
+}
+
 export async function listAccountingUnitOwners(): Promise<{
   items: AccountingUnitOwnerRow[]
   accountants: AccountingAccountantOption[]
