@@ -445,11 +445,16 @@ const groupColumns = computed<DataTableColumns<GroupChatFile>>(() => [
   {
     title: 'От кого',
     key: 'sender_display_name',
-    width: 160,
-    render: (row) =>
-      row.direction === 'inbound'
-        ? `Клиент: ${row.sender_display_name}`
-        : `Оператор: ${row.sender_display_name}`,
+    width: 180,
+    render: (row) => {
+      const name = (row.sender_display_name || row.contact_name || '').trim()
+      if (row.direction === 'inbound') {
+        const client = name && name !== 'Оператор' ? name : row.contact_name || 'Клиент'
+        return `Клиент: ${client}`
+      }
+      const operator = name && name !== 'Оператор' ? name : 'Оператор'
+      return `Оператор: ${operator}`
+    },
   },
   {
     title: 'Когда',

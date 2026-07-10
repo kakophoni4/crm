@@ -260,7 +260,8 @@ onMounted(() => {
       preset="card"
       :title="selected ? `Сделка №${selected.lead_id} · заявка №${selected.order_no}` : 'Заявка'"
       class="applications-page__modal"
-      style="width: min(960px, 96vw)"
+      :style="{ width: 'min(1120px, 96vw)' }"
+      :segmented="{ content: true, footer: 'soft' }"
     >
       <template v-if="selected">
         <dl class="applications-page__facts">
@@ -283,6 +284,7 @@ onMounted(() => {
 
         <div class="applications-page__panel">
           <OptOrdersPanel
+            layout="wide"
             :lead-id="selected.lead_id"
             :initial-order-id="selected.id"
             @payments-changed="onDetailPaymentsChanged"
@@ -360,9 +362,11 @@ onMounted(() => {
 
 .applications-page__facts {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px 14px;
-  margin: 0 0 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--n-border-color);
 }
 
 .applications-page__facts dt {
@@ -371,14 +375,14 @@ onMounted(() => {
 }
 
 .applications-page__facts dd {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .applications-page__panel {
-  max-height: min(70vh, 720px);
-  overflow: auto;
-  padding-right: 4px;
+  min-height: 0;
 }
 
 .applications-page__footer {
@@ -387,11 +391,29 @@ onMounted(() => {
   gap: 8px;
 }
 
+@media (max-width: 800px) {
+  .applications-page__facts {
+    grid-template-columns: 1fr;
+  }
+}
+
 :deep(.n-data-table-tr) {
   transition: background 0.12s ease;
 }
 
 :deep(.n-data-table-tr:hover) {
   background: color-mix(in srgb, var(--app-accent, #3b82f6) 8%, transparent);
+}
+</style>
+
+<style>
+/* NModal teleports outside scoped root */
+.applications-page__modal.n-card {
+  max-height: calc(100vh - 40px);
+}
+
+.applications-page__modal.n-card > .n-card__content {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
 }
 </style>

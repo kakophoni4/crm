@@ -162,6 +162,12 @@ class StorageRepository:
             row.mime_type = mime_type
             row.size_bytes = size_bytes
             row.file_id = file_id
+            row.direction = direction
+            row.sender_user_id = sender_user_id
+            row.sender_contact_id = sender_contact_id
+            row.sender_display_name = sender_display_name
+            if created_at is not None:
+                row.created_at = to_naive_utc(created_at)
             await self._session.flush()
             return row
 

@@ -460,15 +460,24 @@ class StorageService:
             offset=offset,
             limit=limit,
         )
-        contact_names = await self._load_contact_names_for_chats({row.chat_id for row in items})
+        contact_labels = await self._load_contact_labels_for_chats({row.chat_id for row in items})
+        message_meta = await self._load_message_meta({row.message_id for row in items})
         user_names = await self._load_user_names(
-            {row.sender_user_id for row in items if row.sender_user_id is not None},
+            {
+                *(row.sender_user_id for row in items if row.sender_user_id is not None),
+                *(
+                    meta["sender_user_id"]
+                    for meta in message_meta.values()
+                    if meta.get("sender_user_id") is not None
+                ),
+            },
         )
         responses = [
             self._to_group_file_response(
                 row,
-                contact_names.get(row.chat_id),
-                user_names.get(row.sender_user_id) if row.sender_user_id is not None else None,
+                contact_labels.get(row.chat_id),
+                user_names,
+                message_meta.get(row.message_id),
             )
             for row in items
         ]
@@ -482,35 +491,102 @@ class StorageService:
         )
         return {int(row[0]): str(row[1]) for row in result.all() if row[1]}
 
-    async def _load_contact_names_for_chats(
+    async def _load_message_meta(
+        self,
+        message_ids: set[int],
+    ) -> dict[int, dict[str, Any]]:
+        if not message_ids:
+            return {}
+        result = await self._session.execute(
+            select(
+                ChatMessage.id,
+                ChatMessage.direction,
+                ChatMessage.sender_user_id,
+            ).where(ChatMessage.id.in_(message_ids)),
+        )
+        out: dict[int, dict[str, Any]] = {}
+        for message_id, direction, sender_user_id in result.all():
+            direction_value = (
+                direction.value if hasattr(direction, "value") else str(direction or "")
+            )
+            out[int(message_id)] = {
+                "direction": direction_value,
+                "sender_user_id": int(sender_user_id) if sender_user_id is not None else None,
+            }
+        return out
+
+    async def _load_contact_labels_for_chats(
         self,
         chat_ids: set[int],
     ) -> dict[int, str | None]:
         if not chat_ids:
             return {}
         result = await self._session.execute(
-            select(Chat.id, Contact.full_name)
+            select(
+                Chat.id,
+                Contact.full_name,
+                Contact.telegram_username,
+                Contact.phone,
+            )
             .join(Contact, Contact.id == Chat.contact_id)
             .where(Chat.id.in_(chat_ids)),
         )
-        return {int(row[0]): row[1] for row in result.all()}
+        labels: dict[int, str | None] = {}
+        for chat_id, full_name, username, phone in result.all():
+            labels[int(chat_id)] = self._contact_label(
+                full_name=full_name,
+                telegram_username=username,
+                phone=phone,
+            )
+        return labels
+
+    @staticmethod
+    def _contact_label(
+        *,
+        full_name: str | None,
+        telegram_username: str | None = None,
+        phone: str | None = None,
+    ) -> str:
+        name = (full_name or "").strip()
+        if name and name.casefold() not in {"клиент", "client", "unknown", "без имени"}:
+            return name
+        if telegram_username:
+            handle = str(telegram_username).strip().lstrip("@")
+            if handle:
+                return f"@{handle}"
+        if phone and str(phone).strip():
+            return str(phone).strip()
+        return name or "Клиент"
 
     def _to_group_file_response(
         self,
         row: GroupChatFile,
-        contact_name: str | None,
-        sender_user_name: str | None = None,
+        contact_label: str | None,
+        user_names: dict[int, str],
+        message_meta: dict[str, Any] | None = None,
     ) -> GroupChatFileResponse:
-        display_name = row.sender_display_name
-        if row.direction == "outbound" and sender_user_name:
-            display_name = sender_user_name
-        elif row.direction == "inbound" and contact_name:
-            display_name = contact_name
-        elif not display_name or display_name in ("Оператор", "Клиент"):
-            if row.direction == "inbound":
-                display_name = contact_name or "Клиент"
-            else:
-                display_name = sender_user_name or display_name or "Оператор"
+        direction = row.direction
+        sender_user_id = row.sender_user_id
+        if message_meta:
+            live_direction = str(message_meta.get("direction") or "").strip().lower()
+            if live_direction in {"inbound", "outbound"}:
+                direction = live_direction
+            if message_meta.get("sender_user_id") is not None:
+                sender_user_id = int(message_meta["sender_user_id"])
+
+        if direction == "inbound":
+            display_name = contact_label or row.sender_display_name or "Клиент"
+            if display_name.strip().casefold() in {"оператор", "operator"}:
+                display_name = contact_label or "Клиент"
+        else:
+            sender_user_name = (
+                user_names.get(sender_user_id) if sender_user_id is not None else None
+            )
+            display_name = (
+                sender_user_name
+                or (row.sender_display_name if row.sender_display_name not in ("Оператор", "") else None)
+                or "Оператор"
+            )
 
         return GroupChatFileResponse(
             id=row.id,
@@ -522,15 +598,15 @@ class StorageService:
             original_name=row.original_name,
             mime_type=row.mime_type,
             size_bytes=row.size_bytes,
-            direction=row.direction,
+            direction=direction,
             sender_display_name=display_name,
-            sender_user_id=row.sender_user_id,
+            sender_user_id=sender_user_id,
             sender_contact_id=row.sender_contact_id,
             created_at=row.created_at,
             download_path=(
                 f"chats/{row.chat_id}/messages/{row.message_id}/attachments/{row.attachment_index}"
             ),
-            contact_name=contact_name,
+            contact_name=contact_label,
         )
 
     async def get_group_file_bytes(

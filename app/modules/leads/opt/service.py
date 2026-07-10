@@ -32,6 +32,7 @@ from app.modules.leads.opt.schemas import (
     OptOrderRegistryItem,
     OptOrderRegistryListResponse,
     OptOrderResponse,
+    OptPaymentDocument,
     OptPaymentResponse,
     OptVolumeCategoryBreakdown,
 )
@@ -171,20 +172,7 @@ class OptOrderService:
                 for line in sorted(order.lines, key=lambda row: row.line_no)
             ],
             payments=[
-                OptPaymentResponse(
-                    id=payment.id,
-                    amount=Decimal(str(payment.amount)),
-                    paid_at=payment.paid_at,
-                    payment_type=payment.payment_type,
-                    recipient=payment.recipient,
-                    created_at=payment.created_at,
-                    document_file_id=payment.document_file_id,
-                    document_name=(
-                        names.get(payment.document_file_id)
-                        if payment.document_file_id is not None
-                        else None
-                    ),
-                )
+                self._payment_to_response(payment, names)
                 for payment in sorted(order.payments, key=lambda row: row.paid_at)
             ],
             commission_history=[
@@ -202,16 +190,57 @@ class OptOrderService:
             ],
         )
 
+    @staticmethod
+    def _payment_document_ids(payment: object) -> list[int]:
+        raw_ids = getattr(payment, "document_file_ids", None) or []
+        ids: list[int] = []
+        for value in raw_ids:
+            try:
+                file_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if file_id not in ids:
+                ids.append(file_id)
+        legacy = getattr(payment, "document_file_id", None)
+        if legacy is not None:
+            try:
+                legacy_id = int(legacy)
+            except (TypeError, ValueError):
+                legacy_id = None
+            if legacy_id is not None and legacy_id not in ids:
+                ids.insert(0, legacy_id)
+        return ids
+
+    def _payment_to_response(
+        self,
+        payment: object,
+        names: dict[int, str],
+    ) -> OptPaymentResponse:
+        doc_ids = self._payment_document_ids(payment)
+        primary_id = doc_ids[0] if doc_ids else None
+        return OptPaymentResponse(
+            id=int(getattr(payment, "id")),
+            amount=Decimal(str(getattr(payment, "amount"))),
+            paid_at=getattr(payment, "paid_at"),
+            payment_type=str(getattr(payment, "payment_type")),
+            recipient=str(getattr(payment, "recipient")),
+            created_at=getattr(payment, "created_at"),
+            document_file_id=primary_id,
+            document_name=names.get(primary_id) if primary_id is not None else None,
+            documents=[
+                OptPaymentDocument(file_id=file_id, name=names.get(file_id))
+                for file_id in doc_ids
+            ],
+        )
+
     async def _document_names_for_orders(
         self,
         orders: list[LeadOptOrder],
     ) -> dict[int, str]:
-        file_ids = {
-            payment.document_file_id
-            for order in orders
-            for payment in order.payments
-            if payment.document_file_id is not None
-        }
+        file_ids: set[int] = set()
+        for order in orders:
+            for payment in order.payments:
+                file_ids.update(self._payment_document_ids(payment))
         if not file_ids:
             return {}
         from sqlalchemy import select
@@ -242,10 +271,20 @@ class OptOrderService:
             raise ValidationError(
                 message=f"Сумма оплаты превышает остаток ({remaining.quantize(Decimal('0.01'))} ₽)",
             )
-        if body.document_file_id is not None:
-            uploaded = await self._repo.get_uploaded_file(body.document_file_id)
+        doc_ids: list[int] = []
+        for file_id in [*body.document_file_ids, body.document_file_id]:
+            if file_id is None:
+                continue
+            try:
+                normalized = int(file_id)
+            except (TypeError, ValueError):
+                continue
+            if normalized not in doc_ids:
+                doc_ids.append(normalized)
+        for file_id in doc_ids:
+            uploaded = await self._repo.get_uploaded_file(file_id)
             if uploaded is None:
-                raise ValidationError(message="Файл платёжного документа не найден")
+                raise ValidationError(message=f"Файл платёжного документа #{file_id} не найден")
         await self._repo.add_payment(
             order,
             amount=body.amount,
@@ -253,7 +292,8 @@ class OptOrderService:
             payment_type=body.payment_type,
             recipient=body.recipient,
             created_by=actor.id,
-            document_file_id=body.document_file_id,
+            document_file_id=doc_ids[0] if doc_ids else None,
+            document_file_ids=doc_ids,
         )
         await self._session.commit()
         refreshed = await self._repo.get_order(order.id)
@@ -330,15 +370,23 @@ class OptOrderService:
         lead_id: int,
         order_id: int,
         payment_id: int,
+        *,
+        file_id: int | None = None,
     ) -> tuple[bytes, str, str]:
         from app.modules.files.service import FilesService
 
         order = await self._get_order_for_actor(actor, lead_id, order_id)
         payment = next((row for row in order.payments if row.id == payment_id), None)
-        if payment is None or payment.document_file_id is None:
+        if payment is None:
+            raise NotFound(message="Платёжный документ не найден")
+        doc_ids = self._payment_document_ids(payment)
+        if not doc_ids:
+            raise NotFound(message="Платёжный документ не найден")
+        target_id = file_id if file_id is not None else doc_ids[0]
+        if target_id not in doc_ids:
             raise NotFound(message="Платёжный документ не найден")
         files = FilesService(self._session)
-        return await files.get_bytes(payment.document_file_id)
+        return await files.get_bytes(target_id)
 
     async def list_registry(
         self,

@@ -23,6 +23,11 @@ export interface OptVolumeCategoryBreakdown {
   commission: number
 }
 
+export interface OptPaymentDocument {
+  file_id: number
+  name?: string | null
+}
+
 export interface OptPayment {
   id: number
   amount: number
@@ -32,6 +37,7 @@ export interface OptPayment {
   created_at: string
   document_file_id?: number | null
   document_name?: string | null
+  documents?: OptPaymentDocument[]
 }
 
 export interface OptCommissionHistoryItem {

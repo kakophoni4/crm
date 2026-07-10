@@ -105,10 +105,14 @@ export async function downloadOptPaymentDocument(
   leadId: number,
   orderId: number,
   paymentId: number,
+  fileId?: number | null,
 ): Promise<Blob> {
   const { data } = await http.get<Blob>(
     `/leads/${leadId}/opt-orders/${orderId}/payments/${paymentId}/document`,
-    { responseType: 'blob' },
+    {
+      responseType: 'blob',
+      params: fileId != null ? { file_id: fileId } : undefined,
+    },
   )
   return data
 }
@@ -122,6 +126,7 @@ export async function addOptOrderPayment(
     payment_type: 'card' | 'crypto' | 'wire' | 'cash'
     recipient: 'orange' | 'beneficiary'
     document_file_id?: number | null
+    document_file_ids?: number[]
   },
 ): Promise<OptOrder> {
   const { data } = await http.post<OptOrder>(

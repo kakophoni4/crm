@@ -32,6 +32,11 @@ class OptVolumeCategoryBreakdown(BaseModel):
     commission: Decimal
 
 
+class OptPaymentDocument(BaseModel):
+    file_id: int
+    name: str | None = None
+
+
 class OptPaymentResponse(BaseModel):
     id: int
     amount: Decimal
@@ -41,6 +46,7 @@ class OptPaymentResponse(BaseModel):
     created_at: datetime
     document_file_id: int | None = None
     document_name: str | None = None
+    documents: list[OptPaymentDocument] = Field(default_factory=list)
 
 
 class OptOrderPaymentCreateRequest(BaseModel):
@@ -49,6 +55,7 @@ class OptOrderPaymentCreateRequest(BaseModel):
     payment_type: Literal["card", "crypto", "wire", "cash"]
     recipient: Literal["orange", "beneficiary"]
     document_file_id: int | None = None
+    document_file_ids: list[int] = Field(default_factory=list)
 
 
 class OptCommissionAdjustRequest(BaseModel):

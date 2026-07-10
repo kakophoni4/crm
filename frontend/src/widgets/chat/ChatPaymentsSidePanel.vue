@@ -50,7 +50,7 @@ const paymentOpen = ref(false)
 const paymentTarget = ref<OptOrderRegistryItem | null>(null)
 const savingPayment = ref(false)
 const uploadingDocument = ref(false)
-const paymentDocument = ref<{ file_id: number; name: string } | null>(null)
+const paymentDocuments = ref<{ file_id: number; name: string }[]>([])
 const paymentForm = ref<{
   amount: number | null
   paid_at: number
@@ -141,7 +141,7 @@ function openPayment(row: OptOrderRegistryItem): void {
     payment_type: 'wire',
     recipient: 'orange',
   }
-  paymentDocument.value = null
+  paymentDocuments.value = []
   paymentOpen.value = true
 }
 
@@ -151,16 +151,23 @@ async function onPaymentDocumentUpload(options: { file: UploadFileInfo }): Promi
   uploadingDocument.value = true
   try {
     const uploaded = await uploadFile(raw)
-    paymentDocument.value = {
-      file_id: uploaded.id,
-      name: uploaded.name ?? raw.name,
-    }
+    paymentDocuments.value = [
+      ...paymentDocuments.value,
+      {
+        file_id: uploaded.id,
+        name: uploaded.name ?? raw.name,
+      },
+    ]
     message.success('Документ прикреплён')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить документ')
   } finally {
     uploadingDocument.value = false
   }
+}
+
+function removePaymentDocument(fileId: number): void {
+  paymentDocuments.value = paymentDocuments.value.filter((row) => row.file_id !== fileId)
 }
 
 async function onSavePayment(): Promise<void> {
@@ -172,15 +179,17 @@ async function onSavePayment(): Promise<void> {
   }
   savingPayment.value = true
   try {
+    const fileIds = paymentDocuments.value.map((row) => row.file_id)
     const updated = await addOptOrderPayment(target.lead_id, target.id, {
       amount: paymentForm.value.amount,
       paid_at: new Date(paymentForm.value.paid_at).toISOString(),
       payment_type: paymentForm.value.payment_type,
       recipient: paymentForm.value.recipient,
-      document_file_id: paymentDocument.value?.file_id ?? null,
+      document_file_id: fileIds[0] ?? null,
+      document_file_ids: fileIds,
     })
     paymentOpen.value = false
-    paymentDocument.value = null
+    paymentDocuments.value = []
     paymentTarget.value = null
     store.bumpOptOrdersRefresh()
     if (updated.payment_status === 'paid') {
@@ -284,7 +293,7 @@ onMounted(() => {
                 <strong>Сделка №{{ row.lead_id }} · заявка {{ row.order_no }}</strong>
                 <p class="payments-side__client">{{ clientLabel(row) }}</p>
               </div>
-              <NTag size="small" :type="paymentTagType(row.payment_status)" :bordered="false">
+              <NTag size="small" :type="paymentTagType(row.payment_status)" :bordered="true">
                 {{ optPaymentStatusLabel(row.payment_status) }}
               </NTag>
             </div>
@@ -303,7 +312,7 @@ onMounted(() => {
               </div>
             </dl>
             <div class="payments-side__actions">
-              <NButton size="small" type="primary" @click="openPayment(row)">
+              <NButton size="small" type="primary" secondary @click="openPayment(row)">
                 Внести оплату
               </NButton>
               <NButton size="small" quaternary @click="openPreview(row)">
@@ -343,19 +352,33 @@ onMounted(() => {
         <NFormItem label="Кому">
           <NSelect v-model:value="paymentForm.recipient" :options="OPT_PAYMENT_RECIPIENT_OPTIONS" />
         </NFormItem>
-        <NFormItem label="Платёжный документ">
+        <NFormItem label="Платёжные документы">
           <div class="payments-side__doc-upload">
             <NUpload
               :show-file-list="false"
+              multiple
               accept=".pdf,.png,.jpg,.jpeg,.webp,.heic"
               :disabled="uploadingDocument"
               @change="onPaymentDocumentUpload"
             >
               <NButton size="small" :loading="uploadingDocument">
-                {{ paymentDocument ? 'Заменить файл' : 'Прикрепить чек / ПП / скрин' }}
+                Добавить чек / ПП / скрин
               </NButton>
             </NUpload>
-            <p v-if="paymentDocument" class="payments-side__muted">{{ paymentDocument.name }}</p>
+            <ul v-if="paymentDocuments.length" class="payments-side__doc-list">
+              <li v-for="doc in paymentDocuments" :key="doc.file_id">
+                <span>{{ doc.name }}</span>
+                <NButton
+                  size="tiny"
+                  quaternary
+                  type="error"
+                  @click="removePaymentDocument(doc.file_id)"
+                >
+                  Убрать
+                </NButton>
+              </li>
+            </ul>
+            <p v-else class="payments-side__muted">Можно прикрепить несколько файлов</p>
           </div>
         </NFormItem>
       </NForm>
@@ -465,10 +488,10 @@ onMounted(() => {
 }
 
 .payments-side__card {
-  padding: 12px;
-  border: 1px solid var(--n-border-color);
+  padding: 12px 14px;
+  border: 1px solid var(--app-border, var(--n-border-color));
   border-radius: 10px;
-  background: var(--n-color);
+  background: var(--app-surface, transparent);
 }
 
 .payments-side__card-top {
@@ -476,6 +499,11 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+}
+
+.payments-side__card-top strong {
+  color: var(--app-text, inherit);
+  font-size: 0.9rem;
 }
 
 .payments-side__client {
@@ -489,6 +517,9 @@ onMounted(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 10px 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--app-border, var(--n-border-color));
+  border-bottom: 1px solid var(--app-border, var(--n-border-color));
 }
 
 .payments-side__facts dt {
@@ -500,6 +531,7 @@ onMounted(() => {
   margin: 2px 0 0;
   font-size: 0.85rem;
   font-weight: 600;
+  color: var(--app-text, inherit);
 }
 
 .payments-side__actions {
@@ -525,6 +557,23 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.payments-side__doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.payments-side__doc-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
 }
 
 .payments-side__modal-footer {

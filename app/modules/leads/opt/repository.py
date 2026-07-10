@@ -190,7 +190,11 @@ class OptOrderRepository:
         recipient: str,
         created_by: int,
         document_file_id: int | None = None,
+        document_file_ids: list[int] | None = None,
     ) -> LeadOptOrderPayment:
+        ids = list(document_file_ids or [])
+        if document_file_id is not None and document_file_id not in ids:
+            ids.insert(0, document_file_id)
         payment = LeadOptOrderPayment(
             order_id=order.id,
             amount=float(amount),
@@ -198,7 +202,8 @@ class OptOrderRepository:
             payment_type=payment_type,
             recipient=recipient,
             created_by=created_by,
-            document_file_id=document_file_id,
+            document_file_id=ids[0] if ids else None,
+            document_file_ids=ids,
         )
         self._session.add(payment)
         await self._session.flush()

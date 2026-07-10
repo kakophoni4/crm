@@ -49,7 +49,11 @@ const props = defineProps<{
   disabled?: boolean
   /** Prefer selecting this order after load (e.g. from applications list). */
   initialOrderId?: number | null
+  /** side = chat pane; wide = applications / full modal */
+  layout?: 'side' | 'wide'
 }>()
+
+const isWide = computed(() => props.layout === 'wide')
 
 const emit = defineEmits<{
   paymentsChanged: []
@@ -71,15 +75,15 @@ const commissionOpen = ref(false)
 const deleteOpen = ref(false)
 const deleteStep = ref<1 | 2>(1)
 const deleteTarget = ref<OptOrder | null>(null)
+const deleteLineOpen = ref(false)
+const deleteLineStep = ref<1 | 2>(1)
+const deleteLineTarget = ref<OptOrderLine | null>(null)
 const savingPayment = ref(false)
 const savingCommission = ref(false)
 const deletingLineId = ref<number | null>(null)
 const uploadingDocument = ref(false)
 const historyOpen = ref(false)
-const paymentDocument = ref<{
-  file_id: number
-  name: string
-} | null>(null)
+const paymentDocuments = ref<{ file_id: number; name: string }[]>([])
 const commissionForm = ref({
   direction: 'decrease' as 'increase' | 'decrease',
   amount: null as number | null,
@@ -177,7 +181,7 @@ const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
           type: 'error',
           quaternary: true,
           loading: deletingLineId.value === row.id,
-          onClick: () => void onDeleteLine(row),
+          onClick: () => openDeleteLineModal(row),
         },
         { default: () => 'Удал.' },
       )
@@ -208,7 +212,7 @@ function openPaymentModal(order: OptOrder): void {
     payment_type: 'wire',
     recipient: 'orange',
   }
-  paymentDocument.value = null
+  paymentDocuments.value = []
   paymentOpen.value = true
 }
 
@@ -218,16 +222,23 @@ async function onPaymentDocumentUpload(options: { file: UploadFileInfo }): Promi
   uploadingDocument.value = true
   try {
     const uploaded = await uploadFile(raw)
-    paymentDocument.value = {
-      file_id: uploaded.id,
-      name: uploaded.name ?? raw.name,
-    }
+    paymentDocuments.value = [
+      ...paymentDocuments.value,
+      {
+        file_id: uploaded.id,
+        name: uploaded.name ?? raw.name,
+      },
+    ]
     message.success('Документ прикреплён')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить документ')
   } finally {
     uploadingDocument.value = false
   }
+}
+
+function removePaymentDocument(fileId: number): void {
+  paymentDocuments.value = paymentDocuments.value.filter((row) => row.file_id !== fileId)
 }
 
 async function onSavePayment(): Promise<void> {
@@ -238,18 +249,20 @@ async function onSavePayment(): Promise<void> {
   }
   savingPayment.value = true
   try {
+    const fileIds = paymentDocuments.value.map((row) => row.file_id)
     const updated = await addOptOrderPayment(props.leadId, selectedOrder.value.id, {
       amount: paymentForm.value.amount,
       paid_at: new Date(paymentForm.value.paid_at).toISOString(),
       payment_type: paymentForm.value.payment_type,
       recipient: paymentForm.value.recipient,
-      document_file_id: paymentDocument.value?.file_id ?? null,
+      document_file_id: fileIds[0] ?? null,
+      document_file_ids: fileIds,
     })
     orders.value = orders.value
       .map((row) => (row.id === updated.id ? updated : row))
       .sort((a, b) => a.order_no - b.order_no)
     paymentOpen.value = false
-    paymentDocument.value = null
+    paymentDocuments.value = []
     emit('paymentsChanged')
     message.success('Оплата записана')
   } catch (err) {
@@ -259,8 +272,26 @@ async function onSavePayment(): Promise<void> {
   }
 }
 
-async function onDeleteLine(line: OptOrderLine): Promise<void> {
-  if (!selectedOrder.value || props.leadId == null) return
+function openDeleteLineModal(line: OptOrderLine): void {
+  if (!selectedOrder.value || props.leadId == null || props.disabled) return
+  if (selectedOrder.value.lines.length <= 1) {
+    message.warning('Нельзя удалить единственную фактуру — удалите всю заявку')
+    return
+  }
+  deleteLineTarget.value = line
+  deleteLineStep.value = 1
+  deleteLineOpen.value = true
+}
+
+function closeDeleteLineModal(): void {
+  deleteLineOpen.value = false
+  deleteLineStep.value = 1
+  deleteLineTarget.value = null
+}
+
+async function onDeleteLine(): Promise<void> {
+  const line = deleteLineTarget.value
+  if (!selectedOrder.value || props.leadId == null || line == null) return
   deletingLineId.value = line.id
   try {
     const updated = await deleteOptOrderLine(props.leadId, selectedOrder.value.id, line.id)
@@ -268,6 +299,7 @@ async function onDeleteLine(line: OptOrderLine): Promise<void> {
       .map((row) => (row.id === updated.id ? updated : row))
       .sort((a, b) => a.order_no - b.order_no)
     emit('paymentsChanged')
+    closeDeleteLineModal()
     message.success('Фактура удалена, сумма пересчитана')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось удалить фактуру')
@@ -276,19 +308,24 @@ async function onDeleteLine(line: OptOrderLine): Promise<void> {
   }
 }
 
-async function onDownloadPaymentDocument(paymentId: number): Promise<void> {
+async function onDownloadPaymentDocument(paymentId: number, fileId?: number | null): Promise<void> {
   if (!selectedOrder.value || props.leadId == null) return
   try {
     const blob = await downloadOptPaymentDocument(
       props.leadId,
       selectedOrder.value.id,
       paymentId,
+      fileId,
     )
     const payment = selectedOrder.value.payments.find((row) => row.id === paymentId)
+    const doc =
+      fileId != null
+        ? payment?.documents?.find((row) => row.file_id === fileId)
+        : payment?.documents?.[0]
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = payment?.document_name || `payment-${paymentId}`
+    anchor.download = doc?.name || payment?.document_name || `payment-${paymentId}`
     anchor.click()
     URL.revokeObjectURL(url)
   } catch (err) {
@@ -521,15 +558,17 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="opt-orders">
+  <section class="opt-orders" :class="{ 'opt-orders--wide': isWide }">
     <header class="opt-orders__header">
-      <div>
+      <div v-if="!isWide">
         <h3 class="opt-orders__title">
           <template v-if="leadId">Сделка №{{ leadId }} · заявки ОПТ</template>
           <template v-else>Заявки ОПТ</template>
         </h3>
         <p v-if="orders.length" class="opt-orders__count">{{ orders.length }} шт.</p>
       </div>
+      <p v-else-if="orders.length" class="opt-orders__count">Заявок: {{ orders.length }}</p>
+      <div v-else />
       <NUpload
         :show-file-list="false"
         accept=".xlsx,.xls"
@@ -551,7 +590,12 @@ onUnmounted(() => {
       <NEmpty v-if="!orders.length" description="Заявок пока нет" />
 
       <template v-else>
-        <div class="opt-orders__picker" role="tablist" aria-label="Заявки сделки">
+        <div
+          v-if="!isWide || orders.length > 1"
+          class="opt-orders__picker"
+          role="tablist"
+          aria-label="Заявки сделки"
+        >
           <button
             v-for="order in orders"
             :key="order.id"
@@ -572,7 +616,10 @@ onUnmounted(() => {
         <article v-if="selectedOrder" class="opt-orders__detail">
           <div class="opt-orders__detail-head">
             <div>
-              <strong>Сделка №{{ selectedOrder.lead_id }} · {{ orderLabel(selectedOrder) }}</strong>
+              <strong v-if="!isWide">
+                Сделка №{{ selectedOrder.lead_id }} · {{ orderLabel(selectedOrder) }}
+              </strong>
+              <strong v-else>{{ orderLabel(selectedOrder) }}</strong>
               <span class="opt-orders__meta">
                 {{ selectedOrder.source_filename || selectedOrder.crm_id }}
               </span>
@@ -620,7 +667,7 @@ onUnmounted(() => {
                 </NTag>
               </dd>
             </div>
-            <div>
+            <div v-if="!isWide">
               <dt>Покупатель</dt>
               <dd>
                 <template v-if="selectedOrder.buyer.name">
@@ -663,8 +710,19 @@ onUnmounted(() => {
                 <span>{{ new Date(payment.paid_at).toLocaleString('ru-RU') }}</span>
                 <span>{{ optPaymentTypeLabel(payment.payment_type) }}</span>
                 <span>{{ optPaymentRecipientLabel(payment.recipient) }}</span>
+                <template v-if="(payment.documents?.length || 0) > 0">
+                  <NButton
+                    v-for="doc in payment.documents"
+                    :key="doc.file_id"
+                    size="tiny"
+                    quaternary
+                    @click="onDownloadPaymentDocument(payment.id, doc.file_id)"
+                  >
+                    {{ doc.name || 'Документ' }}
+                  </NButton>
+                </template>
                 <NButton
-                  v-if="payment.document_file_id"
+                  v-else-if="payment.document_file_id"
                   size="tiny"
                   quaternary
                   @click="onDownloadPaymentDocument(payment.id)"
@@ -709,7 +767,7 @@ onUnmounted(() => {
             :data="selectedOrder.lines"
             :bordered="false"
             :pagination="false"
-            :max-height="220"
+            :max-height="isWide ? 360 : 220"
             class="opt-orders__table"
           />
 
@@ -815,6 +873,61 @@ onUnmounted(() => {
             @click="selectedOrder && onSendToClient(selectedOrder)"
           >
             Отправить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="deleteLineOpen"
+      preset="card"
+      title="Удалить фактуру"
+      style="max-width: 460px"
+      @after-leave="closeDeleteLineModal"
+    >
+      <template v-if="deleteLineTarget">
+        <template v-if="deleteLineStep === 1">
+          <p class="opt-orders__preview-text">
+            Удалить фактуру №{{ deleteLineTarget.line_no }}
+            <template v-if="deleteLineTarget.document_number">
+              ({{ deleteLineTarget.document_number }})
+            </template>
+            на сумму {{ formatMoney(deleteLineTarget.amount) }} ₽?
+          </p>
+          <p class="opt-orders__meta">
+            Поставщик:
+            {{
+              deleteLineTarget.supplier.name ||
+              `ИНН ${deleteLineTarget.supplier.inn}`
+            }}
+          </p>
+          <p class="opt-orders__meta">
+            После удаления сумма к оплате по заявке будет пересчитана.
+          </p>
+        </template>
+        <template v-else>
+          <p class="opt-orders__preview-text">
+            Подтвердите удаление. Это действие необратимо.
+          </p>
+          <p class="opt-orders__meta opt-orders__meta--warning">
+            Фактура №{{ deleteLineTarget.line_no }} ·
+            {{ formatMoney(deleteLineTarget.amount) }} ₽ будет удалена без восстановления.
+          </p>
+        </template>
+      </template>
+      <template #footer>
+        <div class="opt-orders__modal-footer">
+          <NButton @click="closeDeleteLineModal">Отмена</NButton>
+          <NButton v-if="deleteLineStep === 1" type="warning" @click="deleteLineStep = 2">
+            Продолжить
+          </NButton>
+          <NButton
+            v-else
+            type="error"
+            :loading="deleteLineTarget != null && deletingLineId === deleteLineTarget.id"
+            @click="void onDeleteLine()"
+          >
+            Удалить безвозвратно
           </NButton>
         </div>
       </template>
@@ -931,21 +1044,28 @@ onUnmounted(() => {
         <NFormItem label="Кому">
           <NSelect v-model:value="paymentForm.recipient" :options="OPT_PAYMENT_RECIPIENT_OPTIONS" />
         </NFormItem>
-        <NFormItem label="Платёжный документ">
+        <NFormItem label="Платёжные документы">
           <div class="opt-orders__doc-upload">
             <NUpload
               :show-file-list="false"
+              multiple
               accept=".pdf,.png,.jpg,.jpeg,.webp,.heic"
               :disabled="uploadingDocument"
               @change="onPaymentDocumentUpload"
             >
               <NButton size="small" :loading="uploadingDocument">
-                {{ paymentDocument ? 'Заменить файл' : 'Прикрепить чек / ПП / скрин' }}
+                Добавить чек / ПП / скрин
               </NButton>
             </NUpload>
-            <p v-if="paymentDocument" class="opt-orders__meta">
-              {{ paymentDocument.name }}
-            </p>
+            <ul v-if="paymentDocuments.length" class="opt-orders__doc-list">
+              <li v-for="doc in paymentDocuments" :key="doc.file_id">
+                <span>{{ doc.name }}</span>
+                <NButton size="tiny" quaternary type="error" @click="removePaymentDocument(doc.file_id)">
+                  Убрать
+                </NButton>
+              </li>
+            </ul>
+            <p v-else class="opt-orders__meta">Можно прикрепить несколько файлов</p>
           </div>
         </NFormItem>
       </NForm>
@@ -987,6 +1107,31 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.opt-orders--wide {
+  gap: 12px;
+}
+
+.opt-orders--wide .opt-orders__detail {
+  padding: 14px 16px;
+}
+
+.opt-orders--wide .opt-orders__facts {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+
+.opt-orders--wide .opt-orders__actions {
+  padding-top: 4px;
+  border-top: 1px solid var(--app-border);
+  margin-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .opt-orders--wide .opt-orders__facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .opt-orders__header {
@@ -1204,6 +1349,23 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   width: 100%;
+}
+
+.opt-orders__doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.opt-orders__doc-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
 }
 
 .opt-orders__adjustment {

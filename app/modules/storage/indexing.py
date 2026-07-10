@@ -28,7 +28,17 @@ async def index_message_attachments(session: AsyncSession, *, message_id: int) -
         return
 
     contact = await session.get(Contact, chat.contact_id)
-    contact_name = contact.full_name if contact is not None else "Клиент"
+    contact_name = "Клиент"
+    if contact is not None:
+        name = (contact.full_name or "").strip()
+        if name and name.casefold() not in {"клиент", "client", "unknown", "без имени"}:
+            contact_name = name
+        elif contact.telegram_username:
+            contact_name = f"@{str(contact.telegram_username).lstrip('@')}"
+        elif contact.phone:
+            contact_name = str(contact.phone).strip()
+        elif name:
+            contact_name = name
 
     sender_display_name: str
     sender_user_id: int | None = None

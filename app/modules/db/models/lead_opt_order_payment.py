@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.modules.db.models.base import Base
@@ -34,6 +36,11 @@ class LeadOptOrderPayment(Base):
         BigInteger,
         ForeignKey("uploaded_files.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    document_file_ids: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="[]",
     )
     created_by: Mapped[int] = mapped_column(
         BigInteger,

@@ -145,12 +145,14 @@ async def download_opt_payment_document(
     payment_id: int,
     actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
     service: Annotated[OptOrderService, Depends(_service)],
+    file_id: int | None = None,
 ) -> Response:
     content, content_type, filename = await service.get_payment_document(
         actor,
         lead_id,
         order_id,
         payment_id,
+        file_id=file_id,
     )
     ascii_name = filename.encode("ascii", "ignore").decode() or "payment-document"
     return Response(
