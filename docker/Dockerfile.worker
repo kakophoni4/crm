@@ -37,6 +37,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser scripts/opt_enrich_db_units.py ./scripts/opt_enrich_db_units.py
 COPY --chown=appuser:appuser scripts/opt_recalc_vat_lines.py ./scripts/opt_recalc_vat_lines.py
+COPY --chown=appuser:appuser scripts/opt_retry_submit.py ./scripts/opt_retry_submit.py
 COPY --chown=appuser:appuser pyproject.toml README.md ./
 
 USER appuser
