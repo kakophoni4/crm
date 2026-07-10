@@ -14,6 +14,8 @@ import {
   NSelect,
   NSpace,
   NSpin,
+  NTabPane,
+  NTabs,
   NTag,
   NUpload,
   useMessage,
@@ -69,6 +71,7 @@ const sendingId = ref<number | null>(null)
 const orders = ref<OptOrder[]>([])
 const selectedOrderId = ref<number | null>(null)
 const previewOpen = ref(false)
+const previewTab = ref<'application' | 'commission' | 'payments'>('application')
 const sendPreviewOpen = ref(false)
 const paymentOpen = ref(false)
 const commissionOpen = ref(false)
@@ -82,7 +85,6 @@ const savingPayment = ref(false)
 const savingCommission = ref(false)
 const deletingLineId = ref<number | null>(null)
 const uploadingDocument = ref(false)
-const historyOpen = ref(false)
 const paymentDocuments = ref<{ file_id: number; name: string }[]>([])
 const commissionForm = ref({
   direction: 'decrease' as 'increase' | 'decrease',
@@ -101,6 +103,14 @@ const hasLead = computed(() => props.leadId != null && !props.disabled)
 const selectedOrder = computed(
   () => orders.value.find((row) => row.id === selectedOrderId.value) ?? null,
 )
+
+const selectedPaymentsNewestFirst = computed(() => {
+  const order = selectedOrder.value
+  if (!order) return []
+  return [...order.payments].sort(
+    (a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime(),
+  )
+})
 
 const needsPolling = computed(() =>
   orders.value.some((row) => row.status === 'queued' || row.status === 'submitting'),
@@ -188,6 +198,15 @@ const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
     },
   },
 ])
+
+const previewLineColumns = computed<DataTableColumns<OptOrderLine>>(() =>
+  lineColumns.value.filter((col) => col.key !== 'actions'),
+)
+
+function openPreview(tab: 'application' | 'commission' | 'payments' = 'application'): void {
+  previewTab.value = tab
+  previewOpen.value = true
+}
 
 function paymentTagType(status: string): 'default' | 'success' | 'error' | 'warning' {
   if (status === 'paid') return 'success'
@@ -702,34 +721,30 @@ onUnmounted(() => {
             </table>
           </div>
 
-          <div v-if="selectedOrder.payments.length" class="opt-orders__payments">
-            <h4 class="opt-orders__subheading">Оплаты</h4>
-            <ul class="opt-orders__payments-list">
-              <li v-for="payment in selectedOrder.payments" :key="payment.id">
-                <span>{{ formatMoney(payment.amount) }} ₽</span>
-                <span>{{ new Date(payment.paid_at).toLocaleString('ru-RU') }}</span>
-                <span>{{ optPaymentTypeLabel(payment.payment_type) }}</span>
-                <span>{{ optPaymentRecipientLabel(payment.recipient) }}</span>
-                <template v-if="(payment.documents?.length || 0) > 0">
-                  <NButton
-                    v-for="doc in payment.documents"
-                    :key="doc.file_id"
-                    size="tiny"
-                    quaternary
-                    @click="onDownloadPaymentDocument(payment.id, doc.file_id)"
-                  >
-                    {{ doc.name || 'Документ' }}
-                  </NButton>
-                </template>
-                <NButton
-                  v-else-if="payment.document_file_id"
-                  size="tiny"
-                  quaternary
-                  @click="onDownloadPaymentDocument(payment.id)"
-                >
-                  {{ payment.document_name || 'Документ' }}
-                </NButton>
-                <span v-else class="opt-orders__meta">без документа</span>
+          <div class="opt-orders__payments">
+            <div class="opt-orders__history-head">
+              <h4 class="opt-orders__subheading">История оплат</h4>
+              <NButton size="tiny" quaternary @click="openPreview('payments')">
+                Открыть
+              </NButton>
+            </div>
+            <NEmpty
+              v-if="!selectedPaymentsNewestFirst.length"
+              description="Оплат пока нет"
+              size="small"
+            />
+            <ul v-else class="opt-orders__payments-list">
+              <li
+                v-for="payment in selectedPaymentsNewestFirst.slice(0, 2)"
+                :key="payment.id"
+              >
+                <div class="opt-orders__payment-main">
+                  <strong>{{ formatMoney(payment.amount) }} ₽</strong>
+                  <span class="opt-orders__meta">
+                    {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
+                    {{ optPaymentTypeLabel(payment.payment_type) }}
+                  </span>
+                </div>
               </li>
             </ul>
           </div>
@@ -740,21 +755,20 @@ onUnmounted(() => {
           >
             <div class="opt-orders__history-head">
               <h4 class="opt-orders__subheading">История суммы к оплате</h4>
-              <NButton size="tiny" quaternary @click="historyOpen = true">Все</NButton>
+              <NButton size="tiny" quaternary @click="openPreview('commission')">
+                Открыть
+              </NButton>
             </div>
             <ul class="opt-orders__history-list">
               <li
-                v-for="item in selectedOrder.commission_history.slice(0, 3)"
+                v-for="item in selectedOrder.commission_history.slice(0, 2)"
                 :key="item.id"
               >
                 <span>
                   {{ formatMoney(item.old_commission_due) }} →
                   {{ formatMoney(item.new_commission_due) }} ₽
-                  ({{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
-                  {{ formatMoney(Math.abs(item.delta)) }} ₽)
                 </span>
                 <span class="opt-orders__meta">
-                  {{ item.changed_by_name || `user #${item.changed_by}` }} ·
                   {{ new Date(item.created_at).toLocaleString('ru-RU') }}
                 </span>
               </li>
@@ -780,16 +794,20 @@ onUnmounted(() => {
               v-if="selectedOrder.payment_status !== 'paid'"
               size="small"
               type="primary"
+              secondary
               @click="openPaymentModal(selectedOrder)"
             >
               Записать оплату
             </NButton>
 
-            <NButton size="small" quaternary @click="previewOpen = true">Предпросмотр</NButton>
+            <NButton size="small" secondary @click="openPreview()">
+              Предпросмотр
+            </NButton>
 
             <NButton
               v-if="selectedOrder.status === 'submitted'"
               size="small"
+              secondary
               :loading="downloadingId === selectedOrder.id"
               @click="onDownload(selectedOrder)"
             >
@@ -800,6 +818,7 @@ onUnmounted(() => {
               v-if="selectedOrder.status === 'submitted'"
               size="small"
               type="primary"
+              secondary
               @click="sendPreviewOpen = true"
             >
               Отправить клиенту
@@ -808,7 +827,7 @@ onUnmounted(() => {
             <NButton
               v-if="canAdjustCommission(selectedOrder)"
               size="small"
-              quaternary
+              secondary
               @click="openCommissionModal()"
             >
               Изменить к оплате
@@ -818,7 +837,7 @@ onUnmounted(() => {
               v-if="canDeleteOrder(selectedOrder)"
               size="small"
               type="error"
-              quaternary
+              secondary
               :loading="deletingId === selectedOrder.id"
               @click="openDeleteModal(selectedOrder)"
             >
@@ -836,15 +855,78 @@ onUnmounted(() => {
       style="max-width: 720px"
     >
       <template v-if="selectedOrder">
-        <p class="opt-orders__preview-text">{{ clientMessagePreview(selectedOrder) }}</p>
-        <NDataTable
-          size="small"
-          :columns="lineColumns"
-          :data="selectedOrder.lines"
-          :bordered="true"
-          :pagination="false"
-          :max-height="360"
-        />
+        <NTabs v-model:value="previewTab" type="line" size="small" animated>
+          <NTabPane name="application" tab="Заявка">
+            <p class="opt-orders__preview-text">{{ clientMessagePreview(selectedOrder) }}</p>
+            <NDataTable
+              size="small"
+              :columns="previewLineColumns"
+              :data="selectedOrder.lines"
+              :bordered="true"
+              :pagination="false"
+              :max-height="360"
+            />
+          </NTabPane>
+
+          <NTabPane name="commission" tab="История суммы к оплате">
+            <ul
+              v-if="selectedOrder.commission_history?.length"
+              class="opt-orders__history-list"
+            >
+              <li v-for="item in selectedOrder.commission_history" :key="item.id">
+                <span>
+                  {{ formatMoney(item.old_commission_due) }} →
+                  {{ formatMoney(item.new_commission_due) }} ₽
+                  ({{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
+                  {{ formatMoney(Math.abs(item.delta)) }} ₽)
+                </span>
+                <span class="opt-orders__meta">
+                  {{ item.changed_by_name || `user #${item.changed_by}` }} ·
+                  {{ new Date(item.created_at).toLocaleString('ru-RU') }}
+                </span>
+              </li>
+            </ul>
+            <NEmpty v-else description="Изменений суммы пока нет" />
+          </NTabPane>
+
+          <NTabPane name="payments" tab="История оплат">
+            <ul v-if="selectedPaymentsNewestFirst.length" class="opt-orders__payments-list">
+              <li v-for="payment in selectedPaymentsNewestFirst" :key="payment.id">
+                <div class="opt-orders__payment-main">
+                  <strong>{{ formatMoney(payment.amount) }} ₽</strong>
+                  <span class="opt-orders__meta">
+                    {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
+                    {{ optPaymentTypeLabel(payment.payment_type) }} ·
+                    {{ optPaymentRecipientLabel(payment.recipient) }}
+                  </span>
+                </div>
+                <div class="opt-orders__payment-docs">
+                  <template v-if="(payment.documents?.length || 0) > 0">
+                    <NButton
+                      v-for="doc in payment.documents"
+                      :key="doc.file_id"
+                      size="tiny"
+                      quaternary
+                      @click="onDownloadPaymentDocument(payment.id, doc.file_id)"
+                    >
+                      {{ doc.name || 'Документ' }}
+                    </NButton>
+                  </template>
+                  <NButton
+                    v-else-if="payment.document_file_id"
+                    size="tiny"
+                    quaternary
+                    @click="onDownloadPaymentDocument(payment.id)"
+                  >
+                    {{ payment.document_name || 'Документ' }}
+                  </NButton>
+                  <span v-else class="opt-orders__meta">без документа</span>
+                </div>
+              </li>
+            </ul>
+            <NEmpty v-else description="Оплат пока нет" />
+          </NTabPane>
+        </NTabs>
       </template>
     </NModal>
 
@@ -1076,29 +1158,6 @@ onUnmounted(() => {
         </div>
       </template>
     </NModal>
-
-    <NModal
-      v-model:show="historyOpen"
-      preset="card"
-      title="История изменений суммы к оплате"
-      style="max-width: 560px"
-    >
-      <ul v-if="selectedOrder?.commission_history?.length" class="opt-orders__history-list">
-        <li v-for="item in selectedOrder.commission_history" :key="item.id">
-          <span>
-            {{ formatMoney(item.old_commission_due) }} →
-            {{ formatMoney(item.new_commission_due) }} ₽
-            ({{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
-            {{ formatMoney(Math.abs(item.delta)) }} ₽)
-          </span>
-          <span class="opt-orders__meta">
-            {{ item.changed_by_name || `user #${item.changed_by}` }} ·
-            {{ new Date(item.created_at).toLocaleString('ru-RU') }}
-          </span>
-        </li>
-      </ul>
-      <NEmpty v-else description="Изменений пока нет" />
-    </NModal>
   </section>
 </template>
 
@@ -1259,6 +1318,12 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.opt-orders__actions :deep(.n-button) {
+  min-height: 28px;
+  padding: 0 12px;
 }
 
 .opt-orders__preview-text {
@@ -1310,14 +1375,31 @@ onUnmounted(() => {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   font-size: 0.78rem;
 }
 
 .opt-orders__payments-list li {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.opt-orders__payment-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.opt-orders__payment-main .opt-orders__meta {
+  margin-top: 0;
+}
+
+.opt-orders__payment-docs {
+  display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
 }
 

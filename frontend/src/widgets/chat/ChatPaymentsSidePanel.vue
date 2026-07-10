@@ -11,6 +11,8 @@ import {
   NModal,
   NSelect,
   NSpin,
+  NTabPane,
+  NTabs,
   NTag,
   NUpload,
   useMessage,
@@ -22,15 +24,17 @@ import type { ChatDetail } from '@/entities/chat/types'
 import { useChatsStore } from '@/features/chats/store'
 import {
   addOptOrderPayment,
-  downloadOptRegistry,
+  downloadOptPaymentDocument,
   listOptOrders,
   listOptOrdersRegistry,
 } from '@/features/leads/opt-api'
-import type { OptOrder, OptOrderLine, OptOrderRegistryItem } from '@/features/leads/opt-types'
+import type { OptOrder, OptOrderLine, OptOrderRegistryItem, OptPayment } from '@/features/leads/opt-types'
 import {
   OPT_PAYMENT_RECIPIENT_OPTIONS,
   OPT_PAYMENT_TYPE_OPTIONS,
+  optPaymentRecipientLabel,
   optPaymentStatusLabel,
+  optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { uploadFile } from '@/features/chats/api'
 import { AppError } from '@/shared/api/http'
@@ -64,9 +68,20 @@ const paymentForm = ref<{
 })
 
 const previewOpen = ref(false)
+const previewTab = ref<'application' | 'commission' | 'payments'>('application')
 const previewLoading = ref(false)
 const previewOrder = ref<OptOrder | null>(null)
-const downloadingRegistry = ref(false)
+const historyDownloading = ref<string | null>(null)
+
+const previewPayments = computed(() => {
+  const order = previewOrder.value
+  if (!order) return [] as OptPayment[]
+  return [...order.payments].sort(
+    (a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime(),
+  )
+})
+
+const previewCommissionHistory = computed(() => previewOrder.value?.commission_history ?? [])
 
 const lineColumns = computed<DataTableColumns<OptOrderLine>>(() => [
   {
@@ -217,7 +232,11 @@ async function onSavePayment(): Promise<void> {
   }
 }
 
-async function openPreview(row: OptOrderRegistryItem): Promise<void> {
+async function openPreview(
+  row: OptOrderRegistryItem,
+  tab: 'application' | 'commission' | 'payments' = 'application',
+): Promise<void> {
+  previewTab.value = tab
   previewOpen.value = true
   previewLoading.value = true
   previewOrder.value = null
@@ -236,25 +255,30 @@ async function openPreview(row: OptOrderRegistryItem): Promise<void> {
   }
 }
 
-async function onDownloadRegistry(): Promise<void> {
-  const order = previewOrder.value
-  if (order == null || order.status !== 'submitted') {
-    message.warning('Реестр ещё не готов')
-    return
-  }
-  downloadingRegistry.value = true
+async function onDownloadHistoryDocument(
+  order: OptOrder,
+  paymentId: number,
+  fileId?: number | null,
+): Promise<void> {
+  const key = `${paymentId}:${fileId ?? 'primary'}`
+  historyDownloading.value = key
   try {
-    const blob = await downloadOptRegistry(order.lead_id, order.id)
+    const blob = await downloadOptPaymentDocument(order.lead_id, order.id, paymentId, fileId)
+    const payment = order.payments.find((row) => row.id === paymentId)
+    const doc =
+      fileId != null
+        ? payment?.documents?.find((row) => row.file_id === fileId)
+        : payment?.documents?.[0]
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `реестр-сделка-${order.lead_id}-заявка-${order.order_no}.xlsx`
+    anchor.download = doc?.name || payment?.document_name || `payment-${paymentId}`
     anchor.click()
     URL.revokeObjectURL(url)
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось скачать реестр')
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать документ')
   } finally {
-    downloadingRegistry.value = false
+    historyDownloading.value = null
   }
 }
 
@@ -311,9 +335,16 @@ onMounted(() => {
                 <dd>{{ formatMoney(row.amount_remaining) }} ₽</dd>
               </div>
             </dl>
+            <p v-if="row.payments_count" class="payments-side__history-hint">
+              В истории {{ row.payments_count }}
+              {{ row.payments_count === 1 ? 'оплата' : row.payments_count < 5 ? 'оплаты' : 'оплат' }}
+            </p>
             <div class="payments-side__actions">
               <NButton size="small" type="primary" secondary @click="openPayment(row)">
                 Внести оплату
+              </NButton>
+              <NButton size="small" quaternary @click="openPreview(row, 'payments')">
+                История оплат
               </NButton>
               <NButton size="small" quaternary @click="openPreview(row)">
                 Предпросмотр
@@ -409,31 +440,72 @@ onMounted(() => {
             к оплате {{ formatMoney(previewOrder.commission_due) }} ₽ ·
             остаток {{ formatMoney(previewOrder.amount_remaining) }} ₽
           </p>
-          <h4 class="payments-side__section-title">Заявка</h4>
-          <NDataTable
-            size="small"
-            :columns="lineColumns"
-            :data="previewOrder.lines"
-            :bordered="true"
-            :pagination="false"
-            :max-height="280"
-          />
-          <h4 class="payments-side__section-title">Реестр</h4>
-          <p class="payments-side__modal-meta">
-            Реестр по заявке №{{ previewOrder.order_no }} сделки №{{ previewOrder.lead_id }}.
-          </p>
-          <NButton
-            size="small"
-            :disabled="previewOrder.status !== 'submitted'"
-            :loading="downloadingRegistry"
-            @click="onDownloadRegistry"
-          >
-            {{
-              previewOrder.status === 'submitted'
-                ? 'Скачать реестр (xlsx)'
-                : 'Реестр ещё формируется'
-            }}
-          </NButton>
+          <NTabs v-model:value="previewTab" type="line" size="small" animated>
+            <NTabPane name="application" tab="Заявка">
+              <NDataTable
+                size="small"
+                :columns="lineColumns"
+                :data="previewOrder.lines"
+                :bordered="true"
+                :pagination="false"
+                :max-height="280"
+              />
+            </NTabPane>
+
+            <NTabPane name="payments" tab="История оплаты">
+              <ul v-if="previewPayments.length" class="payments-side__history-list">
+                <li v-for="payment in previewPayments" :key="payment.id">
+                  <div>
+                    <strong>{{ formatMoney(payment.amount) }} ₽</strong>
+                    <p class="payments-side__muted">
+                      {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
+                      {{ optPaymentTypeLabel(payment.payment_type) }} ·
+                      {{ optPaymentRecipientLabel(payment.recipient) }}
+                    </p>
+                  </div>
+                  <div class="payments-side__history-docs">
+                    <template v-if="(payment.documents?.length || 0) > 0">
+                      <NButton
+                        v-for="doc in payment.documents"
+                        :key="doc.file_id"
+                        size="tiny"
+                        quaternary
+                        :loading="historyDownloading === `${payment.id}:${doc.file_id}`"
+                        @click="onDownloadHistoryDocument(previewOrder, payment.id, doc.file_id)"
+                      >
+                        {{ doc.name || 'Документ' }}
+                      </NButton>
+                    </template>
+                    <span v-else class="payments-side__muted">без документа</span>
+                  </div>
+                </li>
+              </ul>
+              <NEmpty v-else description="Оплат пока нет" />
+            </NTabPane>
+
+            <NTabPane name="commission" tab="История изменения суммы">
+              <ul
+                v-if="previewCommissionHistory.length"
+                class="payments-side__history-list"
+              >
+                <li v-for="item in previewCommissionHistory" :key="item.id">
+                  <div>
+                    <strong>
+                      {{ formatMoney(item.old_commission_due) }} →
+                      {{ formatMoney(item.new_commission_due) }} ₽
+                    </strong>
+                    <p class="payments-side__muted">
+                      {{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
+                      {{ formatMoney(Math.abs(item.delta)) }} ₽ ·
+                      {{ item.changed_by_name || `user #${item.changed_by}` }} ·
+                      {{ new Date(item.created_at).toLocaleString('ru-RU') }}
+                    </p>
+                  </div>
+                </li>
+              </ul>
+              <NEmpty v-else description="Изменений суммы пока нет" />
+            </NTabPane>
+          </NTabs>
         </template>
       </NSpin>
     </NModal>
@@ -538,6 +610,40 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.payments-side__history-hint {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+}
+
+.payments-side__history-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.payments-side__history-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--app-border, var(--n-border-color));
+}
+
+.payments-side__history-list li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.payments-side__history-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .payments-side__modal-meta,

@@ -395,25 +395,45 @@ watch(
     </div>
 
     <div class="message-input__row">
-      <div class="message-input__attach">
-        <EmojiPicker :disabled="disabled" @pick="insertEmoji" />
-        <NButton quaternary :disabled="disabled" aria-label="Быстрые ответы" @click="openQuickReplies">
-          <template #icon><MessageSquareText :size="18" /></template>
-        </NButton>
-        <NUpload :show-file-list="false" @before-upload="onBeforeUpload">
-          <NButton quaternary :disabled="disabled" aria-label="Прикрепить файл">
-            <template #icon><Paperclip :size="18" /></template>
+      <div class="message-input__attach" role="toolbar" aria-label="Вложения и шаблоны">
+        <div class="message-input__tool-cell">
+          <EmojiPicker :disabled="disabled" @pick="insertEmoji" />
+        </div>
+        <div class="message-input__tool-cell">
+          <NButton
+            class="message-input__tool"
+            quaternary
+            :disabled="disabled"
+            aria-label="Быстрые ответы"
+            @click="openQuickReplies"
+          >
+            <template #icon><MessageSquareText :size="18" /></template>
           </NButton>
-        </NUpload>
-        <NButton
-          quaternary
-          :disabled="disabled"
-          aria-label="Хранилище"
-          title="Хранилище / файлы диалога"
-          @click="openVaultPicker"
-        >
-          <template #icon><FolderOpen :size="18" /></template>
-        </NButton>
+        </div>
+        <div class="message-input__tool-cell">
+          <NUpload :show-file-list="false" @before-upload="onBeforeUpload">
+            <NButton
+              class="message-input__tool"
+              quaternary
+              :disabled="disabled"
+              aria-label="Прикрепить файл"
+            >
+              <template #icon><Paperclip :size="18" /></template>
+            </NButton>
+          </NUpload>
+        </div>
+        <div class="message-input__tool-cell">
+          <NButton
+            class="message-input__tool"
+            quaternary
+            :disabled="disabled"
+            aria-label="Хранилище"
+            title="Хранилище / файлы диалога"
+            @click="openVaultPicker"
+          >
+            <template #icon><FolderOpen :size="18" /></template>
+          </NButton>
+        </div>
       </div>
 
       <textarea
@@ -659,13 +679,48 @@ watch(
 
 .message-input__attach {
   flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 34px);
+  grid-template-rows: repeat(2, 34px);
+  gap: 4px;
+  align-self: end;
+}
+
+.message-input__tool-cell {
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
+}
+
+.message-input__tool-cell :deep(.n-upload),
+.message-input__tool-cell :deep(.n-upload-trigger),
+.message-input__tool-cell :deep(.n-popover-trigger),
+.message-input__tool-cell :deep(.n-button) {
+  width: 34px;
+  height: 34px;
+}
+
+.message-input__attach :deep(.emoji-picker__trigger),
+.message-input__tool {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  padding: 0 !important;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
 }
 
 .message-input__send {
   flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  padding: 0;
 }
 
 .message-input__textarea {
