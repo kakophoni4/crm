@@ -70,6 +70,7 @@ async def websocket_endpoint(
         role=role,
         department_id=department_id,
         group_id=None,
+        actor_group_ids=frozenset(),
         department_group_ids=frozenset(),
         visible_user_ids=frozenset({user_id}),
     )

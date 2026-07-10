@@ -31,6 +31,7 @@ from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.leads.department_inbox import get_or_create_department_inbox_group
 from app.modules.leads.service import LeadService
+from app.realtime.chat_scope import chat_event_scope
 from app.realtime.events import publish
 from app.shared.db import get_session_factory
 from app.workers.bots.download_attachment import download_attachment
@@ -86,6 +87,7 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
                     publish_payload["text_preview"] = result.text_preview
             elif event_type == "call.received":
                 result = await _handle_call_received(session, bot, envelope, inner)
+                call_scope = await chat_event_scope(session, result.chat_id)
                 await publish(
                     "chat.call.inbound",
                     {
@@ -94,6 +96,7 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
                         "contact_id": result.contact_id,
                         "bot_code": bot.code,
                     },
+                    scope=call_scope or None,
                 )
             elif event_type == "message.edited":
                 await _handle_message_edited(session, bot, inner)
@@ -121,7 +124,8 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
                             "attachment_index": idx,
                         },
                     )
-                await publish(event_name, publish_payload)
+                chat_scope = await chat_event_scope(session, result.chat_id)
+                await publish(event_name, publish_payload, scope=chat_scope or None)
         except Exception as exc:
             await session.rollback()
             async with session_factory() as fail_session:

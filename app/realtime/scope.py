@@ -14,6 +14,7 @@ class WsScope:
     role: UserRole
     department_id: int | None
     group_id: int | None
+    actor_group_ids: frozenset[int]
     department_group_ids: frozenset[int]
     visible_user_ids: frozenset[int] | None  # None = all users (admin)
 
@@ -28,6 +29,7 @@ class WsScope:
             role=role,
             department_id=ctx.actor.department_id,
             group_id=ctx.actor.group_id,
+            actor_group_ids=frozenset(ctx.actor_group_ids),
             department_group_ids=frozenset(ctx.department_group_ids),
             visible_user_ids=visible_frozen,
         )
@@ -62,7 +64,9 @@ def event_visible(ws_scope: WsScope, event: Event) -> bool:
         if ws_scope.role == UserRole.SENIOR:
             return target_group in ws_scope.department_group_ids
         if ws_scope.role == UserRole.USER:
-            return ws_scope.group_id == target_group
+            if ws_scope.group_id == target_group:
+                return True
+            return target_group in ws_scope.actor_group_ids
         return False
 
     if ws_scope.role == UserRole.USER:

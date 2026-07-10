@@ -972,6 +972,9 @@ export const useChatsStore = defineStore('chats', () => {
     const chatId = Number(payload.chat_id)
     if (!Number.isFinite(chatId)) return
     bumpChatInList(chatId, { needs_response: true }, true)
+    if (currentChatId.value === chatId) {
+      void refreshOpenChatMessages(chatId, 0)
+    }
   }
 
   function handleEscalationGroupNotify(payload: Record<string, unknown>): void {

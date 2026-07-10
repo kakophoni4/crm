@@ -8,6 +8,7 @@ import httpx
 import structlog
 from sqlalchemy import text
 
+from app.realtime.chat_scope import chat_event_scope
 from app.realtime.events import publish
 from app.realtime.topics import CHAT_MESSAGE_ATTACHMENT_READY
 from app.shared.db import get_session_factory
@@ -102,6 +103,7 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
             from app.modules.storage.indexing import index_message_attachments
 
             await index_message_attachments(session, message_id=message_id)
+            attachment_scope = await chat_event_scope(session, chat_id)
             await publish(
                 CHAT_MESSAGE_ATTACHMENT_READY,
                 {
@@ -109,6 +111,7 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
                     "message_id": message_id,
                     "attachment_index": attachment_index,
                 },
+                scope=attachment_scope or None,
             )
         except Exception as exc:
             err_text = str(exc)
