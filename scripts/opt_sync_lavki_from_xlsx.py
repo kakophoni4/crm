@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Sync opt_units seed JSON (and optional SQL) from «лавки Ване.xlsx».
+"""Sync opt_units seed JSON (and optional SQL) from a local lavki xlsx.
 
 Usage:
   py scripts/opt_sync_lavki_from_xlsx.py
-  py scripts/opt_sync_lavki_from_xlsx.py --xlsx "лавки Ване.xlsx" --sql scripts/deploy/seed-opt-lavki.sql
+  py scripts/opt_sync_lavki_from_xlsx.py --xlsx /path/to/lavki.xlsx --sql scripts/deploy/seed-opt-lavki.sql
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def load_units_from_xlsx(path: Path) -> list[dict[str, str]]:
 
 def write_sql(units: list[dict[str, str]], path: Path) -> None:
     lines = [
-        "-- Upsert lavki from opt_units_vane.json / лавки Ване.xlsx",
+        "-- Upsert lavki from local opt_units_vane.json (gitignored)",
         "-- Run on server:",
         "--   docker exec -i crm-staging-postgres psql -U crm -d crm < scripts/deploy/seed-opt-lavki.sql",
         "",

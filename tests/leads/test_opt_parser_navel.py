@@ -8,11 +8,11 @@ import pytest
 from app.modules.leads.opt.parser import parse_application_workbook
 
 
-def test_parse_navel_workbook_first_application_only() -> None:
-    sample = Path(__file__).resolve().parents[2] / "Заявка НАВЕЛ КО 1 кв 25  с вайтами.xlsx"
+def test_parse_synthetic_workbook_from_spec() -> None:
+    sample = Path(__file__).resolve().parents[2] / "scripts" / "fixtures" / "opt-test-crm.xlsx"
     if not sample.exists():
-        pytest.skip("NAVEL sample xlsx not in workspace")
+        pytest.skip("test fixture xlsx not generated — run scripts/opt_build_test_zayavka.py")
     parsed = parse_application_workbook(sample.read_bytes())
-    assert parsed.buyer_inn == "5507266215"
+    assert parsed.buyer_inn == "7700000100"
     assert len(parsed.lines) == 5
     assert sum(line.amount for line in parsed.lines) == Decimal("1629430")

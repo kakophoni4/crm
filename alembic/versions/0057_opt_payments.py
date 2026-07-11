@@ -47,7 +47,7 @@ def upgrade() -> None:
         """
     )
 
-    seed_path = Path(__file__).resolve().parents[2] / "scripts" / "opt_units_vane.json"
+    seed_path = Path(__file__).resolve().parents[2] / "scripts" / "fixtures" / "opt_units.example.json"
     if seed_path.is_file():
         units = json.loads(seed_path.read_text(encoding="utf-8"))
         for unit in units:

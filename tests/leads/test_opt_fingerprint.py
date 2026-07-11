@@ -7,12 +7,12 @@ from app.modules.leads.opt.fingerprint import compute_application_fingerprint
 from app.modules.leads.opt.parser import ParsedApplication, ParsedApplicationLine
 
 
-def _sample_parsed(*, buyer_inn: str = "7733419099", amount: str = "100000.00") -> ParsedApplication:
+def _sample_parsed(*, buyer_inn: str = "7700000100", amount: str = "100000.00") -> ParsedApplication:
     return ParsedApplication(
         buyer_inn=buyer_inn,
         lines=[
             ParsedApplicationLine(
-                supplier_inn="7743622734",
+                supplier_inn="7700000001",
                 document_date=date(2025, 3, 15),
                 amount=Decimal(amount),
             ),
@@ -45,9 +45,9 @@ def test_fingerprint_ignores_line_order() -> None:
         amount=Decimal("20.00"),
     )
     forward = compute_application_fingerprint(
-        ParsedApplication(buyer_inn="5507266215", lines=[line_a, line_b]),
+        ParsedApplication(buyer_inn="7700000100", lines=[line_a, line_b]),
     )
     reverse = compute_application_fingerprint(
-        ParsedApplication(buyer_inn="5507266215", lines=[line_b, line_a]),
+        ParsedApplication(buyer_inn="7700000100", lines=[line_b, line_a]),
     )
     assert forward == reverse

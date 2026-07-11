@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Build OPT test xlsx from the real NAVEL sample (1:1 layout).
+"""Build OPT test xlsx from synthetic spec (no real company data in repo).
 
 Usage:
   py scripts/opt_build_test_zayavka.py
 
-Source (repo root):
-  Заявка НАВЕЛ КО 1 кв 25  с вайтами.xlsx
-
-Output:
-  scripts/fixtures/opt-test-crm.xlsx  — only first заявка (rows 1–14)
+Output (gitignored):
+  scripts/fixtures/opt-test-crm.xlsx
 """
 
 from __future__ import annotations
@@ -19,30 +16,15 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 
 _ROOT = Path(__file__).resolve().parents[1]
-_NAVEL_SOURCE = _ROOT / "Заявка НАВЕЛ КО 1 кв 25  с вайтами.xlsx"
-_DEFAULT_SPEC = _ROOT / "scripts" / "fixtures" / "opt-navel-zayavka-spec.json"
+_DEFAULT_SPEC = _ROOT / "scripts" / "fixtures" / "opt-test-zayavka-spec.json"
 _DEFAULT_OUT = _ROOT / "scripts" / "fixtures" / "opt-test-crm.xlsx"
-_TRIM_LAST_ROW = 14
 
 
 def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
-
-
-def copy_trimmed_navel(source: Path, out: Path) -> bool:
-    if not source.is_file():
-        return False
-    wb = load_workbook(source)
-    ws = wb.active
-    max_row = ws.max_row or 0
-    if max_row > _TRIM_LAST_ROW:
-        ws.delete_rows(_TRIM_LAST_ROW + 1, max_row - _TRIM_LAST_ROW)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out)
-    return True
 
 
 def build_workbook_from_spec(spec: dict) -> Workbook:
@@ -78,20 +60,16 @@ def build_workbook_from_spec(spec: dict) -> Workbook:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build NAVEL-style OPT test xlsx")
-    parser.add_argument("--source", type=Path, default=_NAVEL_SOURCE)
+    parser = argparse.ArgumentParser(description="Build synthetic OPT test xlsx")
     parser.add_argument("--spec", type=Path, default=_DEFAULT_SPEC)
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
     args = parser.parse_args()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    if copy_trimmed_navel(args.source, args.out):
-        print(f"Copied first заявка from {args.source} -> {args.out}")
-    else:
-        spec = json.loads(args.spec.read_text(encoding="utf-8"))
-        wb = build_workbook_from_spec(spec)
-        wb.save(args.out)
-        print(f"Built from spec {args.spec} -> {args.out}")
+    spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    wb = build_workbook_from_spec(spec)
+    wb.save(args.out)
+    print(f"Built from spec {args.spec} -> {args.out}")
 
     import sys
 

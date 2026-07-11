@@ -20,15 +20,13 @@ def test_parse_test_fixture_workbook() -> None:
     root = Path(__file__).resolve().parents[2]
     sample = root / "scripts" / "fixtures" / "opt-test-crm.xlsx"
     if not sample.exists():
-        sample = root / "scripts" / "fixtures" / "Заявка-тест-CRM.xlsx"
-    if not sample.exists():
         pytest.skip("test fixture xlsx not generated — run scripts/opt_build_test_zayavka.py")
     parsed = parse_application_workbook(sample.read_bytes())
-    assert parsed.buyer_inn == "5507266215"
+    assert parsed.buyer_inn == "7700000100"
     assert len(parsed.lines) == 5
-    assert parsed.lines[0].supplier_inn == "7703822568"
+    assert parsed.lines[0].supplier_inn == "7700000001"
     assert str(parsed.lines[0].document_date) == "2025-01-22"
     assert parsed.lines[0].amount == Decimal("314752")
     assert parsed.lines[1].amount == Decimal("342500")
-    assert parsed.lines[4].supplier_inn == "7720313708"
+    assert parsed.lines[4].supplier_inn == "7700000003"
     assert parsed.lines[4].amount == Decimal("395671")

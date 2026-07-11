@@ -1,0 +1,16 @@
+[
+  {
+    "inn": "7700000001",
+    "name": "ООО \"Тестовая лавка 1\"",
+    "category_label": "Абсолют",
+    "category_code": "L",
+    "commission_rate_percent": 3.5
+  },
+  {
+    "inn": "7700000002",
+    "name": "ООО \"Тестовая лавка 2\"",
+    "category_label": "Оптима",
+    "category_code": "O",
+    "commission_rate_percent": 2.8
+  }
+]

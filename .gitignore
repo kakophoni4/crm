@@ -16,3 +16,17 @@ dist/
 *.swp
 *.swo
 .DS_Store
+*.egg-info/
+
+# Private / production data — never commit
+*.xlsx
+*.xls
+*.zip
+*.log
+_park*
+_park_xlsx_tmp/
+scripts/opt_units_vane.json
+scripts/opt_park_categories.json
+scripts/deploy/seed-opt-lavki.sql
+scripts/deploy/seed-opt-park-categories.sql
+scripts/fixtures/opt-test-crm.xlsx

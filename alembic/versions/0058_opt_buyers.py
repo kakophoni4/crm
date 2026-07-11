@@ -30,7 +30,7 @@ def upgrade() -> None:
         );
 
         INSERT INTO opt_buyers (inn, kpp, name) VALUES
-            ('5507266215', '550701001', 'НАВЕЛ КО ООО')
+            ('7700000100', '770001001', 'ООО "Тестовый покупатель"')
         ON CONFLICT (inn) DO UPDATE SET
             kpp = EXCLUDED.kpp,
             name = EXCLUDED.name,

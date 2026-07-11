@@ -11,9 +11,9 @@ from app.modules.leads.opt.vat import split_vat_included
 class _Line:
     crm_id = "crm-line-abc"
     line_no = 1
-    supplier_inn = "7743622734"
-    supplier_kpp = "774301001"
-    supplier_name = "СПЕЦАВТОТРАНССЕРВИС ООО"
+    supplier_inn = "7700000001"
+    supplier_kpp = "770001001"
+    supplier_name = 'ООО "Тестовая лавка 1"'
     document_date = date(2025, 1, 22)
     amount = 314752.0
     vat_amount = 52458.67
@@ -22,9 +22,9 @@ class _Line:
 
 class _Order:
     crm_id = "crm-order-xyz"
-    buyer_inn = "5507266215"
-    buyer_kpp = "550701001"
-    buyer_name = "НАВЕЛ КО ООО"
+    buyer_inn = "7700000100"
+    buyer_kpp = "770001001"
+    buyer_name = 'ООО "Тестовый покупатель"'
     lines = [_Line()]
 
 
@@ -39,15 +39,15 @@ def test_build_mole_payload_matches_1c_contract() -> None:
 
     assert payload["CRMid"] == "crm-order-xyz"
     assert payload["Покупатель"] == {
-        "ИНН": "5507266215",
-        "КПП": "550701001",
-        "Наименование": "НАВЕЛ КО ООО",
+        "ИНН": "7700000100",
+        "КПП": "770001001",
+        "Наименование": 'ООО "Тестовый покупатель"',
     }
     assert len(payload["Реестр"]) == 1
     row = payload["Реестр"][0]
     assert row["CRMid"] == "crm-line-abc"
     assert "НомерДокумента" not in row
-    assert row["Поставщик"]["ИНН"] == "7743622734"
+    assert row["Поставщик"]["ИНН"] == "7700000001"
     assert row["ДатаДокумента"] == "2025-01-22"
     assert row["Сумма"] == 314752.0
     assert row["СуммаНДС"] == 56758.56
@@ -62,13 +62,13 @@ def test_build_mole_payload_omits_kpp_when_missing() -> None:
     payload = OptOrderService._build_mole_payload(order)  # type: ignore[arg-type]
 
     assert payload["Покупатель"] == {
-        "ИНН": "5507266215",
-        "Наименование": "НАВЕЛ КО ООО",
+        "ИНН": "7700000100",
+        "Наименование": 'ООО "Тестовый покупатель"',
     }
     assert "КПП" not in payload["Покупатель"]
     assert payload["Реестр"][0]["Поставщик"] == {
-        "ИНН": "7743622734",
-        "Наименование": "СПЕЦАВТОТРАНССЕРВИС ООО",
+        "ИНН": "7700000001",
+        "Наименование": 'ООО "Тестовая лавка 1"',
     }
     assert "КПП" not in payload["Реестр"][0]["Поставщик"]
 
