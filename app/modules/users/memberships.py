@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.enums import UserRole, UserStatus
@@ -72,9 +72,13 @@ async def set_user_group_memberships(
     group_ids: list[int],
 ) -> list[int]:
     unique_ids = sorted({int(gid) for gid in group_ids if gid > 0})
-    await session.execute(
-        delete(UserGroupMembership).where(UserGroupMembership.user_id == user_id),
+    result = await session.execute(
+        select(UserGroupMembership).where(UserGroupMembership.user_id == user_id),
     )
+    for row in result.scalars().all():
+        await session.delete(row)
+    await session.flush()
+
     for gid in unique_ids:
         session.add(UserGroupMembership(user_id=user_id, group_id=gid))
 

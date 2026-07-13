@@ -394,7 +394,6 @@ async function toggleGroupSenior(): Promise<void> {
     const updated = await updateUser(editing.value.id, {
       full_name: form.value.full_name.trim(),
       role: nextRole,
-      group_ids: form.value.group_ids,
     })
     form.value.role = updated.role
     editing.value = { ...editing.value, ...updated }

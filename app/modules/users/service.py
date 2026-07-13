@@ -364,18 +364,31 @@ class UserService:
 
             if normalized_groups is not None:
                 if effective_role in (UserRole.USER, UserRole.GROUP_SENIOR):
-                    if not normalized_groups:
+                    from app.modules.users.memberships import list_user_group_ids
+
+                    current_groups = sorted(await list_user_group_ids(self._session, target.id))
+                    requested_groups = sorted(normalized_groups)
+                    role_only_toggle = (
+                        previous_role in (UserRole.USER, UserRole.GROUP_SENIOR)
+                        and effective_role in (UserRole.USER, UserRole.GROUP_SENIOR)
+                        and previous_role != effective_role
+                        and current_groups == requested_groups
+                    )
+                    if role_only_toggle:
+                        pass
+                    elif not normalized_groups:
                         raise ValidationError(
                             message="At least one group is required",
                             details={"field": "group_ids"},
                         )
-                    group_ids, department_id = await self._resolve_group_ids(
-                        actor,
-                        normalized_groups,
-                    )
-                    await self._ensure_actor_can_assign_groups(actor, group_ids)
-                    target.department_id = department_id
-                    await set_user_group_memberships(self._session, target.id, group_ids)
+                    else:
+                        group_ids, department_id = await self._resolve_group_ids(
+                            actor,
+                            normalized_groups,
+                        )
+                        await self._ensure_actor_can_assign_groups(actor, group_ids)
+                        target.department_id = department_id
+                        await set_user_group_memberships(self._session, target.id, group_ids)
                 elif effective_role == UserRole.SENIOR:
                     if not normalized_groups:
                         target.group_id = None
@@ -410,6 +423,11 @@ class UserService:
             await self._repo.commit()
         except IntegrityError as exc:
             await self._repo.rollback()
+            detail = str(getattr(exc, "orig", exc))
+            if "user_role" in detail and "group_senior" in detail:
+                raise Conflict(
+                    message="Роль group_senior недоступна в БД — примените миграцию 0072",
+                ) from exc
             raise Conflict(message="Failed to update user due to data conflict") from exc
 
         await self._session.refresh(target)
