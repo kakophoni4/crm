@@ -44,11 +44,14 @@ def _conflict_from_db(exc: BaseException) -> Conflict:
     detail = _db_error_detail(exc)
     logger.warning("user_update_db_conflict", error=detail)
     lowered = detail.lower()
-    if "group_senior" in lowered or (
-        "user_role" in lowered and "invalid input value" in lowered
-    ):
+    if "user_role" in lowered and "invalid input value" in lowered:
         return Conflict(
             message="Роль «Старший группы» ещё не добавлена в БД — примените миграцию 0072",
+            details={"db": detail},
+        )
+    if "ck_users_role_org" in lowered:
+        return Conflict(
+            message="Некорректная привязка роли к отделу/группе — примените миграцию 0073",
             details={"db": detail},
         )
     if "unique" in lowered and ("email" in lowered or "username" in lowered):
