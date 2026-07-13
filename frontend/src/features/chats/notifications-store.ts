@@ -195,8 +195,7 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
   function push(
     topic: ChatNotificationTopic,
     payload: Record<string, unknown>,
-    *,
-    playSound = true,
+    options: { playSound?: boolean } = {},
   ): void {
     loadForCurrentUser()
     const key = dedupeKey(topic, payload)
@@ -213,7 +212,7 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
     }
     items.value = [item, ...items.value].slice(0, MAX_ITEMS)
     persist()
-    if (playSound) void playTransferInboxSound()
+    if (options.playSound ?? true) void playTransferInboxSound()
   }
 
   function pushInbound(payload: Record<string, unknown>): void {
