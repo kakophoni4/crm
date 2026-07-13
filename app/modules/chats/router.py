@@ -432,6 +432,7 @@ async def send_message(
             card_owner_user_id=card_owner_user_id,
             card_owner_name=card_owner_name,
             card_owner_group_id=card_owner_group_id,
+            sender_username=actor.username,
         ),
         entity_id=message.id,
         payload=audit_payload,

@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import ENUM
 class UserRole(StrEnum):
     USER = "user"
     SENIOR = "senior"
+    GROUP_SENIOR = "group_senior"
     ADMIN = "admin"
     ACCOUNTANT = "accountant"
 

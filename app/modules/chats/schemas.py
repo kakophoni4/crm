@@ -177,6 +177,7 @@ class MessageResponse(BaseModel):
     text: str | None
     attachments: list[dict[str, Any]]
     sender_user_id: int | None
+    sender_username: str | None = None
     external_message_id: str | None = None
     external_event_id: str | None = None
     reply_to_message_id: int | None

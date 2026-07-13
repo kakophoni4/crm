@@ -415,16 +415,18 @@ class ChatRepository:
         lead_id: int | None = None,
         cursor: str | None,
         limit: int,
-    ) -> tuple[list[tuple[ChatMessage, int | None, str | None, int | None]], str | None]:
+    ) -> tuple[list[tuple[ChatMessage, int | None, str | None, int | None, str | None]], str | None]:
         from app.modules.chats.cursor import encode_message_cursor
 
         owner_user = aliased(User)
+        sender_user = aliased(User)
         stmt = (
             select(
                 ChatMessage,
                 MessageReplyAudit.card_owner_user_id,
                 owner_user.full_name,
                 MessageReplyAudit.group_id,
+                sender_user.username,
             )
             .select_from(ChatMessage)
             .outerjoin(
@@ -432,6 +434,7 @@ class ChatRepository:
                 MessageReplyAudit.message_id == ChatMessage.id,
             )
             .outerjoin(owner_user, owner_user.id == MessageReplyAudit.card_owner_user_id)
+            .outerjoin(sender_user, sender_user.id == ChatMessage.sender_user_id)
             .where(ChatMessage.chat_id == chat_id)
             .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(limit + 1)
@@ -455,7 +458,7 @@ class ChatRepository:
 
         result = await self._session.execute(stmt)
         rows = [
-            (row[0], row[1], row[2], row[3])
+            (row[0], row[1], row[2], row[3], row[4])
             for row in result.all()
         ]
         next_cursor: str | None = None

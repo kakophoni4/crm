@@ -143,6 +143,7 @@ def to_message_response(
     card_owner_user_id: int | None = None,
     card_owner_name: str | None = None,
     card_owner_group_id: int | None = None,
+    sender_username: str | None = None,
 ) -> MessageResponse:
     direction = (
         message.direction
@@ -161,6 +162,7 @@ def to_message_response(
         text=message.text,
         attachments=_sanitize_attachments(message),
         sender_user_id=message.sender_user_id,
+        sender_username=sender_username,
         external_message_id=message.external_message_id,
         external_event_id=message.external_event_id,
         reply_to_message_id=message.reply_to_message_id,

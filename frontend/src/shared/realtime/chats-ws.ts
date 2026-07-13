@@ -1,4 +1,5 @@
 import { useChatsStore } from '@/features/chats/store'
+import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 import { notifyInboundChatMessage } from '@/shared/lib/browser-notifications'
 import { invalidateChatsQueries } from '@/shared/lib/query-invalidation'
 import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
@@ -73,7 +74,15 @@ function notifyInboundFromPayload(
 ): void {
   const chatId = Number(payload.chat_id)
   if (!Number.isFinite(chatId)) return
+
+  const notifications = useChatNotificationsStore()
+  // В ленту — всегда (кроме активного открытого чата), чтобы не дублировать текущий диалог.
+  if (store.currentChatId !== chatId) {
+    notifications.pushInbound(payload)
+  }
+
   if (store.currentChatId === chatId) return
+  if (!document.hidden) return
 
   const contactName =
     typeof payload.contact_name === 'string'

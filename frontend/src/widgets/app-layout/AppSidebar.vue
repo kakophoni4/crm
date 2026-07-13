@@ -116,7 +116,7 @@ const menuOptions = computed(() => {
     })
   }
 
-  if (auth.user?.role === 'senior' || auth.user?.role === 'admin') {
+  if (auth.user?.role === 'senior' || auth.user?.role === 'group_senior' || auth.user?.role === 'admin') {
     items.push({
       label: 'Эскалация',
       key: 'group-escalation',
@@ -129,7 +129,7 @@ const menuOptions = computed(() => {
     })
   }
 
-  if (auth.user?.role === 'senior') {
+  if (auth.user?.role === 'senior' || auth.user?.role === 'group_senior') {
     items.push({
       label: 'Пользователи',
       key: 'settings-users',

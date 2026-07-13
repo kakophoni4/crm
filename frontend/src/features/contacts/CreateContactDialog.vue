@@ -47,7 +47,7 @@ const form = ref({
 })
 
 const showGroupSelect = computed(
-  () => props.openWorkspace && (groupOptions.value.length > 1 || auth.isAdmin || auth.isSenior),
+  () => props.openWorkspace && (groupOptions.value.length > 1 || auth.canForceCardOwner),
 )
 
 function defaultWorkspaceGroupId(): number | null {

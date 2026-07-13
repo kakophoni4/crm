@@ -40,6 +40,7 @@ import { useAuthStore } from '@/shared/store/auth'
 const message = useMessage()
 const auth = useAuthStore()
 const isSenior = computed(() => auth.user?.role === 'senior')
+const isGroupSenior = computed(() => auth.user?.role === 'group_senior')
 const isAdmin = computed(() => auth.user?.role === 'admin')
 
 const loading = ref(false)
@@ -53,7 +54,7 @@ const form = ref({
   username: '',
   full_name: '',
   password: '',
-  role: 'user' as 'user' | 'senior' | 'admin' | 'accountant',
+  role: 'user' as 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant',
   group_ids: [] as number[],
   department_id: null as number | null,
   set_as_department_head: false,
@@ -92,19 +93,47 @@ const departmentOptions = computed<SelectOption[]>(() =>
   departments.value.map((d) => ({ label: d.name, value: d.id })),
 )
 
-const showGroupField = computed(() => form.value.role === 'user')
+const showGroupField = computed(
+  () => form.value.role === 'user' || form.value.role === 'group_senior',
+)
 const showDepartmentField = computed(() => form.value.role === 'senior')
 const showDepartmentHeadCheckbox = computed(
   () => form.value.role === 'senior' && form.value.department_id != null,
 )
+const showRoleSelect = computed(
+  () => !isSenior.value && !(editing.value != null && form.value.role === 'group_senior'),
+)
+const canToggleGroupSenior = computed(() => {
+  if (!editing.value) return false
+  if (!isAdmin.value && !isSenior.value && !isGroupSenior.value) return false
+  return form.value.role === 'user' || form.value.role === 'group_senior'
+})
+const promotingGroupSenior = ref(false)
 
 function departmentName(id: number | null): string {
   if (id == null) return '—'
   return departments.value.find((d) => d.id === id)?.name ?? '—'
 }
 
+function roleLabel(role: AdminUser['role']): string {
+  switch (role) {
+    case 'user':
+      return 'Оператор'
+    case 'group_senior':
+      return 'Старший группы'
+    case 'senior':
+      return 'Старший'
+    case 'accountant':
+      return 'Бухгалтер'
+    case 'admin':
+      return 'Администратор'
+    default:
+      return role
+  }
+}
+
 function canRequestDeletion(row: AdminUser): boolean {
-  if (!isSenior.value) return false
+  if (!isSenior.value && !isGroupSenior.value) return false
   if (row.id === auth.user?.id) return false
   return row.role === 'user' && row.status === 'active' && !pendingByUserId.value.has(row.id)
 }
@@ -121,7 +150,7 @@ function canAdminApprovePending(row: AdminUser): boolean {
 const columns = computed<DataTableColumns<AdminUser>>(() => [
   { title: 'Логин', key: 'username', ellipsis: { tooltip: true } },
   { title: 'Имя', key: 'full_name' },
-  { title: 'Роль', key: 'role', width: 100 },
+  { title: 'Роль', key: 'role', width: 140, render: (row) => roleLabel(row.role) },
   {
     title: 'Отдел',
     key: 'department_id',
@@ -284,10 +313,12 @@ watch(
       form.value.set_as_department_head = false
     } else if (role === 'senior') {
       form.value.group_ids = []
+      form.value.set_as_department_head = false
       if (form.value.department_id == null) {
         form.value.department_id = departments.value[0]?.id ?? null
       }
     } else {
+      // user | group_senior
       form.value.department_id = null
       form.value.set_as_department_head = false
       if (form.value.group_ids.length === 0) {
@@ -298,7 +329,7 @@ watch(
 )
 
 async function loadPendingDeletions(): Promise<void> {
-  if (!isSenior.value && !isAdmin.value) {
+  if (!isSenior.value && !isGroupSenior.value && !isAdmin.value) {
     pendingDeletions.value = []
     return
   }
@@ -306,7 +337,7 @@ async function loadPendingDeletions(): Promise<void> {
     pendingDeletions.value = await listUserDeletionRequests(
       isAdmin.value ? 'pending' : undefined,
     )
-    if (isSenior.value) {
+    if (isSenior.value || isGroupSenior.value) {
       pendingDeletions.value = pendingDeletions.value.filter((r) => r.state === 'pending')
     }
   } catch {
@@ -333,7 +364,7 @@ async function load(): Promise<void> {
   }
 }
 
-function validateForm(role: 'user' | 'senior' | 'admin' | 'accountant'): string | null {
+function validateForm(role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant'): string | null {
   if (!editing.value) {
     if (!form.value.username.trim() || !form.value.password) {
       return 'Заполните логин и пароль'
@@ -342,7 +373,7 @@ function validateForm(role: 'user' | 'senior' | 'admin' | 'accountant'): string 
   if (!form.value.full_name.trim()) {
     return 'Укажите имя'
   }
-  if (role === 'user' && form.value.group_ids.length === 0) {
+  if ((role === 'user' || role === 'group_senior') && form.value.group_ids.length === 0) {
     return 'Выберите хотя бы одну группу для оператора'
   }
   if (role === 'senior' && form.value.department_id == null) {
@@ -351,8 +382,37 @@ function validateForm(role: 'user' | 'senior' | 'admin' | 'accountant'): string 
   return null
 }
 
+async function toggleGroupSenior(): Promise<void> {
+  if (!editing.value) return
+  if (form.value.group_ids.length === 0) {
+    message.warning('Сначала назначьте хотя бы одну группу')
+    return
+  }
+  const nextRole = form.value.role === 'group_senior' ? 'user' : 'group_senior'
+  promotingGroupSenior.value = true
+  try {
+    const updated = await updateUser(editing.value.id, {
+      full_name: form.value.full_name.trim(),
+      role: nextRole,
+      group_ids: form.value.group_ids,
+    })
+    form.value.role = updated.role
+    editing.value = { ...editing.value, ...updated }
+    message.success(
+      nextRole === 'group_senior'
+        ? 'Повышен до старшего группы (можно передавать карточки)'
+        : 'Понижен до оператора',
+    )
+    await load()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось изменить роль')
+  } finally {
+    promotingGroupSenior.value = false
+  }
+}
+
 async function onSave(): Promise<void> {
-  const role = isSenior.value ? 'user' : form.value.role
+  const role = isSenior.value ? 'user' : form.value.role === 'group_senior' ? 'group_senior' : form.value.role
   const validationError = validateForm(role)
   if (validationError) {
     message.warning(validationError)
@@ -361,26 +421,40 @@ async function onSave(): Promise<void> {
 
   try {
     if (editing.value) {
-      const patchRole = isSenior.value ? undefined : form.value.role
-      await updateUser(editing.value.id, {
+      const payload: Parameters<typeof updateUser>[1] = {
         full_name: form.value.full_name.trim(),
-        ...(patchRole !== undefined ? { role: patchRole } : {}),
-        group_ids: form.value.role === 'user' ? form.value.group_ids : [],
-        department_id: form.value.role === 'senior' ? form.value.department_id : null,
-        ...(form.value.role === 'senior' && form.value.set_as_department_head
-          ? { set_as_department_head: true }
-          : {}),
-      })
+      }
+      // Роль group_senior меняется только кнопкой повышения/понижения.
+      if (!isSenior.value && form.value.role !== 'group_senior') {
+        payload.role = form.value.role
+      }
+      if (form.value.role === 'user' || form.value.role === 'group_senior') {
+        payload.group_ids = form.value.group_ids
+      } else if (form.value.role === 'senior') {
+        payload.department_id = form.value.department_id
+        payload.group_ids = []
+        if (form.value.set_as_department_head) {
+          payload.set_as_department_head = true
+        }
+      } else {
+        payload.group_ids = []
+      }
+      await updateUser(editing.value.id, payload)
       message.success('Пользователь обновлён')
     } else {
+      const createRole = isSenior.value ? 'user' : form.value.role
+      if (createRole === 'group_senior') {
+        message.warning('Старшего группы создайте как оператора, затем повысьте кнопкой')
+        return
+      }
       await createUser({
         username: form.value.username.trim(),
         full_name: form.value.full_name.trim(),
         password: form.value.password,
-        role,
-        group_ids: role === 'user' ? form.value.group_ids : [],
-        department_id: role === 'senior' ? form.value.department_id : null,
-        set_as_department_head: role === 'senior' && form.value.set_as_department_head,
+        role: createRole,
+        group_ids: createRole === 'user' ? form.value.group_ids : [],
+        department_id: createRole === 'senior' ? form.value.department_id : null,
+        set_as_department_head: createRole === 'senior' && form.value.set_as_department_head,
       })
       message.success('Пользователь создан')
     }
@@ -433,7 +507,7 @@ async function onRejectDeletion(requestId: number): Promise<void> {
 async function onAdminRemove(row: AdminUser): Promise<void> {
   try {
     await adminRemoveUser(row.id)
-    message.success('Пользователь отключён')
+    message.success('Пользователь отключён, карточки распределены по группе')
     await load()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось удалить пользователя')
@@ -470,8 +544,31 @@ onMounted(() => void load())
         <NFormItem v-if="!editing" label="Пароль">
           <NInput v-model:value="form.password" type="password" show-password-on="click" />
         </NFormItem>
-        <NFormItem v-if="!isSenior" label="Роль">
+        <NFormItem v-if="showRoleSelect" label="Роль">
           <NSelect v-model:value="form.role" :options="roleOptions" />
+        </NFormItem>
+        <NFormItem v-else-if="editing && form.role === 'group_senior'" label="Роль">
+          <span>Старший группы</span>
+        </NFormItem>
+        <NFormItem v-if="canToggleGroupSenior" label="Права старшего группы">
+          <NSpace vertical :size="6">
+            <NButton
+              secondary
+              :type="form.role === 'group_senior' ? 'default' : 'primary'"
+              :loading="promotingGroupSenior"
+              @click="toggleGroupSenior"
+            >
+              {{
+                form.role === 'group_senior'
+                  ? 'Понизить до оператора'
+                  : 'Повысить до старшего группы'
+              }}
+            </NButton>
+            <span class="admin-page__hint">
+              Группы и остальное не меняются — добавляется только право передавать карточки в своих
+              группах.
+            </span>
+          </NSpace>
         </NFormItem>
         <NFormItem v-if="showGroupField" label="Группы">
           <NSelect
@@ -517,5 +614,11 @@ onMounted(() => void load())
   margin: 0;
   font-size: 1.5rem;
   font-weight: 700;
+}
+
+.admin-page__hint {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--app-text-muted, #888);
 }
 </style>

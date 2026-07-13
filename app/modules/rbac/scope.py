@@ -34,8 +34,13 @@ def visible_user_ids(ctx: ScopeContext) -> ScopeResult:
             return {actor.id}
         return set(ctx.department_user_ids) | {actor.id}
 
+    if role == UserRole.GROUP_SENIOR:
+        visible: set[int] = {actor.id}
+        visible.update(ctx.group_member_ids)
+        return visible
+
     # user (operator)
-    visible: set[int] = {actor.id}
+    visible = {actor.id}
     visible.update(ctx.group_member_ids)
     if ctx.department_senior_id is not None:
         visible.add(ctx.department_senior_id)
@@ -54,11 +59,13 @@ def visible_group_ids(ctx: ScopeContext) -> ScopeResult:
             return set()
         return set(ctx.department_group_ids)
 
-    if ctx.actor_group_ids:
-        return set(ctx.actor_group_ids)
+    if role in (UserRole.USER, UserRole.GROUP_SENIOR):
+        if ctx.actor_group_ids:
+            return set(ctx.actor_group_ids)
+        if actor.group_id is not None:
+            return {actor.group_id}
+        return set()
 
-    if actor.group_id is not None:
-        return {actor.group_id}
     return set()
 
 
@@ -89,7 +96,17 @@ def can_act_on_user(ctx: ScopeContext, target: User) -> bool:
     if role == UserRole.SENIOR:
         if actor.department_id is None or target.department_id != actor.department_id:
             return False
-        return not (target_role == UserRole.SENIOR and target.id != actor.id)
+        return target_role not in {UserRole.SENIOR, UserRole.ADMIN}
+
+    if role == UserRole.GROUP_SENIOR:
+        visible = visible_user_ids(ctx)
+        if not isinstance(visible, set) or target.id not in visible:
+            return False
+        return target_role not in {
+            UserRole.SENIOR,
+            UserRole.GROUP_SENIOR,
+            UserRole.ADMIN,
+        }
 
     visible = visible_user_ids(ctx)
     if not isinstance(visible, set):

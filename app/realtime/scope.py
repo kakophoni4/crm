@@ -63,7 +63,7 @@ def event_visible(ws_scope: WsScope, event: Event) -> bool:
         target_group = int(scope["group_id"])
         if ws_scope.role == UserRole.SENIOR:
             return target_group in ws_scope.department_group_ids
-        if ws_scope.role == UserRole.USER:
+        if ws_scope.role in (UserRole.USER, UserRole.GROUP_SENIOR):
             if ws_scope.group_id == target_group:
                 return True
             return target_group in ws_scope.actor_group_ids
@@ -75,6 +75,11 @@ def event_visible(ws_scope: WsScope, event: Event) -> bool:
             if value is not None and int(value) == ws_scope.user_id:
                 return True
         return False
+
+    if ws_scope.role == UserRole.GROUP_SENIOR:
+        if "group_id" in payload:
+            return int(payload["group_id"]) in ws_scope.actor_group_ids
+        return not scope
 
     if ws_scope.role == UserRole.SENIOR:
         if ws_scope.department_id is None:

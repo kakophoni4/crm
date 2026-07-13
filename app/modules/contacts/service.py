@@ -262,7 +262,7 @@ class ContactService:
             limit=limit,
         )
         role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
-        include_actor = role in (UserRole.ADMIN, UserRole.SENIOR)
+        include_actor = role in (UserRole.ADMIN, UserRole.SENIOR, UserRole.GROUP_SENIOR)
         return ContactActivityResponse(
             items=[
                 ContactActivityItemResponse(

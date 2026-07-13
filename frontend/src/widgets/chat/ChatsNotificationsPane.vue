@@ -1,189 +1,34 @@
 <script setup lang="ts">
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { NEmpty, NSpace, NTabPane, NTabs } from 'naive-ui'
-import { onMounted, onUnmounted, ref } from 'vue'
+import { NButton, NEmpty, NSpace } from 'naive-ui'
+import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
-import TransferInboxPanel from '@/features/contacts/transfer-card/TransferInboxPanel.vue'
-import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
-import { playTransferInboxSound } from '@/shared/audio/transfer-inbox'
-import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
+import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 
-type FeedTopic =
-  | 'message.replied.on_behalf'
-  | 'contact.escalation.group_notify'
-  | 'contact.escalation.owner_notify'
-  | 'contact.ownership.assigned'
-  | 'contact.ownership.reassigned'
-  | 'contact.ownership.transferred'
-
-type FeedItem = {
-  id: string
-  at: number
-  topic: FeedTopic
-  line: string
-  chatId: number | null
-}
-
-const FEED_TOPICS: FeedTopic[] = [
-  'message.replied.on_behalf',
-  'contact.escalation.group_notify',
-  'contact.escalation.owner_notify',
-  'contact.ownership.assigned',
-  'contact.ownership.reassigned',
-  'contact.ownership.transferred',
-]
-
 const router = useRouter()
-const feed = ref<FeedItem[]>([])
-const MAX_ITEMS = 50
-const recentDedupe = new Map<string, number>()
-
-let unsubscribers: (() => void)[] = []
-
-function num(payload: Record<string, unknown>, key: string): number | null {
-  const v = payload[key]
-  if (typeof v === 'number' && Number.isFinite(v)) return v
-  if (typeof v === 'string' && v.trim() !== '') {
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  }
-  return null
-}
-
-function str(payload: Record<string, unknown>, key: string): string | null {
-  const v = payload[key]
-  return typeof v === 'string' && v.trim() !== '' ? v : null
-}
-
-function contactLabel(payload: Record<string, unknown>): string {
-  const name = str(payload, 'contact_full_name')
-  if (name) return `«${name}»`
-  const id = num(payload, 'contact_id')
-  return id != null ? `контакт #${id}` : 'карточка'
-}
-
-function groupSuffix(payload: Record<string, unknown>): string {
-  const name =
-    str(payload, 'group_name') ?? lookupGroupName(num(payload, 'group_id'))
-  if (name) return ` · ${name}`
-  return ''
-}
-
-function dedupeKey(topic: FeedTopic, payload: Record<string, unknown>): string {
-  const perspective = str(payload, 'perspective') ?? ''
-  return `${topic}:${num(payload, 'contact_id') ?? ''}:${num(payload, 'group_id') ?? ''}:${perspective}`
-}
-
-function isDuplicate(key: string): boolean {
-  const now = Date.now()
-  const prev = recentDedupe.get(key)
-  recentDedupe.set(key, now)
-  if (prev != null && now - prev < 900) {
-    return true
-  }
-  if (recentDedupe.size > 200) {
-    for (const [k, t] of recentDedupe) {
-      if (now - t > 60_000) recentDedupe.delete(k)
-    }
-  }
-  return false
-}
-
-function formatLine(topic: FeedTopic, payload: Record<string, unknown>): string {
-  const contact = contactLabel(payload)
-  const group = groupSuffix(payload)
-
-  switch (topic) {
-    case 'message.replied.on_behalf': {
-      const who = str(payload, 'author_full_name') ?? 'Коллега'
-      const preview = str(payload, 'text_preview')
-      const piece = preview ? ` — «${preview}»` : ''
-      return `Ответ за вас в чате ${contact}: ${who}${piece}${group}`
-    }
-    case 'contact.escalation.owner_notify':
-      return `Новое входящее по вашей карточке ${contact}${group}`
-    case 'contact.escalation.group_notify':
-      return `Карточка ${contact} ждёт ответа в общей очереди${group}`
-    case 'contact.ownership.assigned': {
-      const owner = str(payload, 'owner_full_name') ?? 'оператор'
-      return `Новая карточка ${contact} — владелец ${owner}${group}`
-    }
-    case 'contact.ownership.reassigned': {
-      const from = str(payload, 'old_owner_full_name') ?? 'прежний владелец'
-      const to = str(payload, 'new_owner_full_name') ?? 'новый владелец'
-      const perspective = str(payload, 'perspective')
-      const reason = str(payload, 'reason')
-      const why =
-        reason === 'timeout' ? ' (таймаут ответа)' : reason != null ? ` (${reason})` : ''
-      if (perspective === 'former_owner') {
-        return `С вас снята карточка ${contact}: новый владелец — ${to}${group}${why}`
-      }
-      if (perspective === 'new_owner') {
-        return `Вам назначена карточка ${contact} (от ${from})${group}${why}`
-      }
-      return `Смена владельца ${contact}: ${from} → ${to}${group}${why}`
-    }
-    case 'contact.ownership.transferred': {
-      const from = str(payload, 'from_user_full_name') ?? 'прежний владелец'
-      const to =
-        str(payload, 'to_user_full_name') ??
-        str(payload, 'owner_full_name') ??
-        'новый владелец'
-      const perspective = str(payload, 'perspective')
-      if (perspective === 'former_owner') {
-        return `Вам передали карточку ${contact}: новый владелец — ${to}${group}`
-      }
-      if (perspective === 'new_owner') {
-        return `Вам назначена карточка ${contact} (от ${from})${group}`
-      }
-      return `Смена владельца ${contact}: ${from} → ${to}${group}`
-    }
-    default:
-      return `Событие: ${topic}`
-  }
-}
-
-function pushFeed(topic: FeedTopic, payload: Record<string, unknown>): void {
-  const chatId = num(payload, 'chat_id')
-  const line = formatLine(topic, payload)
-  const id = `${topic}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  feed.value = [{ id, at: Date.now(), topic, line, chatId }, ...feed.value].slice(0, MAX_ITEMS)
-}
-
-function onFeedTopic(topic: FeedTopic, payload: Record<string, unknown>): void {
-  const key = dedupeKey(topic, payload)
-  if (isDuplicate(key)) return
-  void playTransferInboxSound()
-  pushFeed(topic, payload)
-}
-
-function openChat(chatId: number): void {
-  void router.push({ name: 'chats', query: { chatId: String(chatId) } })
-}
+const notifications = useChatNotificationsStore()
 
 function timeLabel(ts: number): string {
   return format(ts, 'HH:mm', { locale: ru })
 }
 
-onMounted(async () => {
-  await ensureGroupDirectory()
-  await connectRealtime()
-  for (const topic of FEED_TOPICS) {
-    unsubscribers.push(
-      getRealtimeWS().onTopic(topic, (payload) => {
-        onFeedTopic(topic, payload)
-      }),
-    )
+function onOpen(id: string, chatId: number | null): void {
+  notifications.markRead(id)
+  if (chatId != null) {
+    void router.push({ name: 'chats', query: { chatId: String(chatId) } })
   }
+}
+
+onMounted(() => {
+  void notifications.ensureConnected()
 })
 
 onUnmounted(() => {
-  unsubscribers.forEach((fn) => fn())
-  unsubscribers = []
+  // Подписка общая на store — не рвём при размонтировании панели.
 })
 </script>
 
@@ -192,40 +37,58 @@ onUnmounted(() => {
     class="chats-notifications-pane"
     :class="{ 'chats-notifications-pane--embedded': embedded }"
   >
-    <div v-if="!embedded" class="chats-notifications-pane__head">
-      <strong class="chats-notifications-pane__title">Уведомления</strong>
+    <div class="chats-notifications-pane__head">
+      <strong v-if="!embedded" class="chats-notifications-pane__title">Уведомления</strong>
+      <div class="chats-notifications-pane__actions">
+        <span v-if="notifications.unreadCount" class="chats-notifications-pane__unread-count">
+          непрочитано: {{ notifications.unreadCount }}
+        </span>
+        <NButton
+          v-if="notifications.unreadCount"
+          size="tiny"
+          quaternary
+          @click="notifications.markAllRead()"
+        >
+          Прочитать все
+        </NButton>
+      </div>
     </div>
 
-    <NTabs type="line" size="small" animated class="chats-notifications-pane__tabs">
-      <NTabPane name="transfers" tab="Передачи">
-        <TransferInboxPanel embedded />
-      </NTabPane>
-      <NTabPane name="activity" tab="События">
-        <NEmpty v-if="!feed.length" description="Пока тихо — события появятся здесь." />
-        <NSpace v-else vertical :size="8" class="chats-notifications-pane__feed">
-          <button
-            v-for="row in feed"
-            :key="row.id"
-            type="button"
-            class="chats-notifications-pane__row"
-            :class="{ 'chats-notifications-pane__row--click': row.chatId != null }"
-            @click="row.chatId != null && openChat(row.chatId)"
-          >
-            <span class="chats-notifications-pane__time">{{ timeLabel(row.at) }}</span>
-            <span class="chats-notifications-pane__line">{{ row.line }}</span>
-          </button>
-        </NSpace>
-      </NTabPane>
-    </NTabs>
+    <NEmpty
+      v-if="!notifications.items.length"
+      description="Пока тихо — события появятся здесь."
+    />
+    <NSpace v-else vertical :size="8" class="chats-notifications-pane__feed">
+      <button
+        v-for="row in notifications.items"
+        :key="row.id"
+        type="button"
+        class="chats-notifications-pane__row"
+        :class="{
+          'chats-notifications-pane__row--click': row.chatId != null,
+          'chats-notifications-pane__row--unread': !row.read,
+          'chats-notifications-pane__row--read': row.read,
+        }"
+        @click="onOpen(row.id, row.chatId)"
+      >
+        <span class="chats-notifications-pane__time">{{ timeLabel(row.at) }}</span>
+        <span class="chats-notifications-pane__line">{{ row.line }}</span>
+        <span class="chats-notifications-pane__status">
+          {{ row.read ? 'прочитано' : 'новое' }}
+        </span>
+      </button>
+    </NSpace>
   </div>
 </template>
 
 <style scoped>
 .chats-notifications-pane__head {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
 .chats-notifications-pane {
@@ -239,8 +102,6 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-/* Встроенный режим: панель уже находится внутри правой колонки с вкладками,
-   поэтому убираем собственную рамку, фон и дублирующий заголовок. */
 .chats-notifications-pane--embedded {
   flex: 1;
   padding: 8px 12px 12px;
@@ -249,25 +110,20 @@ onUnmounted(() => {
   background: transparent;
 }
 
-.chats-notifications-pane--embedded .chats-notifications-pane__tabs {
-  margin-top: 0;
-}
-
 .chats-notifications-pane__title {
   font-size: 0.9375rem;
 }
 
-.chats-notifications-pane :deep(.n-card) {
-  background: transparent;
+.chats-notifications-pane__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
-.chats-notifications-pane :deep(.n-card.n-card--embedded) {
-  border: none;
-  box-shadow: none;
-}
-
-.chats-notifications-pane__tabs {
-  margin-top: 4px;
+.chats-notifications-pane__unread-count {
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
 }
 
 .chats-notifications-pane__feed {
@@ -278,7 +134,8 @@ onUnmounted(() => {
 }
 
 .chats-notifications-pane__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: flex-start;
   width: 100%;
@@ -290,15 +147,20 @@ onUnmounted(() => {
   background: var(--app-surface-elevated);
   border: 1px solid var(--app-border);
   border-radius: 8px;
-  cursor: default;
+  cursor: pointer;
   box-sizing: border-box;
 }
 
-.chats-notifications-pane__row--click {
-  cursor: pointer;
+.chats-notifications-pane__row--unread {
+  border-left: 3px solid var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent) 8%, var(--app-surface-elevated));
 }
 
-.chats-notifications-pane__row--click:hover {
+.chats-notifications-pane__row--read {
+  opacity: 0.72;
+}
+
+.chats-notifications-pane__row:hover {
   background: color-mix(in srgb, var(--app-text) 7%, var(--app-surface-elevated));
 }
 
@@ -313,5 +175,16 @@ onUnmounted(() => {
 .chats-notifications-pane__line {
   font-size: 0.8125rem;
   line-height: 1.4;
+}
+
+.chats-notifications-pane__row--unread .chats-notifications-pane__line {
+  font-weight: 600;
+}
+
+.chats-notifications-pane__status {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  opacity: 0.65;
+  white-space: nowrap;
 }
 </style>

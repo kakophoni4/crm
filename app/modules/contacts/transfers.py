@@ -273,7 +273,7 @@ class ContactGroupTransfersService:
         role = self._actor_role(actor)
         cross_group = effective_group_id != group_id
         if cross_group:
-            if role not in (UserRole.ADMIN, UserRole.SENIOR):
+            if role not in (UserRole.ADMIN, UserRole.SENIOR, UserRole.GROUP_SENIOR):
                 raise PermissionDenied(message="Only admin or senior can move cards between groups")
             if not force:
                 raise ValidationError(message="Cross-group transfer requires force assignment")
@@ -281,10 +281,10 @@ class ContactGroupTransfersService:
         if force:
             if role == UserRole.ADMIN:
                 pass
-            elif role == UserRole.SENIOR:
+            elif role in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
                 if not self._senior_group_in_scope(ctx, effective_group_id):
                     raise PermissionDenied(
-                        message="Senior can only assign cards within their department",
+                        message="Senior can only assign cards within their scope",
                     )
             else:
                 raise PermissionDenied(
@@ -344,7 +344,11 @@ class ContactGroupTransfersService:
             expires_at=now + TRANSFER_TTL,
         )
         if state == TransferStatus.ACCEPTED:
-            transfer.senior_user_id = actor.id if role in (UserRole.ADMIN, UserRole.SENIOR) else None
+            transfer.senior_user_id = (
+                actor.id
+                if role in (UserRole.ADMIN, UserRole.SENIOR, UserRole.GROUP_SENIOR)
+                else None
+            )
             transfer.senior_decided_at = now if transfer.senior_user_id is not None else None
             transfer.recipient_decided_at = now
             await reassign_owner(
@@ -423,7 +427,7 @@ class ContactGroupTransfersService:
 
         if role == UserRole.ADMIN:
             pass
-        elif role == UserRole.SENIOR:
+        elif role in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
             visible = visible_group_ids(ctx)
             if visible != SCOPE_ALL:
                 if not isinstance(visible, set) or not visible:
@@ -468,7 +472,7 @@ class ContactGroupTransfersService:
         self._ensure_transfer_actionable(transfer)
         self._ensure_version(transfer, expected_version)
         role = self._actor_role(actor)
-        if role not in (UserRole.SENIOR, UserRole.ADMIN):
+        if role not in (UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.ADMIN):
             raise PermissionDenied(message="Only senior or admin can approve transfers")
         if transfer.state != TransferStatus.PENDING_SENIOR:
             raise Conflict(message="Transfer is not pending senior approval")
@@ -497,7 +501,7 @@ class ContactGroupTransfersService:
         await self._ensure_transfer_visible(ctx, transfer)
         self._ensure_transfer_actionable(transfer)
         role = self._actor_role(actor)
-        if role not in (UserRole.SENIOR, UserRole.ADMIN):
+        if role not in (UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.ADMIN):
             raise PermissionDenied(message="Only senior or admin can decline transfers")
         if transfer.state != TransferStatus.PENDING_SENIOR:
             raise Conflict(message="Transfer is not pending senior approval")

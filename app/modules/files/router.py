@@ -67,7 +67,7 @@ async def download_file(
     if row is None:
         raise NotFound(message="File not found")
     role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
-    is_privileged = role in (UserRole.SENIOR, UserRole.ADMIN)
+    is_privileged = role in (UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.ADMIN)
     if row.uploaded_by is not None and row.uploaded_by != actor.id and not is_privileged:
         raise PermissionDenied(message="Файл недоступен")
     data, content_type, filename = await service.get_bytes(file_id)

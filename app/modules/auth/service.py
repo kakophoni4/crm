@@ -179,6 +179,7 @@ class AuthService:
         return MeResponse(
             id=user.id,
             email=str(user.email),
+            username=user.username,
             full_name=user.full_name,
             role=role,
             department_id=user.department_id,

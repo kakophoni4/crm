@@ -70,6 +70,7 @@ class MeResponse(BaseModel):
 
     id: int
     email: str
+    username: str
     full_name: str
     role: UserRole
     department_id: int | None

@@ -110,7 +110,10 @@ export const useChatsStore = defineStore('chats', () => {
   })
 
   const isSenior = computed(
-    () => auth.user?.role === 'senior' || auth.user?.role === 'admin',
+    () =>
+      auth.user?.role === 'senior' ||
+      auth.user?.role === 'group_senior' ||
+      auth.user?.role === 'admin',
   )
 
   const listInitialLoading = computed(() => listLoading.value && !listLoaded.value)
@@ -732,6 +735,7 @@ export const useChatsStore = defineStore('chats', () => {
       text,
       attachments: attachments.map((a) => ({ file_id: a.file_id, status: 'queued' })),
       sender_user_id: auth.user?.id ?? null,
+      sender_username: auth.user?.username ?? null,
       reply_to_message_id: replyToMessageId,
       created_at: new Date().toISOString(),
       idempotency_key: clientKey,

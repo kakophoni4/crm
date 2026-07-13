@@ -179,7 +179,7 @@ watch([page, paymentStatusFilter, selectedDeptKey], () => {
 
 onMounted(() => {
   void load()
-  if (auth.isAdmin || auth.isSenior) {
+  if (auth.isAdmin || auth.isSenior || auth.isGroupSenior) {
     void listDepartments()
       .then((rows) => {
         departments.value = rows
@@ -202,6 +202,7 @@ onMounted(() => {
         <p class="applications-page__subtitle">
           <template v-if="auth.isAdmin">Все заявки по всем отделам</template>
           <template v-else-if="auth.isSenior">Заявки вашего отдела</template>
+          <template v-else-if="auth.isGroupSenior">Заявки ваших групп</template>
           <template v-else>Заявки вашей группы</template>
         </p>
       </div>

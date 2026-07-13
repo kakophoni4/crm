@@ -38,7 +38,7 @@ const resolvedGroupName = ref<string | null>(null)
 const resolvingGroupName = ref(false)
 
 const hint = computed(() => transferHintForRole(auth.user?.role))
-const canAssignInGroup = computed(() => auth.isSenior || auth.isAdmin)
+const canAssignInGroup = computed(() => auth.canForceCardOwner)
 const groupOptions = computed<SelectOption[]>(() => {
   const options = props.groupOptions ?? []
   if (options.length > 0) return options

@@ -67,6 +67,7 @@ import type { StatusOption } from '@/features/leads/types'
 import { useStatusesStore } from '@/features/statuses/store'
 
 import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDialog.vue'
+import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
 import ChatPaymentsSidePanel from '@/widgets/chat/ChatPaymentsSidePanel.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
@@ -95,6 +96,7 @@ import TakeoverBadge from '@/widgets/chat/TakeoverBadge.vue'
 const CHATS_NARROW_BREAKPOINT = 1024
 
 const store = useChatsStore()
+const notifications = useChatNotificationsStore()
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -174,7 +176,7 @@ const canTransferCard = computed(() => {
   const chat = store.currentChat
   const me = auth.user?.id
   if (chat == null || me == null || transferGroupId.value == null) return false
-  if (auth.isSenior || auth.isAdmin) return true
+  if (auth.canForceCardOwner) return true
   return chat.card_owner_user_id === me
 })
 
@@ -381,6 +383,7 @@ onMounted(() => {
   void connectLeadsRealtime()
 
   void connectOwnershipRealtime()
+  void notifications.ensureConnected()
   void loadLeadStatuses()
   void loadChatWorkflowStatuses()
 
@@ -451,6 +454,9 @@ onUnmounted(() => {
               @click="transferInboxOpen = true"
             >
               Уведомления
+              <template v-if="notifications.unreadCount">
+                ({{ notifications.unreadCount }})
+              </template>
             </NButton>
           </NSpace>
         </div>
@@ -739,7 +745,14 @@ onUnmounted(() => {
         >
           <NTab name="deal" tab="Сделки" />
           <NTab name="payments" tab="Оплаты" />
-          <NTab name="notifications" tab="Уведомления" />
+          <NTab
+            name="notifications"
+            :tab="
+              notifications.unreadCount
+                ? `Уведомления (${notifications.unreadCount})`
+                : 'Уведомления'
+            "
+          />
         </NTabs>
         <ChatDealSidePanel
           v-if="store.currentChat && rightPaneTab === 'deal'"

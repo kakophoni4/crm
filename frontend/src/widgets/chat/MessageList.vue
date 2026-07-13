@@ -6,7 +6,6 @@ import { Reply } from 'lucide-vue-next'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import type { ChatMessage } from '@/entities/chat/types'
-import { formatOnBehalfLabel } from '@/entities/contact/on-behalf-label'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
 import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
 import OptAttachmentBar from '@/widgets/chat/OptAttachmentBar.vue'
@@ -77,8 +76,10 @@ function shouldShowDateSeparator(index: number): boolean {
   return !prev || !isSameDay(prev.created_at, current.created_at)
 }
 
-function onBehalfLabel(msg: ChatMessage): string | null {
-  return formatOnBehalfLabel(msg)
+function senderNick(msg: ChatMessage): string | null {
+  if (msg.direction !== 'outbound') return null
+  const nick = msg.sender_username?.trim()
+  return nick || null
 }
 
 function replyPreview(msg: ChatMessage): string {
@@ -225,15 +226,6 @@ watch(
                     : 'message-list__bubble--in'
                 "
               >
-                <NTag
-                  v-if="msg.direction === 'outbound' && onBehalfLabel(msg)"
-                  size="tiny"
-                  type="info"
-                  :bordered="false"
-                  class="message-list__on-behalf"
-                >
-                  {{ onBehalfLabel(msg) }}
-                </NTag>
                 <div v-if="quotedMessage(msg)" class="message-list__quote">
                   {{ replyPreview(quotedMessage(msg)!) }}
                 </div>
@@ -254,6 +246,7 @@ watch(
                   <span :title="formatFullDateTime(msg.created_at)">
                     {{ formatTime(msg.created_at) }}
                   </span>
+                  <span v-if="senderNick(msg)" class="message-list__sender">{{ senderNick(msg) }}</span>
                   <NTag v-if="msg._optimistic" size="tiny" :bordered="false">отправка...</NTag>
                   <NTag v-if="msg._failed" size="tiny" type="error" :bordered="false">ошибка</NTag>
                 </footer>
@@ -374,11 +367,9 @@ watch(
   box-shadow: 0 0 0 1px rgba(208, 48, 80, 0.35);
 }
 
-.message-list__on-behalf {
-  margin-bottom: 4px;
-  max-width: 100%;
-  white-space: normal;
-  height: auto;
+.message-list__sender {
+  font-size: 0.7rem;
+  opacity: 0.85;
 }
 
 .message-list__quote {

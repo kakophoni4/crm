@@ -39,7 +39,10 @@ const searchQ = ref('')
 const statusFilter = ref<ContactStatus | null>(null)
 
 const showContactPrivateFields = computed(
-  () => auth.user?.role === 'admin' || auth.user?.role === 'senior',
+  () =>
+    auth.user?.role === 'admin' ||
+    auth.user?.role === 'senior' ||
+    auth.user?.role === 'group_senior',
 )
 
 const showTelegramUserId = computed(() => auth.isAdmin)

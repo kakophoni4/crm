@@ -55,7 +55,7 @@ class TaskService:
 
     def _is_senior_or_admin(self, actor: User) -> bool:
         role = self._role(actor)
-        return role in (UserRole.SENIOR, UserRole.ADMIN)
+        return role in (UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.ADMIN)
 
     async def _load_user(self, user_id: int) -> User:
         user = await self._session.get(User, user_id)
@@ -73,7 +73,7 @@ class TaskService:
         role = self._role(actor)
         if role == UserRole.ADMIN:
             return
-        if role == UserRole.SENIOR:
+        if role in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
             await self._ensure_department_access(ctx, task.department_id)
             return
         if task.assignee_id != actor.id:

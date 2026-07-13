@@ -87,12 +87,16 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!accessToken.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isSenior = computed(() => user.value?.role === 'senior')
+  const isGroupSenior = computed(() => user.value?.role === 'group_senior')
   const isAccountant = computed(() => user.value?.role === 'accountant')
+  const canForceCardOwner = computed(
+    () => isAdmin.value || isSenior.value || isGroupSenior.value,
+  )
   const canAccounting = computed(
     () => user.value?.permissions.includes('accounting.read') === true,
   )
   const canViewHistoryActor = computed(
-    () => isAdmin.value || isSenior.value,
+    () => isAdmin.value || isSenior.value || isGroupSenior.value,
   )
 
   function setTokens(access: string, refresh: string): void {
@@ -218,7 +222,9 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isAdmin,
     isSenior,
+    isGroupSenior,
     isAccountant,
+    canForceCardOwner,
     canAccounting,
     canViewHistoryActor,
     login,

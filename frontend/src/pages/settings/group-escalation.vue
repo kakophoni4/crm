@@ -35,7 +35,7 @@ const groupSelectOptions = ref<SelectOption[]>([])
 const noGroupsInScope = ref(false)
 
 const canEdit = computed(
-  () => auth.user?.role === 'senior' || auth.user?.role === 'admin',
+  () => auth.user?.role === 'senior' || auth.user?.role === 'group_senior' || auth.user?.role === 'admin',
 )
 
 const form = ref({

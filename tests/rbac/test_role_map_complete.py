@@ -75,6 +75,12 @@ _SENIOR_EXPECTED: frozenset[Permission] = _USER_EXPECTED - {Permission.CHATS_REA
 
 _SENIOR_DENIED: frozenset[Permission] = ALL_PERMISSIONS - _SENIOR_EXPECTED
 
+_GROUP_SENIOR_EXPECTED: frozenset[Permission] = (
+    _SENIOR_EXPECTED - {Permission.CHATS_READ_DEPARTMENT}
+) | {Permission.CHATS_READ_GROUP}
+
+_GROUP_SENIOR_DENIED: frozenset[Permission] = ALL_PERMISSIONS - _GROUP_SENIOR_EXPECTED
+
 _ADMIN_ONLY: frozenset[Permission] = frozenset(
     {
         Permission.USERS_CREATE,
@@ -112,6 +118,8 @@ _ADMIN_ONLY: frozenset[Permission] = frozenset(
         *[(UserRole.USER, perm, False) for perm in _USER_DENIED],
         *[(UserRole.SENIOR, perm, True) for perm in _SENIOR_EXPECTED],
         *[(UserRole.SENIOR, perm, False) for perm in _SENIOR_DENIED],
+        *[(UserRole.GROUP_SENIOR, perm, True) for perm in _GROUP_SENIOR_EXPECTED],
+        *[(UserRole.GROUP_SENIOR, perm, False) for perm in _GROUP_SENIOR_DENIED],
         *[(UserRole.ADMIN, perm, True) for perm in ALL_PERMISSIONS],
     ],
 )
@@ -122,6 +130,7 @@ def test_role_permission_matrix(role: UserRole, permission: Permission, expected
 def test_role_map_matches_expected_sets() -> None:
     assert ROLE_PERMISSIONS[UserRole.USER] == _USER_EXPECTED
     assert ROLE_PERMISSIONS[UserRole.SENIOR] == _SENIOR_EXPECTED
+    assert ROLE_PERMISSIONS[UserRole.GROUP_SENIOR] == _GROUP_SENIOR_EXPECTED
     assert ROLE_PERMISSIONS[UserRole.ADMIN] == ALL_PERMISSIONS
 
 
@@ -129,4 +138,5 @@ def test_role_map_matches_expected_sets() -> None:
 def test_admin_only_permissions_denied_for_non_admin(permission: Permission) -> None:
     assert not has_permission(UserRole.USER, permission)
     assert not has_permission(UserRole.SENIOR, permission)
+    assert not has_permission(UserRole.GROUP_SENIOR, permission)
     assert has_permission(UserRole.ADMIN, permission)

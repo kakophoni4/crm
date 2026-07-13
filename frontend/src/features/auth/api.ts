@@ -1,6 +1,6 @@
 import { http } from '@/shared/api/http'
 
-export type UserRole = 'user' | 'senior' | 'admin' | 'accountant'
+export type UserRole = 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant'
 
 export interface AuthUserSummary {
   id: number
@@ -29,6 +29,7 @@ export type UserPresence = 'online' | 'away' | 'busy' | 'offline'
 export interface MeResponse {
   id: number
   email: string
+  username: string
   full_name: string
   role: UserRole
   department_id: number | null

@@ -82,6 +82,8 @@ export interface ChatMessage {
   text: string | null
   attachments: Record<string, unknown>[]
   sender_user_id: number | null
+  /** Login/nickname of the operator who sent the outbound message. */
+  sender_username?: string | null
   external_message_id?: string | null
   external_event_id?: string | null
   reply_to_message_id: number | null

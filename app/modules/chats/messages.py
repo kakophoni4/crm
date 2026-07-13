@@ -150,12 +150,19 @@ class ChatMessagesService:
             limit=limit,
         )
         items: list[dict[str, Any]] = []
-        for message, card_owner_user_id, card_owner_name, card_owner_group_id in rows:
+        for (
+            message,
+            card_owner_user_id,
+            card_owner_name,
+            card_owner_group_id,
+            sender_username,
+        ) in rows:
             payload = to_message_response(
                 message,
                 card_owner_user_id=card_owner_user_id,
                 card_owner_name=card_owner_name,
                 card_owner_group_id=card_owner_group_id,
+                sender_username=sender_username,
             ).model_dump()
             items.append(payload)
         return {

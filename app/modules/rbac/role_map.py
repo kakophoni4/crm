@@ -90,6 +90,12 @@ _SENIOR_PERMISSIONS: frozenset[Permission] = (
     _USER_PERMISSIONS - {Permission.CHATS_READ_OWN}
 ) | _SENIOR_EXTRA
 
+# Как у старшего отдела, но чаты/скоуп — по своим группам, не по всему отделу.
+_GROUP_SENIOR_PERMISSIONS: frozenset[Permission] = (
+    (_SENIOR_PERMISSIONS - {Permission.CHATS_READ_DEPARTMENT})
+    | {Permission.CHATS_READ_GROUP}
+)
+
 _ADMIN_PERMISSIONS: frozenset[Permission] = ALL_PERMISSIONS
 
 _ACCOUNTANT_PERMISSIONS: frozenset[Permission] = frozenset(
@@ -107,6 +113,7 @@ _ACCOUNTANT_PERMISSIONS: frozenset[Permission] = frozenset(
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.USER: _USER_PERMISSIONS,
     UserRole.SENIOR: _SENIOR_PERMISSIONS,
+    UserRole.GROUP_SENIOR: _GROUP_SENIOR_PERMISSIONS,
     UserRole.ADMIN: _ADMIN_PERMISSIONS,
     UserRole.ACCOUNTANT: _ACCOUNTANT_PERMISSIONS,
 }

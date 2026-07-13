@@ -26,9 +26,17 @@ class ChatTakeoversService:
         role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
         if role == UserRole.ADMIN:
             return True
-        if role != UserRole.SENIOR:
+        if role == UserRole.SENIOR:
+            return actor.department_id is not None and actor.department_id == chat_dept_id
+        return False
+
+    def _can_takeover_group(self, actor: User, chat_group_id: int | None, ctx) -> bool:
+        role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        if role != UserRole.GROUP_SENIOR:
             return False
-        return actor.department_id is not None and actor.department_id == chat_dept_id
+        if chat_group_id is None:
+            return False
+        return chat_group_id in set(ctx.actor_group_ids)
 
     async def start(
         self,
@@ -43,8 +51,14 @@ class ChatTakeoversService:
             raise NotFound(message="Chat not found")
 
         dept_id = chat_department_id(chat)
-        if not self._can_takeover_department(actor, dept_id):
-            raise PermissionDenied(message="Takeover allowed only in your department")
+        role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        allowed = (
+            self._can_takeover_department(actor, dept_id)
+            if role != UserRole.GROUP_SENIOR
+            else self._can_takeover_group(actor, chat.assigned_group_id, ctx)
+        )
+        if not allowed:
+            raise PermissionDenied(message="Takeover allowed only in your scope")
 
         if not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")

@@ -4,7 +4,7 @@ import random
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from app.modules.db.models.department import Department
 from app.modules.db.models.enums import (
     CONTACT_TRANSFER_ACTIVE_STATES,
     TransferStatus,
+    UserAvailability,
     UserDeletionRequestState,
     UserRole,
     UserStatus,
@@ -28,50 +29,61 @@ from app.modules.db.models.enums import (
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.db.models.user_deletion_request import UserDeletionRequest
+from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.rbac.scope import can_act_on_user
-from app.modules.users.memberships import active_user_ids_in_group, list_user_group_ids
+from app.modules.users.memberships import list_user_group_ids
 from app.modules.users.repository import UserRepository
 from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 
+# Кому можно отдать карточки при удалении оператора (внутри той же группы).
+_REBALANCE_ROLES: tuple[UserRole, ...] = (
+    UserRole.USER,
+    UserRole.GROUP_SENIOR,
+)
 
-async def _active_group_member_ids(
+
+async def _peer_owner_ids_in_group(
     session: AsyncSession,
     group_id: int,
     *,
     exclude_user_id: int,
 ) -> list[int]:
-    ids = await active_user_ids_in_group(
-        session,
-        group_id,
-        roles=(UserRole.USER, UserRole.SENIOR),
-    )
-    return [uid for uid in ids if uid != exclude_user_id]
+    """Активные операторы группы — кандидаты на карточки удаляемого.
 
-
-async def _assert_rebalance_possible(session: AsyncSession, target_user_id: int) -> None:
-    gids = await session.execute(
-        select(ContactGroupAssignment.group_id)
-        .where(ContactGroupAssignment.owner_user_id == target_user_id)
-        .distinct(),
+    Сначала available, иначе любые active в группе (кроме удаляемого).
+    """
+    membership_subq = select(UserGroupMembership.user_id).where(
+        UserGroupMembership.group_id == group_id,
     )
-    for gid_raw in gids.scalars().all():
-        gid = int(gid_raw)
-        cnt = await session.scalar(
-            select(func.count())
-            .select_from(ContactGroupAssignment)
-            .where(
-                ContactGroupAssignment.owner_user_id == target_user_id,
-                ContactGroupAssignment.group_id == gid,
+    result = await session.execute(
+        select(User.id, User.availability)
+        .where(
+            User.status == UserStatus.ACTIVE,
+            User.role.in_(_REBALANCE_ROLES),
+            User.id != exclude_user_id,
+            or_(
+                User.group_id == group_id,
+                User.id.in_(membership_subq),
             ),
         )
-        if not cnt:
-            continue
-        peers = await _active_group_member_ids(session, gid, exclude_user_id=target_user_id)
-        if not peers:
-            raise ValidationError(
-                message="Cannot approve: no active colleagues left in the group to receive cards",
-                details={"group_id": gid},
-            )
+        .distinct(),
+    )
+    rows = list(result.all())
+    if not rows:
+        return []
+
+    available = [
+        int(uid)
+        for uid, availability in rows
+        if availability == UserAvailability.AVAILABLE
+        or (
+            isinstance(availability, str)
+            and availability == UserAvailability.AVAILABLE.value
+        )
+    ]
+    if available:
+        return available
+    return [int(uid) for uid, _ in rows]
 
 
 async def _cancel_active_transfers_for_user(session: AsyncSession, user_id: int) -> None:
@@ -95,6 +107,10 @@ async def _reassign_owned_cards_evenly(
     *,
     target_user_id: int,
 ) -> int:
+    """Случайно и равномерно раздаёт карточки коллегам в той же группе.
+
+    Если в группе никого не осталось — снимает владельца (карточка остаётся в группе).
+    """
     result = await session.execute(
         select(ContactGroupAssignment).where(
             ContactGroupAssignment.owner_user_id == target_user_id,
@@ -110,24 +126,28 @@ async def _reassign_owned_cards_evenly(
 
     touched = 0
     for group_id, assignments in by_group.items():
-        peers = await _active_group_member_ids(session, group_id, exclude_user_id=target_user_id)
+        peers = await _peer_owner_ids_in_group(
+            session,
+            group_id,
+            exclude_user_id=target_user_id,
+        )
         random.shuffle(assignments)
         if not peers:
-            for a in assignments:
-                a.owner_user_id = None
-                a.assignment_source = ASSIGNMENT_USER_REMOVAL_REBALANCE
-                a.assigned_at = utc_now()
+            for assignment in assignments:
+                assignment.owner_user_id = None
+                assignment.assignment_source = ASSIGNMENT_USER_REMOVAL_REBALANCE
+                assignment.assigned_at = utc_now()
                 touched += 1
             continue
 
         peer_list = list(peers)
         random.shuffle(peer_list)
         n = len(peer_list)
-        for i, a in enumerate(assignments):
+        for i, assignment in enumerate(assignments):
             new_owner = peer_list[i % n]
             await reassign_owner(
                 session,
-                int(a.contact_id),
+                int(assignment.contact_id),
                 group_id,
                 new_owner,
                 source=ASSIGNMENT_USER_REMOVAL_REBALANCE,
@@ -158,7 +178,8 @@ class UserDeletionRequestService:
         *,
         comment: str | None,
     ) -> UserDeletionRequest:
-        if self._actor_role(actor) != UserRole.SENIOR:
+        actor_role = self._actor_role(actor)
+        if actor_role not in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
             raise PermissionDenied(message="Only senior can request user deletion")
         if actor.id == target_user_id:
             raise ValidationError(message="Cannot request deletion for yourself")
@@ -177,31 +198,20 @@ class UserDeletionRequestService:
 
         if target.status != UserStatus.ACTIVE:
             raise ValidationError(message="User is not active")
-            raise PermissionDenied(message="Target user is outside your department")
 
         if target.group_id is None and not await list_user_group_ids(self._session, target.id):
             raise ValidationError(message="Target user has no group; reassign manually first")
 
         target_group_ids = await list_user_group_ids(self._session, target.id)
-        for gid in target_group_ids:
-            group = await self._session.get(Group, gid)
-            if group is None or group.department_id != actor.department_id:
-                raise PermissionDenied(message="Target group is outside your department")
-
-        for gid in target_group_ids:
-            peers = await _active_group_member_ids(
-                self._session,
-                gid,
-                exclude_user_id=target_user_id,
-            )
-            if not peers:
-                raise ValidationError(
-                    message=(
-                        "No other active operators in one of the user's groups to receive cards; "
-                        "add a colleague first"
-                    ),
-                    details={"group_id": gid},
-                )
+        if actor_role == UserRole.SENIOR:
+            for gid in target_group_ids:
+                group = await self._session.get(Group, gid)
+                if group is None or group.department_id != actor.department_id:
+                    raise PermissionDenied(message="Target group is outside your department")
+        else:
+            actor_groups = set(await list_user_group_ids(self._session, actor.id))
+            if not set(target_group_ids).issubset(actor_groups):
+                raise PermissionDenied(message="Target user is outside your groups")
 
         req = UserDeletionRequest(
             target_user_id=target_user_id,
@@ -231,7 +241,7 @@ class UserDeletionRequestService:
         stmt = select(UserDeletionRequest).order_by(UserDeletionRequest.created_at.desc())
         if state is not None:
             stmt = stmt.where(UserDeletionRequest.state == state)
-        if role == UserRole.SENIOR:
+        if role in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
             stmt = stmt.where(UserDeletionRequest.requested_by_user_id == actor.id)
         elif role != UserRole.ADMIN:
             raise PermissionDenied()
@@ -242,7 +252,6 @@ class UserDeletionRequestService:
         if target.status != UserStatus.ACTIVE:
             raise Conflict(message="User is already inactive")
 
-        await _assert_rebalance_possible(self._session, target.id)
         await _cancel_active_transfers_for_user(self._session, target.id)
         await _reassign_owned_cards_evenly(self._session, target_user_id=target.id)
 
