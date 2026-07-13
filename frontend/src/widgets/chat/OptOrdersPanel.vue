@@ -122,8 +122,8 @@ const hasPendingSubmission = computed(() =>
   ),
 )
 
-function canDeleteOrder(order: OptOrder): boolean {
-  return order.payments.length === 0
+function canDeleteOrder(_order: OptOrder): boolean {
+  return !props.disabled
 }
 
 function canAdjustCommission(order: OptOrder): boolean {
@@ -516,6 +516,7 @@ async function onDelete(): Promise<void> {
     selectedOrderId.value = pickSelectedOrder(orders.value, null)
     if (!needsPolling.value) stopPolling()
     closeDeleteModal()
+    emit('paymentsChanged')
     message.success(`Заявка ${order.order_no} удалена`)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось удалить заявку')
@@ -1030,13 +1031,32 @@ onUnmounted(() => {
           <p class="opt-orders__meta">
             Файл: {{ deleteTarget.source_filename || deleteTarget.crm_id }}
           </p>
+          <p v-if="deleteTarget.lines.length === 1" class="opt-orders__meta">
+            В заявке одна фактура — её нельзя удалить отдельно, удаляется вся заявка.
+          </p>
+          <p
+            v-if="deleteTarget.payments.length"
+            class="opt-orders__meta opt-orders__meta--warning"
+          >
+            В заявке {{ deleteTarget.payments.length }}
+            {{
+              deleteTarget.payments.length === 1
+                ? 'оплата'
+                : deleteTarget.payments.length < 5
+                  ? 'оплаты'
+                  : 'оплат'
+            }}
+            — они тоже будут удалены.
+          </p>
           <p v-if="deleteTarget.status === 'submitted'" class="opt-orders__meta opt-orders__meta--warning">
             Заявка уже отправлена в 1С. Удаление затронет только CRM — запись в 1С останется.
           </p>
         </template>
         <template v-else>
           <p class="opt-orders__preview-text">
-            Это действие необратимо. Заявка и все связанные строки будут удалены без восстановления.
+            Это действие необратимо. Заявка, фактуры
+            <template v-if="deleteTarget.payments.length"> и оплаты</template>
+            будут удалены без восстановления.
           </p>
           <p v-if="deleteTarget.status === 'submitted'" class="opt-orders__meta opt-orders__meta--warning">
             Запись в 1С не удаляется автоматически.

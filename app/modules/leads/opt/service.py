@@ -930,8 +930,6 @@ class OptOrderService:
 
     async def delete_order(self, actor: User, lead_id: int, order_id: int) -> None:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
-        if order.payments:
-            raise ValidationError(message="Нельзя удалить заявку с записанными оплатами")
         lead_id_value = order.lead_id
         order_no = order.order_no
         try:
