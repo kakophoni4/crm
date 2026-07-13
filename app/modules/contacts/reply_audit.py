@@ -55,6 +55,7 @@ class ContactReplyAuditService:
                 message_id=row.message_id,
                 chat_id=row.chat_id,
                 author_user_id=row.author_user_id,
+                author_username=row.author.username,
                 author_full_name=row.author.full_name,
                 card_owner_user_id=row.card_owner_user_id,
                 card_owner_full_name=row.card_owner.full_name,

@@ -420,13 +420,27 @@ class ChatRepository:
 
         owner_user = aliased(User)
         sender_user = aliased(User)
+        author_user = aliased(User)
+        # Prefer message.sender_user_id; fall back to reply-audit author
+        # (covers older rows / phone-synced outbound that still have an audit).
+        sender_label = func.nullif(
+            func.trim(
+                func.coalesce(
+                    sender_user.username,
+                    author_user.username,
+                    sender_user.full_name,
+                    author_user.full_name,
+                )
+            ),
+            "",
+        )
         stmt = (
             select(
                 ChatMessage,
                 MessageReplyAudit.card_owner_user_id,
                 owner_user.full_name,
                 MessageReplyAudit.group_id,
-                sender_user.username,
+                sender_label.label("sender_username"),
             )
             .select_from(ChatMessage)
             .outerjoin(
@@ -435,6 +449,7 @@ class ChatRepository:
             )
             .outerjoin(owner_user, owner_user.id == MessageReplyAudit.card_owner_user_id)
             .outerjoin(sender_user, sender_user.id == ChatMessage.sender_user_id)
+            .outerjoin(author_user, author_user.id == MessageReplyAudit.author_user_id)
             .where(ChatMessage.chat_id == chat_id)
             .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(limit + 1)

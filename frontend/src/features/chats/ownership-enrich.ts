@@ -92,11 +92,20 @@ export function mergeReplyAuditIntoMessages(
 
       author_full_name: row.author_full_name,
 
+      author_username: row.author_username ?? null,
+
       card_owner_full_name: row.card_owner_full_name,
 
       author_user_id: row.author_user_id,
 
       card_owner_user_id: row.card_owner_user_id,
+
+      sender_username:
+        message.sender_username?.trim()
+        || row.author_username?.trim()
+        || row.author_full_name?.trim()
+        || message.sender_username
+        || null,
 
     }
 

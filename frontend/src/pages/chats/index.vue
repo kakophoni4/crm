@@ -209,6 +209,13 @@ const transferGroupOptions = computed(() => {
   }))
 })
 
+const fallbackOutboundNick = computed(() => {
+  const chat = store.currentChat
+  if (chat?.bot_id == null) return null
+  const bot = bots.value.find((item) => item.id === chat.bot_id)
+  return bot?.channel === 'telegram' ? 'TG Bot' : null
+})
+
 async function onCardTransferred(): Promise<void> {
   await store.fetchList()
   await store.refreshCurrentChatOwner()
@@ -705,6 +712,7 @@ onUnmounted(() => {
             :chat-id="store.currentChatId"
             :contact-id="store.currentChat.contact_id"
             :contact-name="store.currentChat.contact_name"
+            :fallback-outbound-nick="fallbackOutboundNick"
             @load-older="store.loadOlderMessages()"
             @reply="onReplyToMessage"
           />

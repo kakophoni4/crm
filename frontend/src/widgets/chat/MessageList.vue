@@ -7,6 +7,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import type { ChatMessage } from '@/entities/chat/types'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
+import { useAuthStore } from '@/shared/store/auth'
 import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
 import OptAttachmentBar from '@/widgets/chat/OptAttachmentBar.vue'
 import { isAttachmentPlaceholderText } from '@/features/chats/message-preview'
@@ -19,6 +20,8 @@ const props = defineProps<{
   chatId?: number | null
   contactId?: number | null
   contactName?: string | null
+  /** Shown on outbound bubbles when sender nick is unknown (e.g. Telegram bot sync). */
+  fallbackOutboundNick?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -26,6 +29,7 @@ const emit = defineEmits<{
   reply: [message: ChatMessage]
 }>()
 
+const auth = useAuthStore()
 const viewportRef = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
 const loadingOlderGuard = ref(false)
@@ -78,8 +82,15 @@ function shouldShowDateSeparator(index: number): boolean {
 
 function senderNick(msg: ChatMessage): string | null {
   if (msg.direction !== 'outbound') return null
-  const nick = msg.sender_username?.trim()
-  return nick || null
+  const fromApi =
+    msg.sender_username?.trim()
+    || msg.author_username?.trim()
+    || msg.author_full_name?.trim()
+  if (fromApi) return fromApi
+  if (msg.sender_user_id != null && msg.sender_user_id === auth.user?.id) {
+    return auth.user.username?.trim() || auth.user.full_name?.trim() || null
+  }
+  return props.fallbackOutboundNick?.trim() || null
 }
 
 function replyPreview(msg: ChatMessage): string {

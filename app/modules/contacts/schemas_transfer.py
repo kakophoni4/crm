@@ -63,6 +63,7 @@ class ReplyAuditItem(BaseModel):
     message_id: int
     chat_id: int
     author_user_id: int
+    author_username: str | None = None
     author_full_name: str
     card_owner_user_id: int
     card_owner_full_name: str

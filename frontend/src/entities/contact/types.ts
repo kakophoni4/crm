@@ -365,6 +365,8 @@ export interface ReplyAuditItem {
 
   author_user_id: number
 
+  author_username?: string | null
+
   author_full_name: string
 
   card_owner_user_id: number

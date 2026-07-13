@@ -21,9 +21,15 @@ from app.modules.contacts.ownership import (
 )
 from app.modules.contacts.realtime_payloads import contact_group_context
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.bots.repository import BotRepository
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.contact import Contact
-from app.modules.db.models.enums import AuditAction, MessageDirection, MessageKind
+from app.modules.db.models.enums import (
+    AuditAction,
+    BotChannel,
+    MessageDirection,
+    MessageKind,
+)
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
@@ -33,6 +39,8 @@ from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.workers.bots.dispatch_outbound import enqueue_outbound
 
 logger = structlog.get_logger(__name__)
+
+_TG_BOT_SENDER_LABEL = "TG Bot"
 
 
 def _preview_text(text: str | None, limit: int = 200) -> str | None:
@@ -149,6 +157,7 @@ class ChatMessagesService:
             cursor=cursor,
             limit=limit,
         )
+        tg_bot_fallback = await self._telegram_bot_sender_fallback(chat.bot_id)
         items: list[dict[str, Any]] = []
         for (
             message,
@@ -157,18 +166,39 @@ class ChatMessagesService:
             card_owner_group_id,
             sender_username,
         ) in rows:
+            label = (sender_username or "").strip() or None
+            direction = (
+                message.direction
+                if isinstance(message.direction, MessageDirection)
+                else MessageDirection(str(message.direction))
+            )
+            if label is None and tg_bot_fallback and direction == MessageDirection.OUTBOUND:
+                label = tg_bot_fallback
             payload = to_message_response(
                 message,
                 card_owner_user_id=card_owner_user_id,
                 card_owner_name=card_owner_name,
                 card_owner_group_id=card_owner_group_id,
-                sender_username=sender_username,
+                sender_username=label,
             ).model_dump()
             items.append(payload)
         return {
             "items": items,
             "next_cursor": next_cursor,
         }
+
+    async def _telegram_bot_sender_fallback(self, bot_id: int | None) -> str | None:
+        if bot_id is None:
+            return None
+        bot = await BotRepository(self._session).get_by_id(bot_id)
+        if bot is None:
+            return None
+        channel = (
+            bot.channel if isinstance(bot.channel, BotChannel) else BotChannel(str(bot.channel))
+        )
+        if channel != BotChannel.TELEGRAM:
+            return None
+        return _TG_BOT_SENDER_LABEL
 
     async def send_outbound(
         self,

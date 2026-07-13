@@ -90,6 +90,7 @@ export interface ChatMessage {
   created_at: string
   idempotency_key?: string | null
   is_on_behalf?: boolean
+  author_username?: string | null
   author_full_name?: string | null
   card_owner_full_name?: string | null
   author_user_id?: number | null
