@@ -37,6 +37,10 @@ import {
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { uploadFile } from '@/features/chats/api'
+import {
+  peekPaymentsRegistry,
+  prefetchPaymentsRegistry,
+} from '@/features/chats/payments-cache'
 import { AppError } from '@/shared/api/http'
 
 defineProps<{
@@ -129,20 +133,36 @@ function clientLabel(row: OptOrderRegistryItem): string {
 }
 
 async function loadItems(): Promise<void> {
-  loading.value = true
+  const cached = peekPaymentsRegistry()
+  if (cached?.items?.length) {
+    items.value = cached.items
+    total.value = cached.total
+    loading.value = false
+  } else {
+    loading.value = true
+  }
   try {
-    const data = await listOptOrdersRegistry({
-      payment_status: 'unpaid,partial',
-      open_only: true,
-      limit: 100,
-      offset: 0,
-    })
-    items.value = data.items
-    total.value = data.total
+    await prefetchPaymentsRegistry(true)
+    const fresh = peekPaymentsRegistry()
+    if (fresh) {
+      items.value = fresh.items
+      total.value = fresh.total
+    } else {
+      const data = await listOptOrdersRegistry({
+        payment_status: 'unpaid,partial',
+        open_only: true,
+        limit: 100,
+        offset: 0,
+      })
+      items.value = data.items
+      total.value = data.total
+    }
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить оплаты')
-    items.value = []
-    total.value = 0
+    if (!cached?.items?.length) {
+      message.error(err instanceof AppError ? err.message : 'Не удалось загрузить оплаты')
+      items.value = []
+      total.value = 0
+    }
   } finally {
     loading.value = false
   }

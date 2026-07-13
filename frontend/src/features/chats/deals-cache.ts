@@ -4,6 +4,7 @@ import {
   CHAT_SNAPSHOT_FRESH_MS,
 } from '@/features/chats/snapshot-cache'
 import { getLead, listContactLeads } from '@/features/leads/api'
+import { readLeadDealFields } from '@/features/leads/order-fields'
 import type { LeadDetail, LeadListItem } from '@/features/leads/types'
 
 export interface ChatDealsSnapshot {
@@ -52,6 +53,11 @@ export function getCachedLeadDetail(leadId: number): LeadDetail | null {
 
 export function setCachedLeadDetail(detail: LeadDetail): void {
   leadDetailById.set(detail.id, detail)
+  void import('@/features/chats/chats-disk-cache')
+    .then((mod) => {
+      mod.trackLeadDetailForDisk(detail)
+    })
+    .catch(() => undefined)
 }
 
 export function setChatDealsSnapshot(
@@ -60,11 +66,70 @@ export function setChatDealsSnapshot(
   preferredLeadId: number | null = pickPreferredLeadId(leadItems),
   options: { fetchedAt?: number } = {},
 ): void {
-  touch(chatId, {
+  const snapshot: ChatDealsSnapshot = {
     leadItems,
     preferredLeadId,
     fetchedAt: options.fetchedAt ?? Date.now(),
+  }
+  touch(chatId, snapshot)
+  void import('@/features/chats/chats-disk-cache')
+    .then((mod) => {
+      mod.trackDealsForDisk(chatId, snapshot)
+    })
+    .catch(() => undefined)
+}
+
+/** Prefetch deals from list row — no need to wait for full chat/messages snapshot. */
+export async function prefetchChatDealsFromListItem(chat: {
+  id: number
+  contact_id: number
+  assigned_group_id: number | null
+}): Promise<void> {
+  if (chat.assigned_group_id == null) return
+  if (inflight.has(chat.id)) return
+  if (isChatDealsSnapshotFresh(chat.id)) return
+  inflight.add(chat.id)
+  try {
+    const data = await listContactLeads(chat.contact_id, {
+      group_id: chat.assigned_group_id,
+      limit: 100,
+    })
+    const items = data.items.filter((lead) => lead.chat_id === chat.id)
+    const preferredLeadId = pickPreferredLeadId(items)
+    setChatDealsSnapshot(chat.id, items, preferredLeadId)
+    if (preferredLeadId != null) {
+      const lead = await getLead(preferredLeadId)
+      setCachedLeadDetail(lead)
+      await prefetchOptOrdersIfNeeded(lead)
+    }
+  } catch {
+    /* prefetch is best-effort */
+  } finally {
+    inflight.delete(chat.id)
+  }
+}
+
+export function scheduleDealsPrefetchFromList(
+  chats: Iterable<{ id: number; contact_id: number; assigned_group_id: number | null }>,
+): void {
+  const list = [...chats].filter((c) => c.assigned_group_id != null).slice(0, CHAT_SNAPSHOT_CACHE_SIZE)
+  let i = 0
+  const concurrency = 4
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (i < list.length) {
+      const chat = list[i]
+      i += 1
+      if (chat) await prefetchChatDealsFromListItem(chat)
+    }
   })
+  void Promise.all(workers)
+}
+
+async function prefetchOptOrdersIfNeeded(detail: LeadDetail): Promise<void> {
+  const service = readLeadDealFields(detail.custom_fields).order?.service?.trim()
+  if (service !== 'ОПТ') return
+  const { prefetchOptOrders } = await import('@/features/chats/payments-cache')
+  await prefetchOptOrders(detail.id)
 }
 
 export async function prefetchChatDeals(detail: ChatDetail): Promise<void> {
@@ -81,7 +146,9 @@ export async function prefetchChatDeals(detail: ChatDetail): Promise<void> {
     const preferredLeadId = pickPreferredLeadId(items)
     setChatDealsSnapshot(chatId, items, preferredLeadId)
     if (preferredLeadId != null) {
-      setCachedLeadDetail(await getLead(preferredLeadId))
+      const lead = await getLead(preferredLeadId)
+      setCachedLeadDetail(lead)
+      await prefetchOptOrdersIfNeeded(lead)
     }
   } catch {
     /* prefetch is best-effort */

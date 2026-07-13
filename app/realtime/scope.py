@@ -57,7 +57,10 @@ def event_visible(ws_scope: WsScope, event: Event) -> bool:
         dept_id = int(scope["department_id"])
         if ws_scope.role == UserRole.SENIOR:
             return ws_scope.department_id == dept_id
-        return False
+        # Chat events often include both department_id and group_id.
+        # Operators must not be dropped by department_id — fall through to group_id.
+        if "group_id" not in scope:
+            return False
 
     if "group_id" in scope:
         target_group = int(scope["group_id"])

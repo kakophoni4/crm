@@ -116,6 +116,9 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
             await session.commit()
 
             if event_type == "message.received":
+                # Publish immediately so operators see text without waiting for file download.
+                chat_scope = await chat_event_scope(session, result.chat_id)
+                await publish(event_name, publish_payload, scope=chat_scope or None)
                 for idx in attachment_indices:
                     await download_attachment(
                         "download_attachment",
@@ -124,8 +127,6 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
                             "attachment_index": idx,
                         },
                     )
-                chat_scope = await chat_event_scope(session, result.chat_id)
-                await publish(event_name, publish_payload, scope=chat_scope or None)
         except Exception as exc:
             await session.rollback()
             async with session_factory() as fail_session:

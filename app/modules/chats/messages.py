@@ -353,11 +353,11 @@ class ChatMessagesService:
                 )
 
         scope: dict[str, Any] = {}
-        if chat.assigned_department_id is not None:
-            scope["department_id"] = chat.assigned_department_id
         if group_id is not None:
             scope["group_id"] = group_id
-        elif chat.assigned_user_id is not None:
+        if chat.assigned_department_id is not None:
+            scope["department_id"] = chat.assigned_department_id
+        if not scope and chat.assigned_user_id is not None:
             scope["user_id"] = chat.assigned_user_id
 
         await publish(

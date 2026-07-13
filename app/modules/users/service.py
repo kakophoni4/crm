@@ -3,8 +3,9 @@ from __future__ import annotations
 import secrets
 import string
 
+import structlog
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.repository import AuthRepository
@@ -30,6 +31,40 @@ from app.modules.users.schemas import (
 from app.modules.users.serialization import user_to_out
 from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 from app.shared.security.passwords import hash_password
+
+logger = structlog.get_logger(__name__)
+
+
+def _db_error_detail(exc: BaseException) -> str:
+    orig = getattr(exc, "orig", None)
+    return str(orig or exc)
+
+
+def _conflict_from_db(exc: BaseException) -> Conflict:
+    detail = _db_error_detail(exc)
+    logger.warning("user_update_db_conflict", error=detail)
+    lowered = detail.lower()
+    if "group_senior" in lowered or (
+        "user_role" in lowered and "invalid input value" in lowered
+    ):
+        return Conflict(
+            message="Роль «Старший группы» ещё не добавлена в БД — примените миграцию 0072",
+            details={"db": detail},
+        )
+    if "unique" in lowered and ("email" in lowered or "username" in lowered):
+        return Conflict(
+            message="Email или username уже занят",
+            details={"db": detail},
+        )
+    if "user_group_membership" in lowered or "uq_user_group" in lowered:
+        return Conflict(
+            message="Конфликт назначения групп пользователя",
+            details={"db": detail},
+        )
+    return Conflict(
+        message=f"Не удалось сохранить пользователя: {detail[:240]}",
+        details={"db": detail},
+    )
 
 
 def _generate_temp_password(length: int = 16) -> str:
@@ -421,14 +456,9 @@ class UserService:
 
             await self._session.flush()
             await self._repo.commit()
-        except IntegrityError as exc:
+        except DBAPIError as exc:
             await self._repo.rollback()
-            detail = str(getattr(exc, "orig", exc))
-            if "user_role" in detail and "group_senior" in detail:
-                raise Conflict(
-                    message="Роль group_senior недоступна в БД — примените миграцию 0072",
-                ) from exc
-            raise Conflict(message="Failed to update user due to data conflict") from exc
+            raise _conflict_from_db(exc) from exc
 
         await self._session.refresh(target)
         return await user_to_out(self._session, target)

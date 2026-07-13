@@ -26,12 +26,19 @@ import {
 } from '@/features/chats/ownership-enrich'
 import { chatWorkflowLabelPatch, chatListItemIsAnswered, chatListItemNeedsResponse } from '@/features/leads/mapping'
 import {
+  hydrateChatsDiskCaches,
+  peekPersistedChatList,
+  persistChatList,
+} from '@/features/chats/chats-disk-cache'
+import { scheduleDealsPrefetchFromList } from '@/features/chats/deals-cache'
+import { prefetchPaymentsRegistry } from '@/features/chats/payments-cache'
+import {
   CHAT_SNAPSHOT_CACHE_SIZE,
   getChatSnapshot,
-  isChatSnapshotFresh,
   priorityPrefetchChat,
   scheduleChatSnapshotsPrefetch,
   setChatSnapshot,
+  waitForChatSnapshot,
 } from '@/features/chats/snapshot-cache'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { priorityPrefetchAttachmentsForMessages } from '@/shared/lib/attachment-blob-cache'
@@ -479,6 +486,29 @@ export const useChatsStore = defineStore('chats', () => {
     })
   }
 
+  function hydrateFromDisk(): void {
+    hydrateChatsDiskCaches()
+    if (listItems.value.length > 0) return
+    const cached = peekPersistedChatList()
+    if (!cached?.items.length) return
+    listItems.value = enrichWithGroupNames(cached.items).map((chat) => ({
+      ...chat,
+      needs_response: chatListItemNeedsResponse(chat),
+    }))
+    listNextCursor.value = cached.nextCursor
+    listLoaded.value = true
+    needsResponseChatIds.value = new Set(
+      listItems.value.filter((chat) => chatListItemNeedsResponse(chat)).map((chat) => chat.id),
+    )
+    // Warm deals/snapshots from list while network list refreshes.
+    scheduleDealsPrefetchFromList(listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE))
+    scheduleChatSnapshotsPrefetch(
+      listItems.value.slice(0, 5).map((c) => c.id),
+      { priority: true },
+    )
+    void prefetchPaymentsRegistry()
+  }
+
   async function fetchList(append = false): Promise<void> {
     listLoading.value = true
     if (!append) listError.value = null
@@ -502,11 +532,15 @@ export const useChatsStore = defineStore('chats', () => {
             return chat != null && !chatListItemIsAnswered(chat)
           }),
         )
+        persistChatList(listItems.value, data?.next_cursor ?? null)
       }
       listNextCursor.value = data?.next_cursor ?? null
     } catch (err) {
       if (!append) {
-        listItems.value = []
+        // Keep disk-hydrated list on network failure instead of wiping UI.
+        if (listItems.value.length === 0) {
+          listItems.value = []
+        }
         listError.value = err instanceof Error ? err.message : 'Не удалось загрузить чаты'
       }
       throw err
@@ -519,6 +553,9 @@ export const useChatsStore = defineStore('chats', () => {
         if (topIds.length > 3) {
           scheduleChatSnapshotsPrefetch(topIds.slice(3))
         }
+        // Deals/заявки — сразу с list item, не ждать полного snapshot сообщений.
+        scheduleDealsPrefetchFromList(listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE))
+        void prefetchPaymentsRegistry()
       }
     }
   }
@@ -648,9 +685,21 @@ export const useChatsStore = defineStore('chats', () => {
     selectedLeadId.value = null
     clearHighlight(chatId)
 
-    const snapshot = getChatSnapshot(chatId)
+    let snapshot = getChatSnapshot(chatId)
     const cached = listItems.value.find((c) => c.id === chatId)
     currentChat.value = snapshot?.detail ?? (cached ? ({ ...cached } as ChatDetail) : null)
+
+    if (!snapshot) {
+      // Kick prefetch and briefly wait — often already in-flight from hover/list.
+      priorityPrefetchChat(chatId)
+      const waited = await waitForChatSnapshot(chatId, 2_500)
+      if (!isActiveChat(chatId, seq)) return
+      if (waited) {
+        snapshot = waited
+        currentChat.value = waited.detail
+      }
+    }
+
     if (snapshot) {
       messages.value = snapshot.messages
       messagesNextCursor.value = snapshot.nextCursor
@@ -664,7 +713,8 @@ export const useChatsStore = defineStore('chats', () => {
 
     try {
       void ensureGroupDirectory()
-      if (snapshot && isChatSnapshotFresh(chatId)) {
+      // With any snapshot (even stale) show messages immediately and refresh in background.
+      if (snapshot) {
         void syncChatFromNetwork(chatId, seq)
         return
       }
@@ -849,7 +899,24 @@ export const useChatsStore = defineStore('chats', () => {
 
     const messageId = Number(payload.message_id)
     if (currentChatId.value === chatId) {
-      if (Number.isFinite(messageId)) {
+      if (Number.isFinite(messageId) && messageId > 0) {
+        // Optimistic stub so the bubble appears even if listMessages is slow/fails.
+        if (!messages.value.some((m) => m.id === messageId)) {
+          messages.value = [
+            ...messages.value,
+            {
+              id: messageId,
+              chat_id: chatId,
+              direction: 'inbound',
+              kind: 'text',
+              text: preview ?? null,
+              attachments: [],
+              sender_user_id: null,
+              reply_to_message_id: null,
+              created_at: now,
+            },
+          ]
+        }
         await refreshOpenChatMessages(chatId, messageId)
       }
     } else {
@@ -920,25 +987,37 @@ export const useChatsStore = defineStore('chats', () => {
       const fresh = enriched.filter((m) => !existingIds.has(m.id))
       if (fresh.length > 0) {
         messages.value = [...messages.value, ...fresh]
-        return
-      }
-      const updated = enriched.find((m) => m.id === messageId)
-      if (updated) {
-        const idx = messages.value.findIndex((m) => m.id === messageId)
-        if (idx >= 0) {
-          messages.value[idx] = updated
-          messages.value = [...messages.value]
-          return
+      } else {
+        const updated = enriched.find((m) => m.id === messageId)
+        if (updated) {
+          const idx = messages.value.findIndex((m) => m.id === messageId)
+          if (idx >= 0) {
+            messages.value[idx] = updated
+            messages.value = [...messages.value]
+          } else if (messageId > 0) {
+            messages.value = [...messages.value, updated]
+          }
+        } else if (!existingIds.has(messageId) && messageId > 0) {
+          const fallback = enriched.slice(-1)[0]
+          if (fallback) {
+            messages.value = [...messages.value, fallback]
+          }
         }
       }
-      if (!existingIds.has(messageId) && messageId > 0) {
-        const fallback = enriched.find((m) => m.id === messageId) ?? enriched.slice(-1)[0]
-        if (fallback) {
-          messages.value = [...messages.value, fallback]
-        }
+
+      if (currentChat.value) {
+        setChatSnapshot(
+          chatId,
+          {
+            detail: currentChat.value,
+            messages: messages.value,
+            nextCursor: messagesNextCursor.value,
+          },
+          { prefetchAttachments: false },
+        )
       }
     } catch {
-      /* list refresh is best-effort */
+      /* list refresh is best-effort; optimistic stub may already be visible */
     }
   }
 
@@ -1054,6 +1133,7 @@ export const useChatsStore = defineStore('chats', () => {
     isInputBlocked,
     isSenior,
     fetchList,
+    hydrateFromDisk,
     refreshCurrentChatOwner,
     openChat,
     closeChat,

@@ -228,6 +228,43 @@ async def test_inbound_message_visible_to_group_members(
 
 
 @pytest.mark.asyncio
+async def test_inbound_message_visible_with_department_and_group_scope(
+    db_ready: None,
+    ownership_org: dict[str, object],
+) -> None:
+    """Regression: department_id must not hide group-scoped chat events from operators."""
+    user_ids = ownership_org["user_ids"]
+    assert isinstance(user_ids, dict)
+    group_id = int(ownership_org["group_id"])
+    dept_id = int(ownership_org["dept_id"])
+    event = Event(
+        topic="chat.message.inbound",
+        payload={"chat_id": 1, "message_id": 99},
+        scope={"department_id": dept_id, "group_id": group_id},
+    )
+    member_scope = WsScope(
+        user_id=user_ids["owner.op1@crm.local"],
+        role=UserRole.USER,
+        department_id=dept_id,
+        group_id=None,
+        actor_group_ids=frozenset({group_id}),
+        department_group_ids=frozenset(),
+        visible_user_ids=frozenset(),
+    )
+    outsider_scope = WsScope(
+        user_id=user_ids["owner.op2@crm.local"],
+        role=UserRole.USER,
+        department_id=dept_id,
+        group_id=None,
+        actor_group_ids=frozenset(),
+        department_group_ids=frozenset(),
+        visible_user_ids=frozenset(),
+    )
+    assert event_visible(member_scope, event) is True
+    assert event_visible(outsider_scope, event) is False
+
+
+@pytest.mark.asyncio
 async def test_inbound_message_without_scope_hidden_from_users(
     db_ready: None,
     ownership_org: dict[str, object],

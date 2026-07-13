@@ -34,6 +34,7 @@ import {
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
+import { peekOptOrders, prefetchOptOrders } from '@/features/chats/payments-cache'
 import { useChatsStore } from '@/features/chats/store'
 import { uploadFile } from '@/features/chats/api'
 import type { OptOrder, OptOrderLine } from '@/features/leads/opt-types'
@@ -419,20 +420,31 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
     stopPolling()
     return
   }
-  if (!options?.silent) loading.value = true
+  const leadId = props.leadId
+  const cached = peekOptOrders(leadId)
+  if (cached?.length && !options?.silent) {
+    orders.value = [...cached].sort((a, b) => a.order_no - b.order_no)
+    selectedOrderId.value = pickSelectedOrder(
+      orders.value,
+      selectedOrderId.value ?? props.initialOrderId ?? null,
+    )
+  }
+  if (!options?.silent && !cached?.length) loading.value = true
   try {
-    const items = await listOptOrders(props.leadId)
+    await prefetchOptOrders(leadId, true)
+    const fresh = peekOptOrders(leadId)
+    const items = fresh ?? (await listOptOrders(leadId))
     orders.value = [...items].sort((a, b) => a.order_no - b.order_no)
     selectedOrderId.value = pickSelectedOrder(
       orders.value,
       selectedOrderId.value ?? props.initialOrderId ?? null,
     )
   } catch (err) {
-    if (!options?.silent) {
+    if (!options?.silent && !cached?.length) {
       message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
+      orders.value = []
+      selectedOrderId.value = null
     }
-    orders.value = []
-    selectedOrderId.value = null
   } finally {
     if (!options?.silent) loading.value = false
   }

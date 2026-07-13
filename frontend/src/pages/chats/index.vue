@@ -383,6 +383,8 @@ watch(
 
 onMounted(() => {
   registerChatListSearchFocus(() => chatListSearchRef.value?.focus())
+  // Instant UI from localStorage (list / messages / deals / payments), then revalidate.
+  store.hydrateFromDisk()
   void ensureGroupDirectory()
   void store.fetchList()
   void loadBots()
