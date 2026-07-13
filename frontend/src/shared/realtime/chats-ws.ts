@@ -85,9 +85,11 @@ function notifyInboundFromPayload(
   if (!document.hidden) return
 
   const contactName =
-    typeof payload.contact_name === 'string'
-      ? payload.contact_name
-      : (store.listItems.find((c) => c.id === chatId)?.contact_name ?? 'Новое сообщение')
+    typeof payload.contact_full_name === 'string'
+      ? payload.contact_full_name
+      : typeof payload.contact_name === 'string'
+        ? payload.contact_name
+        : (store.listItems.find((c) => c.id === chatId)?.contact_name ?? 'Новое сообщение')
   const preview =
     typeof payload.text_preview === 'string'
       ? payload.text_preview

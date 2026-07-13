@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
+import { useChatsStore } from '@/features/chats/store'
 import { playTransferInboxSound } from '@/shared/audio/transfer-inbox'
 import { storage } from '@/shared/lib/storage'
 import { useAuthStore } from '@/shared/store/auth'
@@ -57,6 +58,13 @@ function str(payload: Record<string, unknown>, key: string): string | null {
 function contactLabel(payload: Record<string, unknown>): string {
   const name = str(payload, 'contact_full_name') ?? str(payload, 'contact_name')
   if (name) return `«${name}»`
+
+  const chatId = num(payload, 'chat_id')
+  if (chatId != null) {
+    const fromList = useChatsStore().listItems.find((chat) => chat.id === chatId)?.contact_name
+    if (fromList) return `«${fromList}»`
+  }
+
   const id = num(payload, 'contact_id')
   return id != null ? `контакт #${id}` : 'карточка'
 }

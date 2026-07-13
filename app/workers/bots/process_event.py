@@ -21,9 +21,11 @@ from app.modules.bots.chats_bridge import (
 from app.modules.bots.ownership_bridge import handle_inbound_ownership
 from app.modules.bots.repository import BotEventInboxRepository, BotRepository
 from app.modules.bots.routing import resolve_bot_routing
+from app.modules.contacts.realtime_payloads import contact_group_context
 from app.modules.contacts.ownership import clear_pending_inbound, ownership_v2_enabled
 from app.modules.contacts.status_automation import apply_auto_contact_status
 from app.modules.db.models.bot import Bot
+from app.modules.db.models.chat import Chat
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.department import Department
 from app.modules.db.models.enums import BotOwnerType, UserRole
@@ -37,6 +39,35 @@ from app.shared.db import get_session_factory
 from app.workers.bots.download_attachment import download_attachment
 
 logger = structlog.get_logger(__name__)
+
+
+async def _inbound_realtime_payload(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    contact_id: int,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    payload = dict(base)
+    contact = await session.get(Contact, contact_id)
+    if contact is not None:
+        full_name = str(contact.full_name or "").strip()
+        if full_name:
+            payload["contact_full_name"] = full_name
+            payload["contact_name"] = full_name
+    chat = await session.get(Chat, chat_id)
+    if chat is not None and chat.assigned_group_id is not None:
+        group_ctx = await contact_group_context(
+            session,
+            contact_id,
+            chat.assigned_group_id,
+            include_chat_id=False,
+        )
+        for key in ("contact_full_name", "contact_name", "group_name"):
+            value = group_ctx.get(key)
+            if value and key not in payload:
+                payload[key] = value
+    return payload
 
 
 async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
@@ -118,6 +149,12 @@ async def process_bot_event(_job_type: str, payload: dict[str, Any]) -> None:
             if event_type == "message.received":
                 # Publish immediately so operators see text without waiting for file download.
                 chat_scope = await chat_event_scope(session, result.chat_id)
+                publish_payload = await _inbound_realtime_payload(
+                    session,
+                    chat_id=result.chat_id,
+                    contact_id=result.contact_id,
+                    base=publish_payload,
+                )
                 await publish(event_name, publish_payload, scope=chat_scope or None)
                 for idx in attachment_indices:
                     await download_attachment(
