@@ -35,6 +35,8 @@ export interface OptPayment {
   payment_type: 'card' | 'crypto' | 'wire' | 'cash'
   recipient: 'orange' | 'beneficiary'
   created_at: string
+  created_by: number
+  created_by_name?: string | null
   document_file_id?: number | null
   document_name?: string | null
   documents?: OptPaymentDocument[]

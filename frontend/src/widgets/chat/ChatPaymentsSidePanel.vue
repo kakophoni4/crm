@@ -462,6 +462,9 @@ onMounted(() => {
                       {{ optPaymentTypeLabel(payment.payment_type) }} ·
                       {{ optPaymentRecipientLabel(payment.recipient) }}
                     </p>
+                    <p class="payments-side__muted">
+                      внёс: {{ payment.created_by_name || `user #${payment.created_by}` }}
+                    </p>
                   </div>
                   <div class="payments-side__history-docs">
                     <template v-if="(payment.documents?.length || 0) > 0">

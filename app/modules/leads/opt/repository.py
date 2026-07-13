@@ -81,7 +81,9 @@ class OptOrderRepository:
             .where(LeadOptOrder.lead_id == lead_id)
             .options(
                 selectinload(LeadOptOrder.lines),
-                selectinload(LeadOptOrder.payments),
+                selectinload(LeadOptOrder.payments).selectinload(
+                    LeadOptOrderPayment.creator,
+                ),
                 selectinload(LeadOptOrder.commission_history).selectinload(
                     LeadOptOrderCommissionHistory.changer,
                 ),
@@ -96,7 +98,9 @@ class OptOrderRepository:
             .where(LeadOptOrder.id == order_id)
             .options(
                 selectinload(LeadOptOrder.lines),
-                selectinload(LeadOptOrder.payments),
+                selectinload(LeadOptOrder.payments).selectinload(
+                    LeadOptOrderPayment.creator,
+                ),
                 selectinload(LeadOptOrder.commission_history).selectinload(
                     LeadOptOrderCommissionHistory.changer,
                 ),

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
+from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.user import User
 from sqlalchemy.orm import selectinload
 from app.modules.leads.access import actor_can_access_lead
@@ -218,6 +219,8 @@ class OptOrderService:
     ) -> OptPaymentResponse:
         doc_ids = self._payment_document_ids(payment)
         primary_id = doc_ids[0] if doc_ids else None
+        creator = getattr(payment, "creator", None)
+        created_by = int(getattr(payment, "created_by"))
         return OptPaymentResponse(
             id=int(getattr(payment, "id")),
             amount=Decimal(str(getattr(payment, "amount"))),
@@ -225,6 +228,8 @@ class OptOrderService:
             payment_type=str(getattr(payment, "payment_type")),
             recipient=str(getattr(payment, "recipient")),
             created_at=getattr(payment, "created_at"),
+            created_by=created_by,
+            created_by_name=creator.full_name if creator is not None else None,
             document_file_id=primary_id,
             document_name=names.get(primary_id) if primary_id is not None else None,
             documents=[
@@ -455,7 +460,9 @@ class OptOrderService:
             .outerjoin(Contact, Contact.id == Lead.contact_id)
             .options(
                 selectinload(LeadOptOrder.lines),
-                selectinload(LeadOptOrder.payments),
+                selectinload(LeadOptOrder.payments).selectinload(
+                    LeadOptOrderPayment.creator,
+                ),
             )
         )
         if filters:

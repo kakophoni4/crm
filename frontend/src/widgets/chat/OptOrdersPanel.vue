@@ -743,7 +743,8 @@ onUnmounted(() => {
                   <strong>{{ formatMoney(payment.amount) }} ₽</strong>
                   <span class="opt-orders__meta">
                     {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
-                    {{ optPaymentTypeLabel(payment.payment_type) }}
+                    {{ optPaymentTypeLabel(payment.payment_type) }} ·
+                    {{ payment.created_by_name || `user #${payment.created_by}` }}
                   </span>
                 </div>
               </li>
@@ -899,6 +900,9 @@ onUnmounted(() => {
                     {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
                     {{ optPaymentTypeLabel(payment.payment_type) }} ·
                     {{ optPaymentRecipientLabel(payment.recipient) }}
+                  </span>
+                  <span class="opt-orders__meta">
+                    внёс: {{ payment.created_by_name || `user #${payment.created_by}` }}
                   </span>
                 </div>
                 <div class="opt-orders__payment-docs">

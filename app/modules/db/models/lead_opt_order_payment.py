@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.modules.db.models.base import Base
+
+if TYPE_CHECKING:
+    from app.modules.db.models.user import User
 
 PAYMENT_TYPE_CARD = "card"
 PAYMENT_TYPE_CRYPTO = "crypto"
@@ -50,3 +53,4 @@ class LeadOptOrderPayment(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
     order: Mapped["LeadOptOrder"] = relationship(back_populates="payments", lazy="selectin")
+    creator: Mapped["User"] = relationship(lazy="selectin")

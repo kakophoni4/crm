@@ -44,6 +44,8 @@ class OptPaymentResponse(BaseModel):
     payment_type: str
     recipient: str
     created_at: datetime
+    created_by: int
+    created_by_name: str | None = None
     document_file_id: int | None = None
     document_name: str | None = None
     documents: list[OptPaymentDocument] = Field(default_factory=list)
