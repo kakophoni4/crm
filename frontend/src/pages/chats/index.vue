@@ -707,6 +707,7 @@ onUnmounted(() => {
           />
 
           <MessageList
+            :key="store.currentChatId ?? 0"
             :messages="store.messages"
             :loading="store.messagesLoading"
             :loading-older="store.loadingOlderMessages"
@@ -766,6 +767,7 @@ onUnmounted(() => {
         </NTabs>
         <ChatDealSidePanel
           v-if="store.currentChat && rightPaneTab === 'deal'"
+          :key="`deal-${store.currentChatId}`"
           :chat="store.currentChat"
           :bots="bots"
           :lead-status-options="leadStatusOptions"
@@ -774,6 +776,7 @@ onUnmounted(() => {
         />
         <ChatPaymentsSidePanel
           v-else-if="store.currentChat && rightPaneTab === 'payments'"
+          :key="`pay-${store.currentChatId}`"
           :chat="store.currentChat"
         />
         <ChatsNotificationsPane v-else :embedded="!!store.currentChat" />

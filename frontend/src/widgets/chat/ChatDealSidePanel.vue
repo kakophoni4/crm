@@ -201,11 +201,23 @@ async function loadLeads(forceRefresh = false): Promise<void> {
     if (preferredId != null) {
       const detail = getCachedLeadDetail(preferredId)
       if (detail) applyLeadDetail(detail)
+      else {
+        leadDetail.value = null
+        resetOrderForm()
+      }
+    } else {
+      leadDetail.value = null
+      resetOrderForm()
     }
     if (!forceRefresh && isChatDealsSnapshotFresh(chat.id)) {
       await store.selectLead(preferredId)
       return
     }
+  } else {
+    // No cache for this chat — clear previous chat's deals immediately.
+    leadItems.value = []
+    leadDetail.value = null
+    resetOrderForm()
   }
 
   loadingLeads.value = !cached
@@ -214,6 +226,8 @@ async function loadLeads(forceRefresh = false): Promise<void> {
       group_id: chat.assigned_group_id ?? undefined,
       limit: 100,
     })
+    // Chat may have changed while request was in flight.
+    if (props.chat?.id !== chat.id) return
     const items = data.items.filter((lead) => lead.chat_id === chat.id)
     leadItems.value = items
     const preferredId =
@@ -228,11 +242,16 @@ async function loadLeads(forceRefresh = false): Promise<void> {
         /* detail load is optional here; loadLeadDetail will retry */
       }
     }
+    if (props.chat?.id !== chat.id) return
     await store.selectLead(preferredId)
   } catch {
-    leadItems.value = []
+    if (props.chat?.id === chat.id) {
+      leadItems.value = []
+    }
   } finally {
-    loadingLeads.value = false
+    if (props.chat?.id === chat.id) {
+      loadingLeads.value = false
+    }
   }
 }
 

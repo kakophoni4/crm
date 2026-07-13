@@ -689,17 +689,8 @@ export const useChatsStore = defineStore('chats', () => {
     const cached = listItems.value.find((c) => c.id === chatId)
     currentChat.value = snapshot?.detail ?? (cached ? ({ ...cached } as ChatDetail) : null)
 
-    if (!snapshot) {
-      // Kick prefetch and briefly wait — often already in-flight from hover/list.
-      priorityPrefetchChat(chatId)
-      const waited = await waitForChatSnapshot(chatId, 2_500)
-      if (!isActiveChat(chatId, seq)) return
-      if (waited) {
-        snapshot = waited
-        currentChat.value = waited.detail
-      }
-    }
-
+    // Telegram-style: switch the thread pane immediately.
+    // Never keep previous chat bubbles while waiting for prefetch/network.
     if (snapshot) {
       messages.value = snapshot.messages
       messagesNextCursor.value = snapshot.nextCursor
@@ -709,12 +700,26 @@ export const useChatsStore = defineStore('chats', () => {
       messages.value = []
       messagesNextCursor.value = null
       messagesLoading.value = true
+      priorityPrefetchChat(chatId)
     }
 
     try {
       void ensureGroupDirectory()
-      // With any snapshot (even stale) show messages immediately and refresh in background.
       if (snapshot) {
+        void syncChatFromNetwork(chatId, seq)
+        return
+      }
+
+      // Empty spinner is OK; wrong-chat content is not. Short wait for in-flight prefetch.
+      const waited = await waitForChatSnapshot(chatId, 900)
+      if (!isActiveChat(chatId, seq)) return
+      if (waited) {
+        snapshot = waited
+        currentChat.value = waited.detail
+        messages.value = waited.messages
+        messagesNextCursor.value = waited.nextCursor
+        messagesLoading.value = false
+        priorityPrefetchAttachmentsForMessages(waited.messages)
         void syncChatFromNetwork(chatId, seq)
         return
       }
