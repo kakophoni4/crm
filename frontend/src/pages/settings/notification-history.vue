@@ -40,10 +40,10 @@ const loading = ref(true)
 const loadingMore = ref(false)
 const items = ref<StaffNotificationEvent[]>([])
 const nextCursor = ref<number | null>(null)
-const statusFilter = ref<string | null>(null)
+const statusFilter = ref('')
 
 const statusOptions = [
-  { label: 'Все', value: null },
+  { label: 'Все', value: '' },
   { label: 'Не ознакомлен', value: 'sent' },
   { label: 'Прочитано', value: 'acked' },
   { label: 'Отменено', value: 'cancelled' },
@@ -71,7 +71,7 @@ async function load(reset = true): Promise<void> {
     const data = await getNotificationHistory({
       cursor: reset ? undefined : (nextCursor.value ?? undefined),
       limit: 40,
-      status: statusFilter.value ?? undefined,
+      status: statusFilter.value || undefined,
     })
     items.value = reset ? data.items : [...items.value, ...data.items]
     nextCursor.value = data.next_cursor

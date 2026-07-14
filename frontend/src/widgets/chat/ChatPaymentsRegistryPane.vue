@@ -19,14 +19,14 @@ const message = useMessage()
 const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const total = ref(0)
-const paymentStatusFilter = ref<string | null>('unpaid,partial')
+const paymentStatusFilter = ref('unpaid,partial')
 
 const paymentStatusOptions = [
   { label: 'Не оплачена / частично', value: 'unpaid,partial' },
   { label: 'Не оплачена', value: 'unpaid' },
   { label: 'Частично', value: 'partial' },
   { label: 'Оплачена', value: 'paid' },
-  { label: 'Все', value: null },
+  { label: 'Все', value: '' },
 ]
 
 function formatMoney(value: number): string {
