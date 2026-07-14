@@ -7,7 +7,7 @@ const links = [
   { name: 'admin-groups', label: 'Группы', desc: 'Группы внутри отделов' },
   { name: 'admin-users', label: 'Пользователи', desc: 'Учётные записи, роли, группы' },
   { name: 'admin-bots', label: 'Боты', desc: 'Интеграции, группы и ротация секретов' },
-  { name: 'admin-notification-bot', label: 'Бот уведомлений', desc: 'Токен Telegram-бота для уведомлений сотрудникам' },
+  { name: 'admin-notification-bot', label: 'Бот уведомлений', desc: 'Токен Telegram-бота' },
   { name: 'admin-statuses', label: 'Воронка сделок', desc: 'Этапы открытых сделок (лидов)' },
 ] as const
 </script>

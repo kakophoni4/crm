@@ -130,14 +130,17 @@ const menuOptions = computed(() => {
       icon: () => h(NIcon, null, { default: () => h(Settings) }),
     })
     items.push({
-      label: 'Автоответ',
-      key: 'group-after-hours',
-      icon: () => h(NIcon, null, { default: () => h(Moon) }),
-    })
-    items.push({
       label: 'Статусы',
       key: 'admin-statuses',
       icon: () => h(NIcon, null, { default: () => h(Tags) }),
+    })
+  }
+
+  if (auth.user?.role === 'senior' || auth.user?.role === 'admin') {
+    items.push({
+      label: 'Автоответчик',
+      key: 'group-after-hours',
+      icon: () => h(NIcon, null, { default: () => h(Moon) }),
     })
   }
 
@@ -260,9 +263,7 @@ function onMenuUpdate(key: string): void {
     return
   }
   if (key === 'group-after-hours') {
-    const groupId = auth.user?.group_ids?.[0] ?? auth.user?.group_id ?? undefined
-    const query = groupId != null ? { group_id: String(groupId) } : undefined
-    void router.push({ name: 'group-after-hours', query })
+    void router.push({ name: 'group-after-hours' })
     emit('closeDrawer')
     return
   }

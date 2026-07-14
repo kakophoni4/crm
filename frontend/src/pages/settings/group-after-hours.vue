@@ -12,8 +12,8 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import type { AfterHoursSettings, WorkingHoursSchedule } from '@/entities/contact/types'
 import { listGroups } from '@/features/admin/api'
@@ -43,22 +43,17 @@ const TIMEZONE_OPTIONS: SelectOption[] = [
   { label: 'UTC', value: 'UTC' },
 ]
 
-const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const auth = useAuthStore()
 
 const loading = ref(true)
 const saving = ref(false)
-const settings = ref<AfterHoursSettings | null>(null)
-
-const activeGroupId = ref<number | null>(null)
-const groupSelectOptions = ref<SelectOption[]>([])
+const groupIds = ref<number[]>([])
 const noGroupsInScope = ref(false)
 
-const canEdit = computed(
-  () => auth.user?.role === 'senior' || auth.user?.role === 'group_senior' || auth.user?.role === 'admin',
-)
+/** Старший отдела или админ — единый автоответчик на весь отдел/скоуп. */
+const canEdit = computed(() => auth.user?.role === 'senior' || auth.user?.role === 'admin')
 
 type DayHours = { enabled: boolean; start: string; end: string }
 
@@ -69,29 +64,12 @@ const form = ref({
   timezone: 'Europe/Moscow',
   cooldown_minutes: 120,
   days: Object.fromEntries(
-    WEEKDAYS.map((d) => [d.key, { enabled: d.key !== 'sat' && d.key !== 'sun', start: '09:00', end: '18:00' }]),
+    WEEKDAYS.map((d) => [
+      d.key,
+      { enabled: d.key !== 'sat' && d.key !== 'sun', start: '09:00', end: '18:00' },
+    ]),
   ) as Record<string, DayHours>,
 })
-
-const showGroupPicker = computed(
-  () =>
-    canEdit.value &&
-    activeGroupId.value == null &&
-    groupSelectOptions.value.length > 1 &&
-    !noGroupsInScope.value,
-)
-
-const selectedGroupLabel = computed(() => {
-  const id = activeGroupId.value
-  if (id == null) return null
-  const opt = groupSelectOptions.value.find((o) => o.value === id)
-  return typeof opt?.label === 'string' ? opt.label : null
-})
-
-function parseRouteGroupId(): number | null {
-  const n = Number(route.query.group_id)
-  return Number.isFinite(n) && n > 0 ? n : null
-}
 
 function scheduleFromForm(): WorkingHoursSchedule {
   const out: WorkingHoursSchedule = {}
@@ -123,91 +101,60 @@ function syncForm(data: AfterHoursSettings): void {
   }
 }
 
-async function loadGroupOptions(): Promise<void> {
+async function resolveGroups(): Promise<void> {
   const deptParam =
     auth.user?.role === 'senior' && auth.user.department_id != null
       ? auth.user.department_id
       : undefined
   const items = await listGroups(deptParam)
-  groupSelectOptions.value = items.map((g) => ({ label: g.name, value: g.id }))
+  groupIds.value = items.map((g) => g.id)
   noGroupsInScope.value = items.length === 0
 }
 
 async function loadSettings(): Promise<void> {
-  if (activeGroupId.value == null) {
+  if (!groupIds.value.length) {
     loading.value = false
     return
   }
-
   loading.value = true
   try {
-    settings.value = await getAfterHoursSettings(activeGroupId.value)
-    syncForm(settings.value)
+    // Одна форма на весь отдел: читаем с первой группы как шаблон.
+    const data = await getAfterHoursSettings(groupIds.value[0])
+    syncForm(data)
   } catch (err) {
-    const text = err instanceof AppError ? err.message : 'Не удалось загрузить настройки'
-    message.error(text)
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить настройки')
   } finally {
     loading.value = false
   }
 }
 
 async function saveSettings(): Promise<void> {
-  if (activeGroupId.value == null) return
+  if (!groupIds.value.length) return
   if (form.value.enabled && !form.value.reply_text.trim()) {
     message.warning('Укажите текст автоответа')
     return
   }
   saving.value = true
+  const body = {
+    enabled: form.value.enabled,
+    reply_text: form.value.reply_text,
+    delay_minutes: form.value.delay_minutes,
+    timezone: form.value.timezone,
+    cooldown_minutes: form.value.cooldown_minutes,
+    working_hours: scheduleFromForm(),
+  }
   try {
-    settings.value = await patchAfterHoursSettings(activeGroupId.value, {
-      enabled: form.value.enabled,
-      reply_text: form.value.reply_text,
-      delay_minutes: form.value.delay_minutes,
-      timezone: form.value.timezone,
-      cooldown_minutes: form.value.cooldown_minutes,
-      working_hours: scheduleFromForm(),
-    })
-    syncForm(settings.value)
-    message.success('Настройки автоответа сохранены')
+    // Пишем одинаковые настройки во все группы отдела — автоответчик единый.
+    let last: AfterHoursSettings | null = null
+    for (const gid of groupIds.value) {
+      last = await patchAfterHoursSettings(gid, body)
+    }
+    if (last) syncForm(last)
+    message.success('Сохранено')
   } catch (err) {
-    const text = err instanceof AppError ? err.message : 'Не удалось сохранить'
-    message.error(text)
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
   } finally {
     saving.value = false
-  }
-}
-
-async function onPickGroup(id: number | null): Promise<void> {
-  if (id == null) return
-  activeGroupId.value = id
-  await router.replace({ query: { ...route.query, group_id: String(id) } })
-  await loadSettings()
-}
-
-async function resolveActiveGroup(): Promise<void> {
-  await loadGroupOptions()
-  if (noGroupsInScope.value) {
-    activeGroupId.value = null
-    return
-  }
-
-  let gid = parseRouteGroupId() ?? auth.user?.group_id ?? null
-  if (gid != null && !groupSelectOptions.value.some((o) => o.value === gid)) {
-    gid = null
-  }
-
-  if (gid != null) {
-    activeGroupId.value = gid
-    if (parseRouteGroupId() == null) {
-      await router.replace({ query: { ...route.query, group_id: String(gid) } })
-    }
-    return
-  }
-
-  if (groupSelectOptions.value.length === 1) {
-    const only = groupSelectOptions.value[0].value as number
-    activeGroupId.value = only
-    await router.replace({ query: { ...route.query, group_id: String(only) } })
   }
 }
 
@@ -216,77 +163,32 @@ onMounted(async () => {
     void router.replace({ name: 'dashboard' })
     return
   }
-
   loading.value = true
   try {
-    await resolveActiveGroup()
+    await resolveGroups()
     await loadSettings()
   } catch (err) {
-    const text = err instanceof AppError ? err.message : 'Не удалось загрузить список групп'
-    message.error(text)
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить')
     loading.value = false
   }
 })
-
-watch(
-  () => route.query.group_id,
-  async () => {
-    if (!canEdit.value) return
-    const gid = parseRouteGroupId()
-    if (gid == null || gid === activeGroupId.value) return
-    if (!groupSelectOptions.value.some((o) => o.value === gid)) return
-    activeGroupId.value = gid
-    await loadSettings()
-  },
-)
 </script>
 
 <template>
   <section class="after-hours">
     <header class="after-hours__header">
-      <h1>Автоответ вне рабочего времени</h1>
-      <p v-if="activeGroupId != null && selectedGroupLabel" class="after-hours__sub">
-        Группа «{{ selectedGroupLabel }}»
-      </p>
-      <p v-else-if="activeGroupId != null" class="after-hours__sub">
-        Группа без отображаемого названия
-      </p>
-      <p v-else-if="noGroupsInScope" class="after-hours__sub after-hours__sub--warn">
-        В вашем отделе нет групп. Создайте группу в разделе «Группы».
-      </p>
-      <p v-else-if="showGroupPicker" class="after-hours__sub">
-        Выберите группу, для которой настраивается автоответ.
-      </p>
-      <p v-else class="after-hours__sub">
-        Если клиент пишет вне рабочих часов и оператор не ответил за указанное время — бот отправит текст автоответа.
+      <h1>Автоответчик в нерабочее время</h1>
+      <p v-if="noGroupsInScope" class="after-hours__sub after-hours__sub--warn">
+        В отделе нет групп. Создайте группу в разделе «Группы».
       </p>
     </header>
 
-    <div v-if="showGroupPicker" class="after-hours__picker">
-      <NFormItem label="Группа" label-placement="left">
-        <NSelect
-          :value="null"
-          placeholder="Выберите группу"
-          :options="groupSelectOptions"
-          style="max-width: 360px"
-          @update:value="(v) => onPickGroup(v as number)"
-        />
-      </NFormItem>
-    </div>
-
     <NSpin :show="loading">
-      <NForm
-        v-if="activeGroupId != null && canEdit"
-        label-placement="top"
-        class="after-hours__form"
-      >
-        <NFormItem label="Включить автоответ" extra="Работает только вне настроенных рабочих часов.">
+      <NForm v-if="groupIds.length && canEdit" label-placement="top" class="after-hours__form">
+        <NFormItem label="Включён">
           <NSwitch v-model:value="form.enabled" />
         </NFormItem>
-        <NFormItem
-          label="Текст автоответа"
-          extra="Сообщение клиенту от имени бота, если оператор не ответил вовремя."
-        >
+        <NFormItem label="Текст">
           <NInput
             v-model:value="form.reply_text"
             type="textarea"
@@ -294,16 +196,10 @@ watch(
             placeholder="Сейчас вне рабочего времени. Мы ответим в ближайшее рабочее время."
           />
         </NFormItem>
-        <NFormItem
-          label="Задержка без ответа, мин"
-          extra="Сколько минут ждать ответа оператора после входящего сообщения клиента, прежде чем отправить автоответ."
-        >
+        <NFormItem label="Задержка без ответа, мин">
           <NInputNumber v-model:value="form.delay_minutes" :min="1" :max="1440" style="width: 100%" />
         </NFormItem>
-        <NFormItem
-          label="Пауза между автоответами, мин"
-          extra="Минимальный интервал между автоответами одному контакту (чтобы не спамить при серии сообщений)."
-        >
+        <NFormItem label="Пауза между ответами, мин">
           <NInputNumber
             v-model:value="form.cooldown_minutes"
             :min="0"
@@ -312,17 +208,9 @@ watch(
           />
         </NFormItem>
         <NFormItem label="Часовой пояс">
-          <NSelect
-            v-model:value="form.timezone"
-            :options="TIMEZONE_OPTIONS"
-            filterable
-            tag
-          />
+          <NSelect v-model:value="form.timezone" :options="TIMEZONE_OPTIONS" filterable tag />
         </NFormItem>
-        <NFormItem
-          label="Рабочие часы"
-          extra="В эти интервалы автоответ не отправляется. Пустой день = выходной."
-        >
+        <NFormItem label="Рабочие часы">
           <div class="after-hours__days">
             <div v-for="day in WEEKDAYS" :key="day.key" class="after-hours__day">
               <span class="after-hours__day-label">{{ day.label }}</span>
@@ -358,10 +246,10 @@ watch(
 
 .after-hours__header h1 {
   margin: 0 0 4px;
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 700;
   letter-spacing: -0.02em;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 
 .after-hours__sub {
@@ -371,11 +259,6 @@ watch(
 
 .after-hours__sub--warn {
   color: var(--app-danger);
-}
-
-.after-hours__picker {
-  margin-bottom: 16px;
-  max-width: 480px;
 }
 
 .after-hours__form {

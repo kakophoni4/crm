@@ -11,7 +11,6 @@ const saving = ref(false)
 const enabled = ref(false)
 const username = ref<string | null>(null)
 const hasToken = ref(false)
-const webhookHint = ref('')
 const tokenInput = ref('')
 
 async function load(): Promise<void> {
@@ -21,7 +20,6 @@ async function load(): Promise<void> {
     enabled.value = data.is_enabled
     username.value = data.bot_username
     hasToken.value = data.has_token
-    webhookHint.value = data.webhook_hint
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить')
   } finally {
@@ -42,9 +40,8 @@ async function save(): Promise<void> {
     enabled.value = data.is_enabled
     username.value = data.bot_username
     hasToken.value = data.has_token
-    webhookHint.value = data.webhook_hint
     tokenInput.value = ''
-    message.success('Сохранено. Webhook обновлён автоматически.')
+    message.success('Сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
   } finally {
@@ -61,9 +58,6 @@ onMounted(() => {
   <section class="admin-notif-bot">
     <header class="admin-notif-bot__header">
       <h1>Бот уведомлений</h1>
-      <p class="admin-notif-bot__sub">
-        Закрытый Telegram-бот для сотрудников. Токен можно заменить здесь в любой момент.
-      </p>
     </header>
 
     <NSpin :show="loading">
@@ -72,7 +66,7 @@ onMounted(() => {
           <NFormItem label="Включён">
             <NSwitch v-model:value="enabled" />
           </NFormItem>
-          <NFormItem label="Токен бота" extra="От @BotFather. При сохранении webhook ставится сам.">
+          <NFormItem label="Токен бота">
             <NInput
               v-model:value="tokenInput"
               type="password"
@@ -82,9 +76,6 @@ onMounted(() => {
           </NFormItem>
           <NFormItem v-if="username" label="Username бота">
             <a :href="`https://t.me/${username}`" target="_blank" rel="noopener">@{{ username }}</a>
-          </NFormItem>
-          <NFormItem label="Webhook">
-            <code class="admin-notif-bot__code">{{ webhookHint }}</code>
           </NFormItem>
           <NSpace>
             <NButton type="primary" :loading="saving" @click="save">Сохранить</NButton>
@@ -100,16 +91,8 @@ onMounted(() => {
   margin-bottom: 16px;
 }
 .admin-notif-bot__header h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 1.5rem;
   font-weight: 700;
-}
-.admin-notif-bot__sub {
-  margin: 0;
-  color: var(--app-text-muted);
-}
-.admin-notif-bot__code {
-  font-size: 0.85rem;
-  word-break: break-all;
 }
 </style>

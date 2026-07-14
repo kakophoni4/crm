@@ -218,7 +218,7 @@ const routes: RouteRecordRaw[] = [
 
         component: () => import('@/pages/settings/group-after-hours.vue'),
 
-        meta: { requiresSenior: true },
+        meta: { requiresSeniorOrAdmin: true },
 
       },
 
