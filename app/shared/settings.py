@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     app_debug: bool = True
     app_port: Annotated[int, Field(ge=1, le=65535)] = 8000
+    # Frontend / share-link origin (users open this in browser).
     app_public_base_url: str = "http://localhost:8000"
+    # Public API origin for Telegram/provider webhooks. Empty = same as app_public_base_url.
+    app_api_public_base_url: str = ""
 
     jwt_secret: str = "changeme_dev_secret_min_32_chars_xxxxxx"
     jwt_access_ttl_seconds: int = 900
@@ -160,6 +163,12 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(url).strip() for url in value if str(url).strip()]
         return []
+
+    @property
+    def api_public_base_url(self) -> str:
+        """Origin Telegram and other providers must reach (API host)."""
+        raw = (self.app_api_public_base_url or self.app_public_base_url or "").strip()
+        return raw.rstrip("/")
 
 
 @lru_cache

@@ -351,15 +351,64 @@ async def save_bot_token(
     row.updated_at = utc_now()
     await session.flush()
 
-    base = settings.app_public_base_url.rstrip("/")
-    webhook_url = f"{base}/api/v1/notification-bot/webhook"
+    if enabled:
+        await register_bot_webhook(session, token=token, secret=secret)
+    await session.refresh(row)
+    return row
+
+
+async def register_bot_webhook(
+    session: AsyncSession,
+    *,
+    token: str | None = None,
+    secret: str | None = None,
+) -> str:
+    """Point Telegram webhook at the public API host. Returns the URL."""
+    row = await get_bot_settings(session)
+    if token is None:
+        if row.bot_token_encrypted is None:
+            raise ValidationError(message="Сначала сохраните токен бота")
+        token = await decrypt_secret(session, row.bot_token_encrypted)
+    if secret is None:
+        secret = row.webhook_secret
+    if not secret:
+        secret = secrets.token_urlsafe(24)
+        row.webhook_secret = secret
+        await session.flush()
+
+    webhook_url = f"{settings.api_public_base_url}/api/v1/notification-bot/webhook"
     try:
         await telegram_api.set_webhook(token, webhook_url, secret)
     except telegram_api.TelegramBotError as exc:
         logger.warning("notification_bot_set_webhook_failed", error=str(exc), url=webhook_url)
+        raise ValidationError(
+            message=(
+                f"Не удалось зарегистрировать webhook ({webhook_url}): {exc}. "
+                "Проверьте APP_API_PUBLIC_BASE_URL (должен быть публичный URL API, "
+                "например https://api.example.com)."
+            ),
+        ) from exc
+    logger.info("notification_bot_webhook_registered", url=webhook_url)
+    return webhook_url
+
+
+async def set_bot_enabled(
+    session: AsyncSession,
+    *,
+    enabled: bool,
+    actor_id: int,
+) -> NotificationBotSettings:
+    row = await get_bot_settings(session)
+    row.is_enabled = enabled
+    row.updated_by = actor_id
+    row.updated_at = utc_now()
+    await session.flush()
+    if enabled:
+        if row.bot_token_encrypted is None:
+            raise ValidationError(message="Сначала сохраните токен бота")
+        await register_bot_webhook(session)
     await session.refresh(row)
     return row
-
 
 async def get_or_create_user_settings(
     session: AsyncSession,

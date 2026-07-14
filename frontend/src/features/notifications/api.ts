@@ -103,6 +103,11 @@ export async function patchNotificationBot(body: {
   return data
 }
 
+export async function syncNotificationBotWebhook(): Promise<NotificationBotAdmin> {
+  const { data } = await http.post<NotificationBotAdmin>('/notifications/bot/sync-webhook')
+  return data
+}
+
 export async function getNotificationHistory(params?: {
   cursor?: number
   limit?: number

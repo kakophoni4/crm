@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
+import structlog
 from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,7 @@ from app.shared.exceptions import PermissionDenied, ValidationError
 from app.shared.security.permissions import requires_permission
 from app.shared.settings import settings
 
+logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 webhook_router = APIRouter(prefix="/api/v1/notification-bot", tags=["notification-bot"])
 
@@ -213,7 +215,7 @@ async def get_notification_bot(
     if not is_admin(actor.role):
         raise PermissionDenied(message="Только администратор")
     bot = await notif_service.get_bot_settings(db)
-    base = settings.app_public_base_url.rstrip("/")
+    base = settings.api_public_base_url
     return NotificationBotAdminOut(
         is_enabled=bot.is_enabled,
         bot_username=bot.bot_username,
@@ -239,10 +241,25 @@ async def patch_notification_bot(
             enabled=True if body.is_enabled is None else body.is_enabled,
         )
     elif body.is_enabled is not None:
-        bot = await notif_service.get_bot_settings(db)
-        bot.is_enabled = body.is_enabled
-        bot.updated_by = actor.id
-        await db.flush()
+        await notif_service.set_bot_enabled(
+            db,
+            enabled=body.is_enabled,
+            actor_id=actor.id,
+        )
+    return await get_notification_bot(actor, db)
+
+
+@router.post("/bot/sync-webhook", response_model=NotificationBotAdminOut)
+async def sync_notification_bot_webhook(
+    actor: Annotated[User, Depends(requires_permission(Permission.BOTS_MANAGE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> NotificationBotAdminOut:
+    if not is_admin(actor.role):
+        raise PermissionDenied(message="Только администратор")
+    bot = await notif_service.get_bot_settings(db)
+    if not bot.is_enabled:
+        raise ValidationError(message="Сначала включите бота")
+    await notif_service.register_bot_webhook(db)
     return await get_notification_bot(actor, db)
 
 
@@ -256,6 +273,7 @@ async def notification_bot_webhook(
     if not bot.is_enabled or not bot.webhook_secret:
         return {"ok": True}
     if x_telegram_bot_api_secret_token != bot.webhook_secret:
+        logger.warning("notification_bot_webhook_secret_mismatch")
         return {"ok": True}
     payload = await request.json()
     if isinstance(payload, dict):
