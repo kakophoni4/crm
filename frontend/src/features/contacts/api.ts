@@ -10,6 +10,8 @@ import type {
   ContactUpdateBody,
   EscalationSettings,
   EscalationSettingsPatch,
+  AfterHoursSettings,
+  AfterHoursSettingsPatch,
   ContactActivityResponse,
   ReplyAuditListResponse,
 } from '@/entities/contact/types'
@@ -156,6 +158,22 @@ export async function patchEscalationSettings(
 ): Promise<EscalationSettings> {
   const { data } = await http.patch<EscalationSettings>(
     `/groups/${groupId}/escalation-settings`,
+    body,
+  )
+  return data
+}
+
+export async function getAfterHoursSettings(groupId: number): Promise<AfterHoursSettings> {
+  const { data } = await http.get<AfterHoursSettings>(`/groups/${groupId}/after-hours-settings`)
+  return data
+}
+
+export async function patchAfterHoursSettings(
+  groupId: number,
+  body: AfterHoursSettingsPatch,
+): Promise<AfterHoursSettings> {
+  const { data } = await http.patch<AfterHoursSettings>(
+    `/groups/${groupId}/after-hours-settings`,
     body,
   )
   return data

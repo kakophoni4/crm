@@ -89,3 +89,23 @@ class EscalationSettingsPatchRequest(BaseModel):
     new_contact_reassign_strategy: str | None = None
     notify_owner_on_inbound: bool | None = None
     notify_group_on_escalation: bool | None = None
+
+
+class AfterHoursSettingsResponse(BaseModel):
+    group_id: int
+    enabled: bool
+    reply_text: str
+    delay_minutes: int
+    timezone: str
+    working_hours: dict[str, list[list[str]]]
+    cooldown_minutes: int
+    updated_at: datetime
+
+
+class AfterHoursSettingsPatchRequest(BaseModel):
+    enabled: bool | None = None
+    reply_text: str | None = Field(default=None, max_length=4000)
+    delay_minutes: int | None = Field(default=None, ge=1, le=1440)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    working_hours: dict[str, list[list[str]]] | None = None
+    cooldown_minutes: int | None = Field(default=None, ge=0, le=10080)

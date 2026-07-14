@@ -70,6 +70,7 @@ import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDi
 import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
 import ChatPaymentsSidePanel from '@/widgets/chat/ChatPaymentsSidePanel.vue'
+import ChatPaymentsRegistryPane from '@/widgets/chat/ChatPaymentsRegistryPane.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
 
 import { AppError } from '@/shared/api/http'
@@ -148,15 +149,37 @@ const contactClientLabel = computed(() =>
 type RightPaneTab = 'deal' | 'payments' | 'notifications'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
+type LeftListTab = ChatListTab | 'payments'
+
 const listTabsForPane = computed(() => {
   const compact = Boolean(store.currentChat) && !isNarrow.value
-  if (!compact) return listTabs
+  const paymentsTab = { name: 'payments' as const, label: compact ? 'Оплаты' : 'Все оплаты' }
+  if (!compact) {
+    return [...listTabs, paymentsTab]
+  }
   return [
     { name: 'mine' as const, label: 'Мои' },
     { name: 'group' as const, label: 'Группа' },
     { name: 'needs_response' as const, label: 'Ответ' },
+    paymentsTab,
   ]
 })
+
+const leftListTab = ref<LeftListTab>(store.listTab)
+
+watch(leftListTab, (tab) => {
+  if (tab === 'payments') return
+  if (store.listTab !== tab) store.listTab = tab
+})
+
+watch(
+  () => store.listTab,
+  (tab) => {
+    if (leftListTab.value !== 'payments') {
+      leftListTab.value = tab
+    }
+  },
+)
 
 function goToContact(): void {
   const contactId = store.currentChat?.contact_id
@@ -437,19 +460,12 @@ onUnmounted(() => {
 
         <div class="chats-page__list-toolbar">
           <NTabs
-
-            v-model:value="store.listTab"
-
+            v-model:value="leftListTab"
             type="segment"
-
             size="small"
-
             class="chats-page__tabs"
-
           >
-
             <NTab v-for="tab in listTabsForPane" :key="tab.name" :name="tab.name" :tab="tab.label" />
-
           </NTabs>
 
           <NSpace :size="6" class="chats-page__list-actions" :wrap="false">
@@ -472,6 +488,11 @@ onUnmounted(() => {
 
 
 
+        <template v-if="leftListTab === 'payments'">
+          <ChatPaymentsRegistryPane @open-chat="openChatMobile" />
+        </template>
+
+        <template v-else>
         <NSpace class="chats-page__filters" vertical :size="8">
 
           <NInput
@@ -613,6 +634,7 @@ onUnmounted(() => {
           <NEmpty v-else-if="!store.displayListItems.length" description="Нет чатов по фильтрам" />
 
         </NSpin>
+        </template>
 
       </aside>
 
@@ -755,7 +777,7 @@ onUnmounted(() => {
           class="chats-page__right-tabs"
         >
           <NTab name="deal" tab="Сделки" />
-          <NTab name="payments" tab="Оплаты" />
+          <NTab name="payments" tab="Оплаты клиента" />
           <NTab
             name="notifications"
             :tab="

@@ -14,6 +14,8 @@ export async function listOptOrders(leadId: number): Promise<OptOrder[]> {
 export async function listOptOrdersRegistry(params?: {
   department_id?: number
   group_id?: number
+  contact_id?: number
+  chat_id?: number
   payment_status?: string
   open_only?: boolean
   offset?: number

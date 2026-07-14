@@ -129,6 +129,7 @@ async def list_quick_replies(
     q: str | None = None,
     department_id: int | None = None,
     group_id: int | None = None,
+    scope: str | None = Query(default=None, pattern="^(shared|personal|all)$"),
     include_inactive: bool = False,
     limit: int = Query(default=20, ge=1, le=50),
 ) -> QuickReplyTemplateListResponse:
@@ -137,6 +138,7 @@ async def list_quick_replies(
         q=q,
         department_id=department_id,
         group_id=group_id,
+        scope=scope,
         include_inactive=include_inactive,
         limit=limit,
     )

@@ -37,13 +37,10 @@ import {
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { uploadFile } from '@/features/chats/api'
-import {
-  peekPaymentsRegistry,
-  prefetchPaymentsRegistry,
-} from '@/features/chats/payments-cache'
+import { validateOptPaymentDocuments } from '@/features/leads/opt-payment-validation'
 import { AppError } from '@/shared/api/http'
 
-defineProps<{
+const props = defineProps<{
   chat: ChatDetail | null
 }>()
 
@@ -133,36 +130,28 @@ function clientLabel(row: OptOrderRegistryItem): string {
 }
 
 async function loadItems(): Promise<void> {
-  const cached = peekPaymentsRegistry()
-  if (cached?.items?.length) {
-    items.value = cached.items
-    total.value = cached.total
+  const contactId = props.chat?.contact_id
+  if (contactId == null) {
+    items.value = []
+    total.value = 0
     loading.value = false
-  } else {
-    loading.value = true
+    return
   }
+  loading.value = true
   try {
-    await prefetchPaymentsRegistry(true)
-    const fresh = peekPaymentsRegistry()
-    if (fresh) {
-      items.value = fresh.items
-      total.value = fresh.total
-    } else {
-      const data = await listOptOrdersRegistry({
-        payment_status: 'unpaid,partial',
-        open_only: true,
-        limit: 100,
-        offset: 0,
-      })
-      items.value = data.items
-      total.value = data.total
-    }
+    const data = await listOptOrdersRegistry({
+      contact_id: contactId,
+      payment_status: 'unpaid,partial',
+      open_only: true,
+      limit: 100,
+      offset: 0,
+    })
+    items.value = data.items
+    total.value = data.total
   } catch (err) {
-    if (!cached?.items?.length) {
-      message.error(err instanceof AppError ? err.message : 'Не удалось загрузить оплаты')
-      items.value = []
-      total.value = 0
-    }
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить оплаты')
+    items.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -212,9 +201,17 @@ async function onSavePayment(): Promise<void> {
     message.warning('Укажите сумму оплаты')
     return
   }
+  const fileIds = paymentDocuments.value.map((row) => row.file_id)
+  const docError = validateOptPaymentDocuments({
+    payment_type: paymentForm.value.payment_type,
+    document_file_ids: fileIds,
+  })
+  if (docError) {
+    message.warning(docError)
+    return
+  }
   savingPayment.value = true
   try {
-    const fileIds = paymentDocuments.value.map((row) => row.file_id)
     const updated = await addOptOrderPayment(target.lead_id, target.id, {
       amount: paymentForm.value.amount,
       paid_at: new Date(paymentForm.value.paid_at).toISOString(),
@@ -309,6 +306,13 @@ watch(
   },
 )
 
+watch(
+  () => props.chat?.contact_id,
+  () => {
+    void loadItems()
+  },
+)
+
 onMounted(() => {
   void loadItems()
 })
@@ -317,9 +321,9 @@ onMounted(() => {
 <template>
   <section class="payments-side">
     <header class="payments-side__header">
-      <h2 class="payments-side__title">Оплаты</h2>
+      <h2 class="payments-side__title">Оплаты клиента</h2>
       <p class="payments-side__subtitle">
-        Неоплаченные и частично оплаченные заявки
+        Неоплаченные заявки выбранного контакта
         <template v-if="total"> · {{ total }}</template>
       </p>
     </header>
@@ -429,7 +433,13 @@ onMounted(() => {
                 </NButton>
               </li>
             </ul>
-            <p v-else class="payments-side__muted">Можно прикрепить несколько файлов</p>
+            <p v-else class="payments-side__muted">
+              {{
+                paymentForm.payment_type === 'cash'
+                  ? 'Для наличных документ не обязателен'
+                  : 'Обязательно прикрепите документ подтверждения'
+              }}
+            </p>
           </div>
         </NFormItem>
       </NForm>

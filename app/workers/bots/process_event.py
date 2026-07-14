@@ -259,6 +259,7 @@ async def _handle_message_received(
         contact_id=contact_id,
         group_id=group_id,
         chat_id=chat_id,
+        message_preview=str(message_data.get("text") or "")[:300] or None,
     )
     return await insert_inbound_message(
         session,

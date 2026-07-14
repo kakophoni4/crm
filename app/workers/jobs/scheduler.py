@@ -28,12 +28,16 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     from app.workers.jobs.purge_shares import purge_expired_share_links
     from app.workers.jobs.task_reminders import task_due_reminders
     from app.workers.bots.health_check import schedule_all_health_checks
+    from app.workers.after_hours import after_hours_scan
     from app.workers.escalation import escalation_scan
     from app.workers.jobs.purge_leads import LEAD_PURGE_JOB_TYPE, purge_expired_leads
     from app.workers.jobs.sbis_norm_sync import schedule_sbis_norm_sync_if_due
+    from app.workers.staff_notifications import staff_notifications_scan
     from app.workers.transfer_expire import transfer_expire_scan
 
     await escalation_scan()
+    await after_hours_scan()
+    await staff_notifications_scan()
     await transfer_expire_scan()
     await purge_expired_leads(LEAD_PURGE_JOB_TYPE, {})
 

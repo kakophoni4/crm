@@ -34,6 +34,7 @@ from app.modules.db.models.enums import (
 )
 from app.modules.db.models.group import Group
 from app.modules.db.models.group_chat_file import GroupChatFile
+from app.modules.db.models.group_after_hours_settings import GroupAfterHoursSettings
 from app.modules.db.models.group_escalation_settings import GroupEscalationSettings
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_comment import LeadComment
@@ -43,6 +44,14 @@ from app.modules.db.models.lead_opt_order_commission_history import (
 )
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
+from app.modules.db.models.notification_bot_settings import NotificationBotSettings
+from app.modules.db.models.staff_notification_event import (
+    StaffNotificationEvent,
+    StaffNotificationKind,
+    StaffNotificationStatus,
+)
+from app.modules.db.models.user_notification_settings import UserNotificationSettings
+from app.modules.db.models.user_telegram_link import UserTelegramLink
 from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_requirement import OptRequirement
@@ -87,6 +96,7 @@ __all__ = [
     "Department",
     "Group",
     "GroupChatFile",
+    "GroupAfterHoursSettings",
     "GroupEscalationSettings",
     "Lead",
     "LeadComment",
@@ -97,6 +107,7 @@ __all__ = [
     "MessageDirection",
     "MessageKind",
     "MessageReplyAudit",
+    "NotificationBotSettings",
     "OptAccountantUnitAssignment",
     "OptBuyer",
     "OptRequirement",
@@ -104,6 +115,9 @@ __all__ = [
     "QuickReplyTemplate",
     "QuickReplyTemplateHidden",
     "RefreshToken",
+    "StaffNotificationEvent",
+    "StaffNotificationKind",
+    "StaffNotificationStatus",
     "Status",
     "StatusKind",
     "TelephonyAccount",
@@ -116,7 +130,9 @@ __all__ = [
     "UserAvailability",
     "UserDeletionRequest",
     "UserGroupMembership",
+    "UserNotificationSettings",
     "UserPresence",
     "UserRole",
     "UserStatus",
+    "UserTelegramLink",
 ]

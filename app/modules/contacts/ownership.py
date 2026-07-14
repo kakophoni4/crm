@@ -211,6 +211,11 @@ async def set_pending_inbound(
         return
     assignment.pending_inbound_at = at or utc_now()
     assignment.escalated_to_group_at = None
+    assignment.staff_notify_acked_at = None
+    assignment.staff_notify_acked_by = None
+    assignment.staff_notify_group_senior_at = None
+    assignment.staff_notify_dept_senior_at = None
+    assignment.staff_notify_admin_at = None
     await session.flush()
 
 
@@ -224,7 +229,24 @@ async def clear_pending_inbound(
         return
     assignment.pending_inbound_at = None
     assignment.escalated_to_group_at = None
+    assignment.staff_notify_acked_at = None
+    assignment.staff_notify_acked_by = None
+    assignment.staff_notify_group_senior_at = None
+    assignment.staff_notify_dept_senior_at = None
+    assignment.staff_notify_admin_at = None
     await session.flush()
+    try:
+        from app.modules.notifications.service import cancel_pending_notifications
+
+        await cancel_pending_notifications(session, contact_id=contact_id, group_id=group_id)
+    except Exception:
+        import structlog
+
+        structlog.get_logger(__name__).exception(
+            "cancel_pending_notifications_failed",
+            contact_id=contact_id,
+            group_id=group_id,
+        )
 
 
 async def record_owner_outbound(
@@ -242,7 +264,24 @@ async def record_owner_outbound(
     assignment.last_owner_response_at = now
     assignment.pending_inbound_at = None
     assignment.escalated_to_group_at = None
+    assignment.staff_notify_acked_at = None
+    assignment.staff_notify_acked_by = None
+    assignment.staff_notify_group_senior_at = None
+    assignment.staff_notify_dept_senior_at = None
+    assignment.staff_notify_admin_at = None
     await session.flush()
+    try:
+        from app.modules.notifications.service import cancel_pending_notifications
+
+        await cancel_pending_notifications(session, contact_id=contact_id, group_id=group_id)
+    except Exception:
+        import structlog
+
+        structlog.get_logger(__name__).exception(
+            "cancel_pending_notifications_failed",
+            contact_id=contact_id,
+            group_id=group_id,
+        )
 
 
 async def reassign_owner(
@@ -267,6 +306,11 @@ async def reassign_owner(
     assignment.assignment_source = source
     assignment.pending_inbound_at = None
     assignment.escalated_to_group_at = None
+    assignment.staff_notify_acked_at = None
+    assignment.staff_notify_acked_by = None
+    assignment.staff_notify_group_senior_at = None
+    assignment.staff_notify_dept_senior_at = None
+    assignment.staff_notify_admin_at = None
     await session.flush()
     await session.refresh(assignment)
     return assignment

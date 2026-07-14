@@ -212,6 +212,38 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'settings/group-after-hours',
+
+        name: 'group-after-hours',
+
+        component: () => import('@/pages/settings/group-after-hours.vue'),
+
+        meta: { requiresSenior: true },
+
+      },
+
+      {
+
+        path: 'settings/notifications',
+
+        name: 'notifications',
+
+        component: () => import('@/pages/settings/notifications.vue'),
+
+      },
+
+      {
+
+        path: 'settings/notification-history',
+
+        name: 'notification-history',
+
+        component: () => import('@/pages/settings/notification-history.vue'),
+
+      },
+
+      {
+
         path: 'settings/statuses',
 
         name: 'admin-statuses',
@@ -333,6 +365,16 @@ const routes: RouteRecordRaw[] = [
             name: 'admin-bots',
 
             component: () => import('@/pages/admin/bots.vue'),
+
+          },
+
+          {
+
+            path: 'notification-bot',
+
+            name: 'admin-notification-bot',
+
+            component: () => import('@/pages/admin/notification-bot.vue'),
 
           },
 

@@ -37,6 +37,7 @@ import {
 import { peekOptOrders, prefetchOptOrders } from '@/features/chats/payments-cache'
 import { useChatsStore } from '@/features/chats/store'
 import { uploadFile } from '@/features/chats/api'
+import { validateOptPaymentDocuments } from '@/features/leads/opt-payment-validation'
 import type { OptOrder, OptOrderLine } from '@/features/leads/opt-types'
 import {
   OPT_PAYMENT_RECIPIENT_OPTIONS,
@@ -267,9 +268,17 @@ async function onSavePayment(): Promise<void> {
     message.warning('Укажите сумму оплаты')
     return
   }
+  const fileIds = paymentDocuments.value.map((row) => row.file_id)
+  const docError = validateOptPaymentDocuments({
+    payment_type: paymentForm.value.payment_type,
+    document_file_ids: fileIds,
+  })
+  if (docError) {
+    message.warning(docError)
+    return
+  }
   savingPayment.value = true
   try {
-    const fileIds = paymentDocuments.value.map((row) => row.file_id)
     const updated = await addOptOrderPayment(props.leadId, selectedOrder.value.id, {
       amount: paymentForm.value.amount,
       paid_at: new Date(paymentForm.value.paid_at).toISOString(),
@@ -1183,7 +1192,13 @@ onUnmounted(() => {
                 </NButton>
               </li>
             </ul>
-            <p v-else class="opt-orders__meta">Можно прикрепить несколько файлов</p>
+            <p v-else class="opt-orders__meta">
+              {{
+                paymentForm.payment_type === 'cash'
+                  ? 'Для наличных документ не обязателен'
+                  : 'Обязательно прикрепите документ подтверждения'
+              }}
+            </p>
           </div>
         </NFormItem>
       </NForm>

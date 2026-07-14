@@ -46,6 +46,8 @@ export interface QuickReplyTemplate {
   body: string
   department_id: number | null
   group_id: number | null
+  owner_user_id?: number | null
+  scope?: 'shared' | 'personal'
   is_active: boolean
   usage_count: number
   created_at: string
@@ -57,6 +59,7 @@ export interface QuickReplyTemplateBody {
   body: string
   department_id?: number | null
   group_id?: number | null
+  scope?: 'shared' | 'personal'
   is_active?: boolean
 }
 
@@ -125,6 +128,7 @@ export async function listQuickReplies(params: {
   q?: string
   department_id?: number | null
   group_id?: number | null
+  scope?: 'shared' | 'personal' | 'all'
   include_inactive?: boolean
   limit?: number
 } = {}): Promise<QuickReplyTemplate[]> {
@@ -132,6 +136,7 @@ export async function listQuickReplies(params: {
   if (params.q) query.q = params.q
   if (params.department_id != null) query.department_id = params.department_id
   if (params.group_id != null) query.group_id = params.group_id
+  if (params.scope) query.scope = params.scope
   if (params.include_inactive) query.include_inactive = true
   if (params.limit) query.limit = params.limit
   const { data } = await http.get<{ items: QuickReplyTemplate[] }>('/chats/quick-replies', {

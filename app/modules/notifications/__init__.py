@@ -1,0 +1,1 @@
+"""Staff Telegram notification package."""

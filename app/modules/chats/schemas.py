@@ -64,6 +64,8 @@ class QuickReplyTemplateCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
     department_id: int | None = Field(default=None, gt=0)
     group_id: int | None = Field(default=None, gt=0)
+    """shared = group/department template; personal = only for current user."""
+    scope: Literal["shared", "personal"] = "shared"
     is_active: bool = True
 
 
@@ -81,6 +83,8 @@ class QuickReplyTemplateResponse(BaseModel):
     body: str
     department_id: int | None
     group_id: int | None
+    owner_user_id: int | None = None
+    scope: Literal["shared", "personal"] = "shared"
     is_active: bool
     usage_count: int
     created_at: datetime

@@ -18,6 +18,7 @@ async def handle_inbound_ownership(
     contact_id: int,
     group_id: int,
     chat_id: int,
+    message_preview: str | None = None,
 ) -> int | None:
     if not ownership_v2_enabled():
         return None
@@ -50,6 +51,24 @@ async def handle_inbound_ownership(
             },
             scope={"group_id": group_id},
         )
+        try:
+            from app.modules.notifications.service import notify_new_card
+
+            await notify_new_card(
+                session,
+                contact_id=contact_id,
+                group_id=group_id,
+                chat_id=chat_id,
+                owner_user_id=owner_id,
+            )
+        except Exception:
+            import structlog
+
+            structlog.get_logger(__name__).exception(
+                "staff_notify_new_card_failed",
+                contact_id=contact_id,
+                owner_user_id=owner_id,
+            )
 
     if settings.notify_owner_on_inbound:
         owner_name = await user_full_name(session, owner_id)
@@ -62,5 +81,27 @@ async def handle_inbound_ownership(
             },
             scope={"user_id": owner_id},
         )
+        try:
+            from app.modules.notifications.service import notify_owner_inbound
+
+            pending_at = result.assignment.pending_inbound_at
+            if pending_at is not None:
+                await notify_owner_inbound(
+                    session,
+                    contact_id=contact_id,
+                    group_id=group_id,
+                    chat_id=chat_id,
+                    owner_user_id=owner_id,
+                    pending_at=pending_at,
+                    message_preview=message_preview,
+                )
+        except Exception:
+            import structlog
+
+            structlog.get_logger(__name__).exception(
+                "staff_notify_owner_inbound_failed",
+                contact_id=contact_id,
+                owner_user_id=owner_id,
+            )
 
     return owner_id

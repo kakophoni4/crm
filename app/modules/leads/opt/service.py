@@ -286,6 +286,10 @@ class OptOrderService:
                 continue
             if normalized not in doc_ids:
                 doc_ids.append(normalized)
+        if body.payment_type != "cash" and not doc_ids:
+            raise ValidationError(
+                message="Прикрепите документ подтверждения оплаты (для наличных не требуется)",
+            )
         for file_id in doc_ids:
             uploaded = await self._repo.get_uploaded_file(file_id)
             if uploaded is None:
@@ -399,6 +403,8 @@ class OptOrderService:
         *,
         department_id: int | None = None,
         group_id: int | None = None,
+        contact_id: int | None = None,
+        chat_id: int | None = None,
         payment_status: str | None = None,
         open_only: bool = False,
         offset: int = 0,
@@ -424,6 +430,10 @@ class OptOrderService:
             filters.append(Group.department_id == department_id)
         if group_id is not None:
             filters.append(Lead.group_id == group_id)
+        if contact_id is not None:
+            filters.append(Lead.contact_id == contact_id)
+        if chat_id is not None:
+            filters.append(Lead.chat_id == chat_id)
         if payment_status:
             statuses = [part.strip() for part in payment_status.split(",") if part.strip()]
             if len(statuses) == 1:
@@ -476,8 +486,8 @@ class OptOrderService:
         items: list[OptOrderRegistryItem] = []
         for (
             order,
-            chat_id,
-            contact_id,
+            chat_id_row,
+            contact_id_row,
             order_group_id,
             contact_name,
             group_name,
@@ -492,8 +502,8 @@ class OptOrderService:
                     id=order.id,
                     lead_id=order.lead_id,
                     order_no=order.order_no,
-                    chat_id=chat_id,
-                    contact_id=contact_id,
+                    chat_id=chat_id_row,
+                    contact_id=contact_id_row,
                     contact_name=contact_name,
                     group_id=order_group_id,
                     group_name=group_name,

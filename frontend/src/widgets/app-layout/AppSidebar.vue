@@ -14,6 +14,8 @@ import {
   UserPlus,
   Users,
   UsersRound,
+  Moon,
+  Bell,
 } from 'lucide-vue-next'
 import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu, NSelect } from 'naive-ui'
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -102,6 +104,11 @@ const menuOptions = computed(() => {
     icon: () => h(NIcon, null, { default: () => h(CheckSquare) }),
   },
   {
+    label: 'Уведомления',
+    key: 'notifications',
+    icon: () => h(NIcon, null, { default: () => h(Bell) }),
+  },
+  {
     label: 'Dashboard',
     key: 'dashboard',
     icon: () => h(NIcon, null, { default: () => h(LayoutDashboard) }),
@@ -121,6 +128,11 @@ const menuOptions = computed(() => {
       label: 'Эскалация',
       key: 'group-escalation',
       icon: () => h(NIcon, null, { default: () => h(Settings) }),
+    })
+    items.push({
+      label: 'Автоответ',
+      key: 'group-after-hours',
+      icon: () => h(NIcon, null, { default: () => h(Moon) }),
     })
     items.push({
       label: 'Статусы',
@@ -177,10 +189,12 @@ const activeKey = computed(() => {
   if (route.name === 'applications') return 'applications'
   if (route.name === 'storage') return 'storage'
   if (route.name === 'tasks') return 'tasks'
+  if (route.name === 'notifications' || route.name === 'notification-history') return 'notifications'
   if (route.name === 'accounting') return 'accounting'
   if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
   if (route.name === 'group-escalation') return 'group-escalation'
+  if (route.name === 'group-after-hours') return 'group-after-hours'
   if (route.name === 'admin-statuses') return 'admin-statuses'
   if (route.name === 'settings-users') return 'settings-users'
   if (route.name === 'settings-groups') return 'settings-groups'
@@ -216,6 +230,11 @@ function onMenuUpdate(key: string): void {
     emit('closeDrawer')
     return
   }
+  if (key === 'notifications') {
+    void router.push({ name: 'notifications' })
+    emit('closeDrawer')
+    return
+  }
   if (key === 'accounting') {
     void router.push({ name: 'accounting' })
     emit('closeDrawer')
@@ -237,6 +256,13 @@ function onMenuUpdate(key: string): void {
     const query =
       escalationGroupId != null ? { group_id: String(escalationGroupId) } : undefined
     void router.push({ name: 'group-escalation', query })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'group-after-hours') {
+    const groupId = auth.user?.group_ids?.[0] ?? auth.user?.group_id ?? undefined
+    const query = groupId != null ? { group_id: String(groupId) } : undefined
+    void router.push({ name: 'group-after-hours', query })
     emit('closeDrawer')
     return
   }

@@ -421,6 +421,50 @@ export interface EscalationSettingsPatch {
 
 
 
+export type WorkingHoursSchedule = Record<string, string[][]>
+
+
+
+export interface AfterHoursSettings {
+
+  group_id: number
+
+  enabled: boolean
+
+  reply_text: string
+
+  delay_minutes: number
+
+  timezone: string
+
+  working_hours: WorkingHoursSchedule
+
+  cooldown_minutes: number
+
+  updated_at: string
+
+}
+
+
+
+export interface AfterHoursSettingsPatch {
+
+  enabled?: boolean
+
+  reply_text?: string
+
+  delay_minutes?: number
+
+  timezone?: string
+
+  working_hours?: WorkingHoursSchedule
+
+  cooldown_minutes?: number
+
+}
+
+
+
 /** Актуальные статусы клиента (автоматика + неликвидный). */
 export const CONTACT_CLIENT_STATUS_OPTIONS = [
   { label: 'Новый', value: 'new' as const },

@@ -40,6 +40,16 @@ class ContactGroupAssignment(Base):
     last_owner_response_at: Mapped[datetime | None] = mapped_column(nullable=True)
     pending_inbound_at: Mapped[datetime | None] = mapped_column(nullable=True)
     escalated_to_group_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    after_hours_auto_replied_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    staff_notify_acked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    staff_notify_acked_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    staff_notify_group_senior_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    staff_notify_dept_senior_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    staff_notify_admin_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 

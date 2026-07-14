@@ -26,6 +26,12 @@ class QuickReplyTemplate(Base):
         nullable=True,
         index=True,
     )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     usage_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_by: Mapped[int | None] = mapped_column(

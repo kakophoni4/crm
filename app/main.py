@@ -29,6 +29,8 @@ from app.modules.tasks.router import router as tasks_router
 from app.modules.telephony.router import router as telephony_router
 from app.modules.users.router import router as users_router
 from app.modules.users.user_deletion_router import router as user_deletion_requests_router
+from app.modules.notifications.router import router as notifications_router
+from app.modules.notifications.router import webhook_router as notification_bot_webhook_router
 from app.realtime.auth import router as realtime_auth_router
 from app.realtime.hub import get_hub, reset_hub
 from app.realtime.router import router as realtime_router
@@ -125,6 +127,8 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(analytics_router)
     app.include_router(accounting_router)
+    app.include_router(notifications_router)
+    app.include_router(notification_bot_webhook_router)
 
     def _health_checks(
         db_ok: bool,

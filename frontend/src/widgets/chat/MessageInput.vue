@@ -45,6 +45,7 @@ const dragOver = ref(false)
 const quickReplies = ref<QuickReplyTemplate[]>([])
 const quickRepliesOpen = ref(false)
 const quickRepliesLoading = ref(false)
+const quickReplyScope = ref<'shared' | 'personal'>('shared')
 const creatingQuickReply = ref(false)
 const newQuickReplyTitle = ref('')
 const newQuickReplyBody = ref('')
@@ -52,6 +53,15 @@ const vaultPickerOpen = ref(false)
 let quickReplySearchTimer: number | null = null
 
 const quickReplyQuery = computed(() => text.value.trim())
+const sharedQuickReplies = computed(() =>
+  quickReplies.value.filter((row) => (row.scope ?? 'shared') === 'shared'),
+)
+const personalQuickReplies = computed(() =>
+  quickReplies.value.filter((row) => row.scope === 'personal'),
+)
+const visibleQuickReplies = computed(() =>
+  quickReplyScope.value === 'personal' ? personalQuickReplies.value : sharedQuickReplies.value,
+)
 
 const replyPreview = computed(() => {
   const msg = props.replyTo
@@ -192,9 +202,14 @@ async function loadQuickReplies(): Promise<void> {
   try {
     quickReplies.value = await listQuickReplies({
       q: quickReplyQuery.value || undefined,
-      department_id: props.groupId == null ? (props.departmentId ?? undefined) : undefined,
-      group_id: props.groupId ?? undefined,
-      limit: 8,
+      department_id:
+        quickReplyScope.value === 'shared' && props.groupId == null
+          ? (props.departmentId ?? undefined)
+          : undefined,
+      group_id:
+        quickReplyScope.value === 'shared' ? (props.groupId ?? undefined) : undefined,
+      scope: quickReplyScope.value,
+      limit: 20,
     })
   } catch {
     quickReplies.value = []
@@ -239,17 +254,23 @@ async function saveQuickReply(): Promise<void> {
     return
   }
   try {
+    const isPersonal = quickReplyScope.value === 'personal'
     await createQuickReply({
       title,
       body,
-      department_id: props.groupId == null ? (props.departmentId ?? null) : null,
-      group_id: props.groupId ?? null,
+      scope: isPersonal ? 'personal' : 'shared',
+      department_id: isPersonal
+        ? null
+        : props.groupId == null
+          ? (props.departmentId ?? null)
+          : null,
+      group_id: isPersonal ? null : (props.groupId ?? null),
       is_active: true,
     })
     creatingQuickReply.value = false
     newQuickReplyTitle.value = ''
     newQuickReplyBody.value = ''
-    message.success('Шаблон добавлен')
+    message.success(isPersonal ? 'Личный шаблон добавлен' : 'Общий шаблон добавлен')
     await loadQuickReplies()
   } catch (err) {
     message.error(err instanceof Error ? err.message : 'Не удалось добавить шаблон')
@@ -345,6 +366,25 @@ watch(
         </div>
       </div>
 
+      <div class="message-input__quick-tabs">
+        <button
+          type="button"
+          class="message-input__quick-tab"
+          :class="{ 'message-input__quick-tab--active': quickReplyScope === 'shared' }"
+          @click="quickReplyScope = 'shared'; void loadQuickReplies()"
+        >
+          Общие
+        </button>
+        <button
+          type="button"
+          class="message-input__quick-tab"
+          :class="{ 'message-input__quick-tab--active': quickReplyScope === 'personal' }"
+          @click="quickReplyScope = 'personal'; void loadQuickReplies()"
+        >
+          Личные
+        </button>
+      </div>
+
       <div v-if="creatingQuickReply" class="message-input__quick-form">
         <input
           v-model="newQuickReplyTitle"
@@ -359,15 +399,22 @@ watch(
           placeholder="Текст быстрого ответа"
           :disabled="disabled"
         />
+        <p class="message-input__quick-hint">
+          {{
+            quickReplyScope === 'personal'
+              ? 'Сохранится как личный шаблон (только для вас)'
+              : 'Сохранится как общий шаблон группы/отдела'
+          }}
+        </p>
         <div class="message-input__quick-form-actions">
           <NButton size="small" @click="creatingQuickReply = false">Отмена</NButton>
           <NButton size="small" type="primary" @click="saveQuickReply">Сохранить</NButton>
         </div>
       </div>
 
-      <div v-else-if="quickReplies.length" class="message-input__quick-list">
+      <div v-else-if="visibleQuickReplies.length" class="message-input__quick-list">
         <div
-          v-for="reply in quickReplies"
+          v-for="reply in visibleQuickReplies"
           :key="reply.id"
           class="message-input__quick-item"
           role="button"
@@ -382,7 +429,9 @@ watch(
           <button
             type="button"
             class="message-input__quick-delete"
-            aria-label="Скрыть шаблон для себя"
+            :aria-label="
+              reply.scope === 'personal' ? 'Удалить личный шаблон' : 'Скрыть шаблон для себя'
+            "
             @click.stop="hideQuickReplyForMe(reply)"
           >
             <Trash2 :size="14" />
@@ -390,7 +439,13 @@ watch(
         </div>
       </div>
       <div v-else class="message-input__quick-empty">
-        {{ quickRepliesLoading ? 'Ищем...' : 'Подходящих шаблонов нет' }}
+        {{
+          quickRepliesLoading
+            ? 'Ищем...'
+            : quickReplyScope === 'personal'
+              ? 'Личных шаблонов нет'
+              : 'Общих шаблонов нет'
+        }}
       </div>
     </div>
 
@@ -595,6 +650,36 @@ watch(
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.message-input__quick-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.message-input__quick-tab {
+  flex: 1;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.message-input__quick-tab--active {
+  background: var(--app-accent-soft, #e8f3ff);
+  border-color: color-mix(in srgb, var(--app-accent) 35%, var(--app-border));
+  color: var(--app-text);
+  font-weight: 600;
+}
+
+.message-input__quick-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
 }
 
 .message-input__quick-list,
