@@ -149,6 +149,38 @@ class OptOrderRegistryListResponse(BaseModel):
     total: int
 
 
+class OptPaymentLedgerItem(BaseModel):
+    id: int
+    order_id: int
+    lead_id: int
+    order_no: int
+    chat_id: int | None = None
+    contact_id: int | None = None
+    contact_name: str | None = None
+    group_id: int
+    group_name: str | None = None
+    department_id: int | None = None
+    department_name: str | None = None
+    amount: Decimal
+    paid_at: datetime
+    payment_type: str
+    recipient: str
+    created_at: datetime
+    created_by: int
+    created_by_name: str | None = None
+    document_file_id: int | None = None
+    documents_count: int = 0
+    order_payment_status: str
+    order_commission_due: Decimal
+    order_amount_paid: Decimal
+    buyer: OptCounterpartyResponse
+
+
+class OptPaymentLedgerListResponse(BaseModel):
+    items: list[OptPaymentLedgerItem]
+    total: int
+
+
 class OptSendRegistryResponse(BaseModel):
     message_id: int
     chat_id: int

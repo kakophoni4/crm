@@ -17,6 +17,7 @@ from app.modules.leads.opt.schemas import (
     OptOrderPaymentCreateRequest,
     OptOrderRegistryListResponse,
     OptOrderResponse,
+    OptPaymentLedgerListResponse,
     OptSendRegistryResponse,
     OptUploadFromAttachmentRequest,
 )
@@ -57,6 +58,27 @@ async def list_opt_orders_registry(
         limit=min(max(1, limit), 100),
     )
 
+
+@router.get("/opt-payments", response_model=OptPaymentLedgerListResponse)
+async def list_opt_payments_ledger(
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    department_id: int | None = None,
+    group_id: int | None = None,
+    contact_id: int | None = None,
+    payment_type: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> OptPaymentLedgerListResponse:
+    return await service.list_payments_ledger(
+        actor,
+        department_id=department_id,
+        group_id=group_id,
+        contact_id=contact_id,
+        payment_type=payment_type,
+        offset=max(0, offset),
+        limit=min(max(1, limit), 100),
+    )
 
 @router.get("/leads/{lead_id}/opt-orders", response_model=OptOrderListResponse)
 async def list_opt_orders(

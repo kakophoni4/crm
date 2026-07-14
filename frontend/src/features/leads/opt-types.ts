@@ -123,6 +123,38 @@ export interface OptOrderRegistryListResponse {
   total: number
 }
 
+export interface OptPaymentLedgerItem {
+  id: number
+  order_id: number
+  lead_id: number
+  order_no: number
+  chat_id?: number | null
+  contact_id?: number | null
+  contact_name?: string | null
+  group_id: number
+  group_name?: string | null
+  department_id?: number | null
+  department_name?: string | null
+  amount: number
+  paid_at: string
+  payment_type: string
+  recipient: string
+  created_at: string
+  created_by: number
+  created_by_name?: string | null
+  document_file_id?: number | null
+  documents_count: number
+  order_payment_status: string
+  order_commission_due: number
+  order_amount_paid: number
+  buyer: OptCounterparty
+}
+
+export interface OptPaymentLedgerListResponse {
+  items: OptPaymentLedgerItem[]
+  total: number
+}
+
 export const OPT_PAYMENT_TYPE_OPTIONS = [
   { label: 'На карту', value: 'card' as const },
   { label: 'Крипта', value: 'crypto' as const },

@@ -34,6 +34,8 @@ from app.modules.leads.opt.schemas import (
     OptOrderRegistryListResponse,
     OptOrderResponse,
     OptPaymentDocument,
+    OptPaymentLedgerItem,
+    OptPaymentLedgerListResponse,
     OptPaymentResponse,
     OptVolumeCategoryBreakdown,
 )
@@ -527,6 +529,132 @@ class OptOrderService:
                 ),
             )
         return OptOrderRegistryListResponse(items=items, total=total)
+
+    async def list_payments_ledger(
+        self,
+        actor: User,
+        *,
+        department_id: int | None = None,
+        group_id: int | None = None,
+        contact_id: int | None = None,
+        payment_type: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> OptPaymentLedgerListResponse:
+        from sqlalchemy import func, select
+
+        from app.modules.db.models.contact import Contact
+        from app.modules.db.models.department import Department
+        from app.modules.db.models.group import Group
+        from app.modules.db.models.lead import Lead
+        from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids
+
+        ctx = await self._scope_loader.load(actor)
+        scoped = visible_group_ids(ctx)
+        if scoped != SCOPE_ALL and not scoped:
+            return OptPaymentLedgerListResponse(items=[], total=0)
+
+        filters = []
+        if scoped != SCOPE_ALL:
+            filters.append(Lead.group_id.in_(scoped))
+        if department_id is not None:
+            filters.append(Group.department_id == department_id)
+        if group_id is not None:
+            filters.append(Lead.group_id == group_id)
+        if contact_id is not None:
+            filters.append(Lead.contact_id == contact_id)
+        if payment_type:
+            types = [part.strip() for part in payment_type.split(",") if part.strip()]
+            if len(types) == 1:
+                filters.append(LeadOptOrderPayment.payment_type == types[0])
+            elif types:
+                filters.append(LeadOptOrderPayment.payment_type.in_(types))
+
+        count_stmt = (
+            select(func.count())
+            .select_from(LeadOptOrderPayment)
+            .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderPayment.order_id)
+            .join(Lead, Lead.id == LeadOptOrder.lead_id)
+            .join(Group, Group.id == Lead.group_id)
+        )
+        if filters:
+            count_stmt = count_stmt.where(*filters)
+        total = int((await self._session.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(
+                LeadOptOrderPayment,
+                LeadOptOrder,
+                Lead.chat_id,
+                Lead.contact_id,
+                Lead.group_id,
+                Contact.full_name,
+                Group.name,
+                Group.department_id,
+                Department.name,
+            )
+            .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderPayment.order_id)
+            .join(Lead, Lead.id == LeadOptOrder.lead_id)
+            .join(Group, Group.id == Lead.group_id)
+            .outerjoin(Department, Department.id == Group.department_id)
+            .outerjoin(Contact, Contact.id == Lead.contact_id)
+            .options(selectinload(LeadOptOrderPayment.creator))
+        )
+        if filters:
+            stmt = stmt.where(*filters)
+
+        result = await self._session.execute(
+            stmt.order_by(LeadOptOrderPayment.paid_at.desc(), LeadOptOrderPayment.id.desc())
+            .offset(offset)
+            .limit(limit),
+        )
+        items: list[OptPaymentLedgerItem] = []
+        for (
+            payment,
+            order,
+            chat_id_row,
+            contact_id_row,
+            order_group_id,
+            contact_name,
+            group_name,
+            dept_id,
+            dept_name,
+        ) in result.all():
+            doc_ids = self._payment_document_ids(payment)
+            creator = payment.creator
+            items.append(
+                OptPaymentLedgerItem(
+                    id=payment.id,
+                    order_id=order.id,
+                    lead_id=order.lead_id,
+                    order_no=order.order_no,
+                    chat_id=chat_id_row,
+                    contact_id=contact_id_row,
+                    contact_name=contact_name,
+                    group_id=order_group_id,
+                    group_name=group_name,
+                    department_id=dept_id,
+                    department_name=dept_name,
+                    amount=Decimal(str(payment.amount)),
+                    paid_at=payment.paid_at,
+                    payment_type=payment.payment_type,
+                    recipient=payment.recipient,
+                    created_at=payment.created_at,
+                    created_by=payment.created_by,
+                    created_by_name=creator.full_name if creator is not None else None,
+                    document_file_id=doc_ids[0] if doc_ids else None,
+                    documents_count=len(doc_ids),
+                    order_payment_status=order.payment_status or "unpaid",
+                    order_commission_due=Decimal(str(order.commission_due or 0)),
+                    order_amount_paid=Decimal(str(order.amount_paid or 0)),
+                    buyer=OptCounterpartyResponse(
+                        inn=order.buyer_inn,
+                        kpp=order.buyer_kpp,
+                        name=order.buyer_name,
+                    ),
+                ),
+            )
+        return OptPaymentLedgerListResponse(items=items, total=total)
 
     @staticmethod
     async def assert_lead_won_payment_allowed(

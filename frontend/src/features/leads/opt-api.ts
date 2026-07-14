@@ -3,6 +3,7 @@ import type {
   OptOrder,
   OptOrderListResponse,
   OptOrderRegistryListResponse,
+  OptPaymentLedgerListResponse,
 } from '@/features/leads/opt-types'
 import { http } from '@/shared/api/http'
 
@@ -22,6 +23,18 @@ export async function listOptOrdersRegistry(params?: {
   limit?: number
 }): Promise<OptOrderRegistryListResponse> {
   const { data } = await http.get<OptOrderRegistryListResponse>('/opt-orders', { params })
+  return data
+}
+
+export async function listOptPaymentsLedger(params?: {
+  department_id?: number
+  group_id?: number
+  contact_id?: number
+  payment_type?: string
+  offset?: number
+  limit?: number
+}): Promise<OptPaymentLedgerListResponse> {
+  const { data } = await http.get<OptPaymentLedgerListResponse>('/opt-payments', { params })
   return data
 }
 
