@@ -22,6 +22,7 @@ x-api-env: &api-env
   APP_ENV: ${APP_ENV:-staging}
   APP_DEBUG: ${APP_DEBUG:-false}
   APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-https://chat.${DOMAIN}}
+  APP_API_PUBLIC_BASE_URL: ${APP_API_PUBLIC_BASE_URL:-https://api.${DOMAIN}}
   JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
   PGCRYPTO_KEY: ${PGCRYPTO_KEY:?PGCRYPTO_KEY is required}
   DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-crm}}
