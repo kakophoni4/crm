@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.db.models.user import User
 from app.modules.notifications import service as notif_service
 from app.modules.notifications.schemas import (
+    EscalationPolicyOut,
+    EscalationPolicyPatchRequest,
     NotificationBotAdminOut,
     NotificationBotAdminPatchRequest,
     NotificationSettingsOut,
@@ -29,12 +31,34 @@ router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 webhook_router = APIRouter(prefix="/api/v1/notification-bot", tags=["notification-bot"])
 
 
+def _can_manage_escalation(actor: User) -> bool:
+    return is_admin(actor.role) or is_department_senior(actor.role) or is_group_senior(actor.role)
+
+
 def _link_out(link: Any) -> TelegramLinkOut:
     return TelegramLinkOut(
         id=link.id,
         telegram_user_id=link.telegram_user_id,
         telegram_username=link.telegram_username,
         created_at=link.created_at,
+    )
+
+
+def _escalation_out(
+    scope: str,
+    own: Any,
+    effective: Any,
+) -> EscalationPolicyOut:
+    return EscalationPolicyOut(
+        scope=scope,
+        timeout_minutes=effective.timeout_minutes,
+        mute_phrases=list(effective.mute_phrases),
+        effective_timeout_minutes=effective.timeout_minutes,
+        effective_mute_phrases=list(effective.mute_phrases),
+        effective_source_scope=effective.source_scope,
+        updated_at=effective.updated_at,
+        updated_by_name=effective.updated_by_name,
+        default_timeout_minutes=notif_service.DEFAULT_GROUP_SENIOR_TIMEOUT,
     )
 
 
@@ -56,6 +80,7 @@ async def get_my_notification_settings(
         can_link_multiple=is_admin(actor.role),
         can_view_history=is_admin(actor.role) or is_department_senior(actor.role),
         can_manage_bot=is_admin(actor.role),
+        can_manage_escalation=_can_manage_escalation(actor),
     )
 
 
@@ -65,20 +90,41 @@ async def patch_my_notification_settings(
     actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> NotificationSettingsOut:
-    uset = await notif_service.get_or_create_user_settings(db, actor.id)
-    if body.group_senior_timeout_minutes is not None:
-        if not is_group_senior(actor.role) and not is_admin(actor.role):
-            raise PermissionDenied(message="Таймаут доступен только старшему группы")
-        uset.group_senior_timeout_minutes = body.group_senior_timeout_minutes
-    if body.mute_phrases is not None:
-        if not is_group_senior(actor.role) and not is_admin(actor.role):
-            raise PermissionDenied(message="Фильтр фраз доступен только старшему группы")
-        cleaned = [p.strip() for p in body.mute_phrases if p and p.strip()]
-        if len(cleaned) > 50:
-            raise ValidationError(message="Не больше 50 фраз")
-        uset.mute_phrases = cleaned[:50]
-    await db.flush()
+    # Escalation timeout/mute moved to /escalation-policy.
+    if body.group_senior_timeout_minutes is not None or body.mute_phrases is not None:
+        raise ValidationError(
+            message="Таймаут и фразы эскалации настраиваются в блоке эскалации",
+        )
     return await get_my_notification_settings(actor, db)
+
+
+@router.get("/escalation-policy", response_model=EscalationPolicyOut)
+async def get_escalation_policy(
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> EscalationPolicyOut:
+    if not _can_manage_escalation(actor):
+        raise PermissionDenied(message="Настройка эскалации недоступна для вашей роли")
+    scope, own, effective = await notif_service.get_editable_escalation_policy(db, actor)
+    return _escalation_out(scope, own, effective)
+
+
+@router.patch("/escalation-policy", response_model=EscalationPolicyOut)
+async def patch_escalation_policy(
+    body: EscalationPolicyPatchRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> EscalationPolicyOut:
+    if not _can_manage_escalation(actor):
+        raise PermissionDenied(message="Настройка эскалации недоступна для вашей роли")
+    scope, _row = await notif_service.upsert_escalation_policy(
+        db,
+        actor=actor,
+        timeout_minutes=body.timeout_minutes,
+        mute_phrases=body.mute_phrases,
+    )
+    scope2, own, effective = await notif_service.get_editable_escalation_policy(db, actor)
+    return _escalation_out(scope2 or scope, own, effective)
 
 
 @router.post("/me/telegram-links", response_model=TelegramLinkOut, status_code=201)

@@ -45,6 +45,7 @@ from app.modules.db.models.lead_opt_order_commission_history import (
 from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.message_reply_audit import MessageReplyAudit
 from app.modules.db.models.notification_bot_settings import NotificationBotSettings
+from app.modules.db.models.staff_escalation_policy import StaffEscalationPolicy
 from app.modules.db.models.staff_notification_event import (
     StaffNotificationEvent,
     StaffNotificationKind,
@@ -115,6 +116,7 @@ __all__ = [
     "QuickReplyTemplate",
     "QuickReplyTemplateHidden",
     "RefreshToken",
+    "StaffEscalationPolicy",
     "StaffNotificationEvent",
     "StaffNotificationKind",
     "StaffNotificationStatus",

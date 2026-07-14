@@ -19,16 +19,17 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
+  getEscalationPolicy,
   getNotificationHistory,
   getNotificationSettings,
   linkTelegram,
-  patchNotificationSettings,
+  patchEscalationPolicy,
+  type EscalationPolicy,
   type NotificationSettings,
   type StaffNotificationEvent,
   unlinkTelegram,
 } from '@/features/notifications/api'
 import { AppError } from '@/shared/api/http'
-import { useAuthStore } from '@/shared/store/auth'
 
 const KIND_LABEL: Record<string, string> = {
   inbound_message: 'Сообщение',
@@ -52,15 +53,27 @@ const STATUS_LABEL: Record<string, string> = {
   failed: 'Ошибка',
 }
 
+const SCOPE_TITLE: Record<string, string> = {
+  org: 'Эскалация (все)',
+  department: 'Эскалация (мой отдел)',
+  group: 'Эскалация (моя группа)',
+}
+
+const SCOPE_HINT: Record<string, string> = {
+  org: 'Настройка для всей организации. Учитывается последнее сохранение среди уровней.',
+  department: 'Настройка для вашего отдела. Учитывается последнее сохранение среди уровней.',
+  group: 'Настройка для вашей группы. Учитывается последнее сохранение среди уровней.',
+}
+
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
-const auth = useAuthStore()
 
 const loading = ref(true)
 const saving = ref(false)
 const linking = ref(false)
 const settings = ref<NotificationSettings | null>(null)
+const escalationPolicy = ref<EscalationPolicy | null>(null)
 const telegramIdInput = ref('')
 const timeoutMinutes = ref(15)
 const mutePhrases = ref<string[]>([])
@@ -81,8 +94,14 @@ const statusOptions = [
   { label: 'Ошибка', value: 'failed' },
 ]
 
-const isGroupSenior = computed(
-  () => auth.user?.role === 'group_senior' || auth.user?.role === 'admin',
+const canManageEscalation = computed(() => Boolean(settings.value?.can_manage_escalation))
+const escalationTitle = computed(
+  () => SCOPE_TITLE[escalationPolicy.value?.scope || ''] || 'Эскалация',
+)
+const escalationHint = computed(
+  () =>
+    SCOPE_HINT[escalationPolicy.value?.scope || ''] ||
+    'Учитывается последнее сохранение среди уровней (организация / отдел / группа).',
 )
 const canViewHistory = computed(() => Boolean(settings.value?.can_view_history))
 const botDeepLink = computed(() => {
@@ -103,8 +122,15 @@ async function loadSettings(): Promise<void> {
   loading.value = true
   try {
     settings.value = await getNotificationSettings()
-    timeoutMinutes.value = settings.value.group_senior_timeout_minutes
-    mutePhrases.value = [...settings.value.mute_phrases]
+    if (settings.value.can_manage_escalation) {
+      escalationPolicy.value = await getEscalationPolicy()
+      timeoutMinutes.value = escalationPolicy.value.timeout_minutes
+      mutePhrases.value = [...escalationPolicy.value.mute_phrases]
+    } else {
+      escalationPolicy.value = null
+      timeoutMinutes.value = 15
+      mutePhrases.value = []
+    }
     if (settings.value.can_view_history) {
       const tab = String(route.query.tab || '')
       activeTab.value = tab === 'settings' ? 'settings' : 'history'
@@ -172,15 +198,15 @@ async function onUnlink(linkId: number): Promise<void> {
   }
 }
 
-async function onSave(): Promise<void> {
+async function onSaveEscalation(): Promise<void> {
   saving.value = true
   try {
-    const body: { group_senior_timeout_minutes?: number; mute_phrases?: string[] } = {}
-    if (isGroupSenior.value) {
-      body.group_senior_timeout_minutes = timeoutMinutes.value
-      body.mute_phrases = mutePhrases.value
-    }
-    settings.value = await patchNotificationSettings(body)
+    escalationPolicy.value = await patchEscalationPolicy({
+      timeout_minutes: timeoutMinutes.value,
+      mute_phrases: mutePhrases.value,
+    })
+    timeoutMinutes.value = escalationPolicy.value.timeout_minutes
+    mutePhrases.value = [...escalationPolicy.value.mute_phrases]
     message.success('Сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
@@ -317,11 +343,12 @@ onMounted(async () => {
           </NCard>
 
           <NCard
-            v-if="isGroupSenior"
-            title="Эскалация старшему группы"
+            v-if="canManageEscalation"
+            :title="escalationTitle"
             size="small"
             class="notif-page__card"
           >
+            <p class="notif-page__hint">{{ escalationHint }}</p>
             <NForm label-placement="top">
               <NFormItem label="Нет ответа, мин">
                 <NInputNumber
@@ -334,7 +361,9 @@ onMounted(async () => {
               <NFormItem label="Не уведомлять по фразам">
                 <NDynamicTags v-model:value="mutePhrases" />
               </NFormItem>
-              <NButton type="primary" :loading="saving" @click="onSave">Сохранить</NButton>
+              <NButton type="primary" :loading="saving" @click="onSaveEscalation">
+                Сохранить
+              </NButton>
             </NForm>
           </NCard>
         </NTabPane>
@@ -388,11 +417,12 @@ onMounted(async () => {
         </NCard>
 
         <NCard
-          v-if="isGroupSenior"
-          title="Эскалация старшему группы"
+          v-if="canManageEscalation"
+          :title="escalationTitle"
           size="small"
           class="notif-page__card"
         >
+          <p class="notif-page__hint">{{ escalationHint }}</p>
           <NForm label-placement="top">
             <NFormItem label="Нет ответа, мин">
               <NInputNumber
@@ -405,7 +435,7 @@ onMounted(async () => {
             <NFormItem label="Не уведомлять по фразам">
               <NDynamicTags v-model:value="mutePhrases" />
             </NFormItem>
-            <NButton type="primary" :loading="saving" @click="onSave">Сохранить</NButton>
+            <NButton type="primary" :loading="saving" @click="onSaveEscalation">Сохранить</NButton>
           </NForm>
         </NCard>
       </template>

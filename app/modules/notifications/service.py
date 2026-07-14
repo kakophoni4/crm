@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import html
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.modules.bots.crypto import decrypt_secret, encrypt_secret
 from app.modules.chats.timeutil import utc_now
@@ -23,13 +25,15 @@ from app.modules.db.models.staff_notification_event import (
     StaffNotificationKind,
     StaffNotificationStatus,
 )
+from app.modules.db.models.staff_escalation_policy import StaffEscalationPolicy
 from app.modules.db.models.user import User
 from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.db.models.user_notification_settings import UserNotificationSettings
 from app.modules.db.models.user_telegram_link import UserTelegramLink
 from app.modules.notifications import telegram_api
-from app.modules.rbac.role_checks import is_admin
-from app.shared.exceptions import Conflict, NotFound, ValidationError
+from app.modules.rbac.role_checks import is_admin, is_department_senior, is_group_senior
+from app.modules.users.memberships import list_user_group_ids
+from app.shared.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 from app.shared.settings import settings
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +41,265 @@ logger = structlog.get_logger(__name__)
 DEPT_SENIOR_EXTRA_MINUTES = 10
 ADMIN_EXTRA_MINUTES = 10
 DEFAULT_GROUP_SENIOR_TIMEOUT = 15
+
+
+@dataclass
+class ResolvedEscalationPolicy:
+    timeout_minutes: int
+    mute_phrases: list[str]
+    source_scope: str | None = None
+    updated_at: datetime | None = None
+    updated_by_name: str | None = None
+
+
+def _policy_phrases(row: StaffEscalationPolicy | None) -> list[str]:
+    if row is None:
+        return []
+    return [str(p).strip() for p in (row.mute_phrases or []) if str(p).strip()]
+
+
+async def resolve_escalation_policy(
+    session: AsyncSession,
+    *,
+    group_id: int,
+    department_id: int | None,
+) -> ResolvedEscalationPolicy:
+    """Pick the newest among org / department / group policies (last write wins)."""
+    candidates: list[StaffEscalationPolicy] = []
+    org = await session.execute(
+        select(StaffEscalationPolicy)
+        .where(StaffEscalationPolicy.scope == "org")
+        .options(selectinload(StaffEscalationPolicy.updater))
+        .limit(1),
+    )
+    org_row = org.scalar_one_or_none()
+    if org_row is not None:
+        candidates.append(org_row)
+    if department_id is not None:
+        dept = await session.execute(
+            select(StaffEscalationPolicy)
+            .where(
+                StaffEscalationPolicy.scope == "department",
+                StaffEscalationPolicy.department_id == department_id,
+            )
+            .options(selectinload(StaffEscalationPolicy.updater))
+            .limit(1),
+        )
+        dept_row = dept.scalar_one_or_none()
+        if dept_row is not None:
+            candidates.append(dept_row)
+    group = await session.execute(
+        select(StaffEscalationPolicy)
+        .where(
+            StaffEscalationPolicy.scope == "group",
+            StaffEscalationPolicy.group_id == group_id,
+        )
+        .options(selectinload(StaffEscalationPolicy.updater))
+        .limit(1),
+    )
+    group_row = group.scalar_one_or_none()
+    if group_row is not None:
+        candidates.append(group_row)
+
+    if not candidates:
+        return ResolvedEscalationPolicy(
+            timeout_minutes=DEFAULT_GROUP_SENIOR_TIMEOUT,
+            mute_phrases=[],
+            source_scope=None,
+        )
+
+    winners = sorted(
+        candidates,
+        key=lambda row: row.updated_at or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+    best = winners[0]
+    updater_name = best.updater.full_name if best.updater is not None else None
+    return ResolvedEscalationPolicy(
+        timeout_minutes=max(1, int(best.timeout_minutes or DEFAULT_GROUP_SENIOR_TIMEOUT)),
+        mute_phrases=_policy_phrases(best),
+        source_scope=best.scope,
+        updated_at=best.updated_at,
+        updated_by_name=updater_name,
+    )
+
+
+def _row_as_resolved(row: StaffEscalationPolicy | None) -> ResolvedEscalationPolicy:
+    if row is None:
+        return ResolvedEscalationPolicy(
+            timeout_minutes=DEFAULT_GROUP_SENIOR_TIMEOUT,
+            mute_phrases=[],
+            source_scope=None,
+        )
+    return ResolvedEscalationPolicy(
+        timeout_minutes=max(1, int(row.timeout_minutes or DEFAULT_GROUP_SENIOR_TIMEOUT)),
+        mute_phrases=_policy_phrases(row),
+        source_scope=row.scope,
+        updated_at=row.updated_at,
+        updated_by_name=row.updater.full_name if row.updater is not None else None,
+    )
+
+
+async def get_editable_escalation_policy(
+    session: AsyncSession,
+    actor: User,
+) -> tuple[str, ResolvedEscalationPolicy, ResolvedEscalationPolicy]:
+    """Return (scope, own_scope_values, effective_sample). Form shows effective."""
+    if is_admin(actor.role):
+        result = await session.execute(
+            select(StaffEscalationPolicy)
+            .where(StaffEscalationPolicy.scope == "org")
+            .options(selectinload(StaffEscalationPolicy.updater))
+            .limit(1),
+        )
+        row = result.scalar_one_or_none()
+        own = _row_as_resolved(row)
+        # Sample any group so admin sees true last-write effective.
+        g_row = await session.execute(select(Group.id, Group.department_id).limit(1))
+        sample = g_row.first()
+        if sample is not None:
+            effective = await resolve_escalation_policy(
+                session,
+                group_id=int(sample[0]),
+                department_id=int(sample[1]) if sample[1] is not None else None,
+            )
+        else:
+            effective = own
+        return "org", own, effective
+
+    if is_department_senior(actor.role):
+        if actor.department_id is None:
+            raise ValidationError(message="У старшего отдела не указан отдел")
+        result = await session.execute(
+            select(StaffEscalationPolicy)
+            .where(
+                StaffEscalationPolicy.scope == "department",
+                StaffEscalationPolicy.department_id == actor.department_id,
+            )
+            .options(selectinload(StaffEscalationPolicy.updater))
+            .limit(1),
+        )
+        row = result.scalar_one_or_none()
+        own = _row_as_resolved(row)
+        g_row = await session.execute(
+            select(Group.id).where(Group.department_id == actor.department_id).limit(1),
+        )
+        sample_gid = g_row.scalar_one_or_none()
+        if sample_gid is not None:
+            effective = await resolve_escalation_policy(
+                session,
+                group_id=int(sample_gid),
+                department_id=actor.department_id,
+            )
+        else:
+            effective = own
+        return "department", own, effective
+
+    if is_group_senior(actor.role):
+        group_ids = await list_user_group_ids(session, actor.id)
+        if not group_ids:
+            raise ValidationError(message="Старшему группы нужна хотя бы одна группа")
+        sample_gid = int(group_ids[0])
+        result = await session.execute(
+            select(StaffEscalationPolicy)
+            .where(
+                StaffEscalationPolicy.scope == "group",
+                StaffEscalationPolicy.group_id == sample_gid,
+            )
+            .options(selectinload(StaffEscalationPolicy.updater))
+            .limit(1),
+        )
+        row = result.scalar_one_or_none()
+        own = _row_as_resolved(row)
+        group = await session.get(Group, sample_gid)
+        effective = await resolve_escalation_policy(
+            session,
+            group_id=sample_gid,
+            department_id=group.department_id if group else None,
+        )
+        return "group", own, effective
+
+    raise PermissionDenied(message="Настройка эскалации недоступна для вашей роли")
+
+
+async def upsert_escalation_policy(
+    session: AsyncSession,
+    *,
+    actor: User,
+    timeout_minutes: int,
+    mute_phrases: list[str],
+) -> tuple[str, StaffEscalationPolicy]:
+    cleaned = [p.strip() for p in mute_phrases if p and str(p).strip()][:50]
+    timeout = max(1, min(1440, int(timeout_minutes)))
+    now = utc_now()
+
+    if is_admin(actor.role):
+        result = await session.execute(
+            select(StaffEscalationPolicy).where(StaffEscalationPolicy.scope == "org").limit(1),
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = StaffEscalationPolicy(scope="org")
+            session.add(row)
+        row.timeout_minutes = timeout
+        row.mute_phrases = cleaned
+        row.updated_by = actor.id
+        row.updated_at = now
+        await session.flush()
+        await session.refresh(row)
+        return "org", row
+
+    if is_department_senior(actor.role):
+        if actor.department_id is None:
+            raise ValidationError(message="У старшего отдела не указан отдел")
+        result = await session.execute(
+            select(StaffEscalationPolicy).where(
+                StaffEscalationPolicy.scope == "department",
+                StaffEscalationPolicy.department_id == actor.department_id,
+            ).limit(1),
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = StaffEscalationPolicy(
+                scope="department",
+                department_id=actor.department_id,
+            )
+            session.add(row)
+        row.timeout_minutes = timeout
+        row.mute_phrases = cleaned
+        row.updated_by = actor.id
+        row.updated_at = now
+        await session.flush()
+        await session.refresh(row)
+        return "department", row
+
+    if is_group_senior(actor.role):
+        group_ids = await list_user_group_ids(session, actor.id)
+        if not group_ids:
+            raise ValidationError(message="Старшему группы нужна хотя бы одна группа")
+        last: StaffEscalationPolicy | None = None
+        for gid in group_ids:
+            result = await session.execute(
+                select(StaffEscalationPolicy).where(
+                    StaffEscalationPolicy.scope == "group",
+                    StaffEscalationPolicy.group_id == gid,
+                ).limit(1),
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                row = StaffEscalationPolicy(scope="group", group_id=gid)
+                session.add(row)
+            row.timeout_minutes = timeout
+            row.mute_phrases = cleaned
+            row.updated_by = actor.id
+            row.updated_at = now
+            last = row
+        await session.flush()
+        assert last is not None
+        await session.refresh(last)
+        return "group", last
+
+    raise PermissionDenied(message="Настройка эскалации недоступна для вашей роли")
 
 
 def _utc_naive(dt: datetime) -> datetime:
@@ -609,39 +872,41 @@ async def scan_staff_notification_escalations(session: AsyncSession) -> dict[str
         chat = chat_result.scalar_one_or_none()
         preview = await _latest_inbound_text(session, chat.id if chat else None)
 
-        # --- group seniors ---
+        # --- group seniors (timeout/mute from scoped policy, last write wins) ---
         seniors = await _group_seniors(session, assignment.group_id)
+        policy = await resolve_escalation_policy(
+            session,
+            group_id=assignment.group_id,
+            department_id=group.department_id if group else None,
+        )
+        timeout = policy.timeout_minutes
         any_group_sent = assignment.staff_notify_group_senior_at is not None
-        for senior in seniors:
-            uset = await get_or_create_user_settings(session, senior.id)
-            if _phrase_muted(preview, list(uset.mute_phrases or [])):
-                continue
-            timeout = max(1, int(uset.group_senior_timeout_minutes or DEFAULT_GROUP_SENIOR_TIMEOUT))
-            if age < timedelta(minutes=timeout):
-                continue
-            n = await _send_to_user(
-                session,
-                user=senior,
-                kind=StaffNotificationKind.ESCALATION_GROUP_SENIOR,
-                text=_format_escalation("group", name, preview),
-                keyboard=_ack_keyboard(0),
-                contact_id=assignment.contact_id,
-                chat_id=chat.id if chat else None,
-                group_id=assignment.group_id,
-                department_id=group.department_id if group else None,
-                pending_key=pkey,
-                contact_name=name,
-            )
-            if n:
-                counts["group"] += n
-                any_group_sent = True
+        muted = _phrase_muted(preview, policy.mute_phrases)
+        if not muted and age >= timedelta(minutes=timeout):
+            for senior in seniors:
+                n = await _send_to_user(
+                    session,
+                    user=senior,
+                    kind=StaffNotificationKind.ESCALATION_GROUP_SENIOR,
+                    text=_format_escalation("group", name, preview),
+                    keyboard=_ack_keyboard(0),
+                    contact_id=assignment.contact_id,
+                    chat_id=chat.id if chat else None,
+                    group_id=assignment.group_id,
+                    department_id=group.department_id if group else None,
+                    pending_key=pkey,
+                    contact_name=name,
+                )
+                if n:
+                    counts["group"] += n
+                    any_group_sent = True
         if any_group_sent and assignment.staff_notify_group_senior_at is None:
             assignment.staff_notify_group_senior_at = now
 
-        # If no group seniors exist, start dept timer from pending + default timeout
+        # If no group seniors exist, start dept timer after group timeout
         group_anchor = assignment.staff_notify_group_senior_at
-        if group_anchor is None and not seniors:
-            if age >= timedelta(minutes=DEFAULT_GROUP_SENIOR_TIMEOUT):
+        if group_anchor is None and not seniors and not muted:
+            if age >= timedelta(minutes=timeout):
                 assignment.staff_notify_group_senior_at = now
                 group_anchor = now
 

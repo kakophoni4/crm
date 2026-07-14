@@ -26,11 +26,29 @@ class NotificationSettingsOut(BaseModel):
     can_link_multiple: bool
     can_view_history: bool
     can_manage_bot: bool
+    can_manage_escalation: bool = False
 
 
 class NotificationSettingsPatchRequest(BaseModel):
     group_senior_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
     mute_phrases: list[str] | None = None
+
+
+class EscalationPolicyOut(BaseModel):
+    scope: str
+    timeout_minutes: int
+    mute_phrases: list[str]
+    effective_timeout_minutes: int
+    effective_mute_phrases: list[str]
+    effective_source_scope: str | None = None
+    updated_at: datetime | None = None
+    updated_by_name: str | None = None
+    default_timeout_minutes: int = 15
+
+
+class EscalationPolicyPatchRequest(BaseModel):
+    timeout_minutes: int = Field(ge=1, le=1440)
+    mute_phrases: list[str] = Field(default_factory=list)
 
 
 class NotificationBotAdminOut(BaseModel):

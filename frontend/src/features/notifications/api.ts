@@ -16,11 +16,24 @@ export interface NotificationSettings {
   can_link_multiple: boolean
   can_view_history: boolean
   can_manage_bot: boolean
+  can_manage_escalation: boolean
 }
 
-export interface NotificationSettingsPatch {
-  group_senior_timeout_minutes?: number
-  mute_phrases?: string[]
+export interface EscalationPolicy {
+  scope: 'org' | 'department' | 'group' | string
+  timeout_minutes: number
+  mute_phrases: string[]
+  effective_timeout_minutes: number
+  effective_mute_phrases: string[]
+  effective_source_scope: string | null
+  updated_at: string | null
+  updated_by_name: string | null
+  default_timeout_minutes: number
+}
+
+export interface EscalationPolicyPatch {
+  timeout_minutes: number
+  mute_phrases: string[]
 }
 
 export interface NotificationBotAdmin {
@@ -54,13 +67,6 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
   return data
 }
 
-export async function patchNotificationSettings(
-  body: NotificationSettingsPatch,
-): Promise<NotificationSettings> {
-  const { data } = await http.patch<NotificationSettings>('/notifications/me', body)
-  return data
-}
-
 export async function linkTelegram(telegramUserId: number): Promise<TelegramLink> {
   const { data } = await http.post<TelegramLink>('/notifications/me/telegram-links', {
     telegram_user_id: telegramUserId,
@@ -70,6 +76,18 @@ export async function linkTelegram(telegramUserId: number): Promise<TelegramLink
 
 export async function unlinkTelegram(linkId: number): Promise<void> {
   await http.delete(`/notifications/me/telegram-links/${linkId}`)
+}
+
+export async function getEscalationPolicy(): Promise<EscalationPolicy> {
+  const { data } = await http.get<EscalationPolicy>('/notifications/escalation-policy')
+  return data
+}
+
+export async function patchEscalationPolicy(
+  body: EscalationPolicyPatch,
+): Promise<EscalationPolicy> {
+  const { data } = await http.patch<EscalationPolicy>('/notifications/escalation-policy', body)
+  return data
 }
 
 export async function getNotificationBot(): Promise<NotificationBotAdmin> {
