@@ -31,7 +31,6 @@ import {
   persistChatList,
 } from '@/features/chats/chats-disk-cache'
 import { scheduleDealsPrefetchFromList } from '@/features/chats/deals-cache'
-import { prefetchPaymentsRegistry } from '@/features/chats/payments-cache'
 import {
   CHAT_SNAPSHOT_CACHE_SIZE,
   getChatSnapshot,
@@ -506,7 +505,6 @@ export const useChatsStore = defineStore('chats', () => {
       listItems.value.slice(0, 5).map((c) => c.id),
       { priority: true },
     )
-    void prefetchPaymentsRegistry()
   }
 
   async function fetchList(append = false): Promise<void> {
@@ -555,7 +553,6 @@ export const useChatsStore = defineStore('chats', () => {
         }
         // Deals/заявки — сразу с list item, не ждать полного snapshot сообщений.
         scheduleDealsPrefetchFromList(listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE))
-        void prefetchPaymentsRegistry()
       }
     }
   }

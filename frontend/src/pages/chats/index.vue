@@ -70,7 +70,6 @@ import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDi
 import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
 import ChatPaymentsSidePanel from '@/widgets/chat/ChatPaymentsSidePanel.vue'
-import ChatPaymentsRegistryPane from '@/widgets/chat/ChatPaymentsRegistryPane.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
 
 import { AppError } from '@/shared/api/http'
@@ -149,49 +148,27 @@ const contactClientLabel = computed(() =>
 type RightPaneTab = 'deal' | 'payments' | 'notifications'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
-type LeftListTab = ChatListTab | 'payments'
+const listTabs: { name: ChatListTab; label: string }[] = [
+  { name: 'mine', label: 'Мои карточки' },
+  { name: 'group', label: 'Вся группа' },
+  { name: 'needs_response', label: 'Нужен ответ' },
+]
 
 const listTabsForPane = computed(() => {
   const compact = Boolean(store.currentChat) && !isNarrow.value
-  const paymentsTab = { name: 'payments' as const, label: compact ? 'Оплаты' : 'Все оплаты' }
-  if (!compact) {
-    return [...listTabs, paymentsTab]
-  }
+  if (!compact) return listTabs
   return [
     { name: 'mine' as const, label: 'Мои' },
     { name: 'group' as const, label: 'Группа' },
     { name: 'needs_response' as const, label: 'Ответ' },
-    paymentsTab,
   ]
 })
-
-const leftListTab = ref<LeftListTab>(store.listTab)
-
-watch(leftListTab, (tab) => {
-  if (tab === 'payments') return
-  if (store.listTab !== tab) store.listTab = tab
-})
-
-watch(
-  () => store.listTab,
-  (tab) => {
-    if (leftListTab.value !== 'payments') {
-      leftListTab.value = tab
-    }
-  },
-)
 
 function goToContact(): void {
   const contactId = store.currentChat?.contact_id
   if (contactId == null) return
   void router.push({ name: 'contact-detail', params: { id: contactId } })
 }
-
-const listTabs: { name: ChatListTab; label: string }[] = [
-  { name: 'mine', label: 'Мои карточки' },
-  { name: 'group', label: 'Вся группа' },
-  { name: 'needs_response', label: 'Нужен ответ' },
-]
 
 const transferGroupId = computed(() => store.currentChat?.assigned_group_id ?? null)
 
@@ -460,7 +437,7 @@ onUnmounted(() => {
 
         <div class="chats-page__list-toolbar">
           <NTabs
-            v-model:value="leftListTab"
+            v-model:value="store.listTab"
             type="segment"
             size="small"
             class="chats-page__tabs"
@@ -488,11 +465,6 @@ onUnmounted(() => {
 
 
 
-        <template v-if="leftListTab === 'payments'">
-          <ChatPaymentsRegistryPane @open-chat="openChatMobile" />
-        </template>
-
-        <template v-else>
         <NSpace class="chats-page__filters" vertical :size="8">
 
           <NInput
@@ -634,7 +606,6 @@ onUnmounted(() => {
           <NEmpty v-else-if="!store.displayListItems.length" description="Нет чатов по фильтрам" />
 
         </NSpin>
-        </template>
 
       </aside>
 
