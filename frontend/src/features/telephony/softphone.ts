@@ -11,11 +11,6 @@ export interface SoftphoneEvents {
   onError?: (message: string) => void
 }
 
-const BASE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: true,
-  noiseSuppression: true,
-}
-
 export class CrmSoftphone {
   private user: SimpleUser | null = null
   private accountDomain = ''
@@ -24,16 +19,14 @@ export class CrmSoftphone {
 
   async connect(config: TelephonyWebrtcConfig, remoteAudio: HTMLAudioElement): Promise<void> {
     await this.disconnect()
-    // Fail early with a clear message if Windows/browser has no usable mic.
-    await ensureMicrophoneAvailable()
+    // Do not probe the mic here — SIP register works without it, and a probe with
+    // constraints often throws NotFoundError before Chrome shows the permission UI.
     const domain = sipDomain(config.sip_uri)
     this.accountDomain = domain
     this.events.onStatus?.('connecting')
     const user = new Web.SimpleUser(config.ws_url, {
       aor: config.sip_uri,
       media: {
-        // sip.js SimpleUser types expect boolean; mic check/constraints run in
-        // ensureMicrophoneAvailable() before connect/call.
         constraints: { audio: true, video: false },
         remote: { audio: remoteAudio },
       },
@@ -65,6 +58,7 @@ export class CrmSoftphone {
     if (!this.user || !this.accountDomain) {
       throw new Error('Softphone is not connected')
     }
+    // Permission prompt appears here with the simplest constraint.
     await ensureMicrophoneAvailable()
     const destination = `sip:${normalizeDialNumber(number)}@${this.accountDomain}`
     this.events.onStatus?.('calling')
@@ -135,12 +129,15 @@ export function mapMediaError(err: unknown): string {
     text.includes('device not found')
   ) {
     return (
-      'Микрофон не найден. Подключите гарнитуру/микрофон, в Windows сделайте его устройством ' +
-      'ввода по умолчанию и обновите страницу телефонии.'
+      'Браузер не видит микрофон. Проверьте: Параметры Windows → Конфиденциальность → Микрофон ' +
+      '(доступ для приложений и для Chrome/Edge), устройство ввода по умолчанию, затем обновите страницу.'
     )
   }
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || text.includes('permission')) {
-    return 'Нет доступа к микрофону. Разрешите доступ в адресной строке браузера и повторите звонок.'
+    return (
+      'Нет доступа к микрофону. Нажмите на иконку замка слева от адреса сайта → Микрофон → Разрешить, ' +
+      'обновите страницу и повторите.'
+    )
   }
   if (name === 'NotReadableError' || name === 'AbortError' || text.includes('could not start audio')) {
     return 'Микрофон занят другим приложением (Zoom, Teams, Discord). Закройте их и повторите.'
@@ -148,38 +145,32 @@ export function mapMediaError(err: unknown): string {
   if (name === 'OverconstrainedError') {
     return 'Выбранный микрофон недоступен. Обновите страницу и попробуйте снова.'
   }
+  if (text.includes('secure context') || text.includes('https')) {
+    return 'Доступ к микрофону только по HTTPS. Откройте телефонию по защищённому адресу сайта.'
+  }
   return raw || 'Не удалось начать звонок'
 }
 
+/** Ask for mic with the simplest constraints so the browser shows the permission dialog. */
 async function ensureMicrophoneAvailable(): Promise<void> {
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    throw new Error('Доступ к микрофону только по HTTPS. Откройте телефонию по защищённому адресу сайта.')
+  }
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('Браузер не поддерживает доступ к микрофону (нужен HTTPS или localhost)')
+    throw new Error('Браузер не поддерживает доступ к микрофону (нужен HTTPS)')
   }
 
   let stream: MediaStream | null = null
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { ...BASE_AUDIO_CONSTRAINTS },
-      video: false,
-    })
+    // Bare `audio: true` is what actually triggers the permission prompt.
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
   } catch (firstErr) {
+    // Retry once after enumerating — some Chrome builds only list inputs after a failed attempt.
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const inputs = devices.filter(
-        (d) => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default',
-      )
-      if (inputs.length === 0) {
-        throw firstErr
-      }
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          ...BASE_AUDIO_CONSTRAINTS,
-          deviceId: { exact: inputs[0].deviceId },
-        },
-        video: false,
-      })
+      await navigator.mediaDevices.enumerateDevices()
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
     } catch (secondErr) {
-      throw new Error(mapMediaError(secondErr))
+      throw new Error(mapMediaError(secondErr ?? firstErr))
     }
   } finally {
     stream?.getTracks().forEach((t) => t.stop())
