@@ -58,6 +58,9 @@ const softphone = new CrmSoftphone({
   onError: (value) => {
     message.error(value)
   },
+  onWarning: (value) => {
+    message.warning(value, { duration: 8000 })
+  },
 })
 
 const activeAccounts = computed(() => accounts.value.filter((account) => account.is_active))

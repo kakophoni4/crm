@@ -9,18 +9,18 @@ export type SoftphoneStatus = 'idle' | 'connecting' | 'registered' | 'calling' |
 export interface SoftphoneEvents {
   onStatus?: (status: SoftphoneStatus) => void
   onError?: (message: string) => void
+  onWarning?: (message: string) => void
 }
 
 export class CrmSoftphone {
   private user: SimpleUser | null = null
   private accountDomain = ''
+  private silenceHold: { ctx: AudioContext; osc: OscillatorNode } | null = null
 
   constructor(private readonly events: SoftphoneEvents = {}) {}
 
   async connect(config: TelephonyWebrtcConfig, remoteAudio: HTMLAudioElement): Promise<void> {
     await this.disconnect()
-    // Do not probe the mic here — SIP register works without it, and a probe with
-    // constraints often throws NotFoundError before Chrome shows the permission UI.
     const domain = sipDomain(config.sip_uri)
     this.accountDomain = domain
     this.events.onStatus?.('connecting')
@@ -38,12 +38,30 @@ export class CrmSoftphone {
           peerConnectionConfiguration: {
             iceServers: config.ice_servers as RTCIceServer[],
           },
+          // If Chrome has no usable mic, still place the call with a silent track.
+          mediaStreamFactory: async () => {
+            const acquired = await acquireLocalAudioStream()
+            if (acquired.usedSilence) {
+              this.silenceHold = acquired.hold
+              this.events.onWarning?.(
+                'Микрофон недоступен браузеру — звонок идёт без вашего голоса. ' +
+                  'Windows → Конфиденциальность → Микрофон (разрешить Chrome), ' +
+                  'устройство ввода по умолчанию, затем обновите страницу.',
+              )
+            } else {
+              this.releaseSilenceHold()
+            }
+            return acquired.stream
+          },
         },
       },
       delegate: {
         onCallAnswered: () => this.events.onStatus?.('in-call'),
         onCallCreated: () => this.events.onStatus?.('calling'),
-        onCallHangup: () => this.events.onStatus?.('ended'),
+        onCallHangup: () => {
+          this.releaseSilenceHold()
+          this.events.onStatus?.('ended')
+        },
         onServerConnect: () => this.events.onStatus?.('connecting'),
         onServerDisconnect: () => this.events.onStatus?.('idle'),
       },
@@ -58,13 +76,13 @@ export class CrmSoftphone {
     if (!this.user || !this.accountDomain) {
       throw new Error('Softphone is not connected')
     }
-    // Permission prompt appears here with the simplest constraint.
-    await ensureMicrophoneAvailable()
     const destination = `sip:${normalizeDialNumber(number)}@${this.accountDomain}`
     this.events.onStatus?.('calling')
     try {
+      // Mic (or silent fallback) is acquired inside mediaStreamFactory during INVITE.
       await this.user.call(destination)
     } catch (err) {
+      this.releaseSilenceHold()
       throw new Error(mapMediaError(err))
     }
   }
@@ -74,6 +92,7 @@ export class CrmSoftphone {
       return
     }
     await this.user.hangup()
+    this.releaseSilenceHold()
     this.events.onStatus?.('ended')
   }
 
@@ -95,6 +114,7 @@ export class CrmSoftphone {
 
   async disconnect(): Promise<void> {
     if (!this.user) {
+      this.releaseSilenceHold()
       return
     }
     const user = this.user
@@ -103,8 +123,21 @@ export class CrmSoftphone {
       await user.unregister()
     } finally {
       await user.disconnect()
+      this.releaseSilenceHold()
       this.events.onStatus?.('idle')
     }
+  }
+
+  private releaseSilenceHold(): void {
+    const hold = this.silenceHold
+    this.silenceHold = null
+    if (!hold) return
+    try {
+      hold.osc.stop()
+    } catch {
+      /* already stopped */
+    }
+    void hold.ctx.close().catch(() => undefined)
   }
 }
 
@@ -151,28 +184,46 @@ export function mapMediaError(err: unknown): string {
   return raw || 'Не удалось начать звонок'
 }
 
-/** Ask for mic with the simplest constraints so the browser shows the permission dialog. */
-async function ensureMicrophoneAvailable(): Promise<void> {
+async function acquireLocalAudioStream(): Promise<{
+  stream: MediaStream
+  usedSilence: boolean
+  hold: { ctx: AudioContext; osc: OscillatorNode } | null
+}> {
   if (typeof window !== 'undefined' && !window.isSecureContext) {
     throw new Error('Доступ к микрофону только по HTTPS. Откройте телефонию по защищённому адресу сайта.')
   }
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('Браузер не поддерживает доступ к микрофону (нужен HTTPS)')
+    const silent = createSilentAudioStream()
+    return { stream: silent.stream, usedSilence: true, hold: silent.hold }
   }
 
-  let stream: MediaStream | null = null
   try {
-    // Bare `audio: true` is what actually triggers the permission prompt.
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-  } catch (firstErr) {
-    // Retry once after enumerating — some Chrome builds only list inputs after a failed attempt.
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    return { stream, usedSilence: false, hold: null }
+  } catch {
     try {
       await navigator.mediaDevices.enumerateDevices()
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    } catch (secondErr) {
-      throw new Error(mapMediaError(secondErr ?? firstErr))
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      return { stream, usedSilence: false, hold: null }
+    } catch {
+      const silent = createSilentAudioStream()
+      return { stream: silent.stream, usedSilence: true, hold: silent.hold }
     }
-  } finally {
-    stream?.getTracks().forEach((t) => t.stop())
   }
+}
+
+function createSilentAudioStream(): {
+  stream: MediaStream
+  hold: { ctx: AudioContext; osc: OscillatorNode }
+} {
+  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+  const ctx = new Ctx()
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  const dest = ctx.createMediaStreamDestination()
+  gain.gain.value = 0
+  osc.connect(gain)
+  gain.connect(dest)
+  osc.start()
+  return { stream: dest.stream, hold: { ctx, osc } }
 }
