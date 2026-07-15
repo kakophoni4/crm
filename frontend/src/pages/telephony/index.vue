@@ -58,9 +58,6 @@ const softphone = new CrmSoftphone({
   onError: (value) => {
     message.error(value)
   },
-  onWarning: (value) => {
-    message.warning(value, { duration: 8000 })
-  },
 })
 
 const activeAccounts = computed(() => accounts.value.filter((account) => account.is_active))
@@ -393,6 +390,8 @@ async function startCall(): Promise<void> {
   primeRemoteAudio()
   calling.value = true
   try {
+    // Mic first — без микрофона INVITE не шлём и запись звонка не создаём.
+    await softphone.ensureLocalMic()
     const call = await createTelephonyCall(selectedAccountId.value, fullNumber.value)
     activeCallId.value = call.id
     activeCallStartedAt.value = Date.parse(call.started_at)

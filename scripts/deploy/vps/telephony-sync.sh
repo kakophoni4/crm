@@ -229,10 +229,24 @@ if ! cmp -s "$tmp_ext" "$ASTERISK_DIR/extensions.generated.conf"; then
   changed=1
 fi
 
-if [[ "$changed" -eq 1 ]]; then
-  docker exec "$ASTERISK_CONTAINER" asterisk -rx "pjsip reload" >/dev/null
+reload_asterisk() {
+  # Alpine Asterisk has no "pjsip reload" CLI — reload the module instead.
+  local out
+  out="$(docker exec "$ASTERISK_CONTAINER" asterisk -rx "module reload res_pjsip.so" 2>&1)" || true
+  if echo "$out" | grep -qiE 'no such|failed|error'; then
+    echo "telephony-sync: pjsip module reload failed: $out" >&2
+    return 1
+  fi
   docker exec "$ASTERISK_CONTAINER" asterisk -rx "dialplan reload" >/dev/null
+  echo "telephony-sync: res_pjsip.so + dialplan reloaded"
+}
+
+if [[ "$changed" -eq 1 ]]; then
+  reload_asterisk
   echo "Asterisk config synced and reloaded."
+elif [[ "${TELEPHONY_SYNC_FORCE_RELOAD:-0}" == "1" ]]; then
+  reload_asterisk
+  echo "Asterisk config unchanged; forced reload done."
 else
   echo "Asterisk config already up to date."
 fi

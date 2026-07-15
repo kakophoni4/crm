@@ -9,18 +9,22 @@ export type SoftphoneStatus = 'idle' | 'connecting' | 'registered' | 'calling' |
 export interface SoftphoneEvents {
   onStatus?: (status: SoftphoneStatus) => void
   onError?: (message: string) => void
-  onWarning?: (message: string) => void
 }
 
+/**
+ * Softphone: real microphone required. No silent fake stream — no mic → no INVITE.
+ */
 export class CrmSoftphone {
   private user: SimpleUser | null = null
   private accountDomain = ''
-  private silenceHold: { ctx: AudioContext; osc: OscillatorNode } | null = null
+  private localStream: MediaStream | null = null
 
   constructor(private readonly events: SoftphoneEvents = {}) {}
 
   async connect(config: TelephonyWebrtcConfig, remoteAudio: HTMLAudioElement): Promise<void> {
     await this.disconnect()
+    // Fail registration path early if mic is unusable — operator must fix device first.
+    await this.ensureLocalMic()
     const domain = sipDomain(config.sip_uri)
     this.accountDomain = domain
     this.events.onStatus?.('connecting')
@@ -38,28 +42,16 @@ export class CrmSoftphone {
           peerConnectionConfiguration: {
             iceServers: config.ice_servers as RTCIceServer[],
           },
-          // Own factory: never let a mic glitch abort the SIP INVITE.
           mediaStreamFactory: async () => {
-            const acquired = await acquireLocalAudioStream()
-            if (acquired.usedSilence) {
-              this.silenceHold = acquired.hold
-              this.events.onWarning?.(
-                'Звонок без микрофона (тишина). Если собеседник вас не слышит — проверьте устройство ввода в Windows.',
-              )
-            } else {
-              this.releaseSilenceHold()
-            }
-            return acquired.stream
+            // Always a live mic track — never silence.
+            return this.ensureLocalMic()
           },
         },
       },
       delegate: {
         onCallAnswered: () => this.events.onStatus?.('in-call'),
         onCallCreated: () => this.events.onStatus?.('calling'),
-        onCallHangup: () => {
-          this.releaseSilenceHold()
-          this.events.onStatus?.('ended')
-        },
+        onCallHangup: () => this.events.onStatus?.('ended'),
         onServerConnect: () => this.events.onStatus?.('connecting'),
         onServerDisconnect: () => this.events.onStatus?.('idle'),
       },
@@ -74,12 +66,13 @@ export class CrmSoftphone {
     if (!this.user || !this.accountDomain) {
       throw new Error('Softphone is not connected')
     }
+    // Hard gate: no microphone → no SIP INVITE, no CRM “failed” after half-dial.
+    await this.ensureLocalMic()
     const destination = `sip:${normalizeDialNumber(number)}@${this.accountDomain}`
     this.events.onStatus?.('calling')
     try {
       await this.user.call(destination)
     } catch (err) {
-      this.releaseSilenceHold()
       throw new Error(formatCallError(err))
     }
   }
@@ -89,16 +82,21 @@ export class CrmSoftphone {
       return
     }
     await this.user.hangup()
-    this.releaseSilenceHold()
     this.events.onStatus?.('ended')
   }
 
   mute(): void {
     this.user?.mute()
+    for (const track of this.localStream?.getAudioTracks() ?? []) {
+      track.enabled = false
+    }
   }
 
   unmute(): void {
     this.user?.unmute()
+    for (const track of this.localStream?.getAudioTracks() ?? []) {
+      track.enabled = true
+    }
   }
 
   getRemoteMediaStream(): MediaStream | undefined {
@@ -106,12 +104,12 @@ export class CrmSoftphone {
   }
 
   getLocalMediaStream(): MediaStream | undefined {
-    return this.user?.localMediaStream
+    return this.localStream ?? this.user?.localMediaStream
   }
 
   async disconnect(): Promise<void> {
     if (!this.user) {
-      this.releaseSilenceHold()
+      this.stopLocalMic()
       return
     }
     const user = this.user
@@ -120,22 +118,36 @@ export class CrmSoftphone {
       await user.unregister()
     } finally {
       await user.disconnect()
-      this.releaseSilenceHold()
+      this.stopLocalMic()
       this.events.onStatus?.('idle')
     }
   }
 
-  private releaseSilenceHold(): void {
-    const hold = this.silenceHold
-    this.silenceHold = null
-    if (!hold) return
-    try {
-      hold.osc.stop()
-    } catch {
-      /* already stopped */
+  /** Acquire or reuse a real microphone stream. Throws if none available. */
+  async ensureLocalMic(): Promise<MediaStream> {
+    if (this.localStream && hasLiveAudio(this.localStream)) {
+      return this.localStream
     }
-    void hold.ctx.close().catch(() => undefined)
+    this.stopLocalMic()
+    try {
+      this.localStream = await acquireMicrophoneStream()
+      return this.localStream
+    } catch (err) {
+      throw new Error(formatCallError(err))
+    }
   }
+
+  private stopLocalMic(): void {
+    if (!this.localStream) return
+    for (const track of this.localStream.getTracks()) {
+      track.stop()
+    }
+    this.localStream = null
+  }
+}
+
+function hasLiveAudio(stream: MediaStream): boolean {
+  return stream.getAudioTracks().some((t) => t.readyState === 'live')
 }
 
 function sipDomain(uri: string): string {
@@ -147,92 +159,113 @@ function normalizeDialNumber(value: string): string {
   return value.trim().replace(/[^\d+#*]/g, '')
 }
 
-/** Only map real getUserMedia DOMExceptions — not SIP/Bitcall "device" errors. */
-function isGetUserMediaNotFound(err: unknown): boolean {
+function isDomMediaError(err: unknown, names: string[]): boolean {
   if (!(err instanceof DOMException)) return false
-  return err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError'
-}
-
-function isGetUserMediaPermission(err: unknown): boolean {
-  if (!(err instanceof DOMException)) return false
-  return err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
+  return names.includes(err.name)
 }
 
 export function formatCallError(err: unknown): string {
-  // Do NOT treat generic "device not found" strings as mic errors —
-  // Bitcall/Asterisk often returns that for a missing SIP endpoint/extension.
-  if (isGetUserMediaNotFound(err)) {
+  if (isDomMediaError(err, ['NotFoundError', 'DevicesNotFoundError'])) {
     return (
-      'Браузер не видит аудиовход (это не про разрешение сайта). ' +
-      'Windows → Конфиденциальность → Микрофон → доступ для Chrome, ' +
-      'и устройство ввода по умолчанию.'
+      'Микрофон не найден. Windows → Система → Звук → Ввод: выберите устройство; ' +
+      'Параметры → Конфиденциальность → Микрофон — разрешите Chrome. Звонок без микрофона не начинается.'
     )
   }
-  if (isGetUserMediaPermission(err)) {
-    return 'Сайт без доступа к микрофону (замок у адреса → Микрофон → Разрешить).'
+  if (isDomMediaError(err, ['NotAllowedError', 'PermissionDeniedError'])) {
+    return 'Нет доступа к микрофону. Замок у адреса сайта → Микрофон → Разрешить, затем Подключить линию снова.'
   }
-  if (err instanceof DOMException && (err.name === 'NotReadableError' || err.name === 'AbortError')) {
-    return 'Микрофон занят другим приложением. Закройте Zoom/Teams/Discord и повторите.'
+  if (isDomMediaError(err, ['NotReadableError', 'AbortError'])) {
+    return 'Микрофон занят другим приложением (Zoom/Teams/Discord). Закройте их и повторите.'
+  }
+  if (isDomMediaError(err, ['OverconstrainedError', 'ConstraintNotSatisfiedError'])) {
+    return 'Браузер не смог открыть выбранный микрофон. Смените устройство ввода по умолчанию в Windows и обновите страницу.'
   }
 
   const raw = err instanceof Error ? err.message : String(err ?? '')
   const text = raw.toLowerCase()
+
+  // Chrome sometimes wraps NotFound as plain Error with this text.
+  if (text.includes('requested device not found') || text.includes('could not start audio source')) {
+    return (
+      'Микрофон не найден или недоступен (Requested device not found). ' +
+      'Проверьте устройство ввода в Windows и что Chrome видит микрофон на chrome://settings/content/microphone. ' +
+      'Звонок без микрофона не начинается.'
+    )
+  }
+
   if (
-    text.includes('device not found') ||
-    text.includes('not found') ||
-    text.includes('404') ||
     text.includes('user not registered') ||
     text.includes('temporarily unavailable') ||
+    text.includes('403') ||
+    text.includes('404') ||
     text.includes('486') ||
     text.includes('503')
   ) {
-    return (
-      `Ошибка линии Bitcall/SIP: ${raw || 'device/endpoint not found'}. ` +
-      'Проверьте SIP-аккаунт, extension и что линия зарегистрирована (статус «Готово»).'
-    )
+    return `Ошибка SIP/Bitcall: ${raw}. Линия должна быть «Готово»; проверьте транк Bitcall.`
   }
+
   return raw || 'Не удалось начать звонок'
 }
 
-/** @deprecated use formatCallError — kept for telephony page imports */
+/** @deprecated use formatCallError */
 export function mapMediaError(err: unknown): string {
   return formatCallError(err)
 }
 
-async function acquireLocalAudioStream(): Promise<{
-  stream: MediaStream
-  usedSilence: boolean
-  hold: { ctx: AudioContext; osc: OscillatorNode } | null
-}> {
+/**
+ * Robust mic open: plain constraints → per-device ideal → minimal processing.
+ * Never returns a fake/silent stream.
+ */
+async function acquireMicrophoneStream(): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
-    const silent = createSilentAudioStream()
-    return { stream: silent.stream, usedSilence: true, hold: silent.hold }
+    throw new DOMException(
+      'getUserMedia недоступен (нужен HTTPS и современный Chrome)',
+      'NotFoundError',
+    )
   }
 
+  const attempts: MediaStreamConstraints[] = [{ audio: true, video: false }]
+
+  // After a permission prompt (or prior grant), deviceIds are readable.
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    return { stream, usedSilence: false, hold: null }
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    for (const device of devices) {
+      if (device.kind !== 'audioinput') continue
+      if (device.deviceId) {
+        attempts.push({
+          audio: { deviceId: { ideal: device.deviceId } },
+          video: false,
+        })
+      }
+    }
   } catch {
-    // Never fail the call because of mic — outbound INVITE still goes with silence.
-    const silent = createSilentAudioStream()
-    return { stream: silent.stream, usedSilence: true, hold: silent.hold }
+    /* enumerate optional */
   }
-}
 
-function createSilentAudioStream(): {
-  stream: MediaStream
-  hold: { ctx: AudioContext; osc: OscillatorNode }
-} {
-  const Ctx =
-    window.AudioContext ||
-    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-  const ctx = new Ctx()
-  const osc = ctx.createOscillator()
-  const gain = ctx.createGain()
-  const dest = ctx.createMediaStreamDestination()
-  gain.gain.value = 0
-  osc.connect(gain)
-  gain.connect(dest)
-  osc.start()
-  return { stream: dest.stream, hold: { ctx, osc } }
+  attempts.push({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+    video: false,
+  })
+
+  let lastError: unknown = null
+  for (const constraints of attempts) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      if (hasLiveAudio(stream)) {
+        return stream
+      }
+      for (const track of stream.getTracks()) track.stop()
+      lastError = new DOMException('Requested device not found', 'NotFoundError')
+    } catch (err) {
+      lastError = err
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new DOMException('Requested device not found', 'NotFoundError')
 }
