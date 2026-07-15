@@ -32,9 +32,9 @@ export class CrmSoftphone {
     const user = new Web.SimpleUser(config.ws_url, {
       aor: config.sip_uri,
       media: {
-        // Do not pin deviceId — Chrome fails with "Requested device not found"
-        // when a previously granted mic was unplugged.
-        constraints: { audio: { ...BASE_AUDIO_CONSTRAINTS }, video: false },
+        // sip.js SimpleUser types expect boolean; mic check/constraints run in
+        // ensureMicrophoneAvailable() before connect/call.
+        constraints: { audio: true, video: false },
         remote: { audio: remoteAudio },
       },
       userAgentOptions: {
