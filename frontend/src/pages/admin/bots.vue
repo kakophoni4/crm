@@ -15,12 +15,13 @@ import {
 } from 'naive-ui'
 import { computed, h, onMounted, ref, watch } from 'vue'
 
-import type { BotItem, Department, Group } from '@/features/admin/api'
+import type { BotItem, Department, Group, AdminUser } from '@/features/admin/api'
 import {
   createBot,
   listBots,
   listDepartments,
   listGroups,
+  listUsers,
   rotateBotSecret,
   setBotGroupAssignments,
   updateBot,
@@ -34,6 +35,7 @@ const loading = ref(false)
 const rows = ref<BotItem[]>([])
 const departments = ref<Department[]>([])
 const groups = ref<Group[]>([])
+const users = ref<AdminUser[]>([])
 const showModal = ref(false)
 const showEditModal = ref(false)
 const secretsModal = ref(false)
@@ -52,6 +54,7 @@ const form = ref({
   green_instance_id: '',
   green_api_token: '',
   service_types: ['Деревья', 'ОПТ'] as string[],
+  default_owner_user_id: null as number | null,
 })
 const editForm = ref({
   name: '',
@@ -63,6 +66,7 @@ const editForm = ref({
   green_api_token: '',
   service_types: ['Деревья', 'ОПТ'] as string[],
   assigned_group_ids: [] as number[],
+  default_owner_user_id: null as number | null,
 })
 
 const isWhatsAppForm = computed(() => form.value.channel === 'whatsapp')
@@ -111,6 +115,15 @@ function formatGroupNames(row: BotItem): string {
 }
 
 const editGroupOptions = computed(() => groupOptionsForDepartment(editForm.value.department_id))
+
+const userOptions = computed<SelectOption[]>(() =>
+  users.value
+    .filter((u) => u.status === 'active' && u.role !== 'accountant')
+    .map((u) => ({
+      label: `${u.full_name} (@${u.username})`,
+      value: u.id,
+    })),
+)
 
 const columns = computed<DataTableColumns<BotItem>>(() => [
   { title: 'Код', key: 'code', width: 140, ellipsis: { tooltip: true } },
@@ -188,6 +201,7 @@ function openCreate(): void {
     green_instance_id: '',
     green_api_token: '',
     service_types: ['Деревья', 'ОПТ'],
+    default_owner_user_id: null,
   }
   showModal.value = true
 }
@@ -209,6 +223,7 @@ function openEdit(row: BotItem): void {
     green_api_token: '',
     service_types: row.service_types?.length ? [...row.service_types] : ['Деревья', 'ОПТ'],
     assigned_group_ids: [...row.assigned_group_ids],
+    default_owner_user_id: row.default_owner_user_id ?? null,
   }
   showEditModal.value = true
 }
@@ -216,14 +231,16 @@ function openEdit(row: BotItem): void {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [deptItems, groupItems, botItems] = await Promise.all([
+    const [deptItems, groupItems, botItems, userItems] = await Promise.all([
       listDepartments(),
       listGroups(),
       listBots(),
+      listUsers(),
     ])
     departments.value = deptItems
     groups.value = groupItems
     rows.value = botItems
+    users.value = userItems
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить ботов')
   } finally {
@@ -273,6 +290,9 @@ async function onSave(): Promise<void> {
     if (form.value.service_types.length) {
       body.service_types = [...form.value.service_types]
     }
+    if (form.value.default_owner_user_id != null) {
+      body.default_owner_user_id = form.value.default_owner_user_id
+    }
     const created = await createBot(body)
     showModal.value = false
     if (created.secrets) {
@@ -317,6 +337,11 @@ async function onSaveEdit(): Promise<void> {
       if (editForm.value.green_api_token.trim()) {
         payload.green_api_token = editForm.value.green_api_token.trim()
       }
+    }
+    if (editForm.value.default_owner_user_id != null) {
+      payload.default_owner_user_id = editForm.value.default_owner_user_id
+    } else if (bot.default_owner_user_id != null) {
+      payload.clear_default_owner = true
     }
     await updateBot(bot.id, payload)
     const groupsChanged =
@@ -422,6 +447,18 @@ watch(
             placeholder="Деревья и ОПТ"
           />
         </NFormItem>
+        <NFormItem
+          label="Фиксированный владелец карточек"
+          extra="Все новые лиды с этого бота назначаются только этому менеджеру (например ИнфоСлед → Дейнерис)."
+        >
+          <NSelect
+            v-model:value="form.default_owner_user_id"
+            clearable
+            filterable
+            :options="userOptions"
+            placeholder="По умолчанию — round-robin в группе"
+          />
+        </NFormItem>
         <template v-if="isWhatsAppForm">
           <p class="admin-page__wa-hint">
             Вставьте данные из консоли GREEN API. Секреты ХУИтРИКС и webhook настроятся автоматически.
@@ -496,6 +533,18 @@ watch(
             multiple
             :options="serviceTypeOptions"
             placeholder="Деревья и ОПТ"
+          />
+        </NFormItem>
+        <NFormItem
+          label="Фиксированный владелец карточек"
+          extra="Новые и авто-назначенные карточки бота уходят только этому менеджеру. Ручные передачи не трогаем."
+        >
+          <NSelect
+            v-model:value="editForm.default_owner_user_id"
+            clearable
+            filterable
+            :options="userOptions"
+            placeholder="По умолчанию — round-robin в группе"
           />
         </NFormItem>
         <NFormItem label="Группы">

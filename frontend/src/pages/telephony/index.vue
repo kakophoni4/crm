@@ -18,7 +18,7 @@ import {
   type TelephonyCallStatus,
   type TelephonyWebrtcConfig,
 } from '@/features/telephony/api'
-import { CrmSoftphone, type SoftphoneStatus } from '@/features/telephony/softphone'
+import { CrmSoftphone, mapMediaError, type SoftphoneStatus } from '@/features/telephony/softphone'
 import { AppError } from '@/shared/api/http'
 import { normalizeRussianPhone } from '@/shared/lib/phone'
 
@@ -245,7 +245,11 @@ async function connectSoftphone(options: { silent?: boolean } = {}): Promise<voi
   } catch (err) {
     status.value = 'idle'
     if (!options.silent) {
-      message.error(err instanceof AppError ? err.message : 'Не удалось подключить SIP')
+      message.error(
+        err instanceof AppError
+          ? err.message
+          : mapMediaError(err instanceof Error ? err : new Error('Не удалось подключить SIP')),
+      )
     }
   } finally {
     connecting.value = false
@@ -401,7 +405,9 @@ async function startCall(): Promise<void> {
       await updateActiveCall('failed')
     }
     status.value = 'registered'
-    message.error(err instanceof Error ? err.message : 'Не удалось начать звонок')
+    const text =
+      err instanceof Error ? err.message : 'Не удалось начать звонок'
+    message.error(text)
   } finally {
     calling.value = false
   }

@@ -244,9 +244,12 @@ async function loadLeads(forceRefresh = false): Promise<void> {
     }
     if (props.chat?.id !== chat.id) return
     await store.selectLead(preferredId)
-  } catch {
+  } catch (err) {
     if (props.chat?.id === chat.id) {
       leadItems.value = []
+      message.error(
+        err instanceof AppError ? err.message : 'Не удалось загрузить сделки по контакту',
+      )
     }
   } finally {
     if (props.chat?.id === chat.id) {

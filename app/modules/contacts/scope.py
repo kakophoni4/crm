@@ -16,6 +16,8 @@ from app.modules.rbac.scope import (
 
 
 def _group_contact_clause(group_ids: set[int]) -> ColumnElement[bool]:
+    from app.modules.db.models.bot_group_assignment import BotGroupAssignment
+
     chat_in_group = exists(
         select(1).where(
             Chat.contact_id == Contact.id,
@@ -28,7 +30,17 @@ def _group_contact_clause(group_ids: set[int]) -> ColumnElement[bool]:
             ContactGroupAssignment.group_id.in_(group_ids),
         ),
     )
-    return or_(chat_in_group, assignment_in_group)
+    # Match chat visibility: contact reachable via bot assigned to actor's groups
+    # even when chat.assigned_group_id points elsewhere.
+    bot_in_group = exists(
+        select(1).where(
+            Chat.contact_id == Contact.id,
+            Chat.bot_id.is_not(None),
+            BotGroupAssignment.bot_id == Chat.bot_id,
+            BotGroupAssignment.group_id.in_(group_ids),
+        ),
+    )
+    return or_(chat_in_group, assignment_in_group, bot_in_group)
 
 
 def contact_visibility_clause(ctx: ScopeContext) -> ColumnElement[bool] | None:

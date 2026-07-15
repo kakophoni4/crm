@@ -20,6 +20,7 @@ from app.shared.settings import settings
 ASSIGNMENT_AUTO_ROUND_ROBIN = "auto_round_robin"
 ASSIGNMENT_AUTO_FIRST_RESPONDER = "auto_first_responder"
 ASSIGNMENT_AUTO_RANDOM_AVAILABLE = "auto_random_available"
+ASSIGNMENT_BOT_DEFAULT_OWNER = "bot_default_owner"
 ASSIGNMENT_MANUAL_CREATE = "manual_create"
 ASSIGNMENT_MANUAL_TRANSFER = "manual_transfer"
 ASSIGNMENT_USER_REMOVAL_REBALANCE = "user_removal_rebalance"
@@ -151,6 +152,8 @@ async def ensure_assignment(
     session: AsyncSession,
     contact_id: int,
     group_id: int,
+    *,
+    preferred_owner_user_id: int | None = None,
 ) -> AssignmentResult:
     # Serialize assignment writes in the same group to keep round-robin atomic.
     await _lock_group_row(session, group_id)
@@ -160,6 +163,62 @@ async def ensure_assignment(
         group_id,
         for_update=True,
     )
+    now = utc_now()
+
+    # Bot exclusive owner (e.g. Infosled → fixed manager): take over auto-assigned cards.
+    if preferred_owner_user_id is not None:
+        preferred_ok = await session.get(User, preferred_owner_user_id)
+        preferred_active = (
+            preferred_ok is not None and preferred_ok.status == UserStatus.ACTIVE
+        )
+        if preferred_active:
+            if existing is not None and existing.owner_user_id == preferred_owner_user_id:
+                return AssignmentResult(
+                    assignment=existing,
+                    created=False,
+                    owner_user_id=existing.owner_user_id,
+                )
+            # Do not steal manually transferred cards.
+            if (
+                existing is not None
+                and existing.owner_user_id is not None
+                and existing.assignment_source
+                in {ASSIGNMENT_MANUAL_TRANSFER, ASSIGNMENT_MANUAL_CREATE}
+            ):
+                return AssignmentResult(
+                    assignment=existing,
+                    created=False,
+                    owner_user_id=existing.owner_user_id,
+                )
+
+            if existing is None:
+                assignment = ContactGroupAssignment(
+                    contact_id=contact_id,
+                    group_id=group_id,
+                    owner_user_id=preferred_owner_user_id,
+                    assigned_at=now,
+                    assignment_source=ASSIGNMENT_BOT_DEFAULT_OWNER,
+                )
+                session.add(assignment)
+                await session.flush()
+                await session.refresh(assignment)
+                return AssignmentResult(
+                    assignment=assignment,
+                    created=True,
+                    owner_user_id=preferred_owner_user_id,
+                )
+
+            existing.owner_user_id = preferred_owner_user_id
+            existing.assigned_at = now
+            existing.assignment_source = ASSIGNMENT_BOT_DEFAULT_OWNER
+            await session.flush()
+            await session.refresh(existing)
+            return AssignmentResult(
+                assignment=existing,
+                created=False,
+                owner_user_id=preferred_owner_user_id,
+            )
+
     if existing is not None and existing.owner_user_id is not None:
         return AssignmentResult(
             assignment=existing,
@@ -167,7 +226,6 @@ async def ensure_assignment(
             owner_user_id=existing.owner_user_id,
         )
 
-    now = utc_now()
     owner_id = await _pick_round_robin_owner(session, group_id)
 
     if existing is None:

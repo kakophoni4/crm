@@ -115,13 +115,8 @@ class LeadApiService:
         role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
         if role == UserRole.ADMIN:
             return True
-        if role == UserRole.SENIOR:
+        if role in {UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.USER}:
             return self._group_in_scope(ctx, group_id)
-        if role == UserRole.USER:
-            groups = visible_group_ids(ctx)
-            if groups == SCOPE_ALL:
-                return True
-            return isinstance(groups, set) and group_id in groups
         return False
 
     async def list_contact_leads(

@@ -9,6 +9,8 @@ from app.modules.contacts.ownership import (
     set_pending_inbound,
 )
 from app.modules.contacts.realtime_payloads import contact_group_context, user_full_name
+from app.modules.db.models.bot import Bot
+from app.modules.db.models.chat import Chat
 from app.realtime.events import publish
 
 
@@ -23,7 +25,22 @@ async def handle_inbound_ownership(
     if not ownership_v2_enabled():
         return None
 
-    result = await ensure_assignment(session, contact_id, group_id)
+    preferred_owner_id: int | None = None
+    chat = await session.get(Chat, chat_id)
+    if chat is not None and chat.bot_id is not None:
+        bot = await session.get(Bot, chat.bot_id)
+        if bot is not None and bot.default_owner_user_id is not None:
+            preferred_owner_id = int(bot.default_owner_user_id)
+
+    from app.modules.contacts.ownership import get_owner
+
+    previous_owner_id = await get_owner(session, contact_id, group_id)
+    result = await ensure_assignment(
+        session,
+        contact_id,
+        group_id,
+        preferred_owner_user_id=preferred_owner_id,
+    )
     await set_pending_inbound(session, contact_id, group_id)
 
     owner_id = result.owner_user_id
@@ -39,7 +56,8 @@ async def handle_inbound_ownership(
     )
     ctx["chat_id"] = chat_id
 
-    if result.created:
+    owner_changed = previous_owner_id != owner_id
+    if result.created or owner_changed:
         owner_name = await user_full_name(session, owner_id)
         await publish(
             "contact.ownership.assigned",
@@ -51,24 +69,25 @@ async def handle_inbound_ownership(
             },
             scope={"group_id": group_id},
         )
-        try:
-            from app.modules.notifications.service import notify_new_card
+        if result.created:
+            try:
+                from app.modules.notifications.service import notify_new_card
 
-            await notify_new_card(
-                session,
-                contact_id=contact_id,
-                group_id=group_id,
-                chat_id=chat_id,
-                owner_user_id=owner_id,
-            )
-        except Exception:
-            import structlog
+                await notify_new_card(
+                    session,
+                    contact_id=contact_id,
+                    group_id=group_id,
+                    chat_id=chat_id,
+                    owner_user_id=owner_id,
+                )
+            except Exception:
+                import structlog
 
-            structlog.get_logger(__name__).exception(
-                "staff_notify_new_card_failed",
-                contact_id=contact_id,
-                owner_user_id=owner_id,
-            )
+                structlog.get_logger(__name__).exception(
+                    "staff_notify_new_card_failed",
+                    contact_id=contact_id,
+                    owner_user_id=owner_id,
+                )
 
     if settings.notify_owner_on_inbound:
         owner_name = await user_full_name(session, owner_id)

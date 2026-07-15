@@ -35,6 +35,11 @@ class Bot(Base):
         nullable=False,
         server_default="{Деревья,ОПТ}",
     )
+    default_owner_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        index=True,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_status: Mapped[str | None] = mapped_column(Text, nullable=True)

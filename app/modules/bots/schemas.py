@@ -25,6 +25,7 @@ class BotCreateRequest(BaseModel):
     green_instance_id: str | None = None
     green_api_token: str | None = Field(default=None, min_length=8)
     service_types: list[str] = Field(default_factory=lambda: list(DEFAULT_BOT_SERVICE_TYPES))
+    default_owner_user_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_service_types(self) -> BotCreateRequest:
@@ -67,6 +68,8 @@ class BotUpdateRequest(BaseModel):
     green_instance_id: str | None = None
     green_api_token: str | None = Field(default=None, min_length=8)
     service_types: list[str] | None = None
+    default_owner_user_id: int | None = Field(default=None, gt=0)
+    clear_default_owner: bool | None = None
 
     @model_validator(mode="after")
     def _validate_service_types(self) -> BotUpdateRequest:
@@ -115,6 +118,8 @@ class BotResponse(BaseModel):
     has_green_api_token: bool = False
     whatsapp_webhook_url: str | None = None
     service_types: list[str] = Field(default_factory=lambda: list(ALL_SERVICE_TYPES))
+    default_owner_user_id: int | None = None
+    default_owner_full_name: str | None = None
     last_seen_at: str | None
     last_health_status: str | None
     last_health_checked_at: str | None

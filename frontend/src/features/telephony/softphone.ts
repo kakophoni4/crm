@@ -11,6 +11,11 @@ export interface SoftphoneEvents {
   onError?: (message: string) => void
 }
 
+const BASE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+}
+
 export class CrmSoftphone {
   private user: SimpleUser | null = null
   private accountDomain = ''
@@ -19,13 +24,17 @@ export class CrmSoftphone {
 
   async connect(config: TelephonyWebrtcConfig, remoteAudio: HTMLAudioElement): Promise<void> {
     await this.disconnect()
+    // Fail early with a clear message if Windows/browser has no usable mic.
+    await ensureMicrophoneAvailable()
     const domain = sipDomain(config.sip_uri)
     this.accountDomain = domain
     this.events.onStatus?.('connecting')
     const user = new Web.SimpleUser(config.ws_url, {
       aor: config.sip_uri,
       media: {
-        constraints: { audio: true, video: false },
+        // Do not pin deviceId — Chrome fails with "Requested device not found"
+        // when a previously granted mic was unplugged.
+        constraints: { audio: { ...BASE_AUDIO_CONSTRAINTS }, video: false },
         remote: { audio: remoteAudio },
       },
       userAgentOptions: {
@@ -56,9 +65,14 @@ export class CrmSoftphone {
     if (!this.user || !this.accountDomain) {
       throw new Error('Softphone is not connected')
     }
+    await ensureMicrophoneAvailable()
     const destination = `sip:${normalizeDialNumber(number)}@${this.accountDomain}`
     this.events.onStatus?.('calling')
-    await this.user.call(destination)
+    try {
+      await this.user.call(destination)
+    } catch (err) {
+      throw new Error(mapMediaError(err))
+    }
   }
 
   async hangup(): Promise<void> {
@@ -107,4 +121,67 @@ function sipDomain(uri: string): string {
 
 function normalizeDialNumber(value: string): string {
   return value.trim().replace(/[^\d+#*]/g, '')
+}
+
+export function mapMediaError(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : ''
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const text = raw.toLowerCase()
+
+  if (
+    name === 'NotFoundError' ||
+    name === 'DevicesNotFoundError' ||
+    text.includes('requested device not found') ||
+    text.includes('device not found')
+  ) {
+    return (
+      'Микрофон не найден. Подключите гарнитуру/микрофон, в Windows сделайте его устройством ' +
+      'ввода по умолчанию и обновите страницу телефонии.'
+    )
+  }
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || text.includes('permission')) {
+    return 'Нет доступа к микрофону. Разрешите доступ в адресной строке браузера и повторите звонок.'
+  }
+  if (name === 'NotReadableError' || name === 'AbortError' || text.includes('could not start audio')) {
+    return 'Микрофон занят другим приложением (Zoom, Teams, Discord). Закройте их и повторите.'
+  }
+  if (name === 'OverconstrainedError') {
+    return 'Выбранный микрофон недоступен. Обновите страницу и попробуйте снова.'
+  }
+  return raw || 'Не удалось начать звонок'
+}
+
+async function ensureMicrophoneAvailable(): Promise<void> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('Браузер не поддерживает доступ к микрофону (нужен HTTPS или localhost)')
+  }
+
+  let stream: MediaStream | null = null
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { ...BASE_AUDIO_CONSTRAINTS },
+      video: false,
+    })
+  } catch (firstErr) {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter(
+        (d) => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default',
+      )
+      if (inputs.length === 0) {
+        throw firstErr
+      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          ...BASE_AUDIO_CONSTRAINTS,
+          deviceId: { exact: inputs[0].deviceId },
+        },
+        video: false,
+      })
+    } catch (secondErr) {
+      throw new Error(mapMediaError(secondErr))
+    }
+  } finally {
+    stream?.getTracks().forEach((t) => t.stop())
+  }
 }

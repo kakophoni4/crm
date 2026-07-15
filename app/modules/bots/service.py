@@ -115,6 +115,8 @@ def _to_response(row: BotListRow) -> BotResponse:
         has_green_api_token=bot.green_api_token_encrypted is not None,
         whatsapp_webhook_url=webhook_url,
         service_types=list(bot.service_types or DEFAULT_BOT_SERVICE_TYPES),
+        default_owner_user_id=bot.default_owner_user_id,
+        default_owner_full_name=None,
         last_seen_at=_iso(bot.last_seen_at),
         last_health_status=bot.last_health_status,
         last_health_checked_at=_iso(bot.last_health_checked_at),
@@ -218,6 +220,7 @@ class BotService:
             green_instance_id=green_instance_id,
             green_api_token_encrypted=green_token_enc,
             service_types=body.service_types,
+            default_owner_user_id=body.default_owner_user_id,
         )
         await self._session.commit()
 
@@ -281,6 +284,13 @@ class BotService:
             bot.is_active = body.is_active
         if body.service_types is not None:
             bot.service_types = body.service_types
+        if body.clear_default_owner:
+            bot.default_owner_user_id = None
+        elif body.default_owner_user_id is not None:
+            owner = await self._session.get(User, body.default_owner_user_id)
+            if owner is None:
+                raise ValidationError(message="default_owner_user_id not found")
+            bot.default_owner_user_id = body.default_owner_user_id
 
         green_token_for_sync: str | None = None
         if _bot_channel(bot) == BotChannel.WHATSAPP:
