@@ -46,15 +46,17 @@ cat > "$tmp_ext" <<'EOF'
 
 EOF
 
+# Unit separator (0x1f) avoids breakage when passwords/names contain tabs/spaces.
+# Passwords are base64 so newlines/$/` cannot corrupt the shell loop or pjsip conf.
 account_sql="
 SELECT
   id,
   regexp_replace(sip_host, '[^A-Za-z0-9._-]', '', 'g') AS sip_host,
   sip_port,
   CASE WHEN sip_transport IN ('udp','tcp') THEN sip_transport ELSE 'udp' END AS transport,
-  sip_username,
-  pgp_sym_decrypt(sip_password_encrypted, :'pgcrypto_key') AS sip_password,
-  COALESCE(outbound_caller_id, '')
+  regexp_replace(sip_username, E'[\\x00-\\x1f]', '', 'g'),
+  encode(convert_to(pgp_sym_decrypt(sip_password_encrypted, :'pgcrypto_key'), 'UTF8'), 'base64'),
+  encode(convert_to(COALESCE(outbound_caller_id, ''), 'UTF8'), 'base64')
 FROM telephony_accounts
 WHERE is_active IS TRUE
 ORDER BY id;
@@ -64,8 +66,19 @@ extension_sql="
 SELECT
   e.account_id,
   regexp_replace(e.extension, '[^0-9A-Za-z*#+_-]', '', 'g') AS extension,
-  pgp_sym_decrypt(e.password_encrypted, :'pgcrypto_key') AS extension_password,
-  COALESCE(NULLIF(e.display_name, ''), u.full_name, u.username, u.email, e.extension) AS display_name
+  encode(convert_to(pgp_sym_decrypt(e.password_encrypted, :'pgcrypto_key'), 'UTF8'), 'base64'),
+  encode(
+    convert_to(
+      regexp_replace(
+        COALESCE(NULLIF(e.display_name, ''), u.full_name, u.username, u.email, e.extension),
+        E'[\\x00-\\x1f]',
+        ' ',
+        'g'
+      ),
+      'UTF8'
+    ),
+    'base64'
+  )
 FROM telephony_extensions e
 JOIN telephony_accounts a ON a.id = e.account_id
 JOIN users u ON u.id = e.user_id
@@ -74,10 +87,19 @@ WHERE e.is_active IS TRUE
 ORDER BY e.account_id, e.extension;
 "
 
+b64_decode() {
+  # portable: busybox/openssl/base64
+  if command -v base64 >/dev/null 2>&1; then
+    printf '%s' "$1" | base64 -d 2>/dev/null || printf '%s' "$1" | base64 -D 2>/dev/null
+  else
+    printf '%s' "$1" | openssl base64 -d -A
+  fi
+}
+
 accounts="$(
   docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
     psql -v "pgcrypto_key=$PGCRYPTO_KEY" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -At -F $'\t' <<SQL
+    -At -F $'\x1f' <<SQL
 $account_sql
 SQL
 )"
@@ -85,89 +107,106 @@ SQL
 extensions="$(
   docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
     psql -v "pgcrypto_key=$PGCRYPTO_KEY" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -At -F $'\t' <<SQL
+    -At -F $'\x1f' <<SQL
 $extension_sql
 SQL
 )"
 
-while IFS=$'\t' read -r account_id sip_host sip_port sip_transport sip_username sip_password caller_id; do
+account_count=0
+while IFS=$'\x1f' read -r account_id sip_host sip_port sip_transport sip_username sip_password_b64 caller_id_b64; do
   [[ -n "${account_id:-}" ]] || continue
+  sip_password="$(b64_decode "$sip_password_b64")"
+  caller_id="$(b64_decode "${caller_id_b64:-}")"
   trunk="bitcall-trunk-${account_id}"
   auth="bitcall-auth-${account_id}"
   aor="bitcall-aor-${account_id}"
   reg="bitcall-registration-${account_id}"
   transport="transport-${sip_transport}"
+  account_count=$((account_count + 1))
 
-  cat >> "$tmp_pjsip" <<EOF
-[${auth}]
-type=auth
-auth_type=userpass
-username=${sip_username}
-password=${sip_password}
+  # Quote-safe writes: passwords may contain $ # ; etc.
+  {
+    printf '[%s]\n' "$auth"
+    printf 'type=auth\n'
+    printf 'auth_type=userpass\n'
+    printf 'username=%s\n' "$sip_username"
+    printf 'password=%s\n' "$sip_password"
+    printf '\n'
+    printf '[%s]\n' "$aor"
+    printf 'type=aor\n'
+    printf 'contact=sip:%s:%s\n' "$sip_host" "$sip_port"
+    printf '\n'
+    printf '[%s]\n' "$trunk"
+    printf 'type=endpoint\n'
+    printf 'transport=%s\n' "$transport"
+    printf 'context=from-bitcall-%s\n' "$account_id"
+    printf 'disallow=all\n'
+    printf 'allow=ulaw,alaw\n'
+    printf 'outbound_auth=%s\n' "$auth"
+    printf 'aors=%s\n' "$aor"
+    printf 'from_user=%s\n' "$sip_username"
+    printf 'direct_media=no\n'
+    printf '\n'
+    printf '[%s]\n' "$reg"
+    printf 'type=registration\n'
+    printf 'transport=%s\n' "$transport"
+    printf 'outbound_auth=%s\n' "$auth"
+    printf 'server_uri=sip:%s:%s\n' "$sip_host" "$sip_port"
+    printf 'client_uri=sip:%s@%s\n' "$sip_username" "$sip_host"
+    printf 'contact_user=%s\n' "$sip_username"
+    printf 'retry_interval=60\n'
+    printf 'forbidden_retry_interval=600\n'
+    printf 'expiration=3600\n'
+    printf '\n'
+  } >> "$tmp_pjsip"
 
-[${aor}]
-type=aor
-contact=sip:${sip_host}:${sip_port}
-
-[${trunk}]
-type=endpoint
-transport=${transport}
-context=from-bitcall-${account_id}
-disallow=all
-allow=ulaw,alaw
-outbound_auth=${auth}
-aors=${aor}
-from_user=${sip_username}
-direct_media=no
-
-[${reg}]
-type=registration
-transport=${transport}
-outbound_auth=${auth}
-server_uri=sip:${sip_host}:${sip_port}
-client_uri=sip:${sip_username}@${sip_host}
-contact_user=${sip_username}
-retry_interval=60
-forbidden_retry_interval=600
-expiration=3600
-
-EOF
-
-  cat >> "$tmp_ext" <<EOF
-[crm-internal-account-${account_id}]
-exten => _+X.,1,NoOp(CRM outbound via Bitcall account ${account_id}: \${EXTEN})
- same => n,Dial(PJSIP/\${EXTEN}@${trunk},60)
- same => n,Hangup()
-
-exten => _X.,1,NoOp(CRM outbound via Bitcall account ${account_id}: \${EXTEN})
- same => n,Dial(PJSIP/\${EXTEN}@${trunk},60)
- same => n,Hangup()
-
-EOF
+  {
+    printf '[crm-internal-account-%s]\n' "$account_id"
+    printf 'exten => _+X.,1,NoOp(CRM outbound via Bitcall account %s: ${EXTEN})\n' "$account_id"
+    printf ' same => n,Dial(PJSIP/${EXTEN}@%s,60)\n' "$trunk"
+    printf ' same => n,Hangup()\n'
+    printf '\n'
+    printf 'exten => _X.,1,NoOp(CRM outbound via Bitcall account %s: ${EXTEN})\n' "$account_id"
+    printf ' same => n,Dial(PJSIP/${EXTEN}@%s,60)\n' "$trunk"
+    printf ' same => n,Hangup()\n'
+    printf '\n'
+  } >> "$tmp_ext"
 done <<< "$accounts"
 
-while IFS=$'\t' read -r account_id extension extension_password display_name; do
+extension_count=0
+extension_list=""
+while IFS=$'\x1f' read -r account_id extension extension_password_b64 display_name_b64; do
   [[ -n "${account_id:-}" && -n "${extension:-}" ]] || continue
-  cat >> "$tmp_pjsip" <<EOF
-[${extension}](webrtc-endpoint)
-auth=${extension}
-aors=${extension}
-context=crm-internal-account-${account_id}
-callerid=CRM ${extension} <${extension}>
+  extension_password="$(b64_decode "$extension_password_b64")"
+  display_name="$(b64_decode "${display_name_b64:-}")"
+  extension_count=$((extension_count + 1))
+  if [[ -n "$extension_list" ]]; then
+    extension_list+=","
+  fi
+  extension_list+="$extension"
 
-[${extension}]
-type=auth
-auth_type=userpass
-username=${extension}
-password=${extension_password}
-
-[${extension}]
-type=aor
-max_contacts=1
-remove_existing=yes
-
-EOF
+  {
+    printf '[%s](webrtc-endpoint)\n' "$extension"
+    printf 'auth=%s\n' "$extension"
+    printf 'aors=%s\n' "$extension"
+    printf 'context=crm-internal-account-%s\n' "$account_id"
+    printf 'callerid=CRM %s <%s>\n' "$extension" "$extension"
+    printf '\n'
+    printf '[%s]\n' "$extension"
+    printf 'type=auth\n'
+    printf 'auth_type=userpass\n'
+    printf 'username=%s\n' "$extension"
+    printf 'password=%s\n' "$extension_password"
+    printf '\n'
+    printf '[%s]\n' "$extension"
+    printf 'type=aor\n'
+    printf 'max_contacts=1\n'
+    printf 'remove_existing=yes\n'
+    printf '\n'
+  } >> "$tmp_pjsip"
 done <<< "$extensions"
+
+echo "telephony-sync: accounts=${account_count} extensions=${extension_count} [${extension_list:-none}]"
 
 changed=0
 if ! cmp -s "$tmp_pjsip" "$ASTERISK_DIR/pjsip.generated.conf"; then
