@@ -30,6 +30,7 @@ from app.modules.accounting.schemas import (
     AccountingUnitOrdersResponse,
     AccountingUnitOwnerListResponse,
     AccountingUnitOwnerRow,
+    AccountingUnitPatchRequest,
     AccountingUnitResponse,
 )
 from app.modules.db.models.enums import UserRole
@@ -147,6 +148,51 @@ class AccountingService:
             category_code=created.category_code,
             commission_rate_percent=created.commission_rate_percent,
             is_active=created.is_active,
+        )
+
+    async def update_unit(
+        self,
+        actor: User,
+        unit_id: int,
+        body: AccountingUnitPatchRequest,
+    ) -> AccountingUnitResponse:
+        if not self._is_chief(actor):
+            raise PermissionDenied()
+
+        units = await self._repo.get_units_by_ids([unit_id])
+        unit = units.get(unit_id)
+        if unit is None:
+            raise NotFound(message="Лавка не найдена")
+
+        if body.commission_rate_percent is None and body.name is None and body.category_code is None:
+            raise ValidationError(message="Нет полей для обновления")
+
+        if body.commission_rate_percent is not None:
+            unit.commission_rate_percent = body.commission_rate_percent
+        if body.name is not None:
+            unit.name = body.name
+        if body.category_code is not None:
+            from app.modules.leads.opt.tariffs import ALL_CATEGORY_CODES
+
+            category_code = body.category_code.strip().upper()
+            if category_code not in ALL_CATEGORY_CODES:
+                raise ValidationError(
+                    message="Неизвестный тип компании",
+                    details={"category_code": category_code},
+                )
+            unit.category_code = category_code
+
+        await self._session.flush()
+        await self._session.commit()
+        await self._session.refresh(unit)
+        return AccountingUnitResponse(
+            id=unit.id,
+            inn=unit.inn,
+            kpp=unit.kpp,
+            name=unit.name,
+            category_code=unit.category_code,
+            commission_rate_percent=unit.commission_rate_percent,
+            is_active=unit.is_active,
         )
 
     async def list_orders_by_units(
@@ -474,6 +520,7 @@ class AccountingService:
                 inn=unit.inn,
                 name=unit.name,
                 category_code=unit.category_code,
+                commission_rate_percent=unit.commission_rate_percent,
                 accountant_user_id=accountant_id,
                 accountant_full_name=accountant_name,
             )
@@ -518,6 +565,7 @@ class AccountingService:
             inn=unit.inn,
             name=unit.name,
             category_code=unit.category_code,
+            commission_rate_percent=unit.commission_rate_percent,
             accountant_user_id=accountant_user_id,
             accountant_full_name=accountant_name,
         )

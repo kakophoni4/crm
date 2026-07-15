@@ -33,10 +33,24 @@ export interface CreateAccountingUnitPayload {
   commission_rate_percent: number
 }
 
+export interface PatchAccountingUnitPayload {
+  commission_rate_percent?: number
+  name?: string
+  category_code?: string
+}
+
 export async function createAccountingUnit(
   payload: CreateAccountingUnitPayload,
 ): Promise<AccountingUnit> {
   const { data } = await http.post<AccountingUnit>('/accounting/units', payload)
+  return data
+}
+
+export async function patchAccountingUnit(
+  unitId: number,
+  payload: PatchAccountingUnitPayload,
+): Promise<AccountingUnit> {
+  const { data } = await http.patch<AccountingUnit>(`/accounting/units/${unitId}`, payload)
   return data
 }
 

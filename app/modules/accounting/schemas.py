@@ -75,6 +75,22 @@ class AccountingUnitCreateRequest(BaseModel):
         return cleaned
 
 
+class AccountingUnitPatchRequest(BaseModel):
+    commission_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    name: str | None = Field(default=None, min_length=1, max_length=512)
+    category_code: str | None = Field(default=None, min_length=1, max_length=16)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Укажите название")
+        return cleaned
+
+
 class AccountingOrderLineBrief(BaseModel):
     line_id: int
     line_no: int
@@ -244,6 +260,7 @@ class AccountingUnitOwnerRow(BaseModel):
     inn: str
     name: str | None = None
     category_code: str | None = None
+    commission_rate_percent: Decimal | None = None
     accountant_user_id: int | None = None
     accountant_full_name: str | None = None
 

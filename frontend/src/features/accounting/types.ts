@@ -81,6 +81,7 @@ export interface AccountingUnitOwnerRow {
   inn: string
   name?: string | null
   category_code?: string | null
+  commission_rate_percent?: number | null
   accountant_user_id?: number | null
   accountant_full_name?: string | null
 }

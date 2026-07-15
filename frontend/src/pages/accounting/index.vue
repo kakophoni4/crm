@@ -19,7 +19,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Calculator, Download, Eye, Plus, RefreshCw } from 'lucide-vue-next'
+import { Calculator, Download, Eye, Percent, Plus, RefreshCw } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
@@ -32,6 +32,7 @@ import {
   listAccountingUnitCategories,
   listAccountingUnitOwners,
   listAccountingUnits,
+  patchAccountingUnit,
   saveBlob,
   syncAccountingRequirements,
 } from '@/features/accounting/api'
@@ -106,9 +107,53 @@ const createOpen = ref(false)
 const createSaving = ref(false)
 const createForm = ref<CreateUnitForm>(emptyCreateForm())
 
+const rateEditOpen = ref(false)
+const rateEditSaving = ref(false)
+const rateEditUnitId = ref<number | null>(null)
+const rateEditLabel = ref('')
+const rateEditValue = ref<number | null>(null)
+
 function openCreateUnit(): void {
   createForm.value = emptyCreateForm()
   createOpen.value = true
+}
+
+function openEditRate(unit: {
+  id?: number
+  unit_id?: number
+  name?: string | null
+  inn: string
+  commission_rate_percent?: number | null
+}): void {
+  const id = unit.id ?? unit.unit_id
+  if (id == null) return
+  rateEditUnitId.value = id
+  rateEditLabel.value = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
+  rateEditValue.value =
+    unit.commission_rate_percent != null ? Number(unit.commission_rate_percent) : null
+  rateEditOpen.value = true
+}
+
+async function submitEditRate(): Promise<void> {
+  if (rateEditUnitId.value == null) return
+  if (rateEditValue.value == null || rateEditValue.value < 0 || rateEditValue.value > 100) {
+    message.warning('Укажите процент от 0 до 100')
+    return
+  }
+  rateEditSaving.value = true
+  try {
+    await patchAccountingUnit(rateEditUnitId.value, {
+      commission_rate_percent: rateEditValue.value,
+    })
+    message.success('Процент обновлён')
+    rateEditOpen.value = false
+    await Promise.all([loadUnits(), loadOrders()])
+    if (isChief.value) await loadUnitOwners()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить процент')
+  } finally {
+    rateEditSaving.value = false
+  }
 }
 
 async function submitCreateUnit(): Promise<void> {
@@ -222,7 +267,16 @@ async function openPreview(order: AccountingUnitOrder): Promise<void> {
 }
 
 function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
-  return unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
+  const base = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
+  if (unit.commission_rate_percent != null && unit.commission_rate_percent !== undefined) {
+    return `${base} · ${Number(unit.commission_rate_percent)}%`
+  }
+  return base
+}
+
+function formatUnitRate(value: number | null | undefined): string {
+  if (value == null) return '—'
+  return `${Number(value)}%`
 }
 
 async function loadUnits(): Promise<void> {
@@ -619,6 +673,17 @@ onUnmounted(() => {
                       {{ group.orders.length }}
                       {{ group.orders.length === 1 ? 'заявка' : 'заявок' }}
                     </NTag>
+                    <NButton
+                      v-if="isChief && group.unit.id"
+                      size="tiny"
+                      quaternary
+                      @click.stop="openEditRate(group.unit)"
+                    >
+                      <template #icon>
+                        <Percent :size="14" />
+                      </template>
+                      %
+                    </NButton>
                   </div>
                 </template>
                 <NDataTable
@@ -693,8 +758,16 @@ onUnmounted(() => {
               >
                 <div class="accounting-page__owner-lavka">
                   <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
-                  <span class="accounting-page__owner-inn">{{ row.inn }}</span>
+                  <span class="accounting-page__owner-inn">
+                    {{ row.inn }} · {{ formatUnitRate(row.commission_rate_percent) }}
+                  </span>
                 </div>
+                <NButton size="small" secondary @click="openEditRate(row)">
+                  <template #icon>
+                    <Percent :size="14" />
+                  </template>
+                  Процент
+                </NButton>
                 <NSelect
                   :value="row.accountant_user_id"
                   :options="accountantOptions"
@@ -778,6 +851,38 @@ onUnmounted(() => {
         </div>
       </template>
     </NModal>
+
+    <NModal
+      v-model:show="rateEditOpen"
+      preset="card"
+      title="Процент по компании"
+      style="width: 420px; max-width: 92vw"
+    >
+      <p class="accounting-page__rate-label">{{ rateEditLabel }}</p>
+      <NFormItem label="Процент комиссии" :show-feedback="false">
+        <NInputNumber
+          v-model:value="rateEditValue"
+          :min="0"
+          :max="100"
+          :precision="2"
+          :step="0.1"
+          style="width: 100%"
+        >
+          <template #suffix>%</template>
+        </NInputNumber>
+      </NFormItem>
+      <p class="accounting-page__rate-hint">
+        Новые заявки будут считаться с этим процентом. Уже созданные заказы не пересчитываются.
+      </p>
+      <template #footer>
+        <div class="accounting-page__modal-actions">
+          <NButton @click="rateEditOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="rateEditSaving" @click="submitEditRate">
+            Сохранить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>
 
@@ -845,6 +950,17 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.accounting-page__rate-label {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.accounting-page__rate-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--app-text-muted);
+}
+
 .accounting-page__deal-cell {
   display: flex;
   flex-direction: column;
@@ -899,8 +1015,8 @@ onUnmounted(() => {
 
 .accounting-page__owner-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(260px, 320px);
-  gap: 16px;
+  grid-template-columns: minmax(200px, 1fr) auto minmax(240px, 300px);
+  gap: 12px;
   align-items: center;
   padding: 10px 12px;
   border-radius: 8px;

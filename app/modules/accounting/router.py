@@ -22,6 +22,7 @@ from app.modules.accounting.schemas import (
     AccountingUnitOwnerListResponse,
     AccountingUnitOwnerRow,
     AccountingUnitOwnerUpdateRequest,
+    AccountingUnitPatchRequest,
     AccountingUnitResponse,
 )
 from app.modules.accounting.service import AccountingService
@@ -92,6 +93,16 @@ async def create_accounting_unit(
     service: Annotated[AccountingService, Depends(_service)],
 ) -> AccountingUnitResponse:
     return await service.create_unit(actor, body)
+
+
+@router.patch("/units/{unit_id}", response_model=AccountingUnitResponse)
+async def patch_accounting_unit(
+    unit_id: int,
+    body: AccountingUnitPatchRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingUnitResponse:
+    return await service.update_unit(actor, unit_id, body)
 
 
 @router.get("/orders", response_model=AccountingUnitOrdersResponse)
