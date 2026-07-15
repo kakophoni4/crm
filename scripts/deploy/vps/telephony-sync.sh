@@ -47,15 +47,15 @@ cat > "$tmp_ext" <<'EOF'
 EOF
 
 # Unit separator (0x1f) avoids breakage when passwords/names contain tabs/spaces.
-# Passwords are base64 so newlines/$/` cannot corrupt the shell loop or pjsip conf.
+# Passwords via pgp_sym_decrypt_bytea + base64 (avoids UTF8 null-byte errors).
 account_sql="
 SELECT
   id,
   regexp_replace(sip_host, '[^A-Za-z0-9._-]', '', 'g') AS sip_host,
   sip_port,
   CASE WHEN sip_transport IN ('udp','tcp') THEN sip_transport ELSE 'udp' END AS transport,
-  regexp_replace(sip_username, E'[\\x00-\\x1f]', '', 'g'),
-  encode(convert_to(pgp_sym_decrypt(sip_password_encrypted, :'pgcrypto_key'), 'UTF8'), 'base64'),
+  sip_username,
+  encode(pgp_sym_decrypt_bytea(sip_password_encrypted, :'pgcrypto_key'), 'base64'),
   encode(convert_to(COALESCE(outbound_caller_id, ''), 'UTF8'), 'base64')
 FROM telephony_accounts
 WHERE is_active IS TRUE
@@ -66,14 +66,13 @@ extension_sql="
 SELECT
   e.account_id,
   regexp_replace(e.extension, '[^0-9A-Za-z*#+_-]', '', 'g') AS extension,
-  encode(convert_to(pgp_sym_decrypt(e.password_encrypted, :'pgcrypto_key'), 'UTF8'), 'base64'),
+  encode(pgp_sym_decrypt_bytea(e.password_encrypted, :'pgcrypto_key'), 'base64'),
   encode(
     convert_to(
-      regexp_replace(
+      translate(
         COALESCE(NULLIF(e.display_name, ''), u.full_name, u.username, u.email, e.extension),
-        E'[\\x00-\\x1f]',
-        ' ',
-        'g'
+        chr(9) || chr(10) || chr(13),
+        '   '
       ),
       'UTF8'
     ),
@@ -98,7 +97,8 @@ b64_decode() {
 
 accounts="$(
   docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
-    psql -v "pgcrypto_key=$PGCRYPTO_KEY" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    psql -v ON_ERROR_STOP=1 -v "pgcrypto_key=$PGCRYPTO_KEY" \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
     -At -F $'\x1f' <<SQL
 $account_sql
 SQL
@@ -106,7 +106,8 @@ SQL
 
 extensions="$(
   docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
-    psql -v "pgcrypto_key=$PGCRYPTO_KEY" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    psql -v ON_ERROR_STOP=1 -v "pgcrypto_key=$PGCRYPTO_KEY" \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
     -At -F $'\x1f' <<SQL
 $extension_sql
 SQL
@@ -207,6 +208,14 @@ while IFS=$'\x1f' read -r account_id extension extension_password_b64 display_na
 done <<< "$extensions"
 
 echo "telephony-sync: accounts=${account_count} extensions=${extension_count} [${extension_list:-none}]"
+
+if [[ "$account_count" -lt 1 ]]; then
+  echo "telephony-sync: abort — no active telephony accounts (refusing to overwrite Asterisk config)" >&2
+  exit 1
+fi
+if [[ "$extension_count" -lt 1 ]]; then
+  echo "telephony-sync: warning — no active extensions in DB" >&2
+fi
 
 changed=0
 if ! cmp -s "$tmp_pjsip" "$ASTERISK_DIR/pjsip.generated.conf"; then
