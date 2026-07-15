@@ -284,6 +284,7 @@ class BotService:
             bot.is_active = body.is_active
         if body.service_types is not None:
             bot.service_types = body.service_types
+        owner_just_set: int | None = None
         if body.clear_default_owner:
             bot.default_owner_user_id = None
         elif body.default_owner_user_id is not None:
@@ -291,6 +292,7 @@ class BotService:
             if owner is None:
                 raise ValidationError(message="default_owner_user_id not found")
             bot.default_owner_user_id = body.default_owner_user_id
+            owner_just_set = body.default_owner_user_id
 
         green_token_for_sync: str | None = None
         if _bot_channel(bot) == BotChannel.WHATSAPP:
@@ -312,6 +314,14 @@ class BotService:
                     bot.green_media_url = default_green_media_url(bot.green_instance_id)
 
         await self._repo.save(bot)
+        if owner_just_set is not None:
+            from app.modules.contacts.ownership import apply_bot_default_owner_to_existing
+
+            await apply_bot_default_owner_to_existing(
+                self._session,
+                bot_id=bot.id,
+                owner_user_id=owner_just_set,
+            )
         await self._session.commit()
 
         if _bot_channel(bot) == BotChannel.WHATSAPP and bot.green_instance_id:

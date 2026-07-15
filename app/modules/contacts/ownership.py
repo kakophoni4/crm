@@ -257,6 +257,39 @@ async def ensure_assignment(
     )
 
 
+async def apply_bot_default_owner_to_existing(
+    session: AsyncSession,
+    *,
+    bot_id: int,
+    owner_user_id: int,
+) -> int:
+    """Reassign auto-owned cards for chats of this bot. Manual transfers stay."""
+    from app.modules.db.models.chat import Chat
+
+    result = await session.execute(
+        select(Chat.contact_id, Chat.assigned_group_id)
+        .where(
+            Chat.bot_id == bot_id,
+            Chat.assigned_group_id.is_not(None),
+        )
+        .distinct(),
+    )
+    changed = 0
+    for contact_id, group_id in result.all():
+        if contact_id is None or group_id is None:
+            continue
+        before = await get_owner(session, int(contact_id), int(group_id))
+        outcome = await ensure_assignment(
+            session,
+            int(contact_id),
+            int(group_id),
+            preferred_owner_user_id=owner_user_id,
+        )
+        if outcome.owner_user_id == owner_user_id and before != owner_user_id:
+            changed += 1
+    return changed
+
+
 async def set_pending_inbound(
     session: AsyncSession,
     contact_id: int,
