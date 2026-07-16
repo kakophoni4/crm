@@ -25,7 +25,16 @@ from app.modules.leads.opt.requisites import ensure_unit_requisites  # noqa: E40
 from app.shared.db import get_session_factory  # noqa: E402
 
 
-async def _run(*, only_missing: bool, inn: str | None) -> int:
+# Period rearrangements (3/25, 4/25) — enrich these after migration 0082.
+REARRANGEMENT_INNS = (
+    "7733419099",  # Привет — 3/25
+    "7733428671",  # Иволга — 3/25
+    "7733418909",  # Спектр — 4/25
+    "7733430705",  # Орион — 4/25
+)
+
+
+async def _run(*, only_missing: bool, inns: list[str] | None) -> int:
     session_factory = get_session_factory()
     updated = 0
     skipped = 0
@@ -33,24 +42,28 @@ async def _run(*, only_missing: bool, inn: str | None) -> int:
     async with session_factory() as session:
         repo = OptOrderRepository(session)
         stmt = select(OptUnit).where(OptUnit.is_active.is_(True)).order_by(OptUnit.inn)
-        if inn:
-            stmt = stmt.where(OptUnit.inn == inn)
+        if inns:
+            stmt = stmt.where(OptUnit.inn.in_(inns))
         result = await session.execute(stmt)
         units = list(result.scalars().all())
 
-        if inn and not units:
-            print(f"Лавка с ИНН {inn} не найдена в opt_units")
-            return 1
+        if inns:
+            found = {u.inn for u in units}
+            missing = [inn for inn in inns if inn not in found]
+            if missing:
+                print(f"Не найдены в opt_units: {', '.join(missing)}")
+                if not units:
+                    return 1
 
         print(f"Обрабатываем {len(units)} лавок...")
         for idx, unit in enumerate(units, start=1):
-            if only_missing and unit.kpp and unit.name:
+            if only_missing and unit.kpp and unit.name and len(unit.name.strip()) >= 40:
                 skipped += 1
                 continue
 
             before_kpp = unit.kpp
             before_name = unit.name
-            print(f"[{idx}/{len(units)}] {unit.inn}")
+            print(f"[{idx}/{len(units)}] {unit.inn} ({unit.name})")
             await ensure_unit_requisites(repo, unit)
             if unit.kpp != before_kpp or unit.name != before_name:
                 updated += 1
@@ -66,10 +79,18 @@ async def _run(*, only_missing: bool, inn: str | None) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Enrich opt_units in DB from EGRUL")
-    parser.add_argument("--only-missing", action="store_true", help="Skip rows with kpp and name")
-    parser.add_argument("--inn", help="Process a single lavka INN")
+    parser.add_argument("--only-missing", action="store_true", help="Skip rows with kpp and long name")
+    parser.add_argument("--inn", action="append", dest="inns", help="Process INN (repeatable)")
+    parser.add_argument(
+        "--rearrangements",
+        action="store_true",
+        help="Enrich period rearrangement lavkas (Привет/Иволга/Спектр/Орион)",
+    )
     args = parser.parse_args()
-    return asyncio.run(_run(only_missing=args.only_missing, inn=args.inn))
+    inns = list(args.inns or [])
+    if args.rearrangements:
+        inns.extend(REARRANGEMENT_INNS)
+    return asyncio.run(_run(only_missing=args.only_missing, inns=inns or None))
 
 
 if __name__ == "__main__":
