@@ -4,11 +4,14 @@ import contextlib
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.chats.scope import can_view_chat_async
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import AuditAction, StatusKind, UserRole
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.user import User
@@ -95,6 +98,27 @@ class LeadApiService:
         if not self._group_in_scope(ctx, group_id):
             raise PermissionDenied(message="Group filter outside scope")
 
+    async def _can_view_contact_group_chat(
+        self,
+        ctx: ScopeContext,
+        contact_id: int,
+        group_id: int,
+    ) -> bool:
+        """Chat may be visible via bot↔group assignment even when lead.group is outside scope."""
+        result = await self._session.execute(
+            select(Chat)
+            .where(
+                Chat.contact_id == contact_id,
+                Chat.assigned_group_id == group_id,
+            )
+            .order_by(Chat.id.desc())
+            .limit(1),
+        )
+        chat = result.scalar_one_or_none()
+        if chat is None:
+            return False
+        return await can_view_chat_async(self._session, ctx, chat)
+
     async def _require_visible_contact(self, ctx: ScopeContext, contact_id: int) -> None:
         if not await self._contacts.is_visible(ctx, contact_id):
             raise NotFound(message="Contact not found")
@@ -119,6 +143,18 @@ class LeadApiService:
             return self._group_in_scope(ctx, group_id)
         return False
 
+    async def _can_create_lead_for_contact_group(
+        self,
+        actor: User,
+        ctx: ScopeContext,
+        contact_id: int,
+        group_id: int,
+    ) -> bool:
+        if self._can_create_in_group(actor, ctx, group_id):
+            return True
+        # Same case as list: chat visible via bot assignment, group outside membership.
+        return await self._can_view_contact_group_chat(ctx, contact_id, group_id)
+
     async def list_contact_leads(
         self,
         actor: User,
@@ -132,8 +168,14 @@ class LeadApiService:
     ) -> LeadListResponse:
         ctx = await self._ctx(actor)
         await self._require_visible_contact(ctx, contact_id)
-        self._ensure_group_filter(ctx, group_id)
         scoped = self._scoped_group_ids(ctx)
+        if group_id is not None and not self._group_in_scope(ctx, group_id):
+            # Operator sees chat (bot assigned to their group) but lead lives in
+            # another assigned_group_id — allow listing that chat's deals.
+            if not await self._can_view_contact_group_chat(ctx, contact_id, group_id):
+                raise PermissionDenied(message="Group filter outside scope")
+            if scoped is not None:
+                scoped = set(scoped) | {group_id}
         rows, next_cursor = await self._repo.list_for_contact(
             contact_id,
             group_ids=scoped,
@@ -316,7 +358,12 @@ class LeadApiService:
     ) -> LeadMutationResult:
         ctx = await self._ctx(actor)
         await self._require_visible_contact(ctx, contact_id)
-        if not self._can_create_in_group(actor, ctx, body.group_id):
+        if not await self._can_create_lead_for_contact_group(
+            actor,
+            ctx,
+            contact_id,
+            body.group_id,
+        ):
             raise PermissionDenied(message="Cannot create lead in this group")
 
         if body.status_id is not None:

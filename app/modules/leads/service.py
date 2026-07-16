@@ -53,7 +53,18 @@ class LeadService:
     ) -> Lead:
         await self._repo.reopen_chat_if_closed(chat_id)
 
-        existing = await self._repo.get_open_for_update(contact_id, group_id)
+        # Prefer the open deal for THIS chat/bot. Reusing another bot's open lead
+        # made sidebar filter (lead.chat_id === chat.id) show «Сделок пока нет»
+        # while a deal existed on the other bot.
+        existing = await self._repo.get_open_for_chat_for_update(chat_id)
+        if existing is None and bot_id is not None:
+            existing = await self._repo.get_open_for_bot_for_update(
+                contact_id,
+                group_id,
+                bot_id,
+            )
+            if existing is not None and existing.chat_id != chat_id:
+                await self._repo.bind_lead_to_chat(existing.id, chat_id)
         if existing is not None:
             await self._repo.set_chat_current_lead(chat_id, existing.id)
             return existing
@@ -83,7 +94,13 @@ class LeadService:
                 lead = None
 
         if lead is None:
-            lead = await self._repo.get_open_for_update(contact_id, group_id)
+            lead = await self._repo.get_open_for_chat_for_update(chat_id)
+            if lead is None and bot_id is not None:
+                lead = await self._repo.get_open_for_bot_for_update(
+                    contact_id,
+                    group_id,
+                    bot_id,
+                )
             if lead is None:
                 raise RuntimeError("failed to ensure open lead after unique conflict")
 

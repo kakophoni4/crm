@@ -253,6 +253,13 @@ function chatMetaLine(chat: ChatListItem): string {
   return `${time} · ${status}`
 }
 
+function chatBotLabel(chat: ChatListItem): string | null {
+  const fromApi = chat.bot_name?.trim()
+  if (fromApi) return fromApi
+  if (chat.bot_id == null) return null
+  return bots.value.find((item) => item.id === chat.bot_id)?.name?.trim() || null
+}
+
 
 
 async function onSend(
@@ -575,6 +582,8 @@ onUnmounted(() => {
 
               />
 
+              <span v-if="chatBotLabel(chat)" class="chats-page__bot">{{ chatBotLabel(chat) }}</span>
+
               <p class="chats-page__preview">{{ formatChatMessagePreview(chat.last_message_preview) }}</p>
 
               <span class="chats-page__meta">{{ chatMetaLine(chat) }}</span>
@@ -658,6 +667,14 @@ onUnmounted(() => {
                     :escalated="chatOwnerBadgeEscalated(store.currentChat)"
                     :pending="chatOwnerBadgePending(store.currentChat)"
                   />
+                  <NTag
+                    v-if="chatBotLabel(store.currentChat)"
+                    size="small"
+                    type="success"
+                    :bordered="false"
+                  >
+                    {{ chatBotLabel(store.currentChat) }}
+                  </NTag>
                   <NTag v-if="store.currentChat.contact_illiquid" size="small" type="warning" :bordered="false">
                     Неликвидный
                   </NTag>
@@ -1078,7 +1095,18 @@ onUnmounted(() => {
 
 }
 
-
+.chats-page__bot {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--app-primary, #2080f0);
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
 
 .chats-page__preview {
 

@@ -103,6 +103,7 @@ def to_chat_list_item(
     *,
     unread_for_me: bool = False,
     lead_in_scope: bool = True,
+    bot_name: str | None = None,
 ) -> ChatListItemResponse:
     contact_name = chat.contact.full_name if chat.contact else ""
     group_name = chat.assigned_group.name if chat.assigned_group is not None else None
@@ -112,6 +113,7 @@ def to_chat_list_item(
         contact_id=chat.contact_id,
         contact_name=contact_name,
         bot_id=chat.bot_id,
+        bot_name=bot_name,
         assigned_user_id=chat.assigned_user_id,
         assigned_group_id=chat.assigned_group_id,
         assigned_group_name=group_name,
@@ -132,8 +134,13 @@ def to_chat_list_item(
     )
 
 
-def to_chat_detail(chat: Chat, *, lead_in_scope: bool = True) -> dict[str, Any]:
-    item = to_chat_list_item(chat, lead_in_scope=lead_in_scope)
+def to_chat_detail(
+    chat: Chat,
+    *,
+    lead_in_scope: bool = True,
+    bot_name: str | None = None,
+) -> dict[str, Any]:
+    item = to_chat_list_item(chat, lead_in_scope=lead_in_scope, bot_name=bot_name)
     return item.model_dump()
 
 

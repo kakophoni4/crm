@@ -7,13 +7,15 @@ Reads columns:
   C — INN
   K — commission rate (fraction, e.g. 0.035 = 3.5%)
 
-Companies listed in the park file get category_code + commission_rate_percent.
-All other lavki in opt_units stay unchanged (typically TECH / 1.3%).
+Companies listed in the park file get category_code + commission_rate_percent + is_active.
+With --deactivate-missing (default), all other opt_units are soft-deactivated so OPT
+orders cannot resolve those INNs (get_unit_by_inn filters is_active).
 
 Usage:
   py scripts/opt_sync_park_from_xlsx.py
-  py scripts/opt_sync_park_from_xlsx.py --xlsx "Парк_компаний_на_2КВ2026 09.07.xlsx"
+  py scripts/opt_sync_park_from_xlsx.py --xlsx "Парк_компаний_на_2КВ2026 13.07.xlsx"
   py scripts/opt_sync_park_from_xlsx.py --sql scripts/deploy/seed-opt-park-categories.sql
+  py scripts/opt_sync_park_from_xlsx.py --keep-missing   # do not deactivate others
 """
 
 from __future__ import annotations
@@ -34,8 +36,19 @@ PARK_CATEGORY_LABEL_TO_CODE: dict[str, str] = {
 
 _INN_RE = re.compile(r"^\d{10}(\d{2})?$")
 _ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_XLSX = _ROOT / "Парк_компаний_на_2КВ2026 09.07.xlsx"
 _DEFAULT_JSON = _ROOT / "scripts" / "opt_park_categories.json"
+
+
+def _find_default_xlsx() -> Path:
+    preferred = sorted(
+        _ROOT.glob("Парк_компаний*.xlsx"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if preferred:
+        return preferred[0]
+    legacy = _ROOT / "Парк_компаний_на_2КВ2026 09.07.xlsx"
+    return legacy
 
 
 def _normalize_inn(value: object) -> str | None:
@@ -110,12 +123,20 @@ def load_park_entries(path: Path) -> list[dict[str, object]]:
     return entries
 
 
-def write_sql(entries: list[dict[str, object]], path: Path) -> None:
+def write_sql(
+    entries: list[dict[str, object]],
+    path: Path,
+    *,
+    deactivate_missing: bool,
+) -> None:
     lines = [
         "-- Categories/rates from «Парк компаний» spreadsheet",
         "-- Run after seed-opt-lavki.sql on server",
         "",
+        "BEGIN;",
+        "",
     ]
+    park_inns = [str(entry["inn"]) for entry in entries]
     for entry in entries:
         inn = str(entry["inn"])
         name = str(entry["name"]).replace("'", "''")
@@ -125,7 +146,8 @@ def write_sql(entries: list[dict[str, object]], path: Path) -> None:
         lines.append(
             f"-- {entry['category_label']}: {name}\n"
             "UPDATE opt_units\n"
-            f"SET category_code = '{category_code}',\n"
+            f"SET name = '{name}',\n"
+            f"    category_code = '{category_code}',\n"
             f"    commission_rate_percent = {rate_sql},\n"
             "    is_active = TRUE\n"
             f"WHERE inn = '{inn}';\n"
@@ -133,30 +155,51 @@ def write_sql(entries: list[dict[str, object]], path: Path) -> None:
             f"SELECT '{inn}', '{name}', '{category_code}', {rate_sql}, TRUE\n"
             f"WHERE NOT EXISTS (SELECT 1 FROM opt_units WHERE inn = '{inn}');\n"
         )
+
+    if deactivate_missing and park_inns:
+        inn_list = ",\n  ".join(f"'{inn}'" for inn in park_inns)
+        lines.append(
+            "-- Soft-deactivate lavki missing from park (blocks OPT order resolution)\n"
+            "UPDATE opt_units\n"
+            "SET is_active = FALSE\n"
+            "WHERE is_active IS TRUE\n"
+            f"  AND inn NOT IN (\n  {inn_list}\n);\n"
+        )
+
+    lines.extend(["", "COMMIT;", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sync park categories from Excel")
-    parser.add_argument("--xlsx", type=Path, default=_DEFAULT_XLSX)
+    parser.add_argument("--xlsx", type=Path, default=None)
     parser.add_argument("--json", type=Path, default=_DEFAULT_JSON)
     parser.add_argument("--sql", type=Path, default=None)
+    parser.add_argument(
+        "--deactivate-missing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Soft-deactivate opt_units whose INN is not in the park file (default: on)",
+    )
     args = parser.parse_args()
 
-    if not args.xlsx.is_file():
-        raise SystemExit(f"File not found: {args.xlsx}")
+    xlsx = args.xlsx or _find_default_xlsx()
+    if not xlsx.is_file():
+        raise SystemExit(f"File not found: {xlsx}")
 
-    entries = load_park_entries(args.xlsx)
+    entries = load_park_entries(xlsx)
     args.json.write_text(
         json.dumps(entries, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"Read {len(entries)} park companies from {args.xlsx.name}")
+    print(f"Read {len(entries)} park companies from {xlsx.name}")
     print(f"Wrote {args.json}")
 
     sql_path = args.sql or (_ROOT / "scripts" / "deploy" / "seed-opt-park-categories.sql")
-    write_sql(entries, sql_path)
+    write_sql(entries, sql_path, deactivate_missing=args.deactivate_missing)
     print(f"Wrote {sql_path}")
+    if args.deactivate_missing:
+        print("SQL includes soft-deactivation of opt_units not present in the park file.")
 
 
 if __name__ == "__main__":

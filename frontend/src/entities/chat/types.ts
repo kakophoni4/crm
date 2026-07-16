@@ -19,6 +19,8 @@ export interface ChatListItem {
   contact_id: number
   contact_name: string
   bot_id: number | null
+  /** Display name of the bot this chat belongs to. */
+  bot_name?: string | null
   assigned_user_id: number | null
   assigned_group_id: number | null
   assigned_group_name?: string | null

@@ -220,11 +220,15 @@ async def ensure_assignment(
             )
 
     if existing is not None and existing.owner_user_id is not None:
-        return AssignmentResult(
-            assignment=existing,
-            created=False,
-            owner_user_id=existing.owner_user_id,
-        )
+        # Exclusive bot owners (Infosled → fixed manager) must not stick when the
+        # same contact writes to another bot that shares the group and has no
+        # default_owner — otherwise leads land on the wrong team's employee.
+        if existing.assignment_source != ASSIGNMENT_BOT_DEFAULT_OWNER:
+            return AssignmentResult(
+                assignment=existing,
+                created=False,
+                owner_user_id=existing.owner_user_id,
+            )
 
     owner_id = await _pick_round_robin_owner(session, group_id)
 

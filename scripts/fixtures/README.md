@@ -32,8 +32,10 @@
 ```bash
 # из xlsx (файл только на сервере, не в git)
 py scripts/opt_sync_lavki_from_xlsx.py --xlsx /path/to/lavki.xlsx
-py scripts/opt_sync_park_from_xlsx.py --xlsx /path/to/park.xlsx
-bash scripts/deploy/seed-opt-lavki.sh
+# upsert парка + soft-deactivate всех opt_units, которых нет в файле
+py scripts/opt_sync_park_from_xlsx.py --xlsx "/path/to/Парк_компаний_….xlsx"
+# применить SQL на VPS (psql / deploy script)
+psql "$DATABASE_URL" -f scripts/deploy/seed-opt-park-categories.sql
 ```
 
 ### Тестовый xlsx для pytest

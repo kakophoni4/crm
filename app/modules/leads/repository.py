@@ -54,6 +54,48 @@ class LeadRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_open_for_chat_for_update(self, chat_id: int) -> Lead | None:
+        """Open lead already bound to this chat (preferred reuse target)."""
+        stmt = (
+            select(Lead)
+            .where(
+                Lead.chat_id == chat_id,
+                Lead.closed_at.is_(None),
+            )
+            .with_for_update()
+            .order_by(Lead.id.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_open_for_bot_for_update(
+        self,
+        contact_id: int,
+        group_id: int,
+        bot_id: int,
+    ) -> Lead | None:
+        """Open lead for the same contact/group/bot — do not steal another bot's deal."""
+        stmt = (
+            select(Lead)
+            .where(
+                Lead.contact_id == contact_id,
+                Lead.group_id == group_id,
+                Lead.bot_id == bot_id,
+                Lead.closed_at.is_(None),
+            )
+            .with_for_update()
+            .order_by(Lead.id.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def bind_lead_to_chat(self, lead_id: int, chat_id: int) -> None:
+        await self._session.execute(
+            update(Lead).where(Lead.id == lead_id, Lead.closed_at.is_(None)).values(chat_id=chat_id),
+        )
+
     async def get_by_id(self, lead_id: int) -> Lead | None:
         result = await self._session.execute(select(Lead).where(Lead.id == lead_id))
         return result.scalar_one_or_none()

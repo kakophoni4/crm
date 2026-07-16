@@ -125,6 +125,7 @@ class ChatListItemResponse(BaseModel):
     contact_id: int
     contact_name: str
     bot_id: int | None
+    bot_name: str | None = None
     assigned_user_id: int | None = Field(
         default=None,
         description=(

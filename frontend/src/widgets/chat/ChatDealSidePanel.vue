@@ -228,7 +228,11 @@ async function loadLeads(forceRefresh = false): Promise<void> {
     })
     // Chat may have changed while request was in flight.
     if (props.chat?.id !== chat.id) return
-    const items = data.items.filter((lead) => lead.chat_id === chat.id)
+    const items = data.items.filter(
+      (lead) =>
+        lead.chat_id === chat.id ||
+        (chat.current_lead != null && lead.id === chat.current_lead.id),
+    )
     leadItems.value = items
     const preferredId =
       selectedLeadId.value != null && items.some((lead) => lead.id === selectedLeadId.value)

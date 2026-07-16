@@ -63,6 +63,80 @@ async def test_second_inbound_reuses_open_lead(
 
 
 @pytest.mark.asyncio
+async def test_other_bot_same_group_gets_own_open_lead(
+    leads_org: dict[str, int],
+) -> None:
+    """Same contact/group but different bot/chat must not reuse the other bot's deal."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        first_id = await _ensure(session, leads_org)
+
+        other_bot_id = await session.scalar(
+            text(
+                """
+                INSERT INTO bots (
+                    code, name, owner_type, owner_id, department_id,
+                    inbound_secret_encrypted, outbound_secret_encrypted, outbound_url
+                )
+                VALUES (
+                    :code, 'Other Bot', 'group', :gid, :did,
+                    '\\x00', '\\x00', 'https://example.test/outbound'
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "code": f"other-bot-{leads_org['contact_id']}",
+                "gid": leads_org["group_id"],
+                "did": leads_org["dept_id"],
+            },
+        )
+        assert other_bot_id is not None
+        other_chat_id = await session.scalar(
+            text(
+                """
+                INSERT INTO chats (
+                    contact_id, bot_id, assigned_group_id, assigned_department_id, status
+                )
+                VALUES (:cid, :bid, :gid, :did, 'open')
+                RETURNING id
+                """
+            ),
+            {
+                "cid": leads_org["contact_id"],
+                "bid": int(other_bot_id),
+                "gid": leads_org["group_id"],
+                "did": leads_org["dept_id"],
+            },
+        )
+        assert other_chat_id is not None
+        await session.commit()
+
+        second_id = (
+            await LeadService(session).ensure_open_lead(
+                contact_id=leads_org["contact_id"],
+                group_id=leads_org["group_id"],
+                bot_id=int(other_bot_id),
+                chat_id=int(other_chat_id),
+            )
+        ).id
+        await session.commit()
+
+        current_other = await session.scalar(
+            text("SELECT current_lead_id FROM chats WHERE id = :cid"),
+            {"cid": int(other_chat_id)},
+        )
+        current_first = await session.scalar(
+            text("SELECT current_lead_id FROM chats WHERE id = :cid"),
+            {"cid": leads_org["chat_id"]},
+        )
+
+    assert second_id != first_id
+    assert current_other == second_id
+    assert current_first == first_id
+
+
+@pytest.mark.asyncio
 async def test_close_then_inbound_creates_new_lead_and_messages_differ(
     leads_org: dict[str, int],
 ) -> None:

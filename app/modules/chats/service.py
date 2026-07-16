@@ -23,6 +23,7 @@ from app.modules.chats.scope import can_view_chat_async, resolve_chats_read_perm
 from app.modules.chats.serialization import to_chat_detail, to_chat_list_item
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.scope_loader import ScopeLoader
+from app.modules.db.models.bot import Bot
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import BotChannel, BotOwnerType, ChatStatus, StatusKind
 from app.modules.db.models.user import User
@@ -120,6 +121,13 @@ class ChatService:
             [chat.id for chat, *_ in rows],
             actor.id,
         )
+        bot_ids = {chat.bot_id for chat, *_ in rows if chat.bot_id is not None}
+        bot_names: dict[int, str] = {}
+        if bot_ids:
+            bot_rows = await self._session.execute(
+                select(Bot.id, Bot.name).where(Bot.id.in_(bot_ids)),
+            )
+            bot_names = {int(bid): str(name) for bid, name in bot_rows.all()}
         items = []
         for (
             chat,
@@ -138,6 +146,7 @@ class ChatService:
                 chat,
                 unread_for_me=unread_map.get(chat.id, False),
                 lead_in_scope=lead_in_scope,
+                bot_name=bot_names.get(chat.bot_id) if chat.bot_id is not None else None,
             )
             item.pending_inbound_at = pending_inbound_at
             item.escalated_at = escalated_at
@@ -176,7 +185,13 @@ class ChatService:
             ctx,
             chat.current_lead,
         )
-        payload = to_chat_detail(chat, lead_in_scope=lead_in_scope)
+        bot_name: str | None = None
+        if chat.bot_id is not None:
+            bot_row = await self._session.execute(
+                select(Bot.name).where(Bot.id == chat.bot_id),
+            )
+            bot_name = bot_row.scalar_one_or_none()
+        payload = to_chat_detail(chat, lead_in_scope=lead_in_scope, bot_name=bot_name)
         owner_group_id = chat.assigned_group_id
         if owner_group_id is None and chat.assigned_department_id is not None:
             owner_group_id = await get_department_inbox_group_id(
