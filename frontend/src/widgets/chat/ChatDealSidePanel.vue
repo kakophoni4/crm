@@ -27,6 +27,7 @@ import {
 import { getLead, listContactLeads, patchLead } from '@/features/leads/api'
 import { listOptOrders } from '@/features/leads/opt-api'
 import {
+  OPT_PERIOD_OPTIONS,
   buildLeadDealPatch,
   readLeadDealFields,
 } from '@/features/leads/order-fields'
@@ -66,12 +67,14 @@ const hasSelectedOpenLead = computed(
 )
 
 const service = ref('')
+const period = ref<string | null>(null)
 const quantity = ref<number | null>(null)
 const cost = ref<number | null>(null)
 const costPrice = ref<number | null>(null)
 const commentDraft = ref('')
 const commentsOpen = ref(false)
 const optPaymentsReady = ref(true)
+const periodOptions = OPT_PERIOD_OPTIONS
 
 const serviceOptions = computed<SelectOption[]>(() => {
   const botId = props.chat?.bot_id
@@ -86,11 +89,16 @@ const leadComments = computed(() =>
 )
 
 const canCloseWon = computed(
-  () => hasSelectedOpenLead.value && (!isOptService.value || optPaymentsReady.value),
+  () =>
+    hasSelectedOpenLead.value &&
+    (!isOptService.value || (Boolean(period.value) && optPaymentsReady.value)),
 )
 
 const closeWonTooltip = computed(() => {
   if (!hasSelectedOpenLead.value || props.wonStatusId == null) return null
+  if (isOptService.value && !period.value) {
+    return 'Для ОПТ сначала выберите период.'
+  }
   if (isOptService.value && !optPaymentsReady.value) {
     return 'Закрыть как успешную можно только когда все заявки ОПТ оплачены полностью.'
   }
@@ -119,6 +127,7 @@ function statusLabel(lead: LeadListItem): string {
 
 function resetOrderForm(): void {
   service.value = ''
+  period.value = null
   quantity.value = null
   cost.value = null
   costPrice.value = null
@@ -129,6 +138,7 @@ function applyLeadDetail(detail: LeadDetail): void {
   leadDetail.value = detail
   const fields = readLeadDealFields(detail.custom_fields)
   service.value = fields.order?.service?.toString() ?? ''
+  period.value = fields.order?.period?.toString() || null
   const qty = fields.order?.quantity
   quantity.value = qty == null || qty === '' ? null : Number(qty)
   const costRaw = fields.order?.cost
@@ -294,9 +304,15 @@ async function persistOrderFields(): Promise<void> {
   if (!hasSelectedOpenLead.value || leadDetail.value == null) return
   savingFields.value = true
   try {
+    if (service.value.trim() === 'ОПТ' && !period.value) {
+      message.warning('Для ОПТ выберите период')
+      savingFields.value = false
+      return
+    }
     const customFields = buildLeadDealPatch(leadDetail.value.custom_fields, {
       order: {
         service: service.value.trim() || undefined,
+        period: service.value.trim() === 'ОПТ' ? period.value || undefined : undefined,
         quantity: quantity.value ?? undefined,
         cost: cost.value ?? undefined,
         cost_price: costPrice.value ?? undefined,
@@ -436,10 +452,22 @@ async function saveLeadComment(): Promise<void> {
             />
           </div>
 
+          <div v-if="hasSelectedOpenLead && isOptService" class="deal-side__field">
+            <span class="deal-side__label">Период *</span>
+            <NSelect
+              v-model:value="period"
+              size="small"
+              :disabled="!hasSelectedOpenLead"
+              :options="periodOptions"
+              placeholder="Выберите период"
+              @update:value="persistOrderFields"
+            />
+          </div>
+
           <OptOrdersPanel
             v-if="isOptService && leadDetail"
             :lead-id="leadDetail.id"
-            :disabled="!hasSelectedOpenLead"
+            :disabled="!hasSelectedOpenLead || !period"
             @payments-changed="refreshOptPaymentGate(leadDetail.id)"
           />
 

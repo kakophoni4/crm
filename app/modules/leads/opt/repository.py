@@ -39,6 +39,35 @@ class OptOrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_unit_by_inn_for_period(self, inn: str, period_code: str) -> OptUnit | None:
+        """Active lavka that is explicitly allowed for the OPT period."""
+        from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability
+
+        result = await self._session.execute(
+            select(OptUnit)
+            .join(
+                OptUnitPeriodAvailability,
+                OptUnitPeriodAvailability.inn == OptUnit.inn,
+            )
+            .where(
+                OptUnit.inn == inn,
+                OptUnit.is_active.is_(True),
+                OptUnitPeriodAvailability.period_code == period_code,
+            )
+            .limit(1),
+        )
+        return result.scalar_one_or_none()
+
+    async def list_allowed_inns_for_period(self, period_code: str) -> list[str]:
+        from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability
+
+        result = await self._session.execute(
+            select(OptUnitPeriodAvailability.inn)
+            .where(OptUnitPeriodAvailability.period_code == period_code)
+            .order_by(OptUnitPeriodAvailability.inn),
+        )
+        return [str(inn) for inn in result.scalars().all()]
+
     async def get_buyer_by_inn(self, inn: str) -> OptBuyer | None:
         result = await self._session.execute(
             select(OptBuyer).where(OptBuyer.inn == inn, OptBuyer.is_active.is_(True)),
@@ -347,6 +376,7 @@ class OptOrderRepository:
         source_attachment_index: int | None = None,
         content_fingerprint: str | None = None,
         vat_rate_percent: float = 22.0,
+        period_code: str | None = None,
     ) -> LeadOptOrder:
         order_no = await self.next_order_no(lead_id)
         order = LeadOptOrder(
@@ -357,6 +387,7 @@ class OptOrderRepository:
             buyer_kpp=buyer_kpp,
             buyer_name=buyer_name,
             vat_rate_percent=vat_rate_percent,
+            period_code=period_code,
             status="queued",
             source_filename=source_filename,
             source_message_id=source_message_id,

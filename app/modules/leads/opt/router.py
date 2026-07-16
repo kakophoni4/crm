@@ -5,7 +5,27 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
+from pydantic import BeforeValidator
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _coerce_vat_form(value: object) -> object:
+    """multipart/form-data always sends strings — coerce to int for Literal[20, 22]."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+    return value
+
+
+VatRateForm = Annotated[
+    Literal[20, 22],
+    BeforeValidator(_coerce_vat_form),
+]
 
 from app.modules.db.models.user import User
 from app.modules.leads.opt.schemas import (
@@ -66,6 +86,7 @@ async def list_opt_payments_ledger(
     group_id: int | None = None,
     contact_id: int | None = None,
     payment_type: str | None = None,
+    payment_status: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> OptPaymentLedgerListResponse:
@@ -75,6 +96,7 @@ async def list_opt_payments_ledger(
         group_id=group_id,
         contact_id=contact_id,
         payment_type=payment_type,
+        payment_status=payment_status,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
     )
@@ -138,7 +160,7 @@ async def upload_opt_application(
     actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
     service: Annotated[OptOrderService, Depends(_service)],
     file: Annotated[UploadFile, File()],
-    vat_rate_percent: Annotated[Literal[20, 22], Form()] = 22,
+    vat_rate_percent: Annotated[VatRateForm, Form()] = 22,
 ) -> OptOrderResponse:
     content = await file.read()
     filename = file.filename or "application.xlsx"

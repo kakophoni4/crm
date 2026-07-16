@@ -40,6 +40,7 @@ from app.modules.leads.opt.schemas import (
     OptVolumeCategoryBreakdown,
 )
 from app.modules.leads.opt.pricing import commission_base_from_breakdown
+from app.modules.leads.opt.periods import read_lead_opt_period
 from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
 from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
@@ -141,6 +142,7 @@ class OptOrderService:
             status=order.status,
             payment_status=order.payment_status or "unpaid",
             vat_rate_percent=Decimal(str(getattr(order, "vat_rate_percent", None) or 22)),
+            period_code=getattr(order, "period_code", None),
             total_volume=Decimal(str(order.total_volume or 0)),
             commission_base=commission_base,
             commission_adjustment=commission_adjustment,
@@ -539,6 +541,7 @@ class OptOrderService:
         group_id: int | None = None,
         contact_id: int | None = None,
         payment_type: str | None = None,
+        payment_status: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> OptPaymentLedgerListResponse:
@@ -570,6 +573,12 @@ class OptOrderService:
                 filters.append(LeadOptOrderPayment.payment_type == types[0])
             elif types:
                 filters.append(LeadOptOrderPayment.payment_type.in_(types))
+        if payment_status:
+            statuses = [part.strip() for part in payment_status.split(",") if part.strip()]
+            if len(statuses) == 1:
+                filters.append(LeadOptOrder.payment_status == statuses[0])
+            elif statuses:
+                filters.append(LeadOptOrder.payment_status.in_(statuses))
 
         count_stmt = (
             select(func.count())
@@ -829,6 +838,15 @@ class OptOrderService:
         buyer_inn = parsed.buyer_inn
         buyer_kpp, buyer_name = await resolve_buyer_requisites(self._repo, buyer_inn)
 
+        period_code = read_lead_opt_period(lead.custom_fields)
+        if period_code is None:
+            raise ValidationError(
+                message=(
+                    "Для ОПТ нужно выбрать период сделки "
+                    "(например 2/26 — второй квартал 2026) до загрузки заявки."
+                ),
+            )
+
         try:
             if vat_rate_percent is None:
                 vat_rate = normalize_opt_vat_rate(get_settings().opt_vat_rate_percent)
@@ -840,11 +858,20 @@ class OptOrderService:
         order_crm_id = self._repo.new_crm_id("crm-order")
         line_payloads: list[dict[str, object]] = []
         missing_suppliers: list[str] = []
+        period_blocked: list[str] = []
 
         for parsed_line in parsed.lines:
-            unit = await self._repo.get_unit_by_inn(parsed_line.supplier_inn)
+            unit = await self._repo.get_unit_by_inn_for_period(
+                parsed_line.supplier_inn,
+                period_code,
+            )
             if unit is None:
-                missing_suppliers.append(parsed_line.supplier_inn)
+                # Distinguish: exists but wrong period vs missing entirely.
+                any_unit = await self._repo.get_unit_by_inn(parsed_line.supplier_inn)
+                if any_unit is None:
+                    missing_suppliers.append(parsed_line.supplier_inn)
+                else:
+                    period_blocked.append(parsed_line.supplier_inn)
                 supplier_kpp = None
                 supplier_name = None
             else:
@@ -873,6 +900,13 @@ class OptOrderService:
                     + ", ".join(sorted(set(missing_suppliers)))
                 ),
             )
+        if period_blocked:
+            raise ValidationError(
+                message=(
+                    f"Лавки не доступны для периода {period_code}: "
+                    + ", ".join(sorted(set(period_blocked)))
+                ),
+            )
 
         order = await self._repo.create_order(
             lead_id=lead.id,
@@ -887,6 +921,7 @@ class OptOrderService:
             source_attachment_index=source_attachment_index,
             content_fingerprint=content_fingerprint,
             vat_rate_percent=float(vat_rate),
+            period_code=period_code,
         )
         await self._ensure_lead_service_opt(lead)
         await self._session.commit()

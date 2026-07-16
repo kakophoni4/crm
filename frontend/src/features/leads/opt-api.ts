@@ -32,6 +32,7 @@ export async function listOptPaymentsLedger(params?: {
   group_id?: number
   contact_id?: number
   payment_type?: string
+  payment_status?: string
   offset?: number
   limit?: number
 }): Promise<OptPaymentLedgerListResponse> {

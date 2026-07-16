@@ -84,6 +84,7 @@ class OptOrderResponse(BaseModel):
     status: str
     payment_status: str
     vat_rate_percent: Decimal = Decimal("22")
+    period_code: str | None = None
     total_volume: Decimal
     commission_base: Decimal
     commission_adjustment: Decimal

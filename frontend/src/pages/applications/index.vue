@@ -53,9 +53,10 @@ const detailOpen = ref(false)
 const selected = ref<OptOrderRegistryItem | null>(null)
 
 const paymentStatusOptions = [
-  { label: 'Не оплачена', value: 'unpaid' },
+  { label: 'Все', value: 'all' },
+  { label: 'Не оплаченные', value: 'unpaid' },
   { label: 'Частично', value: 'partial' },
-  { label: 'Оплачена', value: 'paid' },
+  { label: 'Оплаченные', value: 'paid' },
 ]
 
 const paymentTypeOptions = OPT_PAYMENT_TYPE_OPTIONS.map((row) => ({
@@ -302,11 +303,17 @@ async function downloadPaymentDoc(row: OptPaymentLedgerItem): Promise<void> {
   }
 }
 
+function resolvedPaymentStatus(): string | undefined {
+  const value = paymentStatusFilter.value
+  if (value == null || value === 'all') return undefined
+  return value
+}
+
 async function loadOrders(): Promise<void> {
   loading.value = true
   try {
     const data = await listOptOrdersRegistry({
-      payment_status: paymentStatusFilter.value ?? undefined,
+      payment_status: resolvedPaymentStatus(),
       department_id: deptFilterId(),
       offset: (page.value - 1) * pageSize,
       limit: pageSize,
@@ -327,6 +334,7 @@ async function loadPayments(): Promise<void> {
   try {
     const data = await listOptPaymentsLedger({
       payment_type: paymentTypeFilter.value ?? undefined,
+      payment_status: resolvedPaymentStatus(),
       department_id: deptFilterId(),
       offset: (page.value - 1) * pageSize,
       limit: pageSize,
@@ -411,16 +419,15 @@ onMounted(() => {
           size="small"
         />
         <NSelect
-          v-if="activeTab === 'orders'"
           v-model:value="paymentStatusFilter"
           :options="paymentStatusOptions"
-          placeholder="Все статусы оплаты"
+          placeholder="Статус оплаты"
           style="width: 200px"
           size="small"
           clearable
         />
         <NSelect
-          v-else
+          v-if="activeTab === 'payments'"
           v-model:value="paymentTypeFilter"
           :options="paymentTypeOptions"
           placeholder="Все типы оплаты"

@@ -644,6 +644,9 @@ onUnmounted(() => {
     </header>
 
     <NSpin :show="loading">
+      <p v-if="disabled && hasLead" class="opt-orders__hint">
+        Сначала выберите период сделки ОПТ — без него заявку загрузить нельзя.
+      </p>
       <NEmpty v-if="!orders.length" description="Заявок пока нет" />
 
       <template v-else>
@@ -698,6 +701,10 @@ onUnmounted(() => {
             <div>
               <dt>НДС</dt>
               <dd>{{ selectedOrder.vat_rate_percent ?? 22 }}%</dd>
+            </div>
+            <div v-if="selectedOrder.period_code">
+              <dt>Период</dt>
+              <dd>{{ selectedOrder.period_code }}</dd>
             </div>
             <div>
               <dt>К оплате</dt>

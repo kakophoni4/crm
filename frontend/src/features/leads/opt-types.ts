@@ -77,6 +77,8 @@ export interface OptOrder {
   payment_status: 'unpaid' | 'partial' | 'paid' | string
   /** VAT rate used when splitting line amounts (20 or 22). */
   vat_rate_percent?: number
+  /** OPT period snapshot, e.g. "2/26". */
+  period_code?: string | null
   total_volume: number
   commission_base: number
   commission_adjustment: number

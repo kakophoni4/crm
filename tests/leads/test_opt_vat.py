@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from app.modules.leads.opt.parser import parse_application_workbook
-from app.modules.leads.opt.vat import split_vat_included
+from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
+
+
+def test_normalize_opt_vat_rate_accepts_strings() -> None:
+    assert normalize_opt_vat_rate("20") == Decimal("20")
+    assert normalize_opt_vat_rate("22") == Decimal("22")
+    assert normalize_opt_vat_rate(20) == Decimal("20")
 
 
 def test_split_vat_included_matches_registry_sample() -> None:

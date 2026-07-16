@@ -1,9 +1,20 @@
 export interface LeadOrderFields {
   service?: string
+  /** OPT period code, e.g. "2/26" = Q2 2026. */
+  period?: string | null
   quantity?: number | string | null
   cost?: number | string | null
   cost_price?: number | string | null
 }
+
+/** Quarter/year options for OPT deals (2025–2026). */
+export const OPT_PERIOD_OPTIONS = [2025, 2026].flatMap((year) =>
+  [1, 2, 3, 4].map((quarter) => {
+    const yy = String(year % 100).padStart(2, '0')
+    const value = `${quarter}/${yy}`
+    return { label: `${quarter} кв. ${year} (${value})`, value }
+  }),
+)
 
 export interface LeadDealCustomFields {
   order?: LeadOrderFields | null

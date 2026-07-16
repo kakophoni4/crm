@@ -41,6 +41,7 @@ class LeadOptOrder(Base):
         nullable=False,
         server_default="22",
     )
+    period_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_message_id: Mapped[int | None] = mapped_column(

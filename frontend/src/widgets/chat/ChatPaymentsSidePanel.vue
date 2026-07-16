@@ -48,6 +48,14 @@ const store = useChatsStore()
 const message = useMessage()
 
 const loading = ref(false)
+const paymentStatusFilter = ref<string | null>('unpaid,partial')
+const paymentStatusOptions = [
+  { label: 'Все', value: 'all' },
+  { label: 'Не оплаченные', value: 'unpaid' },
+  { label: 'Частично', value: 'partial' },
+  { label: 'Оплаченные', value: 'paid' },
+  { label: 'Не оплаченные + частично', value: 'unpaid,partial' },
+]
 const items = ref<OptOrderRegistryItem[]>([])
 const total = ref(0)
 
@@ -139,10 +147,11 @@ async function loadItems(): Promise<void> {
   }
   loading.value = true
   try {
+    const status = paymentStatusFilter.value
     const data = await listOptOrdersRegistry({
       contact_id: contactId,
-      payment_status: 'unpaid,partial',
-      open_only: true,
+      payment_status: !status || status === 'all' ? undefined : status,
+      open_only: status === 'unpaid' || status === 'partial' || status === 'unpaid,partial',
       limit: 100,
       offset: 0,
     })
@@ -313,6 +322,10 @@ watch(
   },
 )
 
+watch(paymentStatusFilter, () => {
+  void loadItems()
+})
+
 onMounted(() => {
   void loadItems()
 })
@@ -323,9 +336,16 @@ onMounted(() => {
     <header class="payments-side__header">
       <h2 class="payments-side__title">Оплаты клиента</h2>
       <p class="payments-side__subtitle">
-        Неоплаченные заявки выбранного контакта
+        Заявки выбранного контакта
         <template v-if="total"> · {{ total }}</template>
       </p>
+      <NSelect
+        v-model:value="paymentStatusFilter"
+        size="small"
+        :options="paymentStatusOptions"
+        :consistent-menu-width="false"
+        style="margin-top: 8px; width: 100%"
+      />
     </header>
 
     <div class="payments-side__scroll">
