@@ -66,6 +66,8 @@ export interface OptAttachmentProbeResult {
   existing_order?: OptOrderExistingRef | null
 }
 
+export type OptVatRatePercent = 20 | 22
+
 export interface OptOrder {
   id: number
   lead_id: number
@@ -73,6 +75,8 @@ export interface OptOrder {
   crm_id: string
   status: 'queued' | 'submitting' | 'submitted' | 'failed' | string
   payment_status: 'unpaid' | 'partial' | 'paid' | string
+  /** VAT rate used when splitting line amounts (20 or 22). */
+  vat_rate_percent?: number
   total_volume: number
   commission_base: number
   commission_adjustment: number

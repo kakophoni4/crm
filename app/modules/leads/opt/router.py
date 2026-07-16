@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Annotated
-
+from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -125,6 +124,7 @@ async def upload_opt_from_chat_attachment(
         chat_id=body.chat_id,
         message_id=body.message_id,
         attachment_index=body.attachment_index,
+        vat_rate_percent=body.vat_rate_percent,
     )
 
 
@@ -138,6 +138,7 @@ async def upload_opt_application(
     actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
     service: Annotated[OptOrderService, Depends(_service)],
     file: Annotated[UploadFile, File()],
+    vat_rate_percent: Annotated[Literal[20, 22], Form()] = 22,
 ) -> OptOrderResponse:
     content = await file.read()
     filename = file.filename or "application.xlsx"
@@ -146,6 +147,7 @@ async def upload_opt_application(
         lead_id,
         filename=filename,
         content=content,
+        vat_rate_percent=vat_rate_percent,
     )
 
 

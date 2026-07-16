@@ -40,7 +40,7 @@ from app.modules.leads.opt.schemas import (
     OptVolumeCategoryBreakdown,
 )
 from app.modules.leads.opt.pricing import commission_base_from_breakdown
-from app.modules.leads.opt.vat import split_vat_included
+from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
 from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
@@ -140,6 +140,7 @@ class OptOrderService:
             crm_id=order.crm_id,
             status=order.status,
             payment_status=order.payment_status or "unpaid",
+            vat_rate_percent=Decimal(str(getattr(order, "vat_rate_percent", None) or 22)),
             total_volume=Decimal(str(order.total_volume or 0)),
             commission_base=commission_base,
             commission_adjustment=commission_adjustment,
@@ -766,6 +767,7 @@ class OptOrderService:
         chat_id: int,
         message_id: int,
         attachment_index: int,
+        vat_rate_percent: Decimal | float | int | None = None,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
         existing = await self._repo.get_order_by_source_attachment(message_id, attachment_index)
@@ -786,6 +788,7 @@ class OptOrderService:
             content=content,
             source_message_id=message_id,
             source_attachment_index=attachment_index,
+            vat_rate_percent=vat_rate_percent,
         )
 
     async def upload_application(
@@ -797,6 +800,7 @@ class OptOrderService:
         content: bytes,
         source_message_id: int | None = None,
         source_attachment_index: int | None = None,
+        vat_rate_percent: Decimal | float | int | None = None,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
 
@@ -825,8 +829,14 @@ class OptOrderService:
         buyer_inn = parsed.buyer_inn
         buyer_kpp, buyer_name = await resolve_buyer_requisites(self._repo, buyer_inn)
 
-        settings = get_settings()
-        vat_rate = Decimal(str(settings.opt_vat_rate_percent))
+        try:
+            if vat_rate_percent is None:
+                vat_rate = normalize_opt_vat_rate(get_settings().opt_vat_rate_percent)
+            else:
+                vat_rate = normalize_opt_vat_rate(vat_rate_percent)
+        except ValueError as exc:
+            raise ValidationError(message="НДС должен быть 20% или 22%") from exc
+
         order_crm_id = self._repo.new_crm_id("crm-order")
         line_payloads: list[dict[str, object]] = []
         missing_suppliers: list[str] = []
@@ -876,6 +886,7 @@ class OptOrderService:
             source_message_id=source_message_id,
             source_attachment_index=source_attachment_index,
             content_fingerprint=content_fingerprint,
+            vat_rate_percent=float(vat_rate),
         )
         await self._ensure_lead_service_opt(lead)
         await self._session.commit()

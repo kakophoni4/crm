@@ -4,6 +4,7 @@ import type {
   OptOrderListResponse,
   OptOrderRegistryListResponse,
   OptPaymentLedgerListResponse,
+  OptVatRatePercent,
 } from '@/features/leads/opt-types'
 import { http } from '@/shared/api/http'
 
@@ -38,9 +39,14 @@ export async function listOptPaymentsLedger(params?: {
   return data
 }
 
-export async function uploadOptApplication(leadId: number, file: File): Promise<OptOrder> {
+export async function uploadOptApplication(
+  leadId: number,
+  file: File,
+  vatRatePercent: OptVatRatePercent = 22,
+): Promise<OptOrder> {
   const form = new FormData()
   form.append('file', file)
+  form.append('vat_rate_percent', String(vatRatePercent))
   const { data } = await http.post<OptOrder>(`/leads/${leadId}/opt-orders/upload`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
@@ -60,11 +66,16 @@ export async function probeOptChatAttachment(
 
 export async function uploadOptFromChatAttachment(
   leadId: number,
-  body: { chat_id: number; message_id: number; attachment_index: number },
+  body: {
+    chat_id: number
+    message_id: number
+    attachment_index: number
+    vat_rate_percent?: OptVatRatePercent
+  },
 ): Promise<OptOrder> {
   const { data } = await http.post<OptOrder>(
     `/leads/${leadId}/opt-orders/upload-from-attachment`,
-    body,
+    { vat_rate_percent: 22, ...body },
   )
   return data
 }

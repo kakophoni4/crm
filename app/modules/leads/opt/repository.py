@@ -346,6 +346,7 @@ class OptOrderRepository:
         source_message_id: int | None = None,
         source_attachment_index: int | None = None,
         content_fingerprint: str | None = None,
+        vat_rate_percent: float = 22.0,
     ) -> LeadOptOrder:
         order_no = await self.next_order_no(lead_id)
         order = LeadOptOrder(
@@ -355,6 +356,7 @@ class OptOrderRepository:
             buyer_inn=buyer_inn,
             buyer_kpp=buyer_kpp,
             buyer_name=buyer_name,
+            vat_rate_percent=vat_rate_percent,
             status="queued",
             source_filename=source_filename,
             source_message_id=source_message_id,

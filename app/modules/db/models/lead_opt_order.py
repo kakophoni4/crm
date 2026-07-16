@@ -36,6 +36,11 @@ class LeadOptOrder(Base):
     buyer_inn: Mapped[str] = mapped_column(Text, nullable=False)
     buyer_kpp: Mapped[str | None] = mapped_column(Text, nullable=True)
     buyer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vat_rate_percent: Mapped[float] = mapped_column(
+        Numeric(5, 2),
+        nullable=False,
+        server_default="22",
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_message_id: Mapped[int | None] = mapped_column(

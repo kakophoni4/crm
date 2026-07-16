@@ -83,6 +83,7 @@ class OptOrderResponse(BaseModel):
     crm_id: str
     status: str
     payment_status: str
+    vat_rate_percent: Decimal = Decimal("22")
     total_volume: Decimal
     commission_base: Decimal
     commission_adjustment: Decimal
@@ -209,3 +210,4 @@ class OptUploadFromAttachmentRequest(BaseModel):
     chat_id: int
     message_id: int
     attachment_index: int = Field(ge=0)
+    vat_rate_percent: Literal[20, 22] = 22

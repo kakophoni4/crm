@@ -38,7 +38,7 @@ import { peekOptOrders, prefetchOptOrders } from '@/features/chats/payments-cach
 import { useChatsStore } from '@/features/chats/store'
 import { uploadFile } from '@/features/chats/api'
 import { validateOptPaymentDocuments } from '@/features/leads/opt-payment-validation'
-import type { OptOrder, OptOrderLine } from '@/features/leads/opt-types'
+import type { OptOrder, OptOrderLine, OptVatRatePercent } from '@/features/leads/opt-types'
 import {
   OPT_PAYMENT_RECIPIENT_OPTIONS,
   OPT_PAYMENT_TYPE_OPTIONS,
@@ -98,6 +98,11 @@ const paymentForm = ref({
   payment_type: 'wire' as 'card' | 'crypto' | 'wire' | 'cash',
   recipient: 'orange' as 'orange' | 'beneficiary',
 })
+const vatRatePercent = ref<OptVatRatePercent>(22)
+const vatRateOptions = [
+  { label: 'НДС 22%', value: 22 as OptVatRatePercent },
+  { label: 'НДС 20%', value: 20 as OptVatRatePercent },
+]
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const hasLead = computed(() => props.leadId != null && !props.disabled)
@@ -468,13 +473,15 @@ async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
   }
   uploading.value = true
   try {
-    const created = await uploadOptApplication(props.leadId, raw)
+    const created = await uploadOptApplication(props.leadId, raw, vatRatePercent.value)
     orders.value = [...orders.value.filter((row) => row.id !== created.id), created].sort(
       (a, b) => a.order_no - b.order_no,
     )
     selectedOrderId.value = created.id
     startPolling()
-    message.success(`Заявка ${created.order_no} загружена — реестр формируется`)
+    message.success(
+      `Заявка ${created.order_no} загружена (НДС ${vatRatePercent.value}%) — реестр формируется`,
+    )
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявку')
   } finally {
@@ -610,21 +617,30 @@ onUnmounted(() => {
       </div>
       <p v-else-if="orders.length" class="opt-orders__count">Заявок: {{ orders.length }}</p>
       <div v-else />
-      <NUpload
-        :show-file-list="false"
-        accept=".xlsx,.xls"
-        :disabled="!hasLead || uploading || hasPendingSubmission"
-        @change="onUpload"
-      >
-        <NButton
+      <div class="opt-orders__upload-row">
+        <NSelect
+          v-model:value="vatRatePercent"
           size="small"
-          type="primary"
-          :loading="uploading"
-          :disabled="!hasLead || hasPendingSubmission"
+          :options="vatRateOptions"
+          :disabled="!hasLead || uploading || hasPendingSubmission"
+          style="width: 120px"
+        />
+        <NUpload
+          :show-file-list="false"
+          accept=".xlsx,.xls"
+          :disabled="!hasLead || uploading || hasPendingSubmission"
+          @change="onUpload"
         >
-          + Заявка
-        </NButton>
-      </NUpload>
+          <NButton
+            size="small"
+            type="primary"
+            :loading="uploading"
+            :disabled="!hasLead || hasPendingSubmission"
+          >
+            + Заявка
+          </NButton>
+        </NUpload>
+      </div>
     </header>
 
     <NSpin :show="loading">
@@ -678,6 +694,10 @@ onUnmounted(() => {
             <div>
               <dt>Объём</dt>
               <dd>{{ formatMoney(selectedOrder.total_volume) }} ₽</dd>
+            </div>
+            <div>
+              <dt>НДС</dt>
+              <dd>{{ selectedOrder.vat_rate_percent ?? 22 }}%</dd>
             </div>
             <div>
               <dt>К оплате</dt>
@@ -1249,6 +1269,13 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+}
+
+.opt-orders__upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .opt-orders__title {

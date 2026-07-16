@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { NButton, NSpin, useMessage } from 'naive-ui'
+import { NButton, NSelect, NSpin, useMessage } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import {
   probeOptChatAttachment,
   uploadOptFromChatAttachment,
 } from '@/features/leads/opt-api'
-import type { OptAttachmentProbeResult } from '@/features/leads/opt-types'
+import type { OptAttachmentProbeResult, OptVatRatePercent } from '@/features/leads/opt-types'
 import { useChatsStore } from '@/features/chats/store'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import { AppError } from '@/shared/api/http'
@@ -24,6 +24,11 @@ const message = useMessage()
 const probing = ref(false)
 const submitting = ref(false)
 const probeResult = ref<OptAttachmentProbeResult | null>(null)
+const vatRatePercent = ref<OptVatRatePercent>(22)
+const vatRateOptions = [
+  { label: 'НДС 22%', value: 22 as OptVatRatePercent },
+  { label: 'НДС 20%', value: 20 as OptVatRatePercent },
+]
 
 const attachmentRow = computed(() => props.attachment as Record<string, unknown>)
 const isSpreadsheet = computed(
@@ -70,8 +75,9 @@ async function submitApplication(): Promise<void> {
       chat_id: props.chatId,
       message_id: props.messageId,
       attachment_index: props.attachmentIndex,
+      vat_rate_percent: vatRatePercent.value,
     })
-    message.success('Заявка отправлена в обработку')
+    message.success(`Заявка отправлена в обработку (НДС ${vatRatePercent.value}%)`)
     store.bumpOptOrdersRefresh()
     await runProbe()
   } catch (err) {
@@ -106,14 +112,23 @@ watch(
         {{ probeResult.line_count === 1 ? 'строка' : 'строк' }}
         <span v-if="probeResult.buyer_inn">, покупатель ИНН {{ probeResult.buyer_inn }}</span>
       </p>
-      <NButton
-        size="small"
-        type="primary"
-        :loading="submitting"
-        @click="submitApplication"
-      >
-        Отправить заявку
-      </NButton>
+      <div class="opt-attachment-bar__actions">
+        <NSelect
+          v-model:value="vatRatePercent"
+          size="small"
+          :options="vatRateOptions"
+          :disabled="submitting"
+          style="width: 120px"
+        />
+        <NButton
+          size="small"
+          type="primary"
+          :loading="submitting"
+          @click="submitApplication"
+        >
+          Отправить заявку
+        </NButton>
+      </div>
     </template>
   </div>
 </template>
@@ -136,5 +151,12 @@ watch(
 
 .opt-attachment-bar__note {
   color: var(--app-text-muted);
+}
+
+.opt-attachment-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 </style>
