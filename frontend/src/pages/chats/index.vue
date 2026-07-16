@@ -582,8 +582,6 @@ onUnmounted(() => {
 
               />
 
-              <span v-if="chatBotLabel(chat)" class="chats-page__bot">{{ chatBotLabel(chat) }}</span>
-
               <p class="chats-page__preview">{{ formatChatMessagePreview(chat.last_message_preview) }}</p>
 
               <span class="chats-page__meta">{{ chatMetaLine(chat) }}</span>
@@ -1093,19 +1091,6 @@ onUnmounted(() => {
 
   margin-top: 4px;
 
-}
-
-.chats-page__bot {
-  display: inline-block;
-  margin-top: 2px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--app-primary, #2080f0);
-  opacity: 0.9;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
 }
 
 .chats-page__preview {
