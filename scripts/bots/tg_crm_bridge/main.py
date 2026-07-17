@@ -61,8 +61,9 @@ def _pick_largest_photo(photos: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(photos, key=lambda p: p.get("file_size") or p.get("width") or 0)
 
 
-# Cloud Telegram Bot API cannot return file paths for downloads above ~20 MB.
-TG_BOT_API_MAX_FILE_BYTES = 20 * 1024 * 1024
+# Cloud Bot API hard-limit; Local Bot API can go much higher (we cap at CRM 100 MB).
+CLOUD_TG_MAX_FILE_BYTES = 20 * 1024 * 1024
+LOCAL_TG_MAX_FILE_BYTES = 100 * 1024 * 1024
 
 
 def _fmt_mb(size_bytes: int | None) -> str:
@@ -71,14 +72,21 @@ def _fmt_mb(size_bytes: int | None) -> str:
     return f"{size_bytes / (1024 * 1024):.1f}"
 
 
+def _is_cloud_api(api_base: str) -> bool:
+    return "api.telegram.org" in api_base.lower()
+
+
 async def _telegram_file_url(
     client: httpx.AsyncClient,
+    *,
+    api_base: str,
+    file_base: str,
     token: str,
     file_id: str,
 ) -> tuple[str | None, str | None]:
     """Return (download_url, error_description)."""
     resp = await client.get(
-        f"https://api.telegram.org/bot{token}/getFile",
+        f"{api_base}/bot{token}/getFile",
         params={"file_id": file_id},
     )
     data = resp.json()
@@ -89,15 +97,23 @@ async def _telegram_file_url(
     file_path = (data.get("result") or {}).get("file_path")
     if not file_path:
         return None, "Telegram не вернул путь к файлу"
-    return f"https://api.telegram.org/file/bot{token}/{file_path}", None
+    # Local Bot API --local mode returns absolute disk paths; expose via HTTP file endpoint.
+    path = str(file_path).lstrip("/")
+    return f"{file_base}/file/bot{token}/{path}", None
 
 
 async def _build_attachments(
     client: httpx.AsyncClient,
+    *,
     token: str,
+    api_base: str,
+    file_base: str,
+    max_file_bytes: int,
     tg_message: dict[str, Any],
 ) -> list[dict[str, Any]]:
     attachments: list[dict[str, Any]] = []
+    cloud = _is_cloud_api(api_base)
+    limit_label = "20 МБ (cloud Bot API)" if cloud else "100 МБ"
 
     async def add(
         *,
@@ -109,27 +125,41 @@ async def _build_attachments(
     ) -> None:
         name = (filename or "").strip() or "файл"
         size_int = int(size_bytes) if size_bytes is not None else None
-        too_big = size_int is not None and size_int > TG_BOT_API_MAX_FILE_BYTES
+        too_big = size_int is not None and size_int > max_file_bytes
 
         url: str | None = None
         error: str | None = None
         if too_big:
             error = (
-                f"«{name}» ({_fmt_mb(size_int)} МБ) слишком большой для бота Telegram "
-                f"(лимит 20 МБ). Попросите прислать архив поменьше или ссылку на облако."
+                f"«{name}» ({_fmt_mb(size_int)} МБ) слишком большой "
+                f"(лимит {limit_label}). Попросите прислать архив поменьше или ссылку на облако."
             )
             log.warning(
-                "skip getFile for oversized file %s (%s bytes)",
+                "skip getFile for oversized file %s (%s bytes, limit=%s)",
                 name,
                 size_int,
+                max_file_bytes,
             )
         else:
-            url, tg_error = await _telegram_file_url(client, token, file_id)
+            url, tg_error = await _telegram_file_url(
+                client,
+                api_base=api_base,
+                file_base=file_base,
+                token=token,
+                file_id=file_id,
+            )
             if not url:
+                hint = (
+                    " Обычно так бывает с файлами больше 20 МБ на cloud API — "
+                    "нужен Local Bot API или ссылка на облако."
+                    if cloud
+                    else " Проверьте Local Bot API / логи getFile."
+                )
                 error = (
                     f"Не удалось скачать «{name}» из Telegram"
                     + (f" ({_fmt_mb(size_int)} МБ)" if size_int else "")
-                    + ". Обычно так бывает с файлами больше 20 МБ — нужна ссылка на облако."
+                    + "."
+                    + hint
                 )
                 if tg_error:
                     log.warning("attachment unresolved: %s", tg_error)
@@ -238,10 +268,34 @@ class Bridge:
         self.outbound_secret = _env("OUTBOUND_SECRET")
         self.listen_host = _env("LISTEN_HOST", "0.0.0.0")
         self.listen_port = int(_env("LISTEN_PORT", "8765") or "8765")
+        # Cloud default; for files >20MB set TG_API_BASE to Local Bot API (see install-local-bot-api.sh).
+        self.tg_api_base = _env("TG_API_BASE", "https://api.telegram.org").rstrip("/")
+        # Worker runs in Docker — use host.docker.internal when Local Bot API is on the host.
+        default_file_base = (
+            "http://host.docker.internal:8081"
+            if not _is_cloud_api(self.tg_api_base)
+            else self.tg_api_base
+        )
+        self.tg_file_base = _env("TG_FILE_BASE", default_file_base).rstrip("/")
+        default_max = (
+            str(CLOUD_TG_MAX_FILE_BYTES)
+            if _is_cloud_api(self.tg_api_base)
+            else str(LOCAL_TG_MAX_FILE_BYTES)
+        )
+        self.tg_max_file_bytes = int(_env("TG_MAX_FILE_BYTES", default_max) or default_max)
         if not self.tg_token:
             raise SystemExit("TG_BOT_TOKEN is required")
         if not self.inbound_secret or not self.outbound_secret:
             raise SystemExit("INBOUND_SECRET and OUTBOUND_SECRET are required")
+        log.info(
+            "Telegram API base=%s file_base=%s max_file=%sMB",
+            self.tg_api_base,
+            self.tg_file_base,
+            self.tg_max_file_bytes // (1024 * 1024),
+        )
+
+    def _tg_method_url(self, method: str) -> str:
+        return f"{self.tg_api_base}/bot{self.tg_token}/{method}"
 
     async def send_to_crm(self, tg_message: dict[str, Any]) -> None:
         user = tg_message.get("from") or {}
@@ -250,7 +304,14 @@ class Bridge:
             return
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            attachments = await _build_attachments(client, self.tg_token, tg_message)
+            attachments = await _build_attachments(
+                client,
+                token=self.tg_token,
+                api_base=self.tg_api_base,
+                file_base=self.tg_file_base,
+                max_file_bytes=self.tg_max_file_bytes,
+                tg_message=tg_message,
+            )
             text = _message_text(tg_message, attachments)
             if not text and not attachments:
                 log.debug("Skip empty TG message %s", tg_message.get("message_id"))
@@ -303,7 +364,7 @@ class Bridge:
             )
 
     async def send_telegram(self, chat_id: int, text: str) -> dict[str, Any]:
-        url = f"https://api.telegram.org/bot{self.tg_token}/sendMessage"
+        url = self._tg_method_url("sendMessage")
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json={"chat_id": chat_id, "text": text})
         data = resp.json()
@@ -354,13 +415,13 @@ class Bridge:
         as_photo: bool,
     ) -> dict[str, Any]:
         method = "sendPhoto" if as_photo else "sendDocument"
-        url = f"https://api.telegram.org/bot{self.tg_token}/{method}"
+        url = self._tg_method_url(method)
         field = "photo" if as_photo else "document"
         form: dict[str, Any] = {"chat_id": str(chat_id)}
         if caption:
             form["caption"] = caption
         files = {field: (filename, data, mime)}
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0)) as client:
             resp = await client.post(url, data=form, files=files)
         payload = resp.json()
         if not payload.get("ok"):
@@ -478,8 +539,8 @@ class Bridge:
 
     async def poll_telegram(self) -> None:
         offset = 0
-        url = f"https://api.telegram.org/bot{self.tg_token}/getUpdates"
-        log.info("Telegram long polling started")
+        url = self._tg_method_url("getUpdates")
+        log.info("Telegram long polling started via %s", self.tg_api_base)
         async with httpx.AsyncClient(timeout=60.0) as client:
             while True:
                 try:
