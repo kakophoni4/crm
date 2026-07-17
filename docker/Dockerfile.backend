@@ -39,6 +39,7 @@ COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser scripts/opt_enrich_db_units.py ./scripts/opt_enrich_db_units.py
 COPY --chown=appuser:appuser scripts/opt_recalc_vat_lines.py ./scripts/opt_recalc_vat_lines.py
 COPY --chown=appuser:appuser scripts/opt_retry_submit.py ./scripts/opt_retry_submit.py
+COPY --chown=appuser:appuser scripts/bots/resync_bot_group_assignments.py ./scripts/resync_bot_group_assignments.py
 COPY --chown=appuser:appuser alembic.ini pyproject.toml README.md ./
 
 USER appuser
