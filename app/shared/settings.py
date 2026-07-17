@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     workers_in_api: bool = False
 
     max_upload_photo_bytes: int = 10 * 1024 * 1024
-    max_upload_file_bytes: int = 100 * 1024 * 1024
+    max_upload_file_bytes: int = 50 * 1024 * 1024
     login_rate_limit_per_minute: int = 10
     login_rate_limit_use_redis: bool = True
     bot_job_reclaim_idle_ms: int = 300_000

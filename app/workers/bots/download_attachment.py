@@ -76,8 +76,7 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
             return
 
         try:
-            # Large TG files (up to ~100 MB) need a long read timeout.
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0)) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.get(str(url))
                 response.raise_for_status()
                 data = response.content

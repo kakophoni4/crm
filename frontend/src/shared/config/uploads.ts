@@ -1,5 +1,5 @@
 const DEFAULT_MAX_UPLOAD_PHOTO_BYTES = 10 * 1024 * 1024
-const DEFAULT_MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024
+const DEFAULT_MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024
 
 function parseBytes(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback
