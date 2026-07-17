@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.contact import Contact
@@ -333,11 +333,12 @@ class AccountingRepository:
         inn: str,
         period_codes: list[str],
     ) -> list[str]:
-        existing = await self._session.execute(
-            select(OptUnitPeriodAvailability).where(OptUnitPeriodAvailability.inn == inn),
+        # DELETE must flush before INSERT — same (inn, period_code) unique key
+        # otherwise SQLAlchemy UOW can insert first and hit UniqueViolation.
+        await self._session.execute(
+            delete(OptUnitPeriodAvailability).where(OptUnitPeriodAvailability.inn == inn),
         )
-        for row in existing.scalars().all():
-            await self._session.delete(row)
+        await self._session.flush()
         unique = sorted({code for code in period_codes if code})
         for code in unique:
             self._session.add(
