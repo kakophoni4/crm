@@ -36,33 +36,41 @@ async def _resync(*, dry_run: bool) -> None:
         ).mappings().all()
 
         repo = BotRepository(session)
-        changed_bots = 0
+        touched_bots = 0
         for row in rows:
             group_ids = [int(value) for value in row["group_ids"]]
             if not group_ids:
                 continue
-            before = await _count_chats_to_resync(session, int(row["id"]), group_ids)
-            if before == 0:
+            bot_id = int(row["id"])
+            move_count = await _count_chats_to_resync(session, bot_id, group_ids)
+            null_owners = await _count_null_owners(session, bot_id, group_ids)
+            inbox_leftovers = await _count_inbox_leftovers(
+                session,
+                bot_id,
+                int(row["department_id"]),
+                group_ids,
+            )
+            if move_count == 0 and null_owners == 0 and inbox_leftovers == 0:
                 print(f"bot {row['code']}: already synced")
                 continue
-            changed_bots += 1
+            touched_bots += 1
             print(
-                f"bot {row['code']}: resync {before} chat(s) across groups "
-                f"{', '.join(str(gid) for gid in group_ids)}"
+                f"bot {row['code']}: move={move_count} null_owners={null_owners} "
+                f"inbox_leftovers={inbox_leftovers} groups={group_ids}"
             )
             if not dry_run:
                 await repo.sync_chats_after_group_assignment(
-                    int(row["id"]),
+                    bot_id,
                     int(row["department_id"]),
                     group_ids,
                 )
 
         if dry_run:
             await session.rollback()
-            print(f"dry run complete, bots needing sync: {changed_bots}")
+            print(f"dry run complete, bots needing repair: {touched_bots}")
         else:
             await session.commit()
-            print(f"resync complete, changed bots: {changed_bots}")
+            print(f"resync complete, changed bots: {touched_bots}")
 
 
 async def _main_async(*, dry_run: bool) -> None:
@@ -91,9 +99,57 @@ async def _count_chats_to_resync(session, bot_id: int, group_ids: list[int]) -> 
     return int(result.scalar_one())
 
 
+async def _count_null_owners(session, bot_id: int, group_ids: list[int]) -> int:
+    result = await session.execute(
+        text(
+            """
+            SELECT COUNT(DISTINCT c.contact_id)
+            FROM chats c
+            LEFT JOIN contact_group_assignments cga
+              ON cga.contact_id = c.contact_id
+             AND cga.group_id = c.assigned_group_id
+            WHERE c.bot_id = :bid
+              AND c.status != 'archived'
+              AND c.assigned_group_id IN :gids
+              AND (cga.id IS NULL OR cga.owner_user_id IS NULL)
+            """
+        ).bindparams(bindparam("gids", expanding=True)),
+        {"bid": bot_id, "gids": group_ids},
+    )
+    return int(result.scalar_one())
+
+
+async def _count_inbox_leftovers(
+    session,
+    bot_id: int,
+    department_id: int,
+    group_ids: list[int],
+) -> int:
+    result = await session.execute(
+        text(
+            """
+            SELECT COUNT(DISTINCT c.contact_id)
+            FROM chats c
+            JOIN contact_group_assignments cga
+              ON cga.contact_id = c.contact_id
+            JOIN groups g
+              ON g.id = cga.group_id
+             AND g.name = '__department_inbox__'
+             AND g.department_id = :did
+            WHERE c.bot_id = :bid
+              AND c.status != 'archived'
+              AND c.assigned_group_id IN :gids
+            """
+        ).bindparams(bindparam("gids", expanding=True)),
+        {"bid": bot_id, "did": department_id, "gids": group_ids},
+    )
+    return int(result.scalar_one())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Redistribute active bot chats into configured bot groups.",
+        description="Redistribute active bot chats into configured bot groups "
+        "and backfill empty owners / leftover inbox rows.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would change.")
     args = parser.parse_args()

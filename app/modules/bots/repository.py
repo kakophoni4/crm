@@ -401,25 +401,51 @@ class BotRepository:
                     department_id=department_id,
                 )
 
-            # Backfill empty owners on chats already sitting on a bot group.
+            # Backfill empty / missing owners on chats already sitting on a bot group.
             null_owner_rows = await self._session.execute(
                 text(
                     """
                     SELECT DISTINCT c.contact_id, c.assigned_group_id
                     FROM chats c
-                    JOIN contact_group_assignments cga
+                    LEFT JOIN contact_group_assignments cga
                       ON cga.contact_id = c.contact_id
                      AND cga.group_id = c.assigned_group_id
                     WHERE c.bot_id = :bid
                       AND c.status != 'archived'
                       AND c.assigned_group_id IN :gids
-                      AND cga.owner_user_id IS NULL
+                      AND (cga.id IS NULL OR cga.owner_user_id IS NULL)
                     """
                 ).bindparams(bindparam("gids", expanding=True)),
                 {"bid": bot_id, "gids": group_ids},
             )
             for contact_id, group_id in null_owner_rows.all():
                 await ensure_assignment(self._session, int(contact_id), int(group_id))
+                await drop_department_inbox_assignment(
+                    self._session,
+                    contact_id=int(contact_id),
+                    department_id=department_id,
+                )
+
+            # Drop leftover inbox rows for contacts that already have a real-group chat.
+            inbox_contacts = await self._session.execute(
+                text(
+                    """
+                    SELECT DISTINCT c.contact_id
+                    FROM chats c
+                    JOIN contact_group_assignments cga
+                      ON cga.contact_id = c.contact_id
+                    JOIN groups g
+                      ON g.id = cga.group_id
+                     AND g.name = '__department_inbox__'
+                     AND g.department_id = :did
+                    WHERE c.bot_id = :bid
+                      AND c.status != 'archived'
+                      AND c.assigned_group_id IN :gids
+                    """
+                ).bindparams(bindparam("gids", expanding=True)),
+                {"bid": bot_id, "did": department_id, "gids": group_ids},
+            )
+            for (contact_id,) in inbox_contacts.all():
                 await drop_department_inbox_assignment(
                     self._session,
                     contact_id=int(contact_id),
