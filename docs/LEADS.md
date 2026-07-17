@@ -206,16 +206,16 @@ Seed справочника:
 | Задача | Описание |
 |--------|----------|
 | **ARQ purge** | Фоновая job по `retention_expires_at` / `LEAD_RETENTION_DAYS` — v1.1+; в ф.8 колонка только в схеме. |
-| **Department-бот** | **OUT OF SCOPE до v1.1.** Бот с `bots.owner_type = 'department'`: для `ensure_lead` / RBAC нужна явная политика `group_id` (сейчас опора на `chats.assigned_group_id` и group-ботов). Не блокирует приёмку ф.8 для group-ботов. |
+| **Department-бот** | Бот с `owner_type = department` / без ровно одной группы: при **0** группах — synthetic `__department_inbox__`; при **2+** группах — чат и владение на одной из реальных групп (с доступным staff), не inbox. |
 
 ### Department-боты (v1.2 decision — вариант 1)
 
 | Решение | Детали |
 |---------|--------|
-| **Ingest** | `owner_type = department` → чат: `assigned_group_id = NULL`, `assigned_department_id = owner_id` (без изменений). |
-| **Synthetic group** | На ingest создаётся/берётся группа `__department_inbox__` в отделе бота (`app/modules/leads/department_inbox.py`). |
-| **Лиды** | `ensure_open_lead(contact_id, synthetic_group_id, …)` — воронка и `messages.lead_id` как у group-ботов. Ownership/pending inbound — по synthetic group. |
-| **RBAC** | Лид виден senior отдела (группа в scope отдела); user — только если synthetic group в его видимых группах (обычно нет — inbox на уровне отдела). |
+| **Ingest, 0 групп** | Чат: `assigned_group_id = NULL` → synthetic `__department_inbox__` для лида и ownership. |
+| **Ingest, 2+ групп** | Чат и лид на одной из реальных групп бота (предпочтение группам с available staff); inbox не используется. |
+| **Ingest, 1 группа** | Как group-бот: чат/лид/ownership на этой группе. |
+| **RBAC** | Лид виден по `leads.group_id` / scope группы; для inbox — senior отдела. |
 
 Вариант 2 (`leads.department_id` nullable) **не выбран** — схема `leads.group_id NOT NULL` сохранена.
 

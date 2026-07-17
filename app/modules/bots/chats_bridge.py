@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -173,13 +172,19 @@ async def upsert_chat_for_bot(
     owner_id: int,
     candidate_group_ids: list[int] | None = None,
 ) -> ChatUpsertResult:
+    from app.modules.contacts.ownership import pick_group_among_candidates
+
     assigned_group_id: int | None = None
     assigned_department_id: int | None = None
     if owner_type == BotOwnerType.GROUP:
         assigned_group_id = owner_id
         assigned_department_id = await _group_department_id(session, owner_id)
     elif candidate_group_ids:
-        assigned_group_id = random.choice(candidate_group_ids)
+        # Multi-group bot: stay on real groups (never synthetic inbox). Prefer a
+        # group that currently has available operators.
+        assigned_group_id = await pick_group_among_candidates(session, candidate_group_ids)
+        if assigned_group_id is None:
+            assigned_group_id = int(candidate_group_ids[0])
         assigned_department_id = await _group_department_id(session, assigned_group_id)
     else:
         assigned_department_id = owner_id

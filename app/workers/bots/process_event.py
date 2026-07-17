@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.chats_bridge import (
@@ -22,7 +22,11 @@ from app.modules.bots.ownership_bridge import handle_inbound_ownership
 from app.modules.bots.repository import BotEventInboxRepository, BotRepository
 from app.modules.bots.routing import resolve_bot_routing
 from app.modules.contacts.realtime_payloads import contact_group_context
-from app.modules.contacts.ownership import clear_pending_inbound, ownership_v2_enabled
+from app.modules.contacts.ownership import (
+    clear_pending_inbound,
+    ownership_v2_enabled,
+    pick_group_among_candidates,
+)
 from app.modules.contacts.status_automation import apply_auto_contact_status
 from app.modules.db.models.bot import Bot
 from app.modules.db.models.chat import Chat
@@ -37,6 +41,65 @@ from app.realtime.chat_scope import chat_event_scope
 from app.realtime.events import publish
 from app.shared.db import get_session_factory
 from app.workers.bots.download_attachment import download_attachment
+
+
+async def _resolve_ingest_group_id(
+    session: Any,
+    *,
+    routing: Any,
+    chat_assigned_group_id: int | None,
+    created_by: int,
+) -> int:
+    """Real bot groups win over synthetic department inbox when any are assigned.
+
+    Sticky: keep the chat on its current group only if that group is still one of
+    the bot's assigned groups. Inbox / foreign / missing → pick among candidates
+    (prefer groups with available staff). Inbox is used only when the bot has
+    zero real groups.
+    """
+    candidates = [int(gid) for gid in (routing.candidate_group_ids or [])]
+    if candidates:
+        if chat_assigned_group_id is not None and int(chat_assigned_group_id) in candidates:
+            return int(chat_assigned_group_id)
+        picked = await pick_group_among_candidates(session, candidates)
+        if picked is not None:
+            return int(picked)
+        return candidates[0]
+    if chat_assigned_group_id is not None:
+        return int(chat_assigned_group_id)
+    return await get_or_create_department_inbox_group(
+        session,
+        routing.department_id,
+        created_by=created_by,
+    )
+
+
+async def _ensure_chat_on_group(
+    session: Any,
+    *,
+    chat_id: int,
+    group_id: int,
+    department_id: int,
+    current_assigned_group_id: int | None,
+) -> None:
+    if current_assigned_group_id is not None and int(current_assigned_group_id) == int(group_id):
+        return
+    await session.execute(
+        text(
+            """
+            UPDATE chats
+            SET assigned_group_id = :gid,
+                assigned_department_id = :did,
+                updated_at = now()
+            WHERE id = :chat_id
+            """
+        ),
+        {
+            "chat_id": chat_id,
+            "gid": group_id,
+            "did": department_id,
+        },
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -238,14 +301,19 @@ async def _handle_message_received(
     if contact_row is not None:
         await apply_auto_contact_status(session, contact_row, bot_id=bot.id)
     lead_id: int | None = None
-    if chat_result.assigned_group_id is not None:
-        group_id = chat_result.assigned_group_id
-    else:
-        group_id = await get_or_create_department_inbox_group(
-            session,
-            routing.department_id,
-            created_by=created_by,
-        )
+    group_id = await _resolve_ingest_group_id(
+        session,
+        routing=routing,
+        chat_assigned_group_id=chat_result.assigned_group_id,
+        created_by=created_by,
+    )
+    await _ensure_chat_on_group(
+        session,
+        chat_id=chat_id,
+        group_id=group_id,
+        department_id=routing.department_id,
+        current_assigned_group_id=chat_result.assigned_group_id,
+    )
 
     lead = await LeadService(session).ensure_open_lead(
         contact_id=contact_id,
@@ -322,14 +390,19 @@ async def _handle_call_received(
     contact_row = await session.get(Contact, contact_id)
     if contact_row is not None:
         await apply_auto_contact_status(session, contact_row, bot_id=bot.id)
-    if chat_result.assigned_group_id is not None:
-        group_id = chat_result.assigned_group_id
-    else:
-        group_id = await get_or_create_department_inbox_group(
-            session,
-            routing.department_id,
-            created_by=created_by,
-        )
+    group_id = await _resolve_ingest_group_id(
+        session,
+        routing=routing,
+        chat_assigned_group_id=chat_result.assigned_group_id,
+        created_by=created_by,
+    )
+    await _ensure_chat_on_group(
+        session,
+        chat_id=chat_id,
+        group_id=group_id,
+        department_id=routing.department_id,
+        current_assigned_group_id=chat_result.assigned_group_id,
+    )
 
     lead = await LeadService(session).ensure_open_lead(
         contact_id=contact_id,
@@ -393,14 +466,19 @@ async def _handle_bot_outbound_message(
         candidate_group_ids=routing.candidate_group_ids,
     )
     chat_id = chat_result.chat_id
-    if chat_result.assigned_group_id is not None:
-        group_id = chat_result.assigned_group_id
-    else:
-        group_id = await get_or_create_department_inbox_group(
-            session,
-            routing.department_id,
-            created_by=created_by,
-        )
+    group_id = await _resolve_ingest_group_id(
+        session,
+        routing=routing,
+        chat_assigned_group_id=chat_result.assigned_group_id,
+        created_by=created_by,
+    )
+    await _ensure_chat_on_group(
+        session,
+        chat_id=chat_id,
+        group_id=group_id,
+        department_id=routing.department_id,
+        current_assigned_group_id=chat_result.assigned_group_id,
+    )
     lead_id = await get_chat_current_lead_id(session, chat_id)
     result = await insert_outbound_message(
         session,

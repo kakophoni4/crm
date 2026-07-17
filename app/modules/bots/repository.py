@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -315,7 +314,37 @@ class BotRepository:
                 ),
                 {"gid": group_id, "bid": bot_id},
             )
+            from app.modules.contacts.ownership import (
+                drop_department_inbox_assignment,
+                ensure_assignment,
+            )
+
+            orphan_rows = await self._session.execute(
+                text(
+                    """
+                    SELECT DISTINCT c.contact_id
+                    FROM chats c
+                    WHERE c.bot_id = :bid
+                      AND c.status != 'archived'
+                      AND c.assigned_group_id = :gid
+                    """
+                ),
+                {"bid": bot_id, "gid": group_id},
+            )
+            for (contact_id,) in orphan_rows.all():
+                await ensure_assignment(self._session, int(contact_id), group_id)
+                await drop_department_inbox_assignment(
+                    self._session,
+                    contact_id=int(contact_id),
+                    department_id=department_id,
+                )
         elif len(group_ids) > 1:
+            from app.modules.contacts.ownership import (
+                drop_department_inbox_assignment,
+                ensure_assignment,
+                pick_group_among_candidates,
+            )
+
             stmt = text(
                 """
                 SELECT id, contact_id
@@ -330,7 +359,12 @@ class BotRepository:
             ).bindparams(bindparam("gids", expanding=True))
             rows = await self._session.execute(stmt, {"bid": bot_id, "gids": group_ids})
             for row in rows.all():
-                group_id = random.choice(group_ids)
+                chat_id = int(row[0])
+                contact_id = int(row[1])
+                group_id = await pick_group_among_candidates(self._session, group_ids)
+                if group_id is None:
+                    group_id = int(group_ids[0])
+
                 await self._session.execute(
                     text(
                         """
@@ -342,7 +376,7 @@ class BotRepository:
                         """
                     ),
                     {
-                        "chat_id": int(row[0]),
+                        "chat_id": chat_id,
                         "gid": group_id,
                         "did": department_id,
                     },
@@ -358,19 +392,38 @@ class BotRepository:
                           AND group_id IS DISTINCT FROM :gid
                         """
                     ),
-                    {"chat_id": int(row[0]), "gid": group_id},
+                    {"chat_id": chat_id, "gid": group_id},
                 )
-                await self._session.execute(
-                    text(
-                        """
-                        INSERT INTO contact_group_assignments (
-                            contact_id, group_id, owner_user_id, assigned_at, assignment_source
-                        )
-                        VALUES (:contact_id, :gid, NULL, now(), 'migration')
-                        ON CONFLICT (contact_id, group_id) DO NOTHING
-                        """
-                    ),
-                    {"contact_id": int(row[1]), "gid": group_id},
+                await ensure_assignment(self._session, contact_id, group_id)
+                await drop_department_inbox_assignment(
+                    self._session,
+                    contact_id=contact_id,
+                    department_id=department_id,
+                )
+
+            # Backfill empty owners on chats already sitting on a bot group.
+            null_owner_rows = await self._session.execute(
+                text(
+                    """
+                    SELECT DISTINCT c.contact_id, c.assigned_group_id
+                    FROM chats c
+                    JOIN contact_group_assignments cga
+                      ON cga.contact_id = c.contact_id
+                     AND cga.group_id = c.assigned_group_id
+                    WHERE c.bot_id = :bid
+                      AND c.status != 'archived'
+                      AND c.assigned_group_id IN :gids
+                      AND cga.owner_user_id IS NULL
+                    """
+                ).bindparams(bindparam("gids", expanding=True)),
+                {"bid": bot_id, "gids": group_ids},
+            )
+            for contact_id, group_id in null_owner_rows.all():
+                await ensure_assignment(self._session, int(contact_id), int(group_id))
+                await drop_department_inbox_assignment(
+                    self._session,
+                    contact_id=int(contact_id),
+                    department_id=department_id,
                 )
         else:
             await self._session.execute(

@@ -4,13 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.escalation import get_group_settings
 from app.modules.contacts.ownership import (
+    drop_department_inbox_assignment,
     ensure_assignment,
+    get_owner,
     ownership_v2_enabled,
     set_pending_inbound,
 )
 from app.modules.contacts.realtime_payloads import contact_group_context, user_full_name
 from app.modules.db.models.bot import Bot
 from app.modules.db.models.chat import Chat
+from app.modules.db.models.group import Group
+from app.modules.leads.department_inbox import DEPT_INBOX_GROUP_NAME
 from app.realtime.events import publish
 
 
@@ -32,8 +36,6 @@ async def handle_inbound_ownership(
         if bot is not None and bot.default_owner_user_id is not None:
             preferred_owner_id = int(bot.default_owner_user_id)
 
-    from app.modules.contacts.ownership import get_owner
-
     previous_owner_id = await get_owner(session, contact_id, group_id)
     result = await ensure_assignment(
         session,
@@ -44,6 +46,19 @@ async def handle_inbound_ownership(
     await set_pending_inbound(session, contact_id, group_id)
 
     owner_id = result.owner_user_id
+    group = await session.get(Group, group_id)
+    if (
+        owner_id is not None
+        and group is not None
+        and group.name != DEPT_INBOX_GROUP_NAME
+        and group.department_id is not None
+    ):
+        await drop_department_inbox_assignment(
+            session,
+            contact_id=contact_id,
+            department_id=int(group.department_id),
+        )
+
     if owner_id is None:
         return None
 

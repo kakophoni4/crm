@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import bindparam, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.timeutil import utc_now
@@ -140,6 +140,75 @@ async def _pick_round_robin_owner(session: AsyncSession, group_id: int) -> int |
 
     last_index = candidates.index(int(last_owner))
     return candidates[(last_index + 1) % len(candidates)]
+
+
+async def pick_group_among_candidates(
+    session: AsyncSession,
+    candidate_group_ids: list[int],
+) -> int | None:
+    """Choose a real bot group for a multi-group department bot.
+
+    Prefers groups that currently have available operators so ownership is not
+    left empty when another assigned group has staff online.
+    """
+    if not candidate_group_ids:
+        return None
+    ordered = sorted({int(gid) for gid in candidate_group_ids})
+    with_staff: list[int] = []
+    for gid in ordered:
+        if await _available_user_ids(session, gid):
+            with_staff.append(gid)
+    pool = with_staff or ordered
+
+    last_row = await session.execute(
+        text(
+            """
+            SELECT group_id
+            FROM contact_group_assignments
+            WHERE group_id IN :gids
+              AND owner_user_id IS NOT NULL
+            ORDER BY assigned_at DESC, id DESC
+            LIMIT 1
+            """
+        ).bindparams(bindparam("gids", expanding=True)),
+        {"gids": pool},
+    )
+    last_gid = last_row.scalar_one_or_none()
+    if last_gid is None or int(last_gid) not in pool:
+        return pool[0]
+    last_index = pool.index(int(last_gid))
+    return pool[(last_index + 1) % len(pool)]
+
+
+async def pick_owner_for_group(session: AsyncSession, group_id: int) -> int | None:
+    """Public wrapper for round-robin owner selection in a group."""
+    return await _pick_round_robin_owner(session, group_id)
+
+
+async def drop_department_inbox_assignment(
+    session: AsyncSession,
+    *,
+    contact_id: int,
+    department_id: int,
+) -> None:
+    """Remove synthetic inbox ownership once the card is on a real group."""
+    await session.execute(
+        text(
+            """
+            DELETE FROM contact_group_assignments cga
+            USING groups g
+            WHERE cga.group_id = g.id
+              AND cga.contact_id = :contact_id
+              AND g.department_id = :department_id
+              AND g.name = :inbox_name
+            """
+        ),
+        {
+            "contact_id": contact_id,
+            "department_id": department_id,
+            "inbox_name": DEPT_INBOX_GROUP_NAME,
+        },
+    )
 
 
 async def _lock_group_row(session: AsyncSession, group_id: int) -> None:
