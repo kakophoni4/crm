@@ -1,5 +1,8 @@
 import { useChatsStore } from '@/features/chats/store'
-import { useChatNotificationsStore } from '@/features/chats/notifications-store'
+import {
+  textMatchesMutePhrases,
+  useChatNotificationsStore,
+} from '@/features/chats/notifications-store'
 import { notifyInboundChatMessage } from '@/shared/lib/browser-notifications'
 import { invalidateChatsQueries } from '@/shared/lib/query-invalidation'
 import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
@@ -76,6 +79,13 @@ function notifyInboundFromPayload(
   if (!Number.isFinite(chatId)) return
 
   const notifications = useChatNotificationsStore()
+  const preview =
+    typeof payload.text_preview === 'string'
+      ? payload.text_preview
+      : typeof payload.text === 'string'
+        ? payload.text
+        : 'Входящее сообщение'
+
   // В ленту — всегда (кроме активного открытого чата), чтобы не дублировать текущий диалог.
   if (store.currentChatId !== chatId) {
     notifications.pushInbound(payload)
@@ -83,6 +93,14 @@ function notifyInboundFromPayload(
 
   if (store.currentChatId === chatId) return
   if (!document.hidden) return
+  if (
+    textMatchesMutePhrases(
+      preview,
+      notifications.mutePhrases.length ? notifications.mutePhrases : [],
+    )
+  ) {
+    return
+  }
 
   const contactName =
     typeof payload.contact_full_name === 'string'
@@ -90,12 +108,6 @@ function notifyInboundFromPayload(
       : typeof payload.contact_name === 'string'
         ? payload.contact_name
         : (store.listItems.find((c) => c.id === chatId)?.contact_name ?? 'Новое сообщение')
-  const preview =
-    typeof payload.text_preview === 'string'
-      ? payload.text_preview
-      : typeof payload.text === 'string'
-        ? payload.text
-        : 'Входящее сообщение'
 
   notifyInboundChatMessage({
     chatId,

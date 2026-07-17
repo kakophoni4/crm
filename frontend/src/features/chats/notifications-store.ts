@@ -26,7 +26,33 @@ export type ChatNotificationItem = {
   read: boolean
 }
 
-const MAX_ITEMS = 100
+const MAX_ITEMS = 10
+const MUTE_STORAGE_KEY = 'crm.staff.mute_phrases.v1'
+
+function normalizeMutePhrases(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of raw) {
+    const phrase = String(item ?? '').trim()
+    if (!phrase) continue
+    const key = phrase.toLocaleLowerCase('ru-RU')
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(phrase)
+  }
+  return out.slice(0, 50)
+}
+
+export function textMatchesMutePhrases(text: string | null | undefined, phrases: string[]): boolean {
+  const body = (text ?? '').trim()
+  if (!body || !phrases.length) return false
+  const lowered = body.toLocaleLowerCase('ru-RU')
+  return phrases.some((phrase) => {
+    const key = phrase.trim().toLocaleLowerCase('ru-RU')
+    return key.length > 0 && lowered.includes(key)
+  })
+}
 const FEED_TOPICS: ChatNotificationTopic[] = [
   'message.replied.on_behalf',
   'contact.escalation.group_notify',
@@ -142,12 +168,31 @@ function dedupeKey(topic: ChatNotificationTopic, payload: Record<string, unknown
 
 export const useChatNotificationsStore = defineStore('chat-notifications', () => {
   const items = ref<ChatNotificationItem[]>([])
+  const mutePhrases = ref<string[]>([])
   const connected = ref(false)
   const recentDedupe = new Map<string, number>()
   let unsubscribers: (() => void)[] = []
   let loadedUserId: number | null = null
 
   const unreadCount = computed(() => items.value.filter((row) => !row.read).length)
+
+  function loadMutePhrases(): void {
+    const raw = storage.get(MUTE_STORAGE_KEY)
+    if (!raw) {
+      mutePhrases.value = []
+      return
+    }
+    try {
+      mutePhrases.value = normalizeMutePhrases(JSON.parse(raw))
+    } catch {
+      mutePhrases.value = []
+    }
+  }
+
+  function setMutePhrases(phrases: string[]): void {
+    mutePhrases.value = normalizeMutePhrases(phrases)
+    storage.set(MUTE_STORAGE_KEY, JSON.stringify(mutePhrases.value))
+  }
 
   function persist(): void {
     const auth = useAuthStore()
@@ -162,6 +207,7 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
     const userId = auth.user?.id ?? null
     if (loadedUserId === userId) return
     loadedUserId = userId
+    loadMutePhrases()
     const raw = storage.get(storageKey(userId))
     if (!raw) {
       items.value = []
@@ -224,6 +270,12 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
   }
 
   function pushInbound(payload: Record<string, unknown>): void {
+    loadMutePhrases()
+    const preview =
+      (typeof payload.text_preview === 'string' && payload.text_preview) ||
+      (typeof payload.text === 'string' && payload.text) ||
+      ''
+    if (textMatchesMutePhrases(preview, mutePhrases.value)) return
     push('chat.message.inbound', payload, { playSound: true })
   }
 
@@ -244,6 +296,13 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
     loadForCurrentUser()
     if (connected.value) return
     connected.value = true
+    try {
+      const { getNotificationSettings } = await import('@/features/notifications/api')
+      const settings = await getNotificationSettings()
+      setMutePhrases(settings.mute_phrases || [])
+    } catch {
+      // Mute phrases stay from local cache if settings API is unavailable.
+    }
     await ensureGroupDirectory()
     await connectRealtime()
     for (const topic of FEED_TOPICS) {
@@ -263,8 +322,10 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
 
   return {
     items,
+    mutePhrases,
     unreadCount,
     loadForCurrentUser,
+    setMutePhrases,
     push,
     pushInbound,
     markRead,

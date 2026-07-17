@@ -108,6 +108,13 @@ export async function syncNotificationBotWebhook(): Promise<NotificationBotAdmin
   return data
 }
 
+export async function patchMutePhrases(mutePhrases: string[]): Promise<NotificationSettings> {
+  const { data } = await http.patch<NotificationSettings>('/notifications/me', {
+    mute_phrases: mutePhrases,
+  })
+  return data
+}
+
 export async function getNotificationHistory(params?: {
   cursor?: number
   limit?: number
@@ -115,7 +122,7 @@ export async function getNotificationHistory(params?: {
 }): Promise<{ items: StaffNotificationEvent[]; next_cursor: number | null }> {
   const { data } = await http.get<{ items: StaffNotificationEvent[]; next_cursor: number | null }>(
     '/notifications/history',
-    { params },
+    { params: { limit: 10, ...params } },
   )
   return data
 }

@@ -79,7 +79,7 @@ async def get_my_notification_settings(
     uset = await notif_service.get_or_create_user_settings(db, actor.id)
     links = await notif_service.list_telegram_links(db, actor.id)
     bot = await notif_service.get_bot_settings(db)
-    phrases = [str(p) for p in (uset.mute_phrases or []) if str(p).strip()]
+    phrases = notif_service.global_mute_phrases(bot)
     return NotificationSettingsOut(
         group_senior_timeout_minutes=uset.group_senior_timeout_minutes,
         mute_phrases=phrases,
@@ -99,11 +99,17 @@ async def patch_my_notification_settings(
     actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> NotificationSettingsOut:
-    # Escalation timeout/mute moved to /escalation-policy.
-    if body.group_senior_timeout_minutes is not None or body.mute_phrases is not None:
+    if body.group_senior_timeout_minutes is not None:
         raise ValidationError(
-            message="Таймаут и фразы эскалации настраиваются в блоке эскалации",
+            message="Таймаут эскалации настраивается в блоке «Время эскалации»",
         )
+    if body.mute_phrases is not None:
+        await notif_service.set_global_mute_phrases(
+            db,
+            phrases=body.mute_phrases,
+            actor_id=actor.id,
+        )
+        await db.commit()
     return await get_my_notification_settings(actor, db)
 
 
@@ -164,20 +170,25 @@ async def notification_history(
     actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
     cursor: int | None = Query(default=None, ge=1),
-    limit: int = Query(default=50, ge=1, le=100),
+    limit: int = Query(default=10, ge=1, le=50),
     status: str | None = Query(default=None),
 ) -> StaffNotificationHistoryResponse:
     if not (is_admin(actor.role) or is_department_senior(actor.role)):
         raise PermissionDenied(message="История доступна старшему отдела и админам")
 
-    from app.modules.db.models.staff_notification_event import StaffNotificationEvent
+    from app.modules.db.models.staff_notification_event import (
+        StaffNotificationEvent,
+        StaffNotificationStatus,
+    )
 
     stmt = select(StaffNotificationEvent).order_by(StaffNotificationEvent.id.desc())
+    # Cancelled alerts are deleted on reply; hide any legacy cancelled rows.
+    stmt = stmt.where(StaffNotificationEvent.status != StaffNotificationStatus.CANCELLED)
     if is_department_senior(actor.role) and not is_admin(actor.role):
         if actor.department_id is None:
             return StaffNotificationHistoryResponse(items=[], next_cursor=None)
         stmt = stmt.where(StaffNotificationEvent.department_id == actor.department_id)
-    if status:
+    if status and status != "cancelled":
         stmt = stmt.where(StaffNotificationEvent.status == status)
     if cursor is not None:
         stmt = stmt.where(StaffNotificationEvent.id < cursor)

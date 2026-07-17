@@ -322,6 +322,39 @@ async def get_bot_settings(session: AsyncSession) -> NotificationBotSettings:
     return row
 
 
+def global_mute_phrases(row: NotificationBotSettings) -> list[str]:
+    return [str(p).strip() for p in (row.mute_phrases or []) if str(p).strip()][:50]
+
+
+async def get_global_mute_phrases(session: AsyncSession) -> list[str]:
+    return global_mute_phrases(await get_bot_settings(session))
+
+
+async def set_global_mute_phrases(
+    session: AsyncSession,
+    *,
+    phrases: list[str],
+    actor_id: int,
+) -> list[str]:
+    cleaned = [str(p).strip() for p in phrases if p and str(p).strip()][:50]
+    # Dedupe case-insensitively, keep first casing.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for phrase in cleaned:
+        key = phrase.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(phrase)
+    row = await get_bot_settings(session)
+    row.mute_phrases = unique
+    row.updated_by = actor_id
+    row.updated_at = utc_now()
+    await session.flush()
+    await session.refresh(row)
+    return global_mute_phrases(row)
+
+
 async def get_bot_token(session: AsyncSession) -> str | None:
     row = await get_bot_settings(session)
     if not row.is_enabled or row.bot_token_encrypted is None:
@@ -677,6 +710,8 @@ async def notify_owner_inbound(
     pending_at: datetime,
     message_preview: str | None = None,
 ) -> None:
+    if _phrase_muted(message_preview, await get_global_mute_phrases(session)):
+        return
     owner = await session.get(User, owner_user_id)
     if owner is None or owner.status != UserStatus.ACTIVE:
         return
@@ -804,6 +839,7 @@ async def cancel_pending_notifications(
     contact_id: int,
     group_id: int,
 ) -> None:
+    """Drop pending inbound alerts after a reply — do not keep cancelled noise in history."""
     result = await session.execute(
         select(StaffNotificationEvent).where(
             StaffNotificationEvent.contact_id == contact_id,
@@ -816,10 +852,7 @@ async def cancel_pending_notifications(
     if not events:
         return
     token = await get_bot_token(session)
-    now = utc_now()
     for event in events:
-        event.status = StaffNotificationStatus.CANCELLED
-        event.cancelled_at = now
         if (
             token
             and event.telegram_user_id is not None
@@ -830,6 +863,7 @@ async def cancel_pending_notifications(
                 chat_id=int(event.telegram_user_id),
                 message_id=int(event.telegram_message_id),
             )
+        await session.delete(event)
     await session.flush()
 
 
@@ -930,7 +964,11 @@ async def scan_staff_notification_escalations(session: AsyncSession) -> dict[str
         )
         timeout = policy.timeout_minutes
         any_group_sent = assignment.staff_notify_group_senior_at is not None
-        muted = _phrase_muted(preview, policy.mute_phrases)
+        global_muted = await get_global_mute_phrases(session)
+        muted = _phrase_muted(preview, global_muted) or _phrase_muted(
+            preview,
+            policy.mute_phrases,
+        )
         if not muted and age >= timedelta(minutes=timeout):
             for senior in seniors:
                 n = await _send_to_user(

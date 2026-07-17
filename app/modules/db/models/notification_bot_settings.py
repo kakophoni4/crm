@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import BigInteger, Boolean, LargeBinary, SmallInteger, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.modules.db.models.base import Base
@@ -22,6 +23,11 @@ class NotificationBotSettings(Base):
     bot_username: Mapped[str | None] = mapped_column(Text, nullable=True)
     webhook_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    mute_phrases: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="[]",
+    )
     updated_by: Mapped[int | None] = mapped_column(
         BigInteger,
         nullable=True,

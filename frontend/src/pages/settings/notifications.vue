@@ -2,6 +2,7 @@
 import {
   NButton,
   NCard,
+  NDynamicTags,
   NInput,
   NInputNumber,
   NSelect,
@@ -15,6 +16,7 @@ import {
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 import {
   getEscalationPolicy,
   getNotificationBot,
@@ -22,6 +24,7 @@ import {
   getNotificationSettings,
   linkTelegram,
   patchEscalationPolicy,
+  patchMutePhrases,
   patchNotificationBot,
   type EscalationPolicy,
   type NotificationSettings,
@@ -41,45 +44,43 @@ const KIND_LABEL: Record<string, string> = {
 const STATUS_TYPE: Record<string, 'success' | 'warning' | 'error' | 'default' | 'info'> = {
   sent: 'warning',
   acked: 'success',
-  cancelled: 'default',
   failed: 'error',
 }
 
 const STATUS_LABEL: Record<string, string> = {
   sent: 'Не ознакомлен',
   acked: 'Прочитано',
-  cancelled: 'Отменено (ответ)',
   failed: 'Ошибка',
 }
 
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
+const chatNotifications = useChatNotificationsStore()
 
 const loading = ref(true)
 const savingEscalation = ref(false)
+const savingMute = ref(false)
 const savingToken = ref(false)
 const linking = ref(false)
 const settings = ref<NotificationSettings | null>(null)
 const escalationPolicy = ref<EscalationPolicy | null>(null)
 const telegramIdInput = ref('')
 const timeoutMinutes = ref(15)
+const mutePhrases = ref<string[]>([])
 const tokenInput = ref('')
 const hasToken = ref(true)
 
 const activeTab = ref<'history' | 'settings'>('settings')
 
 const historyLoading = ref(false)
-const historyLoadingMore = ref(false)
 const historyItems = ref<StaffNotificationEvent[]>([])
-const historyCursor = ref<number | null>(null)
 const statusFilter = ref('')
 
 const statusOptions = [
   { label: 'Все', value: '' },
   { label: 'Не ознакомлен', value: 'sent' },
   { label: 'Прочитано', value: 'acked' },
-  { label: 'Отменено', value: 'cancelled' },
   { label: 'Ошибка', value: 'failed' },
 ]
 
@@ -108,6 +109,8 @@ async function loadSettings(): Promise<void> {
   loading.value = true
   try {
     settings.value = await getNotificationSettings()
+    mutePhrases.value = [...(settings.value.mute_phrases || [])]
+    chatNotifications.setMutePhrases(mutePhrases.value)
     if (settings.value.can_manage_escalation) {
       escalationPolicy.value = await getEscalationPolicy()
       timeoutMinutes.value = escalationPolicy.value.timeout_minutes
@@ -138,28 +141,19 @@ async function loadSettings(): Promise<void> {
   }
 }
 
-async function loadHistory(reset = true): Promise<void> {
+async function loadHistory(): Promise<void> {
   if (!canViewHistory.value) return
-  if (reset) {
-    historyLoading.value = true
-    historyItems.value = []
-    historyCursor.value = null
-  } else {
-    historyLoadingMore.value = true
-  }
+  historyLoading.value = true
   try {
     const data = await getNotificationHistory({
-      cursor: reset ? undefined : (historyCursor.value ?? undefined),
-      limit: 40,
+      limit: 10,
       status: statusFilter.value || undefined,
     })
-    historyItems.value = reset ? data.items : [...historyItems.value, ...data.items]
-    historyCursor.value = data.next_cursor
+    historyItems.value = data.items
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить историю')
   } finally {
     historyLoading.value = false
-    historyLoadingMore.value = false
   }
 }
 
@@ -215,6 +209,20 @@ async function onSaveToken(): Promise<void> {
   }
 }
 
+async function onSaveMutePhrases(): Promise<void> {
+  savingMute.value = true
+  try {
+    settings.value = await patchMutePhrases(mutePhrases.value)
+    mutePhrases.value = [...(settings.value.mute_phrases || [])]
+    chatNotifications.setMutePhrases(mutePhrases.value)
+    message.success('Фразы сохранены')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить фразы')
+  } finally {
+    savingMute.value = false
+  }
+}
+
 async function onSaveEscalation(): Promise<void> {
   savingEscalation.value = true
   try {
@@ -236,20 +244,20 @@ function onTabChange(name: string | number): void {
   activeTab.value = tab
   void router.replace({ query: { ...route.query, tab } })
   if (tab === 'history' && !historyItems.value.length) {
-    void loadHistory(true)
+    void loadHistory()
   }
 }
 
 watch(canViewHistory, (ok) => {
   if (ok && activeTab.value === 'history') {
-    void loadHistory(true)
+    void loadHistory()
   }
 })
 
 onMounted(async () => {
   await loadSettings()
   if (canViewHistory.value && activeTab.value === 'history') {
-    await loadHistory(true)
+    await loadHistory()
   }
 })
 </script>
@@ -273,7 +281,7 @@ onMounted(async () => {
               v-model:value="statusFilter"
               :options="statusOptions"
               style="width: 180px"
-              @update:value="() => loadHistory(true)"
+              @update:value="() => loadHistory()"
             />
           </div>
           <NSpin :show="historyLoading">
@@ -298,15 +306,9 @@ onMounted(async () => {
                   </div>
                   <div v-if="row.contact_name">Контакт: {{ row.contact_name }}</div>
                   <div v-if="row.acked_at" class="hist__ok">Ознакомился: {{ fmt(row.acked_at) }}</div>
-                  <div v-else-if="row.cancelled_at" class="hist__muted">
-                    Отменено после ответа: {{ fmt(row.cancelled_at) }}
-                  </div>
                   <div v-else-if="row.status === 'sent'" class="hist__warn">Ещё не ознакомился</div>
                 </div>
               </article>
-            </div>
-            <div v-if="historyCursor" class="hist__more">
-              <NButton :loading="historyLoadingMore" @click="loadHistory(false)">Ещё</NButton>
             </div>
           </NSpin>
         </NTabPane>
@@ -357,6 +359,15 @@ onMounted(async () => {
                 />
                 <NButton type="primary" :loading="linking" @click="onLink">Привязать</NButton>
               </NSpace>
+            </NCard>
+
+            <NCard title="Без уведомлений" size="small" class="notif-page__card">
+              <NDynamicTags v-model:value="mutePhrases" />
+              <div class="notif-page__mute-actions">
+                <NButton type="primary" :loading="savingMute" @click="onSaveMutePhrases">
+                  Сохранить
+                </NButton>
+              </div>
             </NCard>
 
             <NCard
@@ -426,6 +437,15 @@ onMounted(async () => {
           </NSpace>
         </NCard>
 
+        <NCard title="Без уведомлений" size="small" class="notif-page__card">
+          <NDynamicTags v-model:value="mutePhrases" />
+          <div class="notif-page__mute-actions">
+            <NButton type="primary" :loading="savingMute" @click="onSaveMutePhrases">
+              Сохранить
+            </NButton>
+          </div>
+        </NCard>
+
         <NCard
           v-if="canManageEscalation"
           title="Время эскалации"
@@ -470,6 +490,9 @@ onMounted(async () => {
 }
 .notif-page__bot a {
   font-weight: 600;
+}
+.notif-page__mute-actions {
+  margin-top: 12px;
 }
 .notif-page__card {
   margin-bottom: 16px;
