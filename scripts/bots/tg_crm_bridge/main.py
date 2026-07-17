@@ -64,11 +64,51 @@ def _pick_largest_photo(photos: list[dict[str, Any]]) -> dict[str, Any] | None:
 # Cloud Telegram Bot API cannot return file paths for downloads above ~20 MB.
 TG_BOT_API_MAX_FILE_BYTES = 20 * 1024 * 1024
 
+FILE_TOO_LARGE_REPLY = (
+    "Файл{name_part} слишком большой — Telegram API не может передать его в CRM "
+    "(лимит бота около 20 МБ).\n\n"
+    "Пожалуйста, отправьте этот файл на почту."
+)
+
 
 def _fmt_mb(size_bytes: int | None) -> str:
     if size_bytes is None or size_bytes <= 0:
         return "?"
     return f"{size_bytes / (1024 * 1024):.1f}"
+
+
+def _is_oversized_attachment(att: dict[str, Any]) -> bool:
+    if att.get("url"):
+        return False
+    size = att.get("size_bytes")
+    try:
+        if size is not None and int(size) > TG_BOT_API_MAX_FILE_BYTES:
+            return True
+    except (TypeError, ValueError):
+        pass
+    err = str(att.get("error") or "").lower()
+    return any(
+        marker in err
+        for marker in ("слишком большой", "20 мб", "file is too big", "too large", "too big")
+    )
+
+
+def _file_too_large_text(att: dict[str, Any]) -> str:
+    name = str(att.get("filename") or "").strip()
+    size = att.get("size_bytes")
+    try:
+        size_int = int(size) if size is not None else None
+    except (TypeError, ValueError):
+        size_int = None
+    if name and size_int is not None:
+        name_part = f" «{name}» ({_fmt_mb(size_int)} МБ)"
+    elif name:
+        name_part = f" «{name}»"
+    elif size_int is not None:
+        name_part = f" ({_fmt_mb(size_int)} МБ)"
+    else:
+        name_part = ""
+    return FILE_TOO_LARGE_REPLY.format(name_part=name_part)
 
 
 async def _telegram_file_url(
@@ -243,45 +283,13 @@ class Bridge:
         if not self.inbound_secret or not self.outbound_secret:
             raise SystemExit("INBOUND_SECRET and OUTBOUND_SECRET are required")
 
-    async def send_to_crm(self, tg_message: dict[str, Any]) -> None:
-        user = tg_message.get("from") or {}
-        tg_user_id = user.get("id")
-        if tg_user_id is None:
-            return
-
+    async def _post_bot_event(self, envelope: dict[str, Any]) -> httpx.Response:
+        body = json.dumps(envelope, separators=(",", ":")).encode()
+        event_id = str(envelope["event_id"])
+        unix_ts = str(int(time.time()))
+        signature = sign_inbound(event_id, unix_ts, body, self.inbound_secret)
         async with httpx.AsyncClient(timeout=30.0) as client:
-            attachments = await _build_attachments(client, self.tg_token, tg_message)
-            text = _message_text(tg_message, attachments)
-            if not text and not attachments:
-                log.debug("Skip empty TG message %s", tg_message.get("message_id"))
-                return
-
-            event_id = f"tg-{tg_message.get('message_id')}-{int(time.time())}"
-            occurred_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-            envelope = {
-                "event": "message.received",
-                "event_id": event_id,
-                "occurred_at": occurred_at,
-                "bot_code": self.bot_code,
-                "payload": {
-                    "contact": {
-                        "telegram_user_id": int(tg_user_id),
-                        "telegram_username": user.get("username"),
-                        "first_name": user.get("first_name"),
-                        "last_name": user.get("last_name"),
-                    },
-                    "message": {
-                        "external_id": str(tg_message.get("message_id")),
-                        "text": text,
-                        "attachments": attachments,
-                    },
-                },
-            }
-            body = json.dumps(envelope, separators=(",", ":")).encode()
-            unix_ts = str(int(time.time()))
-            signature = sign_inbound(event_id, unix_ts, body, self.inbound_secret)
-
-            resp = await client.post(
+            return await client.post(
                 f"{self.crm_api}/api/v1/bot-events",
                 content=body,
                 headers={
@@ -292,20 +300,131 @@ class Bridge:
                     "X-Signature": f"sha256={signature}",
                 },
             )
+
+    async def send_to_crm(self, tg_message: dict[str, Any]) -> None:
+        user = tg_message.get("from") or {}
+        tg_user_id = user.get("id")
+        if tg_user_id is None:
+            return
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            attachments = await _build_attachments(client, self.tg_token, tg_message)
+        text = _message_text(tg_message, attachments)
+        if not text and not attachments:
+            log.debug("Skip empty TG message %s", tg_message.get("message_id"))
+            return
+
+        event_id = f"tg-{tg_message.get('message_id')}-{int(time.time())}"
+        occurred_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        contact_payload = {
+            "telegram_user_id": int(tg_user_id),
+            "telegram_username": user.get("username"),
+            "first_name": user.get("first_name"),
+            "last_name": user.get("last_name"),
+        }
+        envelope = {
+            "event": "message.received",
+            "event_id": event_id,
+            "occurred_at": occurred_at,
+            "bot_code": self.bot_code,
+            "payload": {
+                "contact": contact_payload,
+                "message": {
+                    "external_id": str(tg_message.get("message_id")),
+                    "text": text,
+                    "attachments": attachments,
+                },
+            },
+        }
+        resp = await self._post_bot_event(envelope)
         if resp.status_code != 202:
             log.error("CRM inbound failed %s: %s", resp.status_code, resp.text)
+            return
+
+        log.info(
+            "CRM accepted tg_user=%s text=%r attachments=%d",
+            tg_user_id,
+            text[:80],
+            len(attachments),
+        )
+
+        oversized = next((att for att in attachments if _is_oversized_attachment(att)), None)
+        if oversized is not None and tg_message.get("message_id") is not None:
+            try:
+                await self._notify_client_file_too_large(
+                    tg_user_id=int(tg_user_id),
+                    reply_to_message_id=int(tg_message["message_id"]),
+                    attachment=oversized,
+                    contact=contact_payload,
+                )
+            except Exception:
+                log.exception(
+                    "file_too_large_notify_failed tg_user=%s message_id=%s",
+                    tg_user_id,
+                    tg_message.get("message_id"),
+                )
+
+    async def _notify_client_file_too_large(
+        self,
+        *,
+        tg_user_id: int,
+        reply_to_message_id: int,
+        attachment: dict[str, Any],
+        contact: dict[str, Any],
+    ) -> None:
+        """Reply in TG (thread) + mirror as outbound in CRM so the manager sees it."""
+        reply_text = _file_too_large_text(attachment)
+        sent = await self.send_telegram(
+            tg_user_id,
+            reply_text,
+            reply_to_message_id=reply_to_message_id,
+        )
+        out_external_id = str(sent["external_id"])
+        event_id = f"tg-oversized-{reply_to_message_id}-{out_external_id}"
+        envelope = {
+            "event": "message.received",
+            "event_id": event_id,
+            "occurred_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "bot_code": self.bot_code,
+            "payload": {
+                "contact": contact,
+                "message": {
+                    "external_id": out_external_id,
+                    "text": reply_text,
+                    "direction": "outbound",
+                    "attachments": [],
+                    "reply_to_external_id": str(reply_to_message_id),
+                },
+            },
+        }
+        resp = await self._post_bot_event(envelope)
+        if resp.status_code != 202:
+            log.error(
+                "CRM outbound (file too large) failed %s: %s",
+                resp.status_code,
+                resp.text,
+            )
         else:
             log.info(
-                "CRM accepted tg_user=%s text=%r attachments=%d",
+                "Notified client about oversized file tg_user=%s reply_to=%s",
                 tg_user_id,
-                text[:80],
-                len(attachments),
+                reply_to_message_id,
             )
 
-    async def send_telegram(self, chat_id: int, text: str) -> dict[str, Any]:
+    async def send_telegram(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> dict[str, Any]:
         url = f"https://api.telegram.org/bot{self.tg_token}/sendMessage"
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
+            payload["allow_sending_without_reply"] = True
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json={"chat_id": chat_id, "text": text})
+            resp = await client.post(url, json=payload)
         data = resp.json()
         if not data.get("ok"):
             raise RuntimeError(f"Telegram sendMessage failed: {data}")
