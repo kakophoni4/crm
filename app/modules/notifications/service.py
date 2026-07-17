@@ -544,17 +544,13 @@ def _new_card_keyboard(event_id: int) -> dict[str, Any]:
     }
 
 
-def _format_inbound(contact_name: str, preview: str | None = None) -> str:
+def _format_inbound(contact_name: str) -> str:
     name = html.escape(contact_name or "Клиент")
-    lines = [
-        "📩 <b>Новое сообщение</b>",
-        f"Вам поступило сообщение от <b>{name}</b>",
-    ]
-    if preview:
-        safe = html.escape(preview[:300])
-        lines.append(f"\n<i>{safe}</i>")
-    lines.append("\nЕсли отвечать не нужно — нажмите «Прочитано».")
-    return "\n".join(lines)
+    return (
+        "📩 <b>Новое сообщение</b>\n"
+        f"Вам поступило сообщение от <b>{name}</b>.\n\n"
+        "Если отвечать не нужно — нажмите «Прочитано»."
+    )
 
 
 def _format_new_card(contact_name: str) -> str:
@@ -718,7 +714,7 @@ async def notify_owner_inbound(
     contact = await session.get(Contact, contact_id)
     name = contact.full_name if contact else "Клиент"
     group = await session.get(Group, group_id)
-    text = _format_inbound(name, message_preview)
+    text = _format_inbound(name)
     await _send_to_user(
         session,
         user=owner,
