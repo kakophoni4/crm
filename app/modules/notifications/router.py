@@ -32,6 +32,13 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 webhook_router = APIRouter(prefix="/api/v1/notification-bot", tags=["notification-bot"])
 
+# Seniors have CHATS_READ_DEPARTMENT / CHATS_READ_GROUP instead of CHATS_READ_OWN.
+_require_staff_notifications = requires_permission(
+    Permission.CHATS_READ_OWN,
+    Permission.CHATS_READ_GROUP,
+    Permission.CHATS_READ_DEPARTMENT,
+)
+
 
 def _can_manage_escalation(actor: User) -> bool:
     return is_admin(actor.role) or is_department_senior(actor.role) or is_group_senior(actor.role)
@@ -66,7 +73,7 @@ def _escalation_out(
 
 @router.get("/me", response_model=NotificationSettingsOut)
 async def get_my_notification_settings(
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> NotificationSettingsOut:
     uset = await notif_service.get_or_create_user_settings(db, actor.id)
@@ -89,7 +96,7 @@ async def get_my_notification_settings(
 @router.patch("/me", response_model=NotificationSettingsOut)
 async def patch_my_notification_settings(
     body: NotificationSettingsPatchRequest,
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> NotificationSettingsOut:
     # Escalation timeout/mute moved to /escalation-policy.
@@ -102,7 +109,7 @@ async def patch_my_notification_settings(
 
 @router.get("/escalation-policy", response_model=EscalationPolicyOut)
 async def get_escalation_policy(
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> EscalationPolicyOut:
     if not _can_manage_escalation(actor):
@@ -114,7 +121,7 @@ async def get_escalation_policy(
 @router.patch("/escalation-policy", response_model=EscalationPolicyOut)
 async def patch_escalation_policy(
     body: EscalationPolicyPatchRequest,
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> EscalationPolicyOut:
     if not _can_manage_escalation(actor):
@@ -132,7 +139,7 @@ async def patch_escalation_policy(
 @router.post("/me/telegram-links", response_model=TelegramLinkOut, status_code=201)
 async def create_telegram_link(
     body: TelegramLinkCreateRequest,
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TelegramLinkOut:
     link = await notif_service.link_telegram(
@@ -146,7 +153,7 @@ async def create_telegram_link(
 @router.delete("/me/telegram-links/{link_id}", status_code=204)
 async def delete_telegram_link(
     link_id: int,
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     await notif_service.unlink_telegram(db, actor=actor, link_id=link_id)
@@ -154,7 +161,7 @@ async def delete_telegram_link(
 
 @router.get("/history", response_model=StaffNotificationHistoryResponse)
 async def notification_history(
-    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_READ_OWN))],
+    actor: Annotated[User, Depends(_require_staff_notifications)],
     db: Annotated[AsyncSession, Depends(get_db)],
     cursor: int | None = Query(default=None, ge=1),
     limit: int = Query(default=50, ge=1, le=100),

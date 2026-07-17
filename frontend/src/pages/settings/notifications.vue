@@ -2,9 +2,6 @@
 import {
   NButton,
   NCard,
-  NDynamicTags,
-  NForm,
-  NFormItem,
   NInput,
   NInputNumber,
   NSelect,
@@ -20,10 +17,12 @@ import { useRoute, useRouter } from 'vue-router'
 
 import {
   getEscalationPolicy,
+  getNotificationBot,
   getNotificationHistory,
   getNotificationSettings,
   linkTelegram,
   patchEscalationPolicy,
+  patchNotificationBot,
   type EscalationPolicy,
   type NotificationSettings,
   type StaffNotificationEvent,
@@ -53,30 +52,20 @@ const STATUS_LABEL: Record<string, string> = {
   failed: 'Ошибка',
 }
 
-const SCOPE_TITLE: Record<string, string> = {
-  org: 'Эскалация (все)',
-  department: 'Эскалация (мой отдел)',
-  group: 'Эскалация (моя группа)',
-}
-
-const SCOPE_HINT: Record<string, string> = {
-  org: 'Настройка для всей организации. Учитывается последнее сохранение среди уровней.',
-  department: 'Настройка для вашего отдела. Учитывается последнее сохранение среди уровней.',
-  group: 'Настройка для вашей группы. Учитывается последнее сохранение среди уровней.',
-}
-
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
 
 const loading = ref(true)
-const saving = ref(false)
+const savingEscalation = ref(false)
+const savingToken = ref(false)
 const linking = ref(false)
 const settings = ref<NotificationSettings | null>(null)
 const escalationPolicy = ref<EscalationPolicy | null>(null)
 const telegramIdInput = ref('')
 const timeoutMinutes = ref(15)
-const mutePhrases = ref<string[]>([])
+const tokenInput = ref('')
+const hasToken = ref(true)
 
 const activeTab = ref<'history' | 'settings'>('settings')
 
@@ -95,15 +84,12 @@ const statusOptions = [
 ]
 
 const canManageEscalation = computed(() => Boolean(settings.value?.can_manage_escalation))
-const escalationTitle = computed(
-  () => SCOPE_TITLE[escalationPolicy.value?.scope || ''] || 'Эскалация',
-)
-const escalationHint = computed(
-  () =>
-    SCOPE_HINT[escalationPolicy.value?.scope || ''] ||
-    'Учитывается последнее сохранение среди уровней (организация / отдел / группа).',
-)
+const canManageBot = computed(() => Boolean(settings.value?.can_manage_bot))
 const canViewHistory = computed(() => Boolean(settings.value?.can_view_history))
+const canLinkTelegram = computed(
+  () => Boolean(settings.value?.can_link_multiple) || !settings.value?.telegram_links?.length,
+)
+const showTokenField = computed(() => canManageBot.value && !hasToken.value)
 const botDeepLink = computed(() => {
   const u = settings.value?.bot_username
   return u ? `https://t.me/${u}` : null
@@ -125,11 +111,19 @@ async function loadSettings(): Promise<void> {
     if (settings.value.can_manage_escalation) {
       escalationPolicy.value = await getEscalationPolicy()
       timeoutMinutes.value = escalationPolicy.value.timeout_minutes
-      mutePhrases.value = [...escalationPolicy.value.mute_phrases]
     } else {
       escalationPolicy.value = null
       timeoutMinutes.value = 15
-      mutePhrases.value = []
+    }
+    if (settings.value.can_manage_bot) {
+      const bot = await getNotificationBot()
+      hasToken.value = bot.has_token
+      if (bot.bot_username) {
+        settings.value.bot_username = bot.bot_username
+        settings.value.bot_enabled = bot.is_enabled
+      }
+    } else {
+      hasToken.value = true
     }
     if (settings.value.can_view_history) {
       const tab = String(route.query.tab || '')
@@ -172,7 +166,7 @@ async function loadHistory(reset = true): Promise<void> {
 async function onLink(): Promise<void> {
   const id = Number(telegramIdInput.value.trim())
   if (!Number.isFinite(id) || id <= 0) {
-    message.warning('Введите числовой Telegram ID из бота')
+    message.warning('Введите числовой Telegram ID')
     return
   }
   linking.value = true
@@ -198,20 +192,42 @@ async function onUnlink(linkId: number): Promise<void> {
   }
 }
 
+async function onSaveToken(): Promise<void> {
+  const token = tokenInput.value.trim()
+  if (!token) {
+    message.warning('Введите токен бота')
+    return
+  }
+  savingToken.value = true
+  try {
+    const bot = await patchNotificationBot({ bot_token: token, is_enabled: true })
+    hasToken.value = bot.has_token
+    tokenInput.value = ''
+    if (settings.value) {
+      settings.value.bot_username = bot.bot_username
+      settings.value.bot_enabled = bot.is_enabled
+    }
+    message.success('Токен сохранён')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить токен')
+  } finally {
+    savingToken.value = false
+  }
+}
+
 async function onSaveEscalation(): Promise<void> {
-  saving.value = true
+  savingEscalation.value = true
   try {
     escalationPolicy.value = await patchEscalationPolicy({
       timeout_minutes: timeoutMinutes.value,
-      mute_phrases: mutePhrases.value,
+      mute_phrases: escalationPolicy.value?.mute_phrases ?? [],
     })
     timeoutMinutes.value = escalationPolicy.value.timeout_minutes
-    mutePhrases.value = [...escalationPolicy.value.mute_phrases]
     message.success('Сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
   } finally {
-    saving.value = false
+    savingEscalation.value = false
   }
 }
 
@@ -296,92 +312,92 @@ onMounted(async () => {
         </NTabPane>
 
         <NTabPane name="settings" tab="Настройки">
-          <NCard title="Telegram" size="small" class="notif-page__card">
-            <p class="notif-page__hint">
-              1. Откройте бота
-              <template v-if="botDeepLink">
-                —
-                <a :href="botDeepLink" target="_blank" rel="noopener">@{{ settings?.bot_username }}</a>
-              </template>
-              <template v-else-if="!settings?.bot_enabled">(ещё не настроен)</template>.
-              <br />
-              2. Нажмите <b>Start</b> — бот пришлёт ваш ID.
-              <br />
-              3. Вставьте ID и нажмите «Привязать».
-            </p>
-
-            <div v-if="settings?.telegram_links?.length" class="notif-page__links">
-              <div
-                v-for="link in settings.telegram_links"
-                :key="link.id"
-                class="notif-page__link-row"
-              >
-                <NTag type="success" size="small">ID {{ link.telegram_user_id }}</NTag>
-                <span v-if="link.telegram_username" class="notif-page__muted">
-                  @{{ link.telegram_username }}
-                </span>
-                <NButton size="tiny" quaternary type="error" @click="onUnlink(link.id)">
-                  Отвязать
+          <div class="notif-page__settings">
+            <NCard v-if="showTokenField" title="Токен бота" size="small" class="notif-page__card">
+              <NSpace align="center">
+                <NInput
+                  v-model:value="tokenInput"
+                  type="password"
+                  show-password-on="click"
+                  placeholder="123456:AA..."
+                  style="max-width: 360px"
+                />
+                <NButton type="primary" :loading="savingToken" @click="onSaveToken">
+                  Сохранить
                 </NButton>
+              </NSpace>
+            </NCard>
+
+            <NCard title="Telegram" size="small" class="notif-page__card">
+              <p v-if="botDeepLink" class="notif-page__bot">
+                <a :href="botDeepLink" target="_blank" rel="noopener">@{{ settings?.bot_username }}</a>
+              </p>
+
+              <div v-if="settings?.telegram_links?.length" class="notif-page__links">
+                <div
+                  v-for="link in settings.telegram_links"
+                  :key="link.id"
+                  class="notif-page__link-row"
+                >
+                  <NTag type="success" size="small">ID {{ link.telegram_user_id }}</NTag>
+                  <span v-if="link.telegram_username" class="notif-page__muted">
+                    @{{ link.telegram_username }}
+                  </span>
+                  <NButton size="tiny" quaternary type="error" @click="onUnlink(link.id)">
+                    Отвязать
+                  </NButton>
+                </div>
               </div>
-            </div>
 
-            <NSpace
-              v-if="settings?.can_link_multiple || !settings?.telegram_links?.length"
-              align="center"
+              <NSpace v-if="canLinkTelegram" align="center">
+                <NInput
+                  v-model:value="telegramIdInput"
+                  placeholder="Telegram ID"
+                  style="max-width: 220px"
+                />
+                <NButton type="primary" :loading="linking" @click="onLink">Привязать</NButton>
+              </NSpace>
+            </NCard>
+
+            <NCard
+              v-if="canManageEscalation"
+              title="Время эскалации"
+              size="small"
+              class="notif-page__card"
             >
-              <NInput
-                v-model:value="telegramIdInput"
-                placeholder="Telegram ID"
-                style="max-width: 220px"
-              />
-              <NButton type="primary" :loading="linking" @click="onLink">Привязать</NButton>
-            </NSpace>
-            <p v-else class="notif-page__muted">
-              Можно привязать только один Telegram. Отвяжите текущий, чтобы заменить.
-            </p>
-          </NCard>
-
-          <NCard
-            v-if="canManageEscalation"
-            :title="escalationTitle"
-            size="small"
-            class="notif-page__card"
-          >
-            <p class="notif-page__hint">{{ escalationHint }}</p>
-            <NForm label-placement="top">
-              <NFormItem label="Нет ответа, мин">
+              <NSpace align="center">
                 <NInputNumber
                   v-model:value="timeoutMinutes"
                   :min="1"
                   :max="1440"
-                  style="width: 100%"
+                  style="width: 140px"
                 />
-              </NFormItem>
-              <NFormItem label="Не уведомлять по фразам">
-                <NDynamicTags v-model:value="mutePhrases" />
-              </NFormItem>
-              <NButton type="primary" :loading="saving" @click="onSaveEscalation">
-                Сохранить
-              </NButton>
-            </NForm>
-          </NCard>
+                <NButton type="primary" :loading="savingEscalation" @click="onSaveEscalation">
+                  Сохранить
+                </NButton>
+              </NSpace>
+            </NCard>
+          </div>
         </NTabPane>
       </NTabs>
 
-      <template v-else>
+      <div v-else class="notif-page__settings">
+        <NCard v-if="showTokenField" title="Токен бота" size="small" class="notif-page__card">
+          <NSpace align="center">
+            <NInput
+              v-model:value="tokenInput"
+              type="password"
+              show-password-on="click"
+              placeholder="123456:AA..."
+              style="max-width: 360px"
+            />
+            <NButton type="primary" :loading="savingToken" @click="onSaveToken">Сохранить</NButton>
+          </NSpace>
+        </NCard>
+
         <NCard title="Telegram" size="small" class="notif-page__card">
-          <p class="notif-page__hint">
-            1. Откройте бота
-            <template v-if="botDeepLink">
-              —
-              <a :href="botDeepLink" target="_blank" rel="noopener">@{{ settings?.bot_username }}</a>
-            </template>
-            <template v-else-if="!settings?.bot_enabled">(ещё не настроен)</template>.
-            <br />
-            2. Нажмите <b>Start</b> — бот пришлёт ваш ID.
-            <br />
-            3. Вставьте ID и нажмите «Привязать».
+          <p v-if="botDeepLink" class="notif-page__bot">
+            <a :href="botDeepLink" target="_blank" rel="noopener">@{{ settings?.bot_username }}</a>
           </p>
 
           <div v-if="settings?.telegram_links?.length" class="notif-page__links">
@@ -400,10 +416,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <NSpace
-            v-if="settings?.can_link_multiple || !settings?.telegram_links?.length"
-            align="center"
-          >
+          <NSpace v-if="canLinkTelegram" align="center">
             <NInput
               v-model:value="telegramIdInput"
               placeholder="Telegram ID"
@@ -411,34 +424,27 @@ onMounted(async () => {
             />
             <NButton type="primary" :loading="linking" @click="onLink">Привязать</NButton>
           </NSpace>
-          <p v-else class="notif-page__muted">
-            Можно привязать только один Telegram. Отвяжите текущий, чтобы заменить.
-          </p>
         </NCard>
 
         <NCard
           v-if="canManageEscalation"
-          :title="escalationTitle"
+          title="Время эскалации"
           size="small"
           class="notif-page__card"
         >
-          <p class="notif-page__hint">{{ escalationHint }}</p>
-          <NForm label-placement="top">
-            <NFormItem label="Нет ответа, мин">
-              <NInputNumber
-                v-model:value="timeoutMinutes"
-                :min="1"
-                :max="1440"
-                style="width: 100%"
-              />
-            </NFormItem>
-            <NFormItem label="Не уведомлять по фразам">
-              <NDynamicTags v-model:value="mutePhrases" />
-            </NFormItem>
-            <NButton type="primary" :loading="saving" @click="onSaveEscalation">Сохранить</NButton>
-          </NForm>
+          <NSpace align="center">
+            <NInputNumber
+              v-model:value="timeoutMinutes"
+              :min="1"
+              :max="1440"
+              style="width: 140px"
+            />
+            <NButton type="primary" :loading="savingEscalation" @click="onSaveEscalation">
+              Сохранить
+            </NButton>
+          </NSpace>
         </NCard>
-      </template>
+      </div>
     </NSpin>
   </section>
 </template>
@@ -455,14 +461,15 @@ onMounted(async () => {
 .notif-page__toolbar {
   margin-bottom: 12px;
 }
-.notif-page__hint,
 .notif-page__muted,
 .notif-page__empty {
   color: var(--app-text-muted);
 }
-.notif-page__hint {
+.notif-page__bot {
   margin: 0 0 12px;
-  line-height: 1.5;
+}
+.notif-page__bot a {
+  font-weight: 600;
 }
 .notif-page__card {
   margin-bottom: 16px;
