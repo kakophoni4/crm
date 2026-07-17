@@ -53,10 +53,10 @@ export function textMatchesMutePhrases(text: string | null | undefined, phrases:
     return key.length > 0 && lowered.includes(key)
   })
 }
+// owner_notify intentionally omitted: owners already get chat.message.inbound
 const FEED_TOPICS: ChatNotificationTopic[] = [
   'message.replied.on_behalf',
   'contact.escalation.group_notify',
-  'contact.escalation.owner_notify',
   'contact.ownership.assigned',
   'contact.ownership.reassigned',
   'contact.ownership.transferred',
@@ -106,11 +106,8 @@ function formatLine(topic: ChatNotificationTopic, payload: Record<string, unknow
   const group = groupSuffix(payload)
 
   switch (topic) {
-    case 'chat.message.inbound': {
-      const preview =
-        str(payload, 'text_preview') ?? str(payload, 'text') ?? 'Входящее сообщение'
-      return `Новое сообщение ${contact}: ${preview.slice(0, 120)}${group}`
-    }
+    case 'chat.message.inbound':
+      return `Новое сообщение ${contact}${group}`
     case 'message.replied.on_behalf': {
       const who = str(payload, 'author_full_name') ?? 'Коллега'
       const preview = str(payload, 'text_preview')
@@ -276,6 +273,28 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
       (typeof payload.text === 'string' && payload.text) ||
       ''
     if (textMatchesMutePhrases(preview, mutePhrases.value)) return
+
+    loadForCurrentUser()
+    const chatId = num(payload, 'chat_id')
+    // One unread inbound per chat: refresh instead of stacking every message.
+    if (chatId != null) {
+      const existingIdx = items.value.findIndex(
+        (row) => row.topic === 'chat.message.inbound' && row.chatId === chatId && !row.read,
+      )
+      if (existingIdx >= 0) {
+        const refreshed: ChatNotificationItem = {
+          ...items.value[existingIdx],
+          at: Date.now(),
+          line: formatLine('chat.message.inbound', payload),
+          read: false,
+        }
+        const rest = items.value.filter((_, i) => i !== existingIdx)
+        items.value = [refreshed, ...rest].slice(0, MAX_ITEMS)
+        persist()
+        void playTransferInboxSound()
+        return
+      }
+    }
     push('chat.message.inbound', payload, { playSound: true })
   }
 
