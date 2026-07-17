@@ -14,6 +14,7 @@ from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
 from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
 from app.modules.db.models.opt_requirement import OptRequirement
 from app.modules.db.models.opt_unit import OptUnit
+from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability
 from app.modules.db.models.user import User
 
 
@@ -311,3 +312,40 @@ class AccountingRepository:
         await self._session.flush()
         await self._session.refresh(unit)
         return unit
+
+    async def list_period_codes_by_inns(self, inns: list[str]) -> dict[str, list[str]]:
+        if not inns:
+            return {}
+        result = await self._session.execute(
+            select(OptUnitPeriodAvailability.inn, OptUnitPeriodAvailability.period_code)
+            .where(OptUnitPeriodAvailability.inn.in_(inns))
+            .order_by(OptUnitPeriodAvailability.period_code),
+        )
+        out: dict[str, list[str]] = {}
+        for inn, period_code in result.all():
+            out.setdefault(str(inn), []).append(str(period_code))
+        return out
+
+    async def replace_unit_periods(
+        self,
+        *,
+        unit_id: int,
+        inn: str,
+        period_codes: list[str],
+    ) -> list[str]:
+        existing = await self._session.execute(
+            select(OptUnitPeriodAvailability).where(OptUnitPeriodAvailability.inn == inn),
+        )
+        for row in existing.scalars().all():
+            await self._session.delete(row)
+        unique = sorted({code for code in period_codes if code})
+        for code in unique:
+            self._session.add(
+                OptUnitPeriodAvailability(
+                    inn=inn,
+                    period_code=code,
+                    unit_id=unit_id,
+                ),
+            )
+        await self._session.flush()
+        return unique

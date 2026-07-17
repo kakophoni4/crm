@@ -66,6 +66,41 @@ class AccountingService:
         units = await self._repo.get_units_by_ids(unit_ids)
         return {unit.inn for unit in units.values()}
 
+    def _normalize_period_codes(self, period_codes: list[str]) -> list[str]:
+        from app.modules.leads.opt.periods import list_opt_period_codes, normalize_period_code
+
+        allowed = set(list_opt_period_codes())
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        invalid: list[str] = []
+        for raw in period_codes:
+            code = normalize_period_code(raw)
+            if code is None or code not in allowed:
+                invalid.append(str(raw))
+                continue
+            if code in seen:
+                continue
+            seen.add(code)
+            cleaned.append(code)
+        if invalid:
+            raise ValidationError(
+                message="Некорректные периоды",
+                details={"period_codes": invalid, "allowed": sorted(allowed)},
+            )
+        return cleaned
+
+    def _to_unit_response(self, unit: OptUnit, period_codes: list[str] | None = None) -> AccountingUnitResponse:
+        return AccountingUnitResponse(
+            id=unit.id,
+            inn=unit.inn,
+            kpp=unit.kpp,
+            name=unit.name,
+            category_code=unit.category_code,
+            commission_rate_percent=unit.commission_rate_percent,
+            is_active=unit.is_active,
+            period_codes=list(period_codes or []),
+        )
+
     async def list_units(self, actor: User) -> AccountingUnitListResponse:
         is_chief = self._is_chief(actor)
         all_units = await self._repo.list_active_units()
@@ -74,18 +109,11 @@ class AccountingService:
         else:
             unit_ids = set(await self._repo.list_assigned_unit_ids(actor.id))
             visible = [unit for unit in all_units if unit.id in unit_ids]
+        periods_by_inn = await self._repo.list_period_codes_by_inns([unit.inn for unit in visible])
         return AccountingUnitListResponse(
             is_chief=is_chief,
             items=[
-                AccountingUnitResponse(
-                    id=unit.id,
-                    inn=unit.inn,
-                    kpp=unit.kpp,
-                    name=unit.name,
-                    category_code=unit.category_code,
-                    commission_rate_percent=unit.commission_rate_percent,
-                    is_active=unit.is_active,
-                )
+                self._to_unit_response(unit, periods_by_inn.get(unit.inn, []))
                 for unit in visible
             ],
         )
@@ -130,6 +158,10 @@ class AccountingService:
         if existing is not None:
             raise ValidationError(message="Лавка с таким ИНН уже существует")
 
+        period_codes = self._normalize_period_codes(body.period_codes)
+        if not period_codes:
+            raise ValidationError(message="Укажите хотя бы один разрешённый период")
+
         unit = OptUnit(
             inn=inn,
             kpp=body.kpp,
@@ -139,16 +171,13 @@ class AccountingService:
             is_active=True,
         )
         created = await self._repo.add_unit(unit)
-        await self._session.commit()
-        return AccountingUnitResponse(
-            id=created.id,
+        saved_periods = await self._repo.replace_unit_periods(
+            unit_id=created.id,
             inn=created.inn,
-            kpp=created.kpp,
-            name=created.name,
-            category_code=created.category_code,
-            commission_rate_percent=created.commission_rate_percent,
-            is_active=created.is_active,
+            period_codes=period_codes,
         )
+        await self._session.commit()
+        return self._to_unit_response(created, saved_periods)
 
     async def update_unit(
         self,
@@ -164,7 +193,12 @@ class AccountingService:
         if unit is None:
             raise NotFound(message="Лавка не найдена")
 
-        if body.commission_rate_percent is None and body.name is None and body.category_code is None:
+        if (
+            body.commission_rate_percent is None
+            and body.name is None
+            and body.category_code is None
+            and body.period_codes is None
+        ):
             raise ValidationError(message="Нет полей для обновления")
 
         if body.commission_rate_percent is not None:
@@ -182,18 +216,21 @@ class AccountingService:
                 )
             unit.category_code = category_code
 
+        period_codes: list[str] | None = None
+        if body.period_codes is not None:
+            period_codes = await self._repo.replace_unit_periods(
+                unit_id=unit.id,
+                inn=unit.inn,
+                period_codes=self._normalize_period_codes(body.period_codes),
+            )
+
         await self._session.flush()
         await self._session.commit()
         await self._session.refresh(unit)
-        return AccountingUnitResponse(
-            id=unit.id,
-            inn=unit.inn,
-            kpp=unit.kpp,
-            name=unit.name,
-            category_code=unit.category_code,
-            commission_rate_percent=unit.commission_rate_percent,
-            is_active=unit.is_active,
-        )
+        if period_codes is None:
+            periods_by_inn = await self._repo.list_period_codes_by_inns([unit.inn])
+            period_codes = periods_by_inn.get(unit.inn, [])
+        return self._to_unit_response(unit, period_codes)
 
     async def list_orders_by_units(
         self,
@@ -511,6 +548,9 @@ class AccountingService:
             raise PermissionDenied()
         accountants = await self._repo.list_accountant_users()
         rows = await self._repo.list_unit_owner_rows()
+        periods_by_inn = await self._repo.list_period_codes_by_inns(
+            [unit.inn for unit, _, _ in rows],
+        )
         deduped: dict[int, AccountingUnitOwnerRow] = {}
         for unit, accountant_id, accountant_name in rows:
             if unit.id in deduped:
@@ -521,6 +561,7 @@ class AccountingService:
                 name=unit.name,
                 category_code=unit.category_code,
                 commission_rate_percent=unit.commission_rate_percent,
+                period_codes=periods_by_inn.get(unit.inn, []),
                 accountant_user_id=accountant_id,
                 accountant_full_name=accountant_name,
             )
@@ -560,12 +601,14 @@ class AccountingService:
             accountant_name = target.full_name
         await self._repo.set_unit_owner(unit_id, accountant_user_id, assigned_by=actor.id)
         await self._session.commit()
+        periods_by_inn = await self._repo.list_period_codes_by_inns([unit.inn])
         return AccountingUnitOwnerRow(
             unit_id=unit.id,
             inn=unit.inn,
             name=unit.name,
             category_code=unit.category_code,
             commission_rate_percent=unit.commission_rate_percent,
+            period_codes=periods_by_inn.get(unit.inn, []),
             accountant_user_id=accountant_user_id,
             accountant_full_name=accountant_name,
         )

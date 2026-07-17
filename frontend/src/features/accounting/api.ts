@@ -31,12 +31,14 @@ export interface CreateAccountingUnitPayload {
   name: string
   category_code: string
   commission_rate_percent: number
+  period_codes: string[]
 }
 
 export interface PatchAccountingUnitPayload {
   commission_rate_percent?: number
   name?: string
   category_code?: string
+  period_codes?: string[]
 }
 
 export async function createAccountingUnit(

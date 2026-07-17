@@ -19,7 +19,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Calculator, Download, Eye, Percent, Plus, RefreshCw } from 'lucide-vue-next'
+import { Calculator, CalendarRange, Download, Eye, Percent, Plus, RefreshCw } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
@@ -49,6 +49,7 @@ import {
   formatAccountingMoney,
   formatAccountingPayment,
 } from '@/features/accounting/types'
+import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
 import AppCard from '@/shared/ui/AppCard.vue'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
@@ -97,11 +98,21 @@ interface CreateUnitForm {
   name: string
   category_code: string | null
   commission_rate_percent: number | null
+  period_codes: string[]
 }
 
 function emptyCreateForm(): CreateUnitForm {
-  return { inn: '', kpp: '', name: '', category_code: null, commission_rate_percent: null }
+  return {
+    inn: '',
+    kpp: '',
+    name: '',
+    category_code: null,
+    commission_rate_percent: null,
+    period_codes: [],
+  }
 }
+
+const periodOptions = OPT_PERIOD_OPTIONS
 
 const createOpen = ref(false)
 const createSaving = ref(false)
@@ -112,6 +123,12 @@ const rateEditSaving = ref(false)
 const rateEditUnitId = ref<number | null>(null)
 const rateEditLabel = ref('')
 const rateEditValue = ref<number | null>(null)
+
+const periodsEditOpen = ref(false)
+const periodsEditSaving = ref(false)
+const periodsEditUnitId = ref<number | null>(null)
+const periodsEditLabel = ref('')
+const periodsEditValue = ref<string[]>([])
 
 function openCreateUnit(): void {
   createForm.value = emptyCreateForm()
@@ -156,6 +173,46 @@ async function submitEditRate(): Promise<void> {
   }
 }
 
+function openEditPeriods(row: AccountingUnitOwnerRow): void {
+  periodsEditUnitId.value = row.unit_id
+  periodsEditLabel.value = row.name ? `${row.name} · ${row.inn}` : row.inn
+  periodsEditValue.value = [...(row.period_codes || [])]
+  periodsEditOpen.value = true
+}
+
+async function submitEditPeriods(): Promise<void> {
+  if (periodsEditUnitId.value == null) return
+  if (!periodsEditValue.value.length) {
+    message.warning('Укажите хотя бы один период')
+    return
+  }
+  periodsEditSaving.value = true
+  try {
+    const updated = await patchAccountingUnit(periodsEditUnitId.value, {
+      period_codes: periodsEditValue.value,
+    })
+    message.success('Периоды обновлены')
+    periodsEditOpen.value = false
+    const idx = unitOwners.value.findIndex((item) => item.unit_id === periodsEditUnitId.value)
+    if (idx >= 0) {
+      unitOwners.value[idx] = {
+        ...unitOwners.value[idx],
+        period_codes: updated.period_codes || periodsEditValue.value,
+      }
+    }
+    await loadUnits()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить периоды')
+  } finally {
+    periodsEditSaving.value = false
+  }
+}
+
+function formatPeriodCodes(codes: string[] | null | undefined): string {
+  if (!codes?.length) return 'периоды не заданы'
+  return codes.join(', ')
+}
+
 async function submitCreateUnit(): Promise<void> {
   const form = createForm.value
   const inn = form.inn.trim()
@@ -181,6 +238,10 @@ async function submitCreateUnit(): Promise<void> {
     message.warning('Укажите процент')
     return
   }
+  if (!form.period_codes.length) {
+    message.warning('Укажите хотя бы один разрешённый период')
+    return
+  }
   createSaving.value = true
   try {
     await createAccountingUnit({
@@ -189,6 +250,7 @@ async function submitCreateUnit(): Promise<void> {
       name,
       category_code: form.category_code,
       commission_rate_percent: form.commission_rate_percent,
+      period_codes: form.period_codes,
     })
     message.success('Лавка добавлена')
     createOpen.value = false
@@ -761,12 +823,21 @@ onUnmounted(() => {
                   <span class="accounting-page__owner-inn">
                     {{ row.inn }} · {{ formatUnitRate(row.commission_rate_percent) }}
                   </span>
+                  <span class="accounting-page__owner-periods">
+                    {{ formatPeriodCodes(row.period_codes) }}
+                  </span>
                 </div>
                 <NButton size="small" secondary @click="openEditRate(row)">
                   <template #icon>
                     <Percent :size="14" />
                   </template>
                   Процент
+                </NButton>
+                <NButton size="small" secondary @click="openEditPeriods(row)">
+                  <template #icon>
+                    <CalendarRange :size="14" />
+                  </template>
+                  Периоды
                 </NButton>
                 <NSelect
                   :value="row.accountant_user_id"
@@ -841,6 +912,16 @@ onUnmounted(() => {
             <template #suffix>%</template>
           </NInputNumber>
         </NFormItem>
+        <NFormItem label="Разрешённые периоды" required>
+          <NSelect
+            v-model:value="createForm.period_codes"
+            :options="periodOptions"
+            multiple
+            filterable
+            placeholder="Можно выбрать несколько"
+            style="width: 100%"
+          />
+        </NFormItem>
       </NForm>
       <template #footer>
         <div class="accounting-page__modal-actions">
@@ -878,6 +959,36 @@ onUnmounted(() => {
         <div class="accounting-page__modal-actions">
           <NButton @click="rateEditOpen = false">Отмена</NButton>
           <NButton type="primary" :loading="rateEditSaving" @click="submitEditRate">
+            Сохранить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="periodsEditOpen"
+      preset="card"
+      title="Периоды компании"
+      style="width: 480px; max-width: 92vw"
+    >
+      <p class="accounting-page__rate-label">{{ periodsEditLabel }}</p>
+      <NFormItem label="Разрешённые периоды" :show-feedback="false">
+        <NSelect
+          v-model:value="periodsEditValue"
+          :options="periodOptions"
+          multiple
+          filterable
+          placeholder="Можно выбрать несколько"
+          style="width: 100%"
+        />
+      </NFormItem>
+      <p class="accounting-page__rate-hint">
+        Лавка будет доступна в ОПТ только для выбранных периодов сделки.
+      </p>
+      <template #footer>
+        <div class="accounting-page__modal-actions">
+          <NButton @click="periodsEditOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="periodsEditSaving" @click="submitEditPeriods">
             Сохранить
           </NButton>
         </div>
@@ -1040,6 +1151,11 @@ onUnmounted(() => {
 
 .accounting-page__owner-inn {
   font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
+
+.accounting-page__owner-periods {
+  font-size: 0.78rem;
   color: var(--app-text-muted);
 }
 </style>

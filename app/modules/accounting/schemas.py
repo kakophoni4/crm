@@ -22,6 +22,7 @@ class AccountingUnitResponse(BaseModel):
     category_code: str | None = None
     commission_rate_percent: Decimal | None = None
     is_active: bool
+    period_codes: list[str] = Field(default_factory=list)
 
 
 class AccountingUnitListResponse(BaseModel):
@@ -45,6 +46,7 @@ class AccountingUnitCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=512)
     category_code: str = Field(min_length=1, max_length=16)
     commission_rate_percent: Decimal = Field(ge=0, le=100)
+    period_codes: list[str] = Field(min_length=1)
 
     @field_validator("inn")
     @classmethod
@@ -79,6 +81,7 @@ class AccountingUnitPatchRequest(BaseModel):
     commission_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
     name: str | None = Field(default=None, min_length=1, max_length=512)
     category_code: str | None = Field(default=None, min_length=1, max_length=16)
+    period_codes: list[str] | None = None
 
     @field_validator("name")
     @classmethod
@@ -261,6 +264,7 @@ class AccountingUnitOwnerRow(BaseModel):
     name: str | None = None
     category_code: str | None = None
     commission_rate_percent: Decimal | None = None
+    period_codes: list[str] = Field(default_factory=list)
     accountant_user_id: int | None = None
     accountant_full_name: str | None = None
 

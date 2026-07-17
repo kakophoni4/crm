@@ -13,6 +13,7 @@ export interface AccountingUnit {
   category_code?: string | null
   commission_rate_percent?: number | null
   is_active: boolean
+  period_codes?: string[]
 }
 
 export interface AccountingUnitCategory {
@@ -82,6 +83,7 @@ export interface AccountingUnitOwnerRow {
   name?: string | null
   category_code?: string | null
   commission_rate_percent?: number | null
+  period_codes?: string[]
   accountant_user_id?: number | null
   accountant_full_name?: string | null
 }
