@@ -54,7 +54,7 @@ const label = computed(() => {
 const failureText = computed(() => {
   const error = row.value.error
   if (typeof error === 'string' && error.trim()) return error.trim()
-  return 'Не удалось загрузить файл'
+  return `${label.value} — не удалось загрузить (часто лимит Telegram 20 МБ)`
 })
 const previewKind = computed(() => resolveAttachmentPreviewKind(row.value))
 const isImage = computed(() => previewKind.value === 'image')

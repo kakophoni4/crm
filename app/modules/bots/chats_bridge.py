@@ -321,16 +321,26 @@ def _prepare_message_attachments(
     stored_attachments: list[dict[str, Any]] = []
     pending_indices: list[int] = []
     for idx, att in enumerate(attachments):
-        entry = {
+        has_url = bool(att.get("url"))
+        status = str(att.get("status") or "").strip()
+        if has_url:
+            status = status or "pending"
+        else:
+            # No downloadable URL (e.g. Telegram Bot API >20 MB) — never mark as ready.
+            status = "failed"
+        entry: dict[str, Any] = {
             "type": att.get("type", "document"),
             "url": att.get("url"),
             "mime": att.get("mime"),
             "size_bytes": att.get("size_bytes"),
             "filename": att.get("filename"),
-            "status": "pending" if att.get("url") else "ready",
+            "status": status,
         }
+        error = att.get("error")
+        if isinstance(error, str) and error.strip():
+            entry["error"] = error.strip()[:500]
         stored_attachments.append(entry)
-        if att.get("url"):
+        if has_url and status == "pending":
             pending_indices.append(idx)
 
     kind = MessageKind.TEXT

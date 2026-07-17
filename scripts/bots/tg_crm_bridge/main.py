@@ -61,23 +61,35 @@ def _pick_largest_photo(photos: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(photos, key=lambda p: p.get("file_size") or p.get("width") or 0)
 
 
+# Cloud Telegram Bot API cannot return file paths for downloads above ~20 MB.
+TG_BOT_API_MAX_FILE_BYTES = 20 * 1024 * 1024
+
+
+def _fmt_mb(size_bytes: int | None) -> str:
+    if size_bytes is None or size_bytes <= 0:
+        return "?"
+    return f"{size_bytes / (1024 * 1024):.1f}"
+
+
 async def _telegram_file_url(
     client: httpx.AsyncClient,
     token: str,
     file_id: str,
-) -> str | None:
+) -> tuple[str | None, str | None]:
+    """Return (download_url, error_description)."""
     resp = await client.get(
         f"https://api.telegram.org/bot{token}/getFile",
         params={"file_id": file_id},
     )
     data = resp.json()
     if not data.get("ok"):
+        desc = str(data.get("description") or data)
         log.warning("getFile failed for %s: %s", file_id, data)
-        return None
+        return None, desc
     file_path = (data.get("result") or {}).get("file_path")
     if not file_path:
-        return None
-    return f"https://api.telegram.org/file/bot{token}/{file_path}"
+        return None, "Telegram не вернул путь к файлу"
+    return f"https://api.telegram.org/file/bot{token}/{file_path}", None
 
 
 async def _build_attachments(
@@ -95,18 +107,44 @@ async def _build_attachments(
         filename: str | None = None,
         size_bytes: int | None = None,
     ) -> None:
-        url = await _telegram_file_url(client, token, file_id)
+        name = (filename or "").strip() or "файл"
+        size_int = int(size_bytes) if size_bytes is not None else None
+        too_big = size_int is not None and size_int > TG_BOT_API_MAX_FILE_BYTES
+
+        url: str | None = None
+        error: str | None = None
+        if too_big:
+            error = (
+                f"«{name}» ({_fmt_mb(size_int)} МБ) слишком большой для бота Telegram "
+                f"(лимит 20 МБ). Попросите прислать архив поменьше или ссылку на облако."
+            )
+            log.warning(
+                "skip getFile for oversized file %s (%s bytes)",
+                name,
+                size_int,
+            )
+        else:
+            url, tg_error = await _telegram_file_url(client, token, file_id)
+            if not url:
+                error = (
+                    f"Не удалось скачать «{name}» из Telegram"
+                    + (f" ({_fmt_mb(size_int)} МБ)" if size_int else "")
+                    + ". Обычно так бывает с файлами больше 20 МБ — нужна ссылка на облако."
+                )
+                if tg_error:
+                    log.warning("attachment unresolved: %s", tg_error)
+
+        entry: dict[str, Any] = {
+            "type": att_type,
+            "url": url,
+            "mime": mime,
+            "filename": filename,
+            "size_bytes": size_bytes,
+        }
         if not url:
-            return
-        attachments.append(
-            {
-                "type": att_type,
-                "url": url,
-                "mime": mime,
-                "filename": filename,
-                "size_bytes": size_bytes,
-            }
-        )
+            entry["status"] = "failed"
+            entry["error"] = error
+        attachments.append(entry)
 
     photo = _pick_largest_photo(tg_message.get("photo") or [])
     if photo and photo.get("file_id"):
@@ -179,13 +217,16 @@ def _message_text(tg_message: dict[str, Any], attachments: list[dict[str, Any]])
         return ""
     first = attachments[0]
     att_type = str(first.get("type") or "document")
+    filename = str(first.get("filename") or "").strip()
     if att_type == "photo":
         return "Фото"
     if att_type == "voice":
         return "Голосовое сообщение"
-    if att_type == "document" and (first.get("filename") or "").startswith("sticker"):
+    if att_type == "document" and filename.startswith("sticker"):
         return "Стикер"
-    return ""
+    if filename:
+        return filename
+    return "Вложение"
 
 
 class Bridge:
