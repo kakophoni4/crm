@@ -533,7 +533,10 @@ class AccountingService:
             )
             file_id = uploaded.id
 
+        # Column is TIMESTAMP WITHOUT TIME ZONE — store naive UTC only.
         received_at = body.received_at or datetime.now(UTC)
+        if received_at.tzinfo is not None:
+            received_at = received_at.astimezone(UTC).replace(tzinfo=None)
         row = OptRequirement(
             external_id=body.external_id.strip(),
             supplier_inn=body.supplier_inn.strip(),

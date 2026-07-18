@@ -49,15 +49,19 @@ def _is_pdf_filename(name: object) -> bool:
 
 
 def _parse_received_at(raw: object, document_date: object) -> datetime | None:
+    """Return naive UTC datetime for TIMESTAMP WITHOUT TIME ZONE columns."""
     if isinstance(raw, str) and raw.strip():
         try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(UTC).replace(tzinfo=None)
+            return parsed
         except ValueError:
             pass
     if isinstance(document_date, str) and document_date.strip():
         try:
             d = date.fromisoformat(document_date.strip())
-            return datetime(d.year, d.month, d.day, tzinfo=UTC)
+            return datetime(d.year, d.month, d.day)
         except ValueError:
             pass
     return None
