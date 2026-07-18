@@ -1,17 +1,17 @@
 """Pull FNS requirements from sbis-norm into CRM accounting cabinet.
 
-Flow:
+Flow (sbis-norm API v2 — binary file endpoint):
   1. GET /api/sbis/requirements/?unsynced=1
-  2. Keep only storage_file_name ending with .pdf (.p7m ignored, mark-synced)
-  3. GET /api/sbis/requirements/{id}/  → file_b64
+  2. Keep only storage_file_name ending with .pdf (.p7m → mark-synced, skip)
+  3. GET /api/sbis/requirements/{id}/file/  → raw PDF bytes
   4. AccountingService.ingest_requirement (idempotent by external_id)
   5. POST /api/sbis/requirements/mark-synced/ after successful save
+
+Do not use detail?include_file=1 / file_b64.
 """
 
 from __future__ import annotations
 
-import base64
-import binascii
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -75,44 +75,58 @@ def _guess_mime(filename: str | None, raw: bytes) -> str:
     return "application/octet-stream"
 
 
-def map_detail_to_ingest(detail: dict[str, Any]) -> tuple[AccountingRequirementIngestRequest, bytes | None]:
-    sbis_id = int(detail["id"])
-    inn = str(detail.get("inn") or "").strip()
-    title = str(detail.get("doc_title") or "Требование ФНС").strip() or "Требование ФНС"
-    filename = str(detail.get("storage_file_name") or f"requirement_{sbis_id}.pdf").strip()
-    file_b64 = detail.get("file_b64")
-    raw: bytes | None = None
-    if isinstance(file_b64, str) and file_b64.strip():
-        try:
-            raw = base64.b64decode(file_b64, validate=False)
-        except (binascii.Error, ValueError) as exc:
-            raise ValueError(f"invalid file_b64 for sbis id={sbis_id}") from exc
-
+def map_meta_to_ingest(
+    meta: dict[str, Any],
+    *,
+    pdf_bytes: bytes,
+) -> AccountingRequirementIngestRequest:
+    sbis_id = int(meta["id"])
+    inn = str(meta.get("inn") or "").strip()
+    title = str(meta.get("doc_title") or "Требование ФНС").strip() or "Требование ФНС"
+    filename = str(meta.get("storage_file_name") or f"requirement_{sbis_id}.pdf").strip()
     metadata: dict[str, Any] = {
         "source": "sbis-norm",
         "sbis_id": sbis_id,
-        "sbis_doc_id": detail.get("sbis_doc_id"),
-        "sbis_stage_id": detail.get("sbis_stage_id"),
-        "content_sha256": detail.get("content_sha256"),
-        "document_date": detail.get("document_date"),
-        "file_size": detail.get("file_size"),
+        "sbis_doc_id": meta.get("sbis_doc_id"),
+        "sbis_stage_id": meta.get("sbis_stage_id"),
+        "content_sha256": meta.get("content_sha256"),
+        "document_date": meta.get("document_date"),
+        "file_size": meta.get("file_size"),
         "storage_file_name": filename,
+        "file_url": meta.get("file_url"),
+        "mime_type": _guess_mime(filename, pdf_bytes),
     }
-    if raw is not None:
-        metadata["mime_type"] = _guess_mime(filename, raw)
-
-    body = AccountingRequirementIngestRequest(
+    return AccountingRequirementIngestRequest(
         external_id=external_id_for_sbis(sbis_id),
         supplier_inn=inn,
         title=title,
         description=None,
         status="new",
-        received_at=_parse_received_at(detail.get("created_at"), detail.get("document_date")),
+        received_at=_parse_received_at(meta.get("created_at"), meta.get("document_date")),
         metadata=metadata,
         pdf_base64=None,
         pdf_filename=filename,
     )
-    return body, raw
+
+
+async def _ingest_pdf(
+    service: AccountingService,
+    meta: dict[str, Any],
+) -> tuple[bool, int]:
+    """Download binary PDF and ingest. Returns (created, sbis_id)."""
+    sbis_id = int(meta["id"])
+    raw = await sbis_norm_client.get_requirement_file(sbis_id)
+    if not raw.startswith(b"%PDF") and not _is_pdf_filename(meta.get("storage_file_name")):
+        raise ValueError("downloaded body is not a PDF")
+    body = map_meta_to_ingest(meta, pdf_bytes=raw)
+    if not body.supplier_inn:
+        raise ValueError("empty inn")
+    ingested = await service.ingest_requirement(
+        body,
+        pdf_bytes=raw,
+        pdf_filename=body.pdf_filename,
+    )
+    return ingested.created, sbis_id
 
 
 async def sync_requirement_by_id(
@@ -132,17 +146,8 @@ async def sync_requirement_by_id(
                 await sbis_norm_client.mark_synced([sbis_id])
                 result.marked_synced = 1
             return result
-        body, raw = map_detail_to_ingest(detail)
-        if not body.supplier_inn:
-            raise ValueError("empty inn")
-        if not raw:
-            raise ValueError("empty file_b64 for PDF")
-        ingested = await service.ingest_requirement(
-            body,
-            pdf_bytes=raw,
-            pdf_filename=body.pdf_filename,
-        )
-        if ingested.created:
+        created, _ = await _ingest_pdf(service, detail)
+        if created:
             result.created = 1
         else:
             result.existing = 1
@@ -160,7 +165,7 @@ async def sync_unsynced_requirements(
     session: AsyncSession,
     *,
     limit: int | None = None,
-    max_pages: int = 20,
+    max_pages: int = 50,
 ) -> SbisNormSyncResult:
     settings = get_settings()
     if not settings.sbis_norm_api_base_url.strip():
@@ -193,20 +198,17 @@ async def sync_unsynced_requirements(
                 skip_ids.append(sbis_id)
                 continue
 
-            # Large file_b64 often cannot be read from inside Docker (body stalls).
-            # Leave PDF unsynced for host puller: scripts/sbis_norm_host_pull.py
-            aggregate.failed += 1
-            aggregate.errors.append(
-                f"id={sbis_id}: pdf deferred to host pull "
-                f"({item.get('storage_file_name')})",
-            )
-            logger.warning(
-                "sbis_norm_pdf_deferred_to_host",
-                sbis_id=sbis_id,
-                filename=item.get("storage_file_name"),
-            )
-            # Stop this run — host script should ingest this PDF next.
-            break
+            try:
+                created, _ = await _ingest_pdf(service, item)
+                if created:
+                    aggregate.created += 1
+                else:
+                    aggregate.existing += 1
+                ok_ids.append(sbis_id)
+            except Exception as exc:
+                aggregate.failed += 1
+                aggregate.errors.append(f"id={sbis_id}: {exc}")
+                logger.exception("sbis_norm_sync_item_failed", sbis_id=sbis_id)
 
         mark_ids = ok_ids + skip_ids
         if mark_ids:

@@ -2,6 +2,8 @@
 
 Docs: GET/POST /api/sbis/requirements/ …
 Auth: X-API-Key or Authorization: Bearer <token> when SBIS_NORM_API_TOKEN is set.
+
+File download: GET /api/sbis/requirements/<id>/file/ (raw PDF bytes, not file_b64).
 """
 
 from __future__ import annotations
@@ -59,6 +61,24 @@ def _timeout() -> httpx.Timeout:
     )
 
 
+def _raise_for_status(response: httpx.Response, *, path: str) -> None:
+    if response.status_code == 401:
+        raise SbisNormApiError(
+            message="sbis-norm отклонил авторизацию (проверьте SBIS_NORM_API_TOKEN)",
+            details={"http_status": 401},
+        )
+    if response.status_code == 404:
+        raise SbisNormApiError(
+            message="Документ не найден в sbis-norm",
+            details={"http_status": 404, "path": path},
+        )
+    if response.status_code >= 400:
+        raise SbisNormApiError(
+            message="sbis-norm вернул ошибку",
+            details={"http_status": response.status_code, "text": response.text[:500]},
+        )
+
+
 async def _request(
     method: str,
     path: str,
@@ -97,21 +117,7 @@ async def _request(
             logger.warning("sbis_norm_transport_error", method=method, path=path, error=str(exc))
             raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from exc
 
-        if response.status_code == 401:
-            raise SbisNormApiError(
-                message="sbis-norm отклонил авторизацию (проверьте SBIS_NORM_API_TOKEN)",
-                details={"http_status": 401},
-            )
-        if response.status_code == 404:
-            raise SbisNormApiError(
-                message="Документ не найден в sbis-norm",
-                details={"http_status": 404, "path": path},
-            )
-        if response.status_code >= 400:
-            raise SbisNormApiError(
-                message="sbis-norm вернул ошибку",
-                details={"http_status": response.status_code, "text": response.text[:500]},
-            )
+        _raise_for_status(response, path=path)
 
         try:
             return response.json()
@@ -120,6 +126,48 @@ async def _request(
                 message="sbis-norm вернул некорректный JSON",
                 details={"http_status": response.status_code, "text": response.text[:500]},
             ) from exc
+
+    raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from last_exc
+
+
+async def _request_bytes(method: str, path: str) -> bytes:
+    url = f"{_base_url()}{path}"
+    timeout = _timeout()
+    last_exc: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.request(
+                    method,
+                    url,
+                    headers=_auth_headers(),
+                )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            logger.warning(
+                "sbis_norm_transport_error",
+                method=method,
+                path=path,
+                attempt=attempt + 1,
+                error=str(exc),
+            )
+            if attempt + 1 < _MAX_RETRIES:
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+                continue
+            raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from exc
+        except httpx.HTTPError as exc:
+            logger.warning("sbis_norm_transport_error", method=method, path=path, error=str(exc))
+            raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from exc
+
+        _raise_for_status(response, path=path)
+        content = response.content
+        if not content:
+            raise SbisNormApiError(
+                message="sbis-norm вернул пустой файл",
+                details={"path": path},
+            )
+        return content
 
     raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from last_exc
 
@@ -148,7 +196,13 @@ async def list_requirements(
 
 
 async def get_requirement(requirement_id: int) -> dict[str, Any]:
+    """Light meta JSON (no file_b64 by default)."""
     return await _request("GET", f"/api/sbis/requirements/{requirement_id}/")
+
+
+async def get_requirement_file(requirement_id: int) -> bytes:
+    """Raw PDF bytes from GET …/requirements/<id>/file/."""
+    return await _request_bytes("GET", f"/api/sbis/requirements/{requirement_id}/file/")
 
 
 async def mark_synced(ids: list[int]) -> dict[str, Any]:
