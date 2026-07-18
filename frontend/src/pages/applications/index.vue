@@ -59,9 +59,15 @@ const canSetOrderPeriod = computed(
     auth.isAccountant,
 )
 
-function canEditOrderPeriod(row: OptOrderRegistryItem): boolean {
+function canEditOrderPeriod(row: OptOrderRegistryItem | null): boolean {
+  if (!row) return false
   if (!row.period_code) return canSetOrderPeriod.value
   return canChangeOrderPeriod.value
+}
+
+function onSelectedPeriodChange(value: string | null): void {
+  if (!selected.value) return
+  void onOrderPeriodChange(selected.value, value)
 }
 
 async function onOrderPeriodChange(
@@ -400,7 +406,7 @@ onMounted(() => {
                 placeholder="Указать период"
                 :loading="savingPeriodOrderId === selected.id"
                 style="min-width: 180px"
-                @update:value="(value) => onOrderPeriodChange(selected, value as string | null)"
+                @update:value="(value) => onSelectedPeriodChange(value as string | null)"
               />
               <template v-else>{{ formatOptPeriodLabel(selected.period_code) }}</template>
             </dd>
