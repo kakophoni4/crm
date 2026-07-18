@@ -19,11 +19,23 @@ export async function listOptOrdersRegistry(params?: {
   contact_id?: number
   chat_id?: number
   payment_status?: string
+  period_code?: string
   open_only?: boolean
   offset?: number
   limit?: number
 }): Promise<OptOrderRegistryListResponse> {
   const { data } = await http.get<OptOrderRegistryListResponse>('/opt-orders', { params })
+  return data
+}
+
+export async function patchOptOrderPeriod(
+  orderId: number,
+  periodCode: string,
+): Promise<{ order_id: number; lead_id: number; period_code: string }> {
+  const { data } = await http.patch<{ order_id: number; lead_id: number; period_code: string }>(
+    `/opt-orders/${orderId}/period`,
+    { period_code: periodCode },
+  )
   return data
 }
 

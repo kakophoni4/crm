@@ -37,6 +37,7 @@ export interface AccountingUnitOrder {
   crm_id: string
   status: string
   payment_status: string
+  period_code?: string | null
   amount_paid: number
   commission_due: number
   lavka_line_volume: number

@@ -88,6 +88,7 @@ class AccountingRepository:
         date_from: date | None,
         date_to: date | None,
         q: str | None,
+        period_code: str | None = None,
     ) -> Select[Any]:
         stmt = (
             select(
@@ -117,6 +118,8 @@ class AccountingRepository:
             stmt = stmt.where(LeadOptOrderLine.supplier_inn == supplier_inn)
         if status:
             stmt = stmt.where(LeadOptOrder.status == status)
+        if period_code:
+            stmt = stmt.where(LeadOptOrder.period_code == period_code.strip())
         if manager_user_id is not None:
             stmt = stmt.where(User.id == manager_user_id)
         if date_from is not None:

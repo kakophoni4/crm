@@ -38,6 +38,7 @@ import {
   downloadAccountingRegistry,
   downloadRequirementPdf,
   listAccountingOrders,
+  patchAccountingOrderPeriod,
   listAccountingRequirements,
   listAccountingUnitCategories,
   listAccountingUnitOwners,
@@ -60,12 +61,15 @@ import {
   formatAccountingMoney,
   formatAccountingPayment,
 } from '@/features/accounting/types'
-import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
+import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
+import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
+const auth = useAuthStore()
 
 const loading = ref(false)
 const syncingRequirements = ref(false)
@@ -78,8 +82,59 @@ const ordersTotal = ref(0)
 const ordersPage = ref(1)
 const ordersPageSize = 20
 const orderSupplierInn = ref<string | null>(null)
+const orderPeriodCode = ref<string | null>(null)
 const orderSearch = ref('')
 const expandedLavki = ref<string[]>([])
+const periodFilterOptions = OPT_PERIOD_OPTIONS
+const savingPeriodOrderId = ref<number | null>(null)
+
+/** Change existing period: admin or accounting.manage (главный бухгалтер). */
+const canChangeOrderPeriod = computed(
+  () =>
+    auth.isAdmin ||
+    auth.user?.permissions.includes('accounting.manage') === true,
+)
+/** Set period when empty: seniors + accountants + those who may change. */
+const canSetOrderPeriod = computed(
+  () =>
+    canChangeOrderPeriod.value ||
+    auth.isSenior ||
+    auth.isGroupSenior ||
+    auth.isAccountant,
+)
+
+function canEditOrderPeriod(row: AccountingUnitOrder): boolean {
+  if (!row.period_code) return canSetOrderPeriod.value
+  return canChangeOrderPeriod.value
+}
+
+async function onOrderPeriodChange(
+  row: AccountingUnitOrder,
+  value: string | null,
+): Promise<void> {
+  if (!value || value === row.period_code) return
+  if (!canEditOrderPeriod(row)) {
+    message.error(
+      row.period_code
+        ? 'Менять период может только главный бухгалтер или администратор'
+        : 'Недостаточно прав для указания периода',
+    )
+    return
+  }
+  savingPeriodOrderId.value = row.order_id
+  try {
+    const updated = await patchAccountingOrderPeriod(row.order_id, value)
+    for (const group of orderGroups.value) {
+      const item = group.orders.find((order) => order.order_id === row.order_id)
+      if (item) item.period_code = updated.period_code
+    }
+    message.success('Период сохранён')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить период')
+  } finally {
+    savingPeriodOrderId.value = null
+  }
+}
 
 const requirements = ref<AccountingRequirement[]>([])
 const requirementsTotal = ref(0)
@@ -287,12 +342,14 @@ async function submitCreateUnit(): Promise<void> {
 
 const downloadingRegistryId = ref<number | null>(null)
 const downloadingReqId = ref<number | null>(null)
+const previewingReqId = ref<number | null>(null)
 const previewOpen = ref(false)
 const previewOrder = ref<AccountingUnitOrder | null>(null)
 const previewBlob = ref<Blob | null>(null)
 const previewBlobUrl = ref<string | null>(null)
 const previewLoading = ref(false)
 const previewLabel = ref('Реестр.xlsx')
+const previewKind = ref<AttachmentPreviewKind>('spreadsheet')
 
 const unitOptions = computed<SelectOption[]>(() =>
   units.value.map((unit) => ({
@@ -326,14 +383,16 @@ function clearPreviewBlob(): void {
   previewBlob.value = null
 }
 
-function closeRegistryPreview(): void {
+function closePreview(): void {
   previewOpen.value = false
   previewOrder.value = null
+  previewingReqId.value = null
   clearPreviewBlob()
 }
 
 async function openPreview(order: AccountingUnitOrder): Promise<void> {
   previewOrder.value = order
+  previewKind.value = 'spreadsheet'
   previewLabel.value = registryFilename(order)
   previewOpen.value = true
   previewLoading.value = true
@@ -344,9 +403,32 @@ async function openPreview(order: AccountingUnitOrder): Promise<void> {
     previewBlobUrl.value = URL.createObjectURL(blob)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить реестр')
-    closeRegistryPreview()
+    closePreview()
   } finally {
     previewLoading.value = false
+  }
+}
+
+async function openRequirementPreview(row: AccountingRequirement): Promise<void> {
+  if (!row.has_pdf) return
+  previewingReqId.value = row.id
+  previewKind.value = 'pdf'
+  previewLabel.value = row.pdf_filename || `requirement_${row.external_id}.pdf`
+  previewOpen.value = true
+  previewLoading.value = true
+  clearPreviewBlob()
+  try {
+    const blob = await downloadRequirementPdf(row.id)
+    const pdfBlob =
+      blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' })
+    previewBlob.value = pdfBlob
+    previewBlobUrl.value = URL.createObjectURL(pdfBlob)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось открыть PDF')
+    closePreview()
+  } finally {
+    previewLoading.value = false
+    previewingReqId.value = null
   }
 }
 
@@ -374,6 +456,7 @@ async function loadOrders(): Promise<void> {
   try {
     const data = await listAccountingOrders({
       supplier_inn: orderSupplierInn.value || undefined,
+      period_code: orderPeriodCode.value || undefined,
       q: orderSearch.value.trim() || undefined,
       limit: ordersPageSize,
       offset: (ordersPage.value - 1) * ordersPageSize,
@@ -603,6 +686,27 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
       render: (row) => formatDate(row.created_at),
     },
     {
+      title: 'Период',
+      key: 'period_code',
+      width: 180,
+      render: (row) => {
+        if (!canEditOrderPeriod(row)) {
+          return formatOptPeriodLabel(row.period_code)
+        }
+        return h(NSelect, {
+          value: row.period_code || null,
+          options: periodFilterOptions,
+          size: 'small',
+          clearable: false,
+          filterable: true,
+          placeholder: 'Указать период',
+          loading: savingPeriodOrderId.value === row.order_id,
+          style: 'min-width: 160px',
+          onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
+        })
+      },
+    },
+    {
       title: 'Заявка',
       key: 'lead_id',
       width: 150,
@@ -704,11 +808,24 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
   {
     title: 'Файл',
     key: 'pdf',
-    width: 260,
+    width: 340,
     render: (row) => {
       const actions = []
       if (row.has_pdf) {
         actions.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              quaternary: true,
+              loading: previewingReqId.value === row.id,
+              onClick: () => openRequirementPreview(row),
+            },
+            {
+              icon: () => h(Eye, { size: 14 }),
+              default: () => 'Просмотр',
+            },
+          ),
           h(
             NButton,
             {
@@ -771,7 +888,7 @@ watch(activeTab, async (tab) => {
   else await loadUnitOwners()
 })
 
-watch([ordersPage, orderSupplierInn], () => {
+watch([ordersPage, orderSupplierInn, orderPeriodCode], () => {
   if (activeTab.value === 'orders') void loadOrders()
 })
 
@@ -838,6 +955,14 @@ onUnmounted(() => {
               filterable
               placeholder="Лавка"
               style="min-width: 260px"
+            />
+            <NSelect
+              v-model:value="orderPeriodCode"
+              :options="periodFilterOptions"
+              clearable
+              filterable
+              placeholder="Период"
+              style="min-width: 200px"
             />
             <NInput
               v-model:value="orderSearch"
@@ -1070,8 +1195,8 @@ onUnmounted(() => {
       :label="previewLabel"
       :blob-url="previewBlobUrl"
       :blob="previewBlob"
-      preview-kind="spreadsheet"
-      @close="closeRegistryPreview"
+      :preview-kind="previewKind"
+      @close="closePreview"
     />
 
     <NModal

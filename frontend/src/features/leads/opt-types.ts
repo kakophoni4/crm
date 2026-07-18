@@ -113,6 +113,7 @@ export interface OptOrderRegistryItem {
   department_name?: string | null
   status: string
   payment_status: string
+  period_code?: string | null
   total_volume: number
   commission_due: number
   amount_paid: number

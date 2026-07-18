@@ -135,6 +135,7 @@ class OptOrderRegistryItem(BaseModel):
     department_name: str | None = None
     status: str
     payment_status: str
+    period_code: str | None = None
     total_volume: Decimal
     commission_due: Decimal
     amount_paid: Decimal
@@ -212,3 +213,13 @@ class OptUploadFromAttachmentRequest(BaseModel):
     message_id: int
     attachment_index: int = Field(ge=0)
     vat_rate_percent: Literal[20, 22] = 22
+
+
+class OptOrderPeriodUpdateRequest(BaseModel):
+    period_code: str = Field(min_length=1, max_length=16)
+
+
+class OptOrderPeriodUpdateResponse(BaseModel):
+    order_id: int
+    lead_id: int
+    period_code: str

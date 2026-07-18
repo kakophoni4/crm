@@ -60,6 +60,7 @@ export async function patchAccountingUnit(
 export async function listAccountingOrders(params: {
   supplier_inn?: string
   q?: string
+  period_code?: string
   limit?: number
   offset?: number
 }): Promise<{ items: AccountingUnitOrderGroup[]; total: number; limit: number; offset: number }> {
@@ -76,6 +77,17 @@ export async function downloadAccountingRegistry(orderId: number): Promise<Blob>
   const { data } = await http.get<Blob>(`/accounting/orders/${orderId}/registry`, {
     responseType: 'blob',
   })
+  return data
+}
+
+export async function patchAccountingOrderPeriod(
+  orderId: number,
+  periodCode: string,
+): Promise<{ order_id: number; period_code: string }> {
+  const { data } = await http.patch<{ order_id: number; period_code: string }>(
+    `/accounting/orders/${orderId}/period`,
+    { period_code: periodCode },
+  )
   return data
 }
 

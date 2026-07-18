@@ -411,6 +411,7 @@ class OptOrderService:
         contact_id: int | None = None,
         chat_id: int | None = None,
         payment_status: str | None = None,
+        period_code: str | None = None,
         open_only: bool = False,
         offset: int = 0,
         limit: int = 50,
@@ -445,6 +446,8 @@ class OptOrderService:
                 filters.append(LeadOptOrder.payment_status == statuses[0])
             elif statuses:
                 filters.append(LeadOptOrder.payment_status.in_(statuses))
+        if period_code:
+            filters.append(LeadOptOrder.period_code == period_code.strip())
         if open_only:
             filters.append(Lead.closed_at.is_(None))
 
@@ -516,6 +519,7 @@ class OptOrderService:
                     department_name=dept_name,
                     status=order.status,
                     payment_status=order.payment_status or "unpaid",
+                    period_code=getattr(order, "period_code", None),
                     total_volume=Decimal(str(order.total_volume or 0)),
                     commission_due=commission_due,
                     amount_paid=amount_paid,
@@ -1118,6 +1122,28 @@ class OptOrderService:
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
         return self._to_response(refreshed)
+
+    async def update_order_period(
+        self,
+        actor: User,
+        order_id: int,
+        period_code: str,
+    ) -> tuple[int, int, str]:
+        """Set/change period for an order visible in actor lead scope."""
+        from app.modules.leads.opt.period_access import resolve_writable_period_code
+
+        order = await self._repo.get_order(order_id)
+        if order is None:
+            raise NotFound(message="OPT order not found")
+        await self._get_lead_for_actor(actor, order.lead_id)
+        new_code = resolve_writable_period_code(
+            actor,
+            current=getattr(order, "period_code", None),
+            requested=period_code,
+        )
+        order.period_code = new_code
+        await self._session.flush()
+        return order.id, order.lead_id, new_code
 
     async def delete_order(self, actor: User, lead_id: int, order_id: int) -> None:
         order = await self._get_order_for_actor(actor, lead_id, order_id)

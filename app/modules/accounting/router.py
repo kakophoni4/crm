@@ -10,6 +10,8 @@ from app.modules.accounting.schemas import (
     AccountingAssignmentListResponse,
     AccountingAssignmentItem,
     AccountingAssignmentUpdateRequest,
+    AccountingOrderPeriodUpdateRequest,
+    AccountingOrderPeriodUpdateResponse,
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
@@ -117,6 +119,7 @@ async def list_accounting_orders(
     date_from: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
     date_to: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
     q: Annotated[str | None, Query()] = None,
+    period_code: Annotated[str | None, Query(description="OPT period, e.g. 2/26")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AccountingUnitOrdersResponse:
@@ -131,6 +134,7 @@ async def list_accounting_orders(
         date_from=parsed_from,
         date_to=parsed_to,
         q=q,
+        period_code=(period_code or "").strip() or None,
         limit=limit,
         offset=offset,
     )
@@ -153,6 +157,26 @@ async def download_accounting_registry(
             ),
         },
     )
+
+
+@router.patch(
+    "/orders/{order_id}/period",
+    response_model=AccountingOrderPeriodUpdateResponse,
+)
+async def patch_accounting_order_period(
+    order_id: int,
+    body: AccountingOrderPeriodUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AccountingOrderPeriodUpdateResponse:
+    order_id_out, period_code = await service.update_order_period(
+        actor,
+        order_id,
+        body.period_code,
+    )
+    await db.commit()
+    return AccountingOrderPeriodUpdateResponse(order_id=order_id_out, period_code=period_code)
 
 
 @router.get("/requirements", response_model=AccountingRequirementListResponse)

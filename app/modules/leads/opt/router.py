@@ -34,6 +34,8 @@ from app.modules.leads.opt.schemas import (
     OptCommissionAdjustRequest,
     OptOrderListResponse,
     OptOrderPaymentCreateRequest,
+    OptOrderPeriodUpdateRequest,
+    OptOrderPeriodUpdateResponse,
     OptOrderRegistryListResponse,
     OptOrderResponse,
     OptPaymentLedgerListResponse,
@@ -61,6 +63,7 @@ async def list_opt_orders_registry(
     contact_id: int | None = None,
     chat_id: int | None = None,
     payment_status: str | None = None,
+    period_code: str | None = None,
     open_only: bool = False,
     offset: int = 0,
     limit: int = 50,
@@ -72,9 +75,31 @@ async def list_opt_orders_registry(
         contact_id=contact_id,
         chat_id=chat_id,
         payment_status=payment_status,
+        period_code=(period_code or "").strip() or None,
         open_only=open_only,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
+    )
+
+
+@router.patch("/opt-orders/{order_id}/period", response_model=OptOrderPeriodUpdateResponse)
+async def patch_opt_order_period(
+    order_id: int,
+    body: OptOrderPeriodUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OptOrderPeriodUpdateResponse:
+    order_id_out, lead_id, period_code = await service.update_order_period(
+        actor,
+        order_id,
+        body.period_code,
+    )
+    await db.commit()
+    return OptOrderPeriodUpdateResponse(
+        order_id=order_id_out,
+        lead_id=lead_id,
+        period_code=period_code,
     )
 
 

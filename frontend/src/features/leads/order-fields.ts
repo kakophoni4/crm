@@ -16,6 +16,16 @@ export const OPT_PERIOD_OPTIONS = [2025, 2026].flatMap((year) =>
   }),
 )
 
+/** Human label for period code `2/26` → `2 кв. 2026`. */
+export function formatOptPeriodLabel(code: string | null | undefined): string {
+  if (!code) return '—'
+  const match = OPT_PERIOD_OPTIONS.find((row) => row.value === code)
+  if (match) return match.label.replace(/\s*\([^)]*\)\s*$/, '')
+  const m = /^([1-4])\/(\d{2})$/.exec(code.trim())
+  if (!m) return code
+  return `${m[1]} кв. 20${m[2]}`
+}
+
 export interface LeadDealCustomFields {
   order?: LeadOrderFields | null
   service_suggestions?: string[]

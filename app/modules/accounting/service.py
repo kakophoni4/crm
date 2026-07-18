@@ -254,6 +254,7 @@ class AccountingService:
         date_from: date | None,
         date_to: date | None,
         q: str | None,
+        period_code: str | None,
         limit: int,
         offset: int,
     ) -> AccountingUnitOrdersResponse:
@@ -266,6 +267,7 @@ class AccountingService:
             "date_from": date_from,
             "date_to": date_to,
             "q": q,
+            "period_code": period_code,
         }
         rows = await self._repo.list_order_lines_all(**filters)
         unit_cache: dict[str, OptUnit | None] = {}
@@ -301,6 +303,7 @@ class AccountingService:
                     crm_id=order.crm_id,
                     status=order.status,
                     payment_status=order.payment_status or "unpaid",
+                    period_code=getattr(order, "period_code", None),
                     amount_paid=amount_paid,
                     commission_due=commission_due,
                     lavka_line_volume=Decimal("0"),
@@ -350,6 +353,7 @@ class AccountingService:
         date_from: date | None,
         date_to: date | None,
         q: str | None,
+        period_code: str | None = None,
         limit: int,
         offset: int,
     ) -> AccountingOrderLineListResponse:
@@ -362,6 +366,7 @@ class AccountingService:
             "date_from": date_from,
             "date_to": date_to,
             "q": q,
+            "period_code": period_code,
         }
         total = await self._repo.count_order_lines(**filters)
         rows = await self._repo.list_order_lines(limit=limit, offset=offset, **filters)
@@ -383,6 +388,7 @@ class AccountingService:
                     crm_id=order.crm_id,
                     status=order.status,
                     payment_status=order.payment_status or "unpaid",
+                    period_code=getattr(order, "period_code", None),
                     supplier=AccountingSupplierResponse(
                         inn=line.supplier_inn,
                         kpp=line.supplier_kpp,
@@ -420,6 +426,29 @@ class AccountingService:
         if not filename.lower().endswith(".xlsx"):
             filename = f"{filename}.xlsx"
         return content, filename
+
+    async def update_order_period(
+        self,
+        actor: User,
+        order_id: int,
+        period_code: str,
+    ) -> tuple[int, str]:
+        from app.modules.leads.opt.period_access import resolve_writable_period_code
+
+        supplier_inns = await self._visible_supplier_inns(actor)
+        if not await self._repo.order_visible_for_supplier_inns(order_id, supplier_inns):
+            raise NotFound(message="Заявка не найдена")
+        order = await self._repo.get_order_for_registry(order_id)
+        if order is None or order.status != _ACCOUNTING_ORDER_STATUS:
+            raise NotFound(message="Заявка не найдена")
+        new_code = resolve_writable_period_code(
+            actor,
+            current=getattr(order, "period_code", None),
+            requested=period_code,
+        )
+        order.period_code = new_code
+        await self._session.flush()
+        return order.id, new_code
 
     async def list_requirements(
         self,

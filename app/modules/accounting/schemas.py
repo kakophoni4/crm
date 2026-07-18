@@ -110,6 +110,7 @@ class AccountingUnitOrderItem(BaseModel):
     crm_id: str
     status: str
     payment_status: str
+    period_code: str | None = None
     amount_paid: Decimal
     commission_due: Decimal
     lavka_line_volume: Decimal
@@ -138,6 +139,15 @@ class AccountingUnitOrdersResponse(BaseModel):
     offset: int
 
 
+class AccountingOrderPeriodUpdateRequest(BaseModel):
+    period_code: str = Field(min_length=1, max_length=16)
+
+
+class AccountingOrderPeriodUpdateResponse(BaseModel):
+    order_id: int
+    period_code: str
+
+
 class AccountingOrderLineItem(BaseModel):
     line_id: int
     line_no: int
@@ -147,6 +157,7 @@ class AccountingOrderLineItem(BaseModel):
     crm_id: str
     status: str
     payment_status: str
+    period_code: str | None = None
     supplier: AccountingSupplierResponse
     buyer_inn: str
     buyer_name: str | None = None
