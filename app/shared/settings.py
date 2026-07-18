@@ -123,10 +123,13 @@ class Settings(BaseSettings):
     # sbis-norm FNS requirements pull (http://host:8000/api/sbis/requirements/)
     sbis_norm_api_base_url: str = ""
     sbis_norm_api_token: str = ""
-    sbis_norm_api_timeout_seconds: float = 60.0
+    # Read timeout for sbis-norm (PDF detail can be slow over inter-VPS links).
+    sbis_norm_api_timeout_seconds: float = 120.0
     sbis_norm_sync_enabled: bool = True
-    sbis_norm_sync_interval_seconds: int = 3600
-    sbis_norm_sync_batch_limit: int = 50
+    # Default: twice per day (12h). Override via SBIS_NORM_SYNC_INTERVAL_SECONDS.
+    sbis_norm_sync_interval_seconds: int = 43_200
+    # Smaller batches = shorter list responses (helps flaky links).
+    sbis_norm_sync_batch_limit: int = 20
     # Token expected from sbis-norm webhook (REQUIREMENTS_WEBHOOK_TOKEN on their side)
     sbis_norm_webhook_token: str = ""
 

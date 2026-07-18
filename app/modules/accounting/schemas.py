@@ -82,6 +82,7 @@ class AccountingUnitPatchRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=512)
     category_code: str | None = Field(default=None, min_length=1, max_length=16)
     period_codes: list[str] | None = None
+    is_active: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -236,7 +237,21 @@ class AccountingRequirementSyncResponse(BaseModel):
     existing: int
     failed: int
     marked_synced: int
+    skipped_non_pdf: int = 0
+    queued: bool = False
     errors: list[str] = Field(default_factory=list)
+
+
+class AccountingRequirementStatusUpdateRequest(BaseModel):
+    status: str = Field(min_length=1, max_length=32)
+
+    @field_validator("status")
+    @classmethod
+    def _validate_status(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned not in {"new", "answered"}:
+            raise ValueError("status должен быть new или answered")
+        return cleaned
 
 
 class AccountingAssignmentItem(BaseModel):
@@ -264,6 +279,7 @@ class AccountingUnitOwnerRow(BaseModel):
     name: str | None = None
     category_code: str | None = None
     commission_rate_percent: Decimal | None = None
+    is_active: bool = True
     period_codes: list[str] = Field(default_factory=list)
     accountant_user_id: int | None = None
     accountant_full_name: str | None = None

@@ -6,6 +6,7 @@ Auth: X-API-Key or Authorization: Bearer <token> when SBIS_NORM_API_TOKEN is set
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -15,6 +16,9 @@ from app.shared.exceptions import AppError
 from app.shared.settings import get_settings
 
 logger = structlog.get_logger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = (1.0, 3.0, 8.0)
 
 
 class SbisNormApiError(AppError):
@@ -44,6 +48,17 @@ def _base_url() -> str:
     return base
 
 
+def _timeout() -> httpx.Timeout:
+    """Connect fast, allow slow body (PDF / flaky inter-VPS links)."""
+    total = max(float(get_settings().sbis_norm_api_timeout_seconds), 30.0)
+    return httpx.Timeout(
+        connect=15.0,
+        read=total,
+        write=30.0,
+        pool=15.0,
+    )
+
+
 async def _request(
     method: str,
     path: str,
@@ -51,45 +66,62 @@ async def _request(
     params: dict[str, Any] | None = None,
     json_body: dict[str, Any] | None = None,
 ) -> Any:
-    settings = get_settings()
     url = f"{_base_url()}{path}"
-    timeout = httpx.Timeout(settings.sbis_norm_api_timeout_seconds)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                headers=_auth_headers(),
+    timeout = _timeout()
+    last_exc: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    headers=_auth_headers(),
+                )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            logger.warning(
+                "sbis_norm_transport_error",
+                method=method,
+                path=path,
+                attempt=attempt + 1,
+                error=str(exc),
             )
-    except httpx.HTTPError as exc:
-        logger.warning("sbis_norm_transport_error", method=method, path=path, error=str(exc))
-        raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from exc
+            if attempt + 1 < _MAX_RETRIES:
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+                continue
+            raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from exc
+        except httpx.HTTPError as exc:
+            logger.warning("sbis_norm_transport_error", method=method, path=path, error=str(exc))
+            raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from exc
 
-    if response.status_code == 401:
-        raise SbisNormApiError(
-            message="sbis-norm отклонил авторизацию (проверьте SBIS_NORM_API_TOKEN)",
-            details={"http_status": 401},
-        )
-    if response.status_code == 404:
-        raise SbisNormApiError(
-            message="Документ не найден в sbis-norm",
-            details={"http_status": 404, "path": path},
-        )
-    if response.status_code >= 400:
-        raise SbisNormApiError(
-            message="sbis-norm вернул ошибку",
-            details={"http_status": response.status_code, "text": response.text[:500]},
-        )
+        if response.status_code == 401:
+            raise SbisNormApiError(
+                message="sbis-norm отклонил авторизацию (проверьте SBIS_NORM_API_TOKEN)",
+                details={"http_status": 401},
+            )
+        if response.status_code == 404:
+            raise SbisNormApiError(
+                message="Документ не найден в sbis-norm",
+                details={"http_status": 404, "path": path},
+            )
+        if response.status_code >= 400:
+            raise SbisNormApiError(
+                message="sbis-norm вернул ошибку",
+                details={"http_status": response.status_code, "text": response.text[:500]},
+            )
 
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise SbisNormApiError(
-            message="sbis-norm вернул некорректный JSON",
-            details={"http_status": response.status_code, "text": response.text[:500]},
-        ) from exc
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise SbisNormApiError(
+                message="sbis-norm вернул некорректный JSON",
+                details={"http_status": response.status_code, "text": response.text[:500]},
+            ) from exc
+
+    raise SbisNormApiError(message="Не удалось связаться с sbis-norm") from last_exc
 
 
 async def list_requirements(

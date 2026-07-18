@@ -19,7 +19,17 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Calculator, CalendarRange, Download, Eye, Percent, Plus, RefreshCw } from 'lucide-vue-next'
+import {
+  Calculator,
+  CalendarRange,
+  Check,
+  Download,
+  Eye,
+  Percent,
+  Plus,
+  RefreshCw,
+  Undo2,
+} from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
@@ -32,6 +42,7 @@ import {
   listAccountingUnitCategories,
   listAccountingUnitOwners,
   listAccountingUnits,
+  patchAccountingRequirementStatus,
   patchAccountingUnit,
   saveBlob,
   syncAccountingRequirements,
@@ -76,10 +87,21 @@ const requirementsPage = ref(1)
 const requirementsPageSize = 50
 const reqSupplierInn = ref<string | null>(null)
 const reqSearch = ref('')
+const requirementsStatusTab = ref<'new' | 'answered'>('new')
+const answeringReqId = ref<number | null>(null)
 
 const unitOwners = ref<AccountingUnitOwnerRow[]>([])
 const accountantOptions = ref<SelectOption[]>([])
 const savingUnitId = ref<number | null>(null)
+const assignmentsSubTab = ref<'selling' | 'requirements'>('selling')
+const togglingUnitId = ref<number | null>(null)
+
+const sellingUnitOwners = computed(() =>
+  unitOwners.value.filter((row) => row.is_active !== false),
+)
+const requirementUnitOwners = computed(() =>
+  unitOwners.value.filter((row) => row.is_active === false),
+)
 
 const categories = ref<AccountingUnitCategory[]>([])
 const categoryOptions = computed<SelectOption[]>(() =>
@@ -373,6 +395,7 @@ async function loadRequirements(): Promise<void> {
   try {
     const data = await listAccountingRequirements({
       supplier_inn: reqSupplierInn.value || undefined,
+      status: requirementsStatusTab.value,
       q: reqSearch.value.trim() || undefined,
       limit: requirementsPageSize,
       offset: (requirementsPage.value - 1) * requirementsPageSize,
@@ -390,12 +413,22 @@ async function onSyncRequirements(): Promise<void> {
   syncingRequirements.value = true
   try {
     const result = await syncAccountingRequirements()
+    if (result.queued) {
+      message.success('Синхронизация запущена в фоне. Обновите список через 1–2 минуты.')
+      window.setTimeout(() => {
+        void loadRequirements()
+      }, 60_000)
+      return
+    }
     const parts = [
       `забрано ${result.fetched}`,
       `новых ${result.created}`,
       `уже было ${result.existing}`,
       `ошибок ${result.failed}`,
     ]
+    if (result.skipped_non_pdf) {
+      parts.push(`пропущено не-PDF ${result.skipped_non_pdf}`)
+    }
     if (result.failed > 0 && result.errors.length) {
       message.warning(`${parts.join(', ')}. ${result.errors[0]}`)
     } else {
@@ -406,6 +439,22 @@ async function onSyncRequirements(): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось синхронизировать требования')
   } finally {
     syncingRequirements.value = false
+  }
+}
+
+async function onSetRequirementStatus(
+  row: AccountingRequirement,
+  status: 'new' | 'answered',
+): Promise<void> {
+  answeringReqId.value = row.id
+  try {
+    await patchAccountingRequirementStatus(row.id, status)
+    message.success(status === 'answered' ? 'Отмечено как отвеченное' : 'Вернуто в неотвеченные')
+    await loadRequirements()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось обновить статус')
+  } finally {
+    answeringReqId.value = null
   }
 }
 
@@ -460,23 +509,59 @@ async function onDownloadRequirement(row: AccountingRequirement): Promise<void> 
   }
 }
 
+function sortUnitOwners(rows: AccountingUnitOwnerRow[]): AccountingUnitOwnerRow[] {
+  return [...rows].sort((a, b) => {
+    const aActive = a.is_active !== false ? 0 : 1
+    const bActive = b.is_active !== false ? 0 : 1
+    if (aActive !== bActive) return aActive - bActive
+    const aKey = a.accountant_user_id == null ? 0 : 1
+    const bKey = b.accountant_user_id == null ? 0 : 1
+    if (aKey !== bKey) return aKey - bKey
+    return (a.name || a.inn).localeCompare(b.name || b.inn, 'ru')
+  })
+}
+
 async function onAssignUnit(row: AccountingUnitOwnerRow, value: number | null): Promise<void> {
   savingUnitId.value = row.unit_id
   try {
     const updated = await assignAccountingUnitOwner(row.unit_id, value)
     const idx = unitOwners.value.findIndex((item) => item.unit_id === row.unit_id)
     if (idx >= 0) unitOwners.value[idx] = updated
-    unitOwners.value = [...unitOwners.value].sort((a, b) => {
-      const aKey = a.accountant_user_id == null ? 0 : 1
-      const bKey = b.accountant_user_id == null ? 0 : 1
-      if (aKey !== bKey) return aKey - bKey
-      return (a.name || a.inn).localeCompare(b.name || b.inn, 'ru')
-    })
+    unitOwners.value = sortUnitOwners(unitOwners.value)
     message.success('Назначение сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
   } finally {
     savingUnitId.value = null
+  }
+}
+
+async function onToggleUnitActive(row: AccountingUnitOwnerRow, nextActive: boolean): Promise<void> {
+  togglingUnitId.value = row.unit_id
+  try {
+    const updated = await patchAccountingUnit(row.unit_id, { is_active: nextActive })
+    const idx = unitOwners.value.findIndex((item) => item.unit_id === row.unit_id)
+    if (idx >= 0) {
+      unitOwners.value[idx] = {
+        ...unitOwners.value[idx],
+        is_active: updated.is_active,
+        period_codes: updated.period_codes || unitOwners.value[idx].period_codes,
+        commission_rate_percent:
+          updated.commission_rate_percent ?? unitOwners.value[idx].commission_rate_percent,
+      }
+    }
+    unitOwners.value = sortUnitOwners(unitOwners.value)
+    await loadUnits()
+    message.success(
+      nextActive
+        ? 'Лавка перенесена в продающие'
+        : 'Лавка перенесена в лавки для требований',
+    )
+    assignmentsSubTab.value = nextActive ? 'selling' : 'requirements'
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось изменить статус лавки')
+  } finally {
+    togglingUnitId.value = null
   }
 }
 
@@ -617,18 +702,14 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     render: (row) => row.title,
   },
   {
-    title: 'Статус',
-    key: 'status',
-    width: 100,
-    render: (row) => row.status,
-  },
-  {
-    title: 'PDF',
+    title: 'Файл',
     key: 'pdf',
-    width: 110,
-    render: (row) =>
-      row.has_pdf
-        ? h(
+    width: 260,
+    render: (row) => {
+      const actions = []
+      if (row.has_pdf) {
+        actions.push(
+          h(
             NButton,
             {
               size: 'small',
@@ -640,8 +721,47 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
               icon: () => h(Download, { size: 14 }),
               default: () => 'Скачать',
             },
-          )
-        : '—',
+          ),
+        )
+      } else {
+        actions.push(h('span', '—'))
+      }
+      if (row.status !== 'answered') {
+        actions.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'primary',
+              secondary: true,
+              loading: answeringReqId.value === row.id,
+              onClick: () => onSetRequirementStatus(row, 'answered'),
+            },
+            {
+              icon: () => h(Check, { size: 14 }),
+              default: () => 'Отвечено',
+            },
+          ),
+        )
+      } else {
+        actions.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              quaternary: true,
+              loading: answeringReqId.value === row.id,
+              onClick: () => onSetRequirementStatus(row, 'new'),
+            },
+            {
+              icon: () => h(Undo2, { size: 14 }),
+              default: () => 'Вернуть',
+            },
+          ),
+        )
+      }
+      return h('div', { class: 'accounting-page__registry-actions' }, actions)
+    },
   },
 ])
 
@@ -656,6 +776,14 @@ watch([ordersPage, orderSupplierInn], () => {
 })
 
 watch([requirementsPage, reqSupplierInn], () => {
+  if (activeTab.value === 'requirements') void loadRequirements()
+})
+
+watch(requirementsStatusTab, () => {
+  if (requirementsPage.value !== 1) {
+    requirementsPage.value = 1
+    return
+  }
   if (activeTab.value === 'requirements') void loadRequirements()
 })
 
@@ -769,6 +897,10 @@ onUnmounted(() => {
         </NTabPane>
 
         <NTabPane name="requirements" tab="Требования">
+          <NTabs v-model:value="requirementsStatusTab" type="segment" size="small" animated>
+            <NTabPane name="new" tab="Неотвеченные" />
+            <NTabPane name="answered" tab="Отвеченные" />
+          </NTabs>
           <div class="accounting-page__filters">
             <NInput
               v-model:value="reqSearch"
@@ -779,8 +911,9 @@ onUnmounted(() => {
             />
             <NButton type="primary" @click="loadRequirements">Найти</NButton>
             <NButton
+              v-if="isChief"
               :loading="syncingRequirements"
-              title="Опционально: синхронизация и так идёт каждый час автоматически"
+              title="Автосинхронизация — 2 раза в день; кнопка запускает фоновый забор"
               @click="onSyncRequirements"
             >
               <template #icon><RefreshCw :size="16" /></template>
@@ -788,7 +921,16 @@ onUnmounted(() => {
             </NButton>
           </div>
           <NSpin :show="loading">
+            <NEmpty
+              v-if="!loading && requirements.length === 0"
+              :description="
+                requirementsStatusTab === 'answered'
+                  ? 'Нет отвеченных требований'
+                  : 'Нет неотвеченных требований'
+              "
+            />
             <NDataTable
+              v-else
               :columns="requirementColumns"
               :data="requirements"
               :bordered="false"
@@ -806,52 +948,118 @@ onUnmounted(() => {
         </NTabPane>
 
         <NTabPane v-if="isChief" name="assignments" tab="Назначения лавок">
-          <NSpin :show="loading">
-            <NEmpty
-              v-if="!loading && unitOwners.length === 0"
-              description="Нет активных лавок"
-            />
-            <div v-else class="accounting-page__owners">
-              <div
-                v-for="row in unitOwners"
-                :key="row.unit_id"
-                class="accounting-page__owner-row"
-                :class="{ 'accounting-page__owner-row--unassigned': row.accountant_user_id == null }"
-              >
-                <div class="accounting-page__owner-lavka">
-                  <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
-                  <span class="accounting-page__owner-inn">
-                    {{ row.inn }} · {{ formatUnitRate(row.commission_rate_percent) }}
-                  </span>
-                  <span class="accounting-page__owner-periods">
-                    {{ formatPeriodCodes(row.period_codes) }}
-                  </span>
-                </div>
-                <NButton size="small" secondary @click="openEditRate(row)">
-                  <template #icon>
-                    <Percent :size="14" />
-                  </template>
-                  Процент
-                </NButton>
-                <NButton size="small" secondary @click="openEditPeriods(row)">
-                  <template #icon>
-                    <CalendarRange :size="14" />
-                  </template>
-                  Периоды
-                </NButton>
-                <NSelect
-                  :value="row.accountant_user_id"
-                  :options="accountantOptions"
-                  clearable
-                  filterable
-                  placeholder="Бухгалтер"
-                  :loading="savingUnitId === row.unit_id"
-                  style="min-width: 260px"
-                  @update:value="(value) => onAssignUnit(row, value as number | null)"
+          <NTabs v-model:value="assignmentsSubTab" type="segment" size="small" animated>
+            <NTabPane name="selling" tab="Продающие лавки">
+              <p class="accounting-page__owners-hint">
+                Доступны для сдачи заявок. Назначенный бухгалтер видит заявки и требования по этим
+                лавкам.
+              </p>
+              <NSpin :show="loading">
+                <NEmpty
+                  v-if="!loading && sellingUnitOwners.length === 0"
+                  description="Нет продающих лавок"
                 />
-              </div>
-            </div>
-          </NSpin>
+                <div v-else class="accounting-page__owners">
+                  <div
+                    v-for="row in sellingUnitOwners"
+                    :key="row.unit_id"
+                    class="accounting-page__owner-row"
+                    :class="{
+                      'accounting-page__owner-row--unassigned': row.accountant_user_id == null,
+                    }"
+                  >
+                    <div class="accounting-page__owner-lavka">
+                      <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
+                      <span class="accounting-page__owner-inn">
+                        {{ row.inn }} · {{ formatUnitRate(row.commission_rate_percent) }}
+                      </span>
+                      <span class="accounting-page__owner-periods">
+                        {{ formatPeriodCodes(row.period_codes) }}
+                      </span>
+                    </div>
+                    <div class="accounting-page__owner-actions">
+                      <NButton size="small" secondary @click="openEditRate(row)">
+                        <template #icon>
+                          <Percent :size="14" />
+                        </template>
+                        Процент
+                      </NButton>
+                      <NButton size="small" secondary @click="openEditPeriods(row)">
+                        <template #icon>
+                          <CalendarRange :size="14" />
+                        </template>
+                        Периоды
+                      </NButton>
+                      <NButton
+                        size="small"
+                        quaternary
+                        :loading="togglingUnitId === row.unit_id"
+                        @click="onToggleUnitActive(row, false)"
+                      >
+                        В требования
+                      </NButton>
+                    </div>
+                    <NSelect
+                      :value="row.accountant_user_id"
+                      :options="accountantOptions"
+                      clearable
+                      filterable
+                      placeholder="Бухгалтер"
+                      :loading="savingUnitId === row.unit_id"
+                      style="min-width: 220px"
+                      @update:value="(value) => onAssignUnit(row, value as number | null)"
+                    />
+                  </div>
+                </div>
+              </NSpin>
+            </NTabPane>
+            <NTabPane name="requirements" tab="Лавки для требований">
+              <p class="accounting-page__owners-hint">
+                Не участвуют в сдаче. Назначенный бухгалтер видит только требования по этим лавкам.
+              </p>
+              <NSpin :show="loading">
+                <NEmpty
+                  v-if="!loading && requirementUnitOwners.length === 0"
+                  description="Нет лавок только для требований"
+                />
+                <div v-else class="accounting-page__owners">
+                  <div
+                    v-for="row in requirementUnitOwners"
+                    :key="row.unit_id"
+                    class="accounting-page__owner-row accounting-page__owner-row--requirements"
+                    :class="{
+                      'accounting-page__owner-row--unassigned': row.accountant_user_id == null,
+                    }"
+                  >
+                    <div class="accounting-page__owner-lavka">
+                      <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
+                      <span class="accounting-page__owner-inn">{{ row.inn }}</span>
+                    </div>
+                    <div class="accounting-page__owner-actions">
+                      <NButton
+                        size="small"
+                        secondary
+                        :loading="togglingUnitId === row.unit_id"
+                        @click="onToggleUnitActive(row, true)"
+                      >
+                        В продающие
+                      </NButton>
+                    </div>
+                    <NSelect
+                      :value="row.accountant_user_id"
+                      :options="accountantOptions"
+                      clearable
+                      filterable
+                      placeholder="Бухгалтер"
+                      :loading="savingUnitId === row.unit_id"
+                      style="min-width: 220px"
+                      @update:value="(value) => onAssignUnit(row, value as number | null)"
+                    />
+                  </div>
+                </div>
+              </NSpin>
+            </NTabPane>
+          </NTabs>
         </NTabPane>
       </NTabs>
     </AppCard>
@@ -1118,6 +1326,12 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.accounting-page__owners-hint {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: var(--app-text-muted);
+}
+
 .accounting-page__owners {
   display: flex;
   flex-direction: column;
@@ -1126,7 +1340,7 @@ onUnmounted(() => {
 
 .accounting-page__owner-row {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) auto minmax(240px, 300px);
+  grid-template-columns: minmax(200px, 1fr) auto minmax(220px, 280px);
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -1136,6 +1350,13 @@ onUnmounted(() => {
 
 .accounting-page__owner-row--unassigned {
   background: var(--app-warning-soft);
+}
+
+.accounting-page__owner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .accounting-page__owner-lavka {

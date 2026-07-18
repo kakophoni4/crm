@@ -57,13 +57,23 @@ class AccountingService:
             return True
         return has_permission(role, Permission.ACCOUNTING_MANAGE)
 
-    async def _visible_supplier_inns(self, actor: User) -> set[str] | None:
+    async def _visible_supplier_inns(
+        self,
+        actor: User,
+        *,
+        active_only: bool = True,
+    ) -> set[str] | None:
+        """INNs in actor scope. None = chief (all).
+
+        active_only=True  → продающие лавки (заявки / сдача)
+        active_only=False → все назначенные, включая лавки только для требований
+        """
         if self._is_chief(actor):
             return None
         unit_ids = await self._repo.list_assigned_unit_ids(actor.id)
         if not unit_ids:
             return set()
-        units = await self._repo.get_units_by_ids(unit_ids)
+        units = await self._repo.get_units_by_ids(unit_ids, active_only=active_only)
         return {unit.inn for unit in units.values()}
 
     def _normalize_period_codes(self, period_codes: list[str]) -> list[str]:
@@ -188,7 +198,7 @@ class AccountingService:
         if not self._is_chief(actor):
             raise PermissionDenied()
 
-        units = await self._repo.get_units_by_ids([unit_id])
+        units = await self._repo.get_units_by_ids([unit_id], active_only=False)
         unit = units.get(unit_id)
         if unit is None:
             raise NotFound(message="Лавка не найдена")
@@ -198,6 +208,7 @@ class AccountingService:
             and body.name is None
             and body.category_code is None
             and body.period_codes is None
+            and body.is_active is None
         ):
             raise ValidationError(message="Нет полей для обновления")
 
@@ -205,6 +216,8 @@ class AccountingService:
             unit.commission_rate_percent = body.commission_rate_percent
         if body.name is not None:
             unit.name = body.name
+        if body.is_active is not None:
+            unit.is_active = body.is_active
         if body.category_code is not None:
             from app.modules.leads.opt.tariffs import ALL_CATEGORY_CODES
 
@@ -418,7 +431,7 @@ class AccountingService:
         limit: int,
         offset: int,
     ) -> AccountingRequirementListResponse:
-        supplier_inns = await self._visible_supplier_inns(actor)
+        supplier_inns = await self._visible_supplier_inns(actor, active_only=False)
         filters = {
             "supplier_inns": supplier_inns,
             "supplier_inn": supplier_inn,
@@ -435,7 +448,7 @@ class AccountingService:
         )
 
     async def get_requirement_pdf(self, actor: User, requirement_id: int) -> tuple[bytes, str, str]:
-        supplier_inns = await self._visible_supplier_inns(actor)
+        supplier_inns = await self._visible_supplier_inns(actor, active_only=False)
         row = await self._repo.get_requirement(requirement_id)
         if row is None:
             raise NotFound(message="Требование не найдено")
@@ -446,6 +459,24 @@ class AccountingService:
         files = FilesService(self._session)
         data, content_type, filename = await files.get_bytes(row.pdf_file_id)
         return data, content_type, filename
+
+    async def update_requirement_status(
+        self,
+        actor: User,
+        requirement_id: int,
+        status: str,
+    ) -> AccountingRequirementResponse:
+        supplier_inns = await self._visible_supplier_inns(actor, active_only=False)
+        row = await self._repo.get_requirement(requirement_id)
+        if row is None:
+            raise NotFound(message="Требование не найдено")
+        if supplier_inns is not None and row.supplier_inn not in supplier_inns:
+            raise NotFound(message="Требование не найдено")
+        row.status = status
+        await self._session.flush()
+        await self._session.commit()
+        await self._session.refresh(row)
+        return self._requirement_to_response(row)
 
     async def ingest_requirement(
         self,
@@ -462,7 +493,7 @@ class AccountingService:
                 created=False,
             )
 
-        unit = await self._repo.get_unit_by_inn(body.supplier_inn.strip())
+        unit = await self._repo.get_unit_by_inn_any(body.supplier_inn.strip())
         supplier_kpp = body.supplier_kpp or (unit.kpp if unit else None)
         supplier_name = body.supplier_name or (unit.name if unit else None)
 
@@ -561,6 +592,7 @@ class AccountingService:
                 name=unit.name,
                 category_code=unit.category_code,
                 commission_rate_percent=unit.commission_rate_percent,
+                is_active=bool(unit.is_active),
                 period_codes=periods_by_inn.get(unit.inn, []),
                 accountant_user_id=accountant_id,
                 accountant_full_name=accountant_name,
@@ -568,6 +600,7 @@ class AccountingService:
         items = sorted(
             deduped.values(),
             key=lambda row: (
+                0 if row.is_active else 1,
                 0 if row.accountant_user_id is None else 1,
                 (row.name or row.inn).casefold(),
             ),
@@ -588,7 +621,7 @@ class AccountingService:
     ) -> AccountingUnitOwnerRow:
         if not self._is_chief(actor):
             raise PermissionDenied()
-        units = await self._repo.get_units_by_ids([unit_id])
+        units = await self._repo.get_units_by_ids([unit_id], active_only=False)
         unit = units.get(unit_id)
         if unit is None:
             raise NotFound(message="Лавка не найдена")
@@ -608,6 +641,7 @@ class AccountingService:
             name=unit.name,
             category_code=unit.category_code,
             commission_rate_percent=unit.commission_rate_percent,
+            is_active=bool(unit.is_active),
             period_codes=periods_by_inn.get(unit.inn, []),
             accountant_user_id=accountant_user_id,
             accountant_full_name=accountant_name,
@@ -626,7 +660,7 @@ class AccountingService:
         if target is None:
             raise NotFound(message="Бухгалтер не найден")
         unique_ids = sorted({int(uid) for uid in unit_ids if uid > 0})
-        units = await self._repo.get_units_by_ids(unique_ids)
+        units = await self._repo.get_units_by_ids(unique_ids, active_only=False)
         missing = [uid for uid in unique_ids if uid not in units]
         if missing:
             raise ValidationError(

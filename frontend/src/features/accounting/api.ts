@@ -39,6 +39,7 @@ export interface PatchAccountingUnitPayload {
   name?: string
   category_code?: string
   period_codes?: string[]
+  is_active?: boolean
 }
 
 export async function createAccountingUnit(
@@ -80,7 +81,7 @@ export async function downloadAccountingRegistry(orderId: number): Promise<Blob>
 
 export async function listAccountingRequirements(params: {
   supplier_inn?: string
-  status?: string
+  status?: 'new' | 'answered' | string
   q?: string
   limit?: number
   offset?: number
@@ -107,6 +108,8 @@ export async function syncAccountingRequirements(): Promise<{
   existing: number
   failed: number
   marked_synced: number
+  skipped_non_pdf?: number
+  queued?: boolean
   errors: string[]
 }> {
   const { data } = await http.post<{
@@ -115,8 +118,21 @@ export async function syncAccountingRequirements(): Promise<{
     existing: number
     failed: number
     marked_synced: number
+    skipped_non_pdf?: number
+    queued?: boolean
     errors: string[]
   }>('/accounting/requirements/sync')
+  return data
+}
+
+export async function patchAccountingRequirementStatus(
+  requirementId: number,
+  status: 'new' | 'answered',
+): Promise<AccountingRequirement> {
+  const { data } = await http.patch<AccountingRequirement>(
+    `/accounting/requirements/${requirementId}`,
+    { status },
+  )
   return data
 }
 

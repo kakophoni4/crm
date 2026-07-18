@@ -64,10 +64,10 @@ x-api-env: &api-env
   ACCOUNTING_INGEST_TOKEN: ${ACCOUNTING_INGEST_TOKEN:-}
   SBIS_NORM_API_BASE_URL: ${SBIS_NORM_API_BASE_URL:-http://sbis-norm.example:8000}
   SBIS_NORM_API_TOKEN: ${SBIS_NORM_API_TOKEN:-}
-  SBIS_NORM_API_TIMEOUT_SECONDS: ${SBIS_NORM_API_TIMEOUT_SECONDS:-60}
+  SBIS_NORM_API_TIMEOUT_SECONDS: ${SBIS_NORM_API_TIMEOUT_SECONDS:-120}
   SBIS_NORM_SYNC_ENABLED: ${SBIS_NORM_SYNC_ENABLED:-true}
-  SBIS_NORM_SYNC_INTERVAL_SECONDS: ${SBIS_NORM_SYNC_INTERVAL_SECONDS:-3600}
-  SBIS_NORM_SYNC_BATCH_LIMIT: ${SBIS_NORM_SYNC_BATCH_LIMIT:-50}
+  SBIS_NORM_SYNC_INTERVAL_SECONDS: ${SBIS_NORM_SYNC_INTERVAL_SECONDS:-43200}
+  SBIS_NORM_SYNC_BATCH_LIMIT: ${SBIS_NORM_SYNC_BATCH_LIMIT:-20}
   SBIS_NORM_WEBHOOK_TOKEN: ${SBIS_NORM_WEBHOOK_TOKEN:-}
 
 services:
@@ -178,6 +178,8 @@ services:
       dockerfile: docker/Dockerfile.backend
     container_name: crm-staging-api
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *api-env
     command:
@@ -238,6 +240,9 @@ services:
       dockerfile: docker/Dockerfile.worker
     container_name: crm-staging-worker
     restart: unless-stopped
+    # Reach host proxy for sbis-norm (Docker→same-/24 peer often stalls response body).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *api-env
     depends_on:

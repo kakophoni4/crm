@@ -2,9 +2,10 @@
 
 Flow:
   1. GET /api/sbis/requirements/?unsynced=1
-  2. GET /api/sbis/requirements/{id}/  → file_b64
-  3. AccountingService.ingest_requirement (idempotent by external_id)
-  4. POST /api/sbis/requirements/mark-synced/ for successfully handled ids
+  2. Keep only storage_file_name ending with .pdf (.p7m ignored, mark-synced)
+  3. GET /api/sbis/requirements/{id}/  → file_b64
+  4. AccountingService.ingest_requirement (idempotent by external_id)
+  5. POST /api/sbis/requirements/mark-synced/ after successful save
 """
 
 from __future__ import annotations
@@ -35,11 +36,16 @@ class SbisNormSyncResult:
     existing: int = 0
     failed: int = 0
     marked_synced: int = 0
+    skipped_non_pdf: int = 0
     errors: list[str] = field(default_factory=list)
 
 
 def external_id_for_sbis(sbis_id: int) -> str:
     return f"{EXTERNAL_ID_PREFIX}{sbis_id}"
+
+
+def _is_pdf_filename(name: object) -> bool:
+    return str(name or "").strip().lower().endswith(".pdf")
 
 
 def _parse_received_at(raw: object, document_date: object) -> datetime | None:
@@ -119,9 +125,18 @@ async def sync_requirement_by_id(
     service = AccountingService(session)
     try:
         detail = await sbis_norm_client.get_requirement(sbis_id)
+        filename = detail.get("storage_file_name")
+        if not _is_pdf_filename(filename):
+            result.skipped_non_pdf = 1
+            if mark:
+                await sbis_norm_client.mark_synced([sbis_id])
+                result.marked_synced = 1
+            return result
         body, raw = map_detail_to_ingest(detail)
         if not body.supplier_inn:
             raise ValueError("empty inn")
+        if not raw:
+            raise ValueError("empty file_b64 for PDF")
         ingested = await service.ingest_requirement(
             body,
             pdf_bytes=raw,
@@ -164,6 +179,7 @@ async def sync_unsynced_requirements(
             break
 
         ok_ids: list[int] = []
+        skip_ids: list[int] = []
         for item in rows:
             if not isinstance(item, dict) or item.get("id") is None:
                 aggregate.failed += 1
@@ -171,11 +187,23 @@ async def sync_unsynced_requirements(
                 continue
             sbis_id = int(item["id"])
             aggregate.fetched += 1
+
+            if not _is_pdf_filename(item.get("storage_file_name")):
+                aggregate.skipped_non_pdf += 1
+                skip_ids.append(sbis_id)
+                continue
+
             try:
                 detail = await sbis_norm_client.get_requirement(sbis_id)
+                if not _is_pdf_filename(detail.get("storage_file_name")):
+                    aggregate.skipped_non_pdf += 1
+                    skip_ids.append(sbis_id)
+                    continue
                 body, raw = map_detail_to_ingest(detail)
                 if not body.supplier_inn:
                     raise ValueError("empty inn")
+                if not raw:
+                    raise ValueError("empty file_b64 for PDF")
                 ingested = await service.ingest_requirement(
                     body,
                     pdf_bytes=raw,
@@ -191,13 +219,14 @@ async def sync_unsynced_requirements(
                 aggregate.errors.append(f"id={sbis_id}: {exc}")
                 logger.exception("sbis_norm_sync_item_failed", sbis_id=sbis_id)
 
-        if ok_ids:
+        mark_ids = ok_ids + skip_ids
+        if mark_ids:
             try:
-                marked = await sbis_norm_client.mark_synced(ok_ids)
-                aggregate.marked_synced += int(marked.get("updated") or len(ok_ids))
+                marked = await sbis_norm_client.mark_synced(mark_ids)
+                aggregate.marked_synced += int(marked.get("updated") or len(mark_ids))
             except Exception as exc:
                 aggregate.errors.append(f"mark-synced failed: {exc}")
-                logger.exception("sbis_norm_mark_synced_failed", ids=ok_ids)
+                logger.exception("sbis_norm_mark_synced_failed", ids=mark_ids)
 
         if len(rows) < batch_limit:
             break
@@ -208,6 +237,7 @@ async def sync_unsynced_requirements(
         created=aggregate.created,
         existing=aggregate.existing,
         failed=aggregate.failed,
+        skipped_non_pdf=aggregate.skipped_non_pdf,
         marked_synced=aggregate.marked_synced,
     )
     return aggregate

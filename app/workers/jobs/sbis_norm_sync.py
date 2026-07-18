@@ -11,7 +11,7 @@ logger = structlog.get_logger(__name__)
 
 SBIS_NORM_SYNC_JOB_TYPE = "sbis_norm_sync"
 _LOCK_KEY = "crm:sbis_norm:sync:lock"
-_LOCK_TTL_SECONDS = 600
+_LOCK_TTL_SECONDS = 1800
 _SCHEDULE_KEY = "crm:sbis_norm:sync:scheduled"
 
 
@@ -40,6 +40,7 @@ async def process_sbis_norm_sync(_job_type: str, _payload: dict[str, object]) ->
             created=result.created,
             existing=result.existing,
             failed=result.failed,
+            skipped_non_pdf=result.skipped_non_pdf,
             marked_synced=result.marked_synced,
         )
     except Exception:
@@ -49,7 +50,7 @@ async def process_sbis_norm_sync(_job_type: str, _payload: dict[str, object]) ->
 
 
 async def schedule_sbis_norm_sync_if_due(*, force: bool = False) -> None:
-    """Enqueue hourly pull when due. Manual UI sync bypasses this scheduler."""
+    """Enqueue pull when due (default twice/day). Manual UI sync uses force=True."""
     settings = get_settings()
     if not settings.sbis_norm_sync_enabled:
         return
@@ -71,5 +72,5 @@ async def schedule_sbis_norm_sync_if_due(*, force: bool = False) -> None:
 
 
 async def bootstrap_sbis_norm_sync() -> None:
-    """Run first pull soon after worker start, then hourly via periodic scheduler."""
+    """Run first pull soon after worker start, then on the configured interval."""
     await schedule_sbis_norm_sync_if_due(force=True)

@@ -13,6 +13,8 @@ from app.modules.accounting.schemas import (
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
+    AccountingRequirementResponse,
+    AccountingRequirementStatusUpdateRequest,
     AccountingRequirementSyncResponse,
     AccountingRequirementWebhookPayload,
     AccountingUnitCategoriesResponse,
@@ -197,21 +199,35 @@ async def download_requirement_pdf(
 )
 async def sync_accounting_requirements(
     actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
-    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AccountingRequirementSyncResponse:
+    """Enqueue background pull — avoids browser/API request timeouts on large batches."""
     del actor
-    from app.modules.accounting.sbis_norm_sync import sync_unsynced_requirements
+    from app.workers.jobs.sbis_norm_sync import schedule_sbis_norm_sync_if_due
 
-    result = await sync_unsynced_requirements(db)
-    await db.commit()
+    await schedule_sbis_norm_sync_if_due(force=True)
     return AccountingRequirementSyncResponse(
-        fetched=result.fetched,
-        created=result.created,
-        existing=result.existing,
-        failed=result.failed,
-        marked_synced=result.marked_synced,
-        errors=result.errors[:20],
+        fetched=0,
+        created=0,
+        existing=0,
+        failed=0,
+        marked_synced=0,
+        skipped_non_pdf=0,
+        queued=True,
+        errors=[],
     )
+
+
+@router.patch(
+    "/requirements/{requirement_id}",
+    response_model=AccountingRequirementResponse,
+)
+async def patch_accounting_requirement(
+    requirement_id: int,
+    body: AccountingRequirementStatusUpdateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingRequirementResponse:
+    return await service.update_requirement_status(actor, requirement_id, body.status)
 
 
 @router.post(
@@ -234,6 +250,7 @@ async def sbis_norm_requirements_webhook(
         existing=result.existing,
         failed=result.failed,
         marked_synced=result.marked_synced,
+        skipped_non_pdf=result.skipped_non_pdf,
         errors=result.errors[:20],
     )
 

@@ -159,17 +159,23 @@ class AccountingRepository:
         result = await self._session.execute(self._order_lines_query(**filters))
         return list(result.all())
 
-    async def list_unit_owner_rows(self) -> list[tuple[OptUnit, int | None, str | None]]:
-        result = await self._session.execute(
+    async def list_unit_owner_rows(
+        self,
+        *,
+        active_only: bool = False,
+    ) -> list[tuple[OptUnit, int | None, str | None]]:
+        stmt = (
             select(OptUnit, User.id, User.full_name)
             .outerjoin(
                 OptAccountantUnitAssignment,
                 OptAccountantUnitAssignment.unit_id == OptUnit.id,
             )
             .outerjoin(User, User.id == OptAccountantUnitAssignment.user_id)
-            .where(OptUnit.is_active.is_(True))
-            .order_by(OptUnit.name, OptUnit.inn),
         )
+        if active_only:
+            stmt = stmt.where(OptUnit.is_active.is_(True))
+        stmt = stmt.order_by(OptUnit.is_active.desc(), OptUnit.name, OptUnit.inn)
+        result = await self._session.execute(stmt)
         return list(result.all())
 
     async def set_unit_owner(
@@ -287,12 +293,18 @@ class AccountingRepository:
         await self._session.refresh(row)
         return row
 
-    async def get_units_by_ids(self, unit_ids: list[int]) -> dict[int, OptUnit]:
+    async def get_units_by_ids(
+        self,
+        unit_ids: list[int],
+        *,
+        active_only: bool = True,
+    ) -> dict[int, OptUnit]:
         if not unit_ids:
             return {}
-        result = await self._session.execute(
-            select(OptUnit).where(OptUnit.id.in_(unit_ids), OptUnit.is_active.is_(True)),
-        )
+        stmt = select(OptUnit).where(OptUnit.id.in_(unit_ids))
+        if active_only:
+            stmt = stmt.where(OptUnit.is_active.is_(True))
+        result = await self._session.execute(stmt)
         return {unit.id: unit for unit in result.scalars().all()}
 
     async def get_unit_by_inn(self, inn: str) -> OptUnit | None:
