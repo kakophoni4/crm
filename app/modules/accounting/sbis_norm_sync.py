@@ -210,9 +210,11 @@ async def sync_unsynced_requirements(
                     aggregate.existing += 1
                 ok_ids.append(sbis_id)
             except Exception as exc:
+                await session.rollback()
                 aggregate.failed += 1
                 aggregate.errors.append(f"id={sbis_id}: {exc}")
                 logger.exception("sbis_norm_sync_item_failed", sbis_id=sbis_id)
+                service = AccountingService(session)
 
         mark_ids = ok_ids + skip_ids
         if mark_ids:
