@@ -86,3 +86,22 @@ REQUIREMENTS_WEBHOOK_TOKEN=<тот же, что SBIS_NORM_WEBHOOK_TOKEN>
 
 - UI: Бухгалтерия → Требования → «Забрать из СБИС»
 - API: `POST /api/v1/accounting/requirements/sync` (нужен `accounting.manage`)
+
+## Docker и большие PDF
+
+Из контейнера CRM list/`mark-synced` для `.p7m` работают, а `GET …/requirements/{id}/` с `file_b64` часто зависает (body timeout).  
+PDF забирайте **с хоста** скриптом:
+
+```bash
+# прокси sbis (если ещё не поднят)
+docker ps | grep sbis-norm-proxy
+
+export SBIS_NORM_API_BASE_URL=http://127.0.0.1:18000
+export CRM_INGEST_BASE_URL=http://127.0.0.1:19001
+export ACCOUNTING_INGEST_TOKEN='...'   # из deploy/.env.staging
+
+cd /root/crm
+python3 scripts/sbis_norm_host_pull.py
+```
+
+Worker в Docker только чистит `.p7m` и откладывает PDF на этот host-pull.

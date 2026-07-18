@@ -193,31 +193,20 @@ async def sync_unsynced_requirements(
                 skip_ids.append(sbis_id)
                 continue
 
-            try:
-                detail = await sbis_norm_client.get_requirement(sbis_id)
-                if not _is_pdf_filename(detail.get("storage_file_name")):
-                    aggregate.skipped_non_pdf += 1
-                    skip_ids.append(sbis_id)
-                    continue
-                body, raw = map_detail_to_ingest(detail)
-                if not body.supplier_inn:
-                    raise ValueError("empty inn")
-                if not raw:
-                    raise ValueError("empty file_b64 for PDF")
-                ingested = await service.ingest_requirement(
-                    body,
-                    pdf_bytes=raw,
-                    pdf_filename=body.pdf_filename,
-                )
-                if ingested.created:
-                    aggregate.created += 1
-                else:
-                    aggregate.existing += 1
-                ok_ids.append(sbis_id)
-            except Exception as exc:
-                aggregate.failed += 1
-                aggregate.errors.append(f"id={sbis_id}: {exc}")
-                logger.exception("sbis_norm_sync_item_failed", sbis_id=sbis_id)
+            # Large file_b64 often cannot be read from inside Docker (body stalls).
+            # Leave PDF unsynced for host puller: scripts/sbis_norm_host_pull.py
+            aggregate.failed += 1
+            aggregate.errors.append(
+                f"id={sbis_id}: pdf deferred to host pull "
+                f"({item.get('storage_file_name')})",
+            )
+            logger.warning(
+                "sbis_norm_pdf_deferred_to_host",
+                sbis_id=sbis_id,
+                filename=item.get("storage_file_name"),
+            )
+            # Stop this run — host script should ingest this PDF next.
+            break
 
         mark_ids = ok_ids + skip_ids
         if mark_ids:

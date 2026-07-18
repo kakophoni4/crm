@@ -128,8 +128,8 @@ class Settings(BaseSettings):
     sbis_norm_sync_enabled: bool = True
     # Default: twice per day (12h). Override via SBIS_NORM_SYNC_INTERVAL_SECONDS.
     sbis_norm_sync_interval_seconds: int = 43_200
-    # Smaller batches = shorter list responses (helps flaky links).
-    sbis_norm_sync_batch_limit: int = 20
+    # Keep small: Docker→host-proxy often stalls larger response bodies.
+    sbis_norm_sync_batch_limit: int = 1
     # Token expected from sbis-norm webhook (REQUIREMENTS_WEBHOOK_TOKEN on their side)
     sbis_norm_webhook_token: str = ""
 
