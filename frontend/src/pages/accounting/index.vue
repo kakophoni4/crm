@@ -1036,7 +1036,6 @@ onUnmounted(() => {
             />
             <NButton type="primary" @click="loadRequirements">Найти</NButton>
             <NButton
-              v-if="isChief"
               :loading="syncingRequirements"
               title="Автосинхронизация — 2 раза в день; кнопка запускает фоновый забор"
               @click="onSyncRequirements"

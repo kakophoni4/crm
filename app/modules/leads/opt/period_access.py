@@ -31,6 +31,7 @@ def can_set_missing_order_period(actor: User) -> bool:
         UserRole.SENIOR,
         UserRole.GROUP_SENIOR,
         UserRole.ACCOUNTANT,
+        UserRole.CHIEF_ACCOUNTANT,
     }
 
 

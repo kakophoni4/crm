@@ -11,6 +11,7 @@ class UserRole(StrEnum):
     GROUP_SENIOR = "group_senior"
     ADMIN = "admin"
     ACCOUNTANT = "accountant"
+    CHIEF_ACCOUNTANT = "chief_accountant"
 
 
 class UserStatus(StrEnum):

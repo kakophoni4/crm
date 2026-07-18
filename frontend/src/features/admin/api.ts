@@ -21,7 +21,7 @@ export interface AdminUser {
   email: string
   username: string
   full_name: string
-  role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant'
+  role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant' | 'chief_accountant'
   department_id: number | null
   group_id: number | null
   group_ids: number[]
@@ -154,7 +154,7 @@ export async function createUser(body: {
   username: string
   full_name: string
   password: string
-  role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant'
+  role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant' | 'chief_accountant'
   group_id?: number | null
   group_ids?: number[]
   department_id?: number | null

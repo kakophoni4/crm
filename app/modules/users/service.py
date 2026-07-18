@@ -242,7 +242,7 @@ class UserService:
                         details={"group_ids": senior_groups, "department_id": department_id},
                     )
             return senior_groups, department_id
-        if role == UserRole.ACCOUNTANT:
+        if role in (UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT):
             if normalized or body.department_id is not None:
                 raise ValidationError(
                     message="Accountant must not be assigned to a group or department",
@@ -361,7 +361,11 @@ class UserService:
                 if actor_role == UserRole.ADMIN:
                     self._ensure_can_create_role(actor, body.role)
                 target.role = body.role
-                if body.role in (UserRole.ADMIN, UserRole.ACCOUNTANT):
+                if body.role in (
+                    UserRole.ADMIN,
+                    UserRole.ACCOUNTANT,
+                    UserRole.CHIEF_ACCOUNTANT,
+                ):
                     target.group_id = None
                     target.department_id = None
                     await set_user_group_memberships(self._session, target.id, [])

@@ -223,7 +223,7 @@ async def download_requirement_pdf(
     response_model=AccountingRequirementSyncResponse,
 )
 async def sync_accounting_requirements(
-    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
 ) -> AccountingRequirementSyncResponse:
     """Request pull. In agent mode kali pull-agent claims and pushes ingest."""
     del actor

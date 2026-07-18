@@ -88,7 +88,10 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isSenior = computed(() => user.value?.role === 'senior')
   const isGroupSenior = computed(() => user.value?.role === 'group_senior')
-  const isAccountant = computed(() => user.value?.role === 'accountant')
+  const isAccountant = computed(
+    () => user.value?.role === 'accountant' || user.value?.role === 'chief_accountant',
+  )
+  const isChiefAccountant = computed(() => user.value?.role === 'chief_accountant')
   const canForceCardOwner = computed(
     () => isAdmin.value || isSenior.value || isGroupSenior.value,
   )
@@ -224,6 +227,7 @@ export const useAuthStore = defineStore('auth', () => {
     isSenior,
     isGroupSenior,
     isAccountant,
+    isChiefAccountant,
     canForceCardOwner,
     canAccounting,
     canViewHistoryActor,

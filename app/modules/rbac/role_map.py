@@ -106,6 +106,11 @@ _ACCOUNTANT_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.PROFILE_AVAILABILITY_UPDATE,
         Permission.FILES_DOWNLOAD,
         Permission.ACCOUNTING_READ,
+    }
+)
+
+_CHIEF_ACCOUNTANT_PERMISSIONS: frozenset[Permission] = _ACCOUNTANT_PERMISSIONS | frozenset(
+    {
         Permission.ACCOUNTING_MANAGE,
     }
 )
@@ -116,6 +121,7 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.GROUP_SENIOR: _GROUP_SENIOR_PERMISSIONS,
     UserRole.ADMIN: _ADMIN_PERMISSIONS,
     UserRole.ACCOUNTANT: _ACCOUNTANT_PERMISSIONS,
+    UserRole.CHIEF_ACCOUNTANT: _CHIEF_ACCOUNTANT_PERMISSIONS,
 }
 
 

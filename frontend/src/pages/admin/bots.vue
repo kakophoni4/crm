@@ -118,7 +118,10 @@ const editGroupOptions = computed(() => groupOptionsForDepartment(editForm.value
 
 const userOptions = computed<SelectOption[]>(() =>
   users.value
-    .filter((u) => u.status === 'active' && u.role !== 'accountant')
+    .filter(
+      (u) =>
+        u.status === 'active' && u.role !== 'accountant' && u.role !== 'chief_accountant',
+    )
     .map((u) => ({
       label: `${u.full_name} (@${u.username})`,
       value: u.id,

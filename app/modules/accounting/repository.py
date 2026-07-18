@@ -49,7 +49,10 @@ class AccountingRepository:
     async def list_accountant_users(self) -> list[User]:
         result = await self._session.execute(
             select(User)
-            .where(User.role == UserRole.ACCOUNTANT, User.status == UserStatus.ACTIVE)
+            .where(
+                User.role.in_((UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT)),
+                User.status == UserStatus.ACTIVE,
+            )
             .order_by(User.full_name),
         )
         return list(result.scalars().all())
