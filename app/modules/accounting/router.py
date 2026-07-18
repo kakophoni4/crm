@@ -13,6 +13,7 @@ from app.modules.accounting.schemas import (
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
+    AccountingRequirementPullClaimResponse,
     AccountingRequirementResponse,
     AccountingRequirementStatusUpdateRequest,
     AccountingRequirementSyncResponse,
@@ -200,11 +201,13 @@ async def download_requirement_pdf(
 async def sync_accounting_requirements(
     actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
 ) -> AccountingRequirementSyncResponse:
-    """Enqueue background pull — avoids browser/API request timeouts on large batches."""
+    """Request pull. In agent mode kali pull-agent claims and pushes ingest."""
     del actor
     from app.workers.jobs.sbis_norm_sync import schedule_sbis_norm_sync_if_due
+    from app.shared.settings import get_settings
 
     await schedule_sbis_norm_sync_if_due(force=True)
+    mode = (get_settings().sbis_norm_sync_mode or "agent").strip().lower()
     return AccountingRequirementSyncResponse(
         fetched=0,
         created=0,
@@ -213,8 +216,22 @@ async def sync_accounting_requirements(
         marked_synced=0,
         skipped_non_pdf=0,
         queued=True,
+        mode=mode,
         errors=[],
     )
+
+
+@router.post(
+    "/requirements/pull-claim",
+    response_model=AccountingRequirementPullClaimResponse,
+    dependencies=[Depends(_require_ingest_token)],
+)
+async def claim_accounting_requirements_pull() -> AccountingRequirementPullClaimResponse:
+    """Kali pull-agent: claim a UI/schedule pull request (no CRM→sbis download)."""
+    from app.workers.jobs.sbis_norm_sync import claim_sbis_norm_pull
+
+    claimed = await claim_sbis_norm_pull()
+    return AccountingRequirementPullClaimResponse(claimed=claimed)
 
 
 @router.patch(

@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     sbis_norm_sync_batch_limit: int = 20
     # Token expected from sbis-norm webhook (REQUIREMENTS_WEBHOOK_TOKEN on their side)
     sbis_norm_webhook_token: str = ""
+    # agent = CRM only sets pull flag; kali agent claims + pushes ingest
+    # direct = CRM worker downloads from sbis-norm (needs working CRM→sbis body path)
+    sbis_norm_sync_mode: str = "agent"
 
     @field_validator("sentry_traces_sample_rate")
     @classmethod

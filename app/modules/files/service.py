@@ -16,12 +16,13 @@ class FilesService:
     async def create_upload(
         self,
         *,
-        uploaded_by: int,
+        uploaded_by: int | None,
         data: bytes,
         original_name: str,
         mime_type: str,
     ) -> UploadedFile:
-        key = f"operator/{uploaded_by}/{uuid4().hex}"
+        owner = str(uploaded_by) if uploaded_by is not None else "system"
+        key = f"operator/{owner}/{uuid4().hex}"
         storage = get_file_storage()
         await storage.upload_bytes(key, data, mime_type or "application/octet-stream")
         row = UploadedFile(

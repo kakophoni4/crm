@@ -13,13 +13,43 @@ SBIS_NORM_SYNC_JOB_TYPE = "sbis_norm_sync"
 _LOCK_KEY = "crm:sbis_norm:sync:lock"
 _LOCK_TTL_SECONDS = 1800
 _SCHEDULE_KEY = "crm:sbis_norm:sync:scheduled"
+PULL_REQUEST_KEY = "crm:sbis_norm:pull_requested"
+
+
+def _sync_mode() -> str:
+    mode = (get_settings().sbis_norm_sync_mode or "agent").strip().lower()
+    return mode if mode in {"agent", "direct"} else "agent"
+
+
+async def request_sbis_norm_pull(*, reason: str = "manual") -> None:
+    """Signal kali pull-agent that a sync was requested (UI button / schedule)."""
+    redis = get_redis()
+    await redis.set(PULL_REQUEST_KEY, reason)
+    logger.info("sbis_norm_pull_requested", reason=reason)
+
+
+async def claim_sbis_norm_pull() -> bool:
+    """Atomically claim a pending pull request for the external agent."""
+    redis = get_redis()
+    getdel = getattr(redis, "getdel", None)
+    if callable(getdel):
+        val = await getdel(PULL_REQUEST_KEY)
+    else:
+        val = await redis.get(PULL_REQUEST_KEY)
+        if val is not None:
+            await redis.delete(PULL_REQUEST_KEY)
+    return val is not None
 
 
 async def process_sbis_norm_sync(_job_type: str, _payload: dict[str, object]) -> None:
     del _job_type, _payload
     settings = get_settings()
-    if not settings.sbis_norm_sync_enabled:
+    mode = _sync_mode()
+    if mode == "agent":
+        await request_sbis_norm_pull(reason="worker")
+        logger.info("sbis_norm_sync_job_delegated_to_agent")
         return
+
     if not settings.sbis_norm_api_base_url.strip():
         return
 
@@ -50,10 +80,31 @@ async def process_sbis_norm_sync(_job_type: str, _payload: dict[str, object]) ->
 
 
 async def schedule_sbis_norm_sync_if_due(*, force: bool = False) -> None:
-    """Enqueue pull when due (default twice/day). Manual UI sync uses force=True."""
+    """Enqueue / request pull. Manual UI sync uses force=True (works even if auto off)."""
     settings = get_settings()
-    if not settings.sbis_norm_sync_enabled:
+    mode = _sync_mode()
+
+    if force:
+        if mode == "agent":
+            await request_sbis_norm_pull(reason="manual")
+            return
+        # direct + manual: fall through to enqueue even when auto-sync disabled
+    elif not settings.sbis_norm_sync_enabled:
         return
+
+    if mode == "agent":
+        # Periodic auto: set the same flag the kali agent polls.
+        if not settings.sbis_norm_sync_enabled:
+            return
+        redis = get_redis()
+        ttl = max(int(settings.sbis_norm_sync_interval_seconds), 60)
+        acquired = await redis.set(_SCHEDULE_KEY, "1", nx=True, ex=ttl)
+        if not acquired:
+            return
+        await request_sbis_norm_pull(reason="schedule")
+        logger.info("sbis_norm_sync_scheduled_agent", interval_seconds=ttl)
+        return
+
     if not settings.sbis_norm_api_base_url.strip():
         return
 

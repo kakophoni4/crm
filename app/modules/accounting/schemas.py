@@ -239,7 +239,12 @@ class AccountingRequirementSyncResponse(BaseModel):
     marked_synced: int
     skipped_non_pdf: int = 0
     queued: bool = False
+    mode: str | None = None
     errors: list[str] = Field(default_factory=list)
+
+
+class AccountingRequirementPullClaimResponse(BaseModel):
+    claimed: bool
 
 
 class AccountingRequirementStatusUpdateRequest(BaseModel):
