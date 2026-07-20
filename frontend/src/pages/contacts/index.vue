@@ -30,8 +30,7 @@ const auth = useAuthStore()
 const loading = ref(false)
 const createDialogVisible = ref(false)
 const rows = ref<Contact[]>([])
-const nextCursor = ref<string | null>(null)
-const cursorStack = ref<(string | undefined)[]>([undefined])
+const total = ref(0)
 const pageIndex = ref(1)
 const pageSize = ref(20)
 
@@ -67,13 +66,13 @@ const columns = computed<DataTableColumns<Contact>>(() => {
     {
       title: 'Имя',
       key: 'full_name',
-      width: 180,
+      minWidth: 160,
       ellipsis: { tooltip: true },
     },
     {
       title: 'Пометка',
       key: 'note',
-      width: 200,
+      minWidth: 160,
       ellipsis: { tooltip: true },
       render: (row) => row.note?.trim() || '—',
     },
@@ -84,20 +83,20 @@ const columns = computed<DataTableColumns<Contact>>(() => {
       {
         title: 'Телефон',
         key: 'phone',
-        width: 140,
+        minWidth: 130,
         render: (row) => row.phone ?? '—',
       },
       {
         title: 'Email',
         key: 'email',
-        width: 180,
+        minWidth: 160,
         ellipsis: { tooltip: true },
         render: (row) => row.email ?? '—',
       },
       {
         title: 'Telegram',
         key: 'telegram_username',
-        width: 140,
+        minWidth: 130,
         render: (row) => row.telegram_username ?? '—',
       },
     )
@@ -134,31 +133,48 @@ function rowProps(row: Contact): Record<string, unknown> {
   }
 }
 
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
+
 const pagination = computed(() => ({
   page: pageIndex.value,
   pageSize: pageSize.value,
-  pageCount: pageIndex.value + (nextCursor.value ? 1 : 0),
-  pageSlot: 5,
+  itemCount: total.value,
+  pageCount: pageCount.value,
+  /** Sliding window around current page; first & last stay visible via Naive ellipsis. */
+  pageSlot: 7,
   showSizePicker: true,
   pageSizes: [10, 20, 50],
-  prefix: () => `Страница ${pageIndex.value}`,
+  showQuickJumper: pageCount.value > 7,
+  prefix: ({ itemCount }: { itemCount: number | undefined }) =>
+    `Всего ${itemCount ?? total.value}`,
 }))
-
-function currentCursor(): string | undefined {
-  return cursorStack.value[pageIndex.value - 1]
-}
 
 async function fetchPage(): Promise<void> {
   loading.value = true
   try {
+    let page = pageIndex.value
     const data = await listContacts({
       q: searchQ.value.trim() || undefined,
       status: statusFilter.value ?? undefined,
-      cursor: currentCursor(),
+      offset: (page - 1) * pageSize.value,
       limit: pageSize.value,
     })
-    rows.value = data.items
-    nextCursor.value = data.next_cursor
+    total.value = data.total ?? 0
+    const maxPage = Math.max(1, Math.ceil(total.value / pageSize.value) || 1)
+    if (page > maxPage) {
+      page = maxPage
+      pageIndex.value = maxPage
+      const again = await listContacts({
+        q: searchQ.value.trim() || undefined,
+        status: statusFilter.value ?? undefined,
+        offset: (page - 1) * pageSize.value,
+        limit: pageSize.value,
+      })
+      rows.value = again.items
+      total.value = again.total ?? 0
+    } else {
+      rows.value = data.items
+    }
   } catch (err) {
     const text = err instanceof AppError ? err.message : 'Не удалось загрузить контакты'
     message.error(text)
@@ -167,33 +183,21 @@ async function fetchPage(): Promise<void> {
   }
 }
 
-function resetPagination(): void {
-  pageIndex.value = 1
-  cursorStack.value = [undefined]
-  nextCursor.value = null
-}
-
 function applyFilters(): void {
-  resetPagination()
+  pageIndex.value = 1
   void fetchPage()
 }
 
 function onPageChange(page: number): void {
-  if (page > pageIndex.value) {
-    if (!nextCursor.value) return
-    if (cursorStack.value.length < page) {
-      cursorStack.value.push(nextCursor.value)
-    }
-  } else if (page < pageIndex.value) {
-    cursorStack.value = cursorStack.value.slice(0, page)
-  }
+  if (page < 1 || page > pageCount.value || page === pageIndex.value) return
   pageIndex.value = page
   void fetchPage()
 }
 
 function onPageSizeChange(size: number): void {
   pageSize.value = size
-  applyFilters()
+  pageIndex.value = 1
+  void fetchPage()
 }
 
 let stopInvalidate: (() => void) | undefined
@@ -234,7 +238,7 @@ watch(
     </header>
 
     <AppCard class="contacts-page__panel">
-      <NSpace class="contacts-page__filters" wrap :size="12" align="center">
+      <NSpace class="contacts-page__filters" wrap :size="12" align="center" justify="center">
         <NInput
           v-model:value="searchQ"
           clearable
@@ -283,7 +287,8 @@ watch(
 
 <style scoped>
 .contacts-page {
-  width: 100%;
+  width: min(1120px, 100%);
+  margin: 0 auto;
   padding-bottom: 16px;
   box-sizing: border-box;
 }
@@ -314,6 +319,7 @@ watch(
 
 .contacts-page__filters {
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .contacts-page__field--search {
@@ -339,7 +345,6 @@ watch(
   overflow-x: auto;
 }
 
-/* Было width: fit-content — из‑за этого пустая таблица сжималась в «узкую полоску». */
 .contacts-page__table-wrap :deep(.n-data-table-wrapper) {
   width: 100%;
   min-width: 0;
@@ -356,7 +361,7 @@ watch(
 }
 
 .contacts-page__table-wrap :deep(.n-data-table-pagination) {
-  justify-content: space-between;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
 }

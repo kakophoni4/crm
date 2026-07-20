@@ -20,6 +20,7 @@ export async function listOptOrdersRegistry(params?: {
   chat_id?: number
   payment_status?: string
   period_code?: string
+  manager_user_id?: number
   open_only?: boolean
   offset?: number
   limit?: number
@@ -45,6 +46,8 @@ export async function listOptPaymentsLedger(params?: {
   contact_id?: number
   payment_type?: string
   payment_status?: string
+  period_code?: string
+  manager_user_id?: number
   offset?: number
   limit?: number
 }): Promise<OptPaymentLedgerListResponse> {

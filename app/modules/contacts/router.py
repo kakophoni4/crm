@@ -70,6 +70,7 @@ async def list_contacts(
     assigned_user_id: int | None = None,
     telegram_username: str | None = None,
     cursor: str | None = None,
+    offset: int | None = Query(default=None, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> ContactListResponse:
     return await service.list_contacts(
@@ -80,6 +81,7 @@ async def list_contacts(
         telegram_username=telegram_username,
         custom_field_filters=_parse_custom_field_filters(request),
         cursor=cursor,
+        offset=offset,
         limit=limit,
     )
 

@@ -133,6 +133,8 @@ class OptOrderRegistryItem(BaseModel):
     group_name: str | None = None
     department_id: int | None = None
     department_name: str | None = None
+    manager_user_id: int | None = None
+    manager_name: str | None = None
     status: str
     payment_status: str
     period_code: str | None = None
@@ -164,6 +166,9 @@ class OptPaymentLedgerItem(BaseModel):
     group_name: str | None = None
     department_id: int | None = None
     department_name: str | None = None
+    manager_user_id: int | None = None
+    manager_name: str | None = None
+    period_code: str | None = None
     amount: Decimal
     paid_at: datetime
     payment_type: str

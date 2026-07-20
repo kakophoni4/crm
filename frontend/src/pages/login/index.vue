@@ -71,7 +71,10 @@ async function onSubmit(): Promise<void> {
 
 <template>
   <main class="login-page">
-    <NCard title="Вход в ХУИтРИКС" class="login-page__card">
+    <NCard class="login-page__card">
+      <div class="login-page__brand">
+        <img src="/brand/logo.png" alt="" class="login-page__logo" draggable="false" />
+      </div>
       <NForm ref="formRef" :model="model" :rules="rules" @submit.prevent="onSubmit">
         <NFormItem label="Логин" path="username">
           <NInput
@@ -103,7 +106,9 @@ async function onSubmit(): Promise<void> {
 
 <style scoped>
 .login-page {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
+  overflow: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,5 +119,20 @@ async function onSubmit(): Promise<void> {
 .login-page__card {
   width: 100%;
   max-width: 400px;
+}
+
+.login-page__brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.login-page__logo {
+  display: block;
+  height: 64px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  user-select: none;
 }
 </style>

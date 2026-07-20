@@ -207,17 +207,53 @@ def fmt_money(value: Decimal) -> str:
     return f"{value:,.2f}".replace(",", " ").replace(".", ",")
 
 
+def _norm_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def row_dedupe_key(row: DataRow) -> tuple:
+    """Fingerprint of a deal line across duplicate file uploads."""
+    return (
+        re.sub(r"\D", "", row.buyer_inn or ""),
+        re.sub(r"\D", "", row.org_inn or ""),
+        _norm_text(row.date),
+        _norm_text(row.doc_no),
+        row.amount_with_vat,
+        row.vat_amount,
+        # fallback when doc_no/date empty: buyer+org names
+        _norm_text(row.buyer_name),
+        _norm_text(row.org_name),
+    )
+
+
+def dedupe_rows(rows: list[DataRow]) -> tuple[list[DataRow], int]:
+    seen: set[tuple] = set()
+    unique: list[DataRow] = []
+    for row in rows:
+        key = row_dedupe_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique, len(rows) - len(unique)
+
+
 def print_report(
     results: list[FileResult],
     *,
     by_org: bool,
     by_file: bool,
     csv_path: Path | None,
+    dedupe: bool = False,
 ) -> None:
     partner = [r for r in results if r.kind == "partner"]
     skipped = [r for r in results if r.kind in {"crm_registry", "unknown"}]
     errors = [r for r in results if r.kind == "error"]
     rows = [row for fr in partner for row in fr.rows]
+    raw_count = len(rows)
+    dropped = 0
+    if dedupe:
+        rows, dropped = dedupe_rows(rows)
 
     total_vat = sum((r.vat_amount for r in rows), Decimal("0"))
     total_amount = sum((r.amount_with_vat for r in rows), Decimal("0"))
@@ -227,7 +263,10 @@ def print_report(
     print(f"  партнёрских:      {len(partner)}")
     print(f"  пропущено (CRM/другое): {len(skipped)}")
     print(f"  ошибок чтения:    {len(errors)}")
-    print(f"Строк данных:       {len(rows)}")
+    if dedupe:
+        print(f"Строк данных:       {len(rows)} (было {raw_count}, дублей снято {dropped})")
+    else:
+        print(f"Строк данных:       {len(rows)}")
     print(f"Сумма (в т.ч. НДС): {fmt_money(total_amount)}")
     print(f"Сумма НДС:          {fmt_money(total_vat)}")
     print()
@@ -321,6 +360,11 @@ def main() -> None:
     )
     parser.add_argument("--by-org", action="store_true", help="Группировка по организации")
     parser.add_argument("--by-file", action="store_true", help="Итог по каждому файлу")
+    parser.add_argument(
+        "--dedupe",
+        action="store_true",
+        help="Убрать дубли строк (ИНН/дата/№/суммы) между копиями файлов",
+    )
     parser.add_argument("--csv", type=str, default="", help="Путь для CSV общего списка")
     args = parser.parse_args()
 
@@ -334,7 +378,13 @@ def main() -> None:
 
     results = [analyze_file(p) for p in files]
     csv_path = Path(args.csv) if args.csv else None
-    print_report(results, by_org=args.by_org, by_file=args.by_file, csv_path=csv_path)
+    print_report(
+        results,
+        by_org=args.by_org,
+        by_file=args.by_file,
+        csv_path=csv_path,
+        dedupe=args.dedupe,
+    )
 
 
 if __name__ == "__main__":

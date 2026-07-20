@@ -112,27 +112,18 @@ export interface ContactCrmSummary {
 
 
 export interface ContactListResponse {
-
   items: Contact[]
-
   next_cursor: string | null
-
+  total: number
 }
 
-
-
 export interface ContactListParams {
-
   q?: string
-
   status?: ContactStatus
-
   cursor?: string
-
+  offset?: number
   limit?: number
-
   custom_field_filters?: Record<string, string>
-
 }
 
 

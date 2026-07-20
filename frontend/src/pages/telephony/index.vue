@@ -82,7 +82,6 @@ const statusLabel = computed(() => {
   return labels[status.value]
 })
 const fullNumber = computed(() => `+7${dialDigits.value}`)
-const displayNumber = computed(() => formatRussianNumber(dialDigits.value))
 const canCall = computed(
   () => status.value === 'registered' && dialDigits.value.length === 10 && !calling.value,
 )
@@ -99,6 +98,7 @@ const callPanelVisible = computed(
 const canCreateContactFromDial = computed(() => dialDigits.value.length === 10)
 
 const dialKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
+const dialInputRef = ref<HTMLInputElement | null>(null)
 
 function appendDigit(value: string): void {
   if (!/^\d$/.test(value) || dialDigits.value.length >= 10) return
@@ -109,26 +109,59 @@ function backspace(): void {
   dialDigits.value = dialDigits.value.slice(0, -1)
 }
 
-function redial(number: string): void {
-  const digits = number.replace(/\D/g, '')
-  if (digits.length === 11 && digits.startsWith('7')) {
-    dialDigits.value = digits.slice(1, 11)
+/** Normalize pasted/typed phone into 10 national digits (after +7). */
+function setDialFromRaw(raw: string): void {
+  const digits = raw.replace(/\D/g, '')
+  if (!digits) {
+    dialDigits.value = ''
     return
   }
-  if (digits.length === 10) {
-    dialDigits.value = digits
+  let national = digits
+  if (digits.startsWith('7') || digits.startsWith('8')) {
+    if (digits.length >= 11) {
+      national = digits.slice(1, 11)
+    } else if (digits.length === 10) {
+      // 10 digits starting with 7/8 — keep as national (rare), else drop country prefix
+      national = digits.startsWith('9') ? digits : digits.slice(1)
+    } else {
+      national = digits.slice(1).slice(0, 10)
+    }
+  } else {
+    national = digits.slice(0, 10)
   }
+  dialDigits.value = national.slice(0, 10)
 }
 
-function formatRussianNumber(digits: string): string {
-  const padded = digits.padEnd(10, '0')
-  const chunks = [
-    padded.slice(0, 3),
-    padded.slice(3, 6),
-    padded.slice(6, 8),
-    padded.slice(8, 10),
-  ]
-  return `+7 ${chunks[0]} ${chunks[1]}-${chunks[2]}-${chunks[3]}`
+function redial(number: string): void {
+  setDialFromRaw(number)
+}
+
+function onDialInput(event: Event): void {
+  const el = event.target as HTMLInputElement
+  const value = el.value
+  const digits = value.replace(/\D/g, '')
+  // Full international / formatted value → normalize; otherwise keep national digits.
+  if (value.includes('+') || digits.length > 10) {
+    setDialFromRaw(value)
+  } else {
+    dialDigits.value = digits.slice(0, 10)
+  }
+  el.value = dialDigits.value
+}
+
+function onDialPaste(event: ClipboardEvent): void {
+  const text = event.clipboardData?.getData('text') ?? ''
+  if (!text.trim()) return
+  event.preventDefault()
+  setDialFromRaw(text)
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  if (el === dialInputRef.value || el.closest?.('.telephony-dialer__input')) return false
+  const tag = el.tagName?.toLowerCase()
+  return tag === 'input' || tag === 'textarea' || el.isContentEditable === true
 }
 
 function openContactModal(phone: string, departmentId?: number | null): void {
@@ -469,15 +502,18 @@ function enableRemoteAudio(options: { silent?: boolean } = {}): void {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  const target = event.target as HTMLElement | null
-  const tag = target?.tagName.toLowerCase()
-  if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return
+  if (isEditableTarget(event.target)) return
+  const inDialInput = event.target === dialInputRef.value
   if (/^\d$/.test(event.key)) {
-    appendDigit(event.key)
-    event.preventDefault()
+    if (!inDialInput) {
+      appendDigit(event.key)
+      event.preventDefault()
+    }
   } else if (event.key === 'Backspace') {
-    backspace()
-    event.preventDefault()
+    if (!inDialInput) {
+      backspace()
+      event.preventDefault()
+    }
   } else if (event.key === 'Enter') {
     primeRemoteAudio()
     void startCall()
@@ -488,13 +524,23 @@ function handleKeydown(event: KeyboardEvent): void {
   }
 }
 
+function handlePaste(event: ClipboardEvent): void {
+  if (isEditableTarget(event.target)) return
+  const text = event.clipboardData?.getData('text') ?? ''
+  if (!text.trim() || !/\d/.test(text)) return
+  event.preventDefault()
+  setDialFromRaw(text)
+}
+
 onMounted(() => {
   void load()
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('paste', handlePaste)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('paste', handlePaste)
   stopCallTimer()
   stopRingback()
   void softphone.disconnect()
@@ -538,11 +584,22 @@ watch(status, (value) => {
             :disabled="status === 'registered' || status === 'in-call'"
           />
 
-          <div class="telephony-dialer__display">
-            <span :class="{ 'telephony-dialer__placeholder': dialDigits.length === 0 }">
-              {{ displayNumber }}
-            </span>
-            <NButton circle quaternary aria-label="Стереть" @click="backspace">
+          <div class="telephony-dialer__display" @click="dialInputRef?.focus()">
+            <span class="telephony-dialer__prefix">+7</span>
+            <input
+              ref="dialInputRef"
+              class="telephony-dialer__input"
+              type="tel"
+              inputmode="numeric"
+              autocomplete="tel"
+              maxlength="16"
+              placeholder="900 123-45-67"
+              :value="dialDigits"
+              aria-label="Номер телефона"
+              @input="onDialInput"
+              @paste="onDialPaste"
+            />
+            <NButton circle quaternary aria-label="Стереть" @click.stop="backspace">
               <template #icon>
                 <NIcon><Delete /></NIcon>
               </template>
@@ -788,18 +845,37 @@ watch(status, (value) => {
   min-height: 48px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   padding: 0 8px 0 14px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   font-size: 1.125rem;
   font-weight: 700;
+  cursor: text;
 }
 
-.telephony-dialer__placeholder {
+.telephony-dialer__prefix {
+  flex-shrink: 0;
+  color: var(--app-text-muted);
+  font-weight: 600;
+}
+
+.telephony-dialer__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.telephony-dialer__input::placeholder {
   color: var(--app-text-muted);
   font-weight: 500;
+  letter-spacing: normal;
 }
 
 .telephony-dialer__keys {

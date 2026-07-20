@@ -111,6 +111,8 @@ export interface OptOrderRegistryItem {
   group_name?: string | null
   department_id?: number | null
   department_name?: string | null
+  manager_user_id?: number | null
+  manager_name?: string | null
   status: string
   payment_status: string
   period_code?: string | null
@@ -142,6 +144,9 @@ export interface OptPaymentLedgerItem {
   group_name?: string | null
   department_id?: number | null
   department_name?: string | null
+  manager_user_id?: number | null
+  manager_name?: string | null
+  period_code?: string | null
   amount: number
   paid_at: string
   payment_type: string

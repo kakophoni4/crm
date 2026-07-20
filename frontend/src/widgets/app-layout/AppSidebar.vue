@@ -17,13 +17,12 @@ import {
   Moon,
   Bell,
 } from 'lucide-vue-next'
-import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu, NSelect } from 'naive-ui'
+import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu } from 'naive-ui'
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listTelephonyAccounts } from '@/features/telephony/api'
 import { useAuthStore } from '@/shared/store/auth'
-import { useThemeStore, type ThemePreference } from '@/shared/store/theme'
 import BrandMark from './BrandMark.vue'
 
 defineProps<{
@@ -40,29 +39,25 @@ const emit = defineEmits<{
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const themeStore = useThemeStore()
-const telephonyVisible = ref(false)
-
-const themeOptions = [
-  { label: 'Светлая', value: 'light' as ThemePreference },
-  { label: 'Тёмная', value: 'dark' as ThemePreference },
-  { label: 'Системная', value: 'system' as ThemePreference },
-]
 
 const canRequestTelephony = computed(
   () => auth.user?.permissions.includes('telephony.call') === true,
 )
+
+/** Show immediately by permission; refine after accounts load (avoids late menu pop-in). */
+const telephonyVisible = ref(canRequestTelephony.value)
 
 async function refreshTelephonyVisibility(): Promise<void> {
   if (!canRequestTelephony.value) {
     telephonyVisible.value = false
     return
   }
+  telephonyVisible.value = true
   try {
     const accounts = await listTelephonyAccounts()
     telephonyVisible.value = accounts.some((account) => account.is_active)
   } catch {
-    telephonyVisible.value = false
+    // Keep visible on transient errors — route guard still checks accounts.
   }
 }
 
@@ -234,7 +229,7 @@ function onMenuUpdate(key: string): void {
     return
   }
   if (key === 'notifications') {
-    void router.push({ name: 'notifications' })
+    void router.push({ name: 'notifications', query: { tab: 'history' } })
     emit('closeDrawer')
     return
   }
@@ -331,19 +326,11 @@ watch(
         <div class="app-sidebar__brand">
           <BrandMark />
         </div>
-        <NMenu
-          :value="activeKey"
-          :options="menuOptions"
-          @update:value="onMenuUpdate"
-        />
-        <div class="app-sidebar__theme">
-          <span class="app-sidebar__theme-label">Тема</span>
-          <NSelect
-            :value="themeStore.preference"
-            :options="themeOptions"
-            size="small"
-            aria-label="Тема оформления"
-            @update:value="(v: ThemePreference) => themeStore.setPreference(v)"
+        <div class="app-sidebar__menu">
+          <NMenu
+            :value="activeKey"
+            :options="menuOptions"
+            @update:value="onMenuUpdate"
           />
         </div>
       </div>
@@ -362,19 +349,13 @@ watch(
     @collapse="emit('toggle')"
     @expand="emit('toggle')"
   >
-    <div class="app-sidebar__brand" :class="{ 'app-sidebar__brand--collapsed': collapsed }">
-      <BrandMark :collapsed="collapsed" />
-    </div>
-    <NMenu :value="activeKey" :options="menuOptions" @update:value="onMenuUpdate" />
-    <div class="app-sidebar__theme">
-      <span class="app-sidebar__theme-label">Тема</span>
-      <NSelect
-        :value="themeStore.preference"
-        :options="themeOptions"
-        size="small"
-        aria-label="Тема оформления"
-        @update:value="(v: ThemePreference) => themeStore.setPreference(v)"
-      />
+    <div class="app-sidebar__inner">
+      <div class="app-sidebar__brand" :class="{ 'app-sidebar__brand--collapsed': collapsed }">
+        <BrandMark :collapsed="collapsed" />
+      </div>
+      <div class="app-sidebar__menu">
+        <NMenu :value="activeKey" :options="menuOptions" @update:value="onMenuUpdate" />
+      </div>
     </div>
   </NLayoutSider>
 </template>
@@ -382,13 +363,32 @@ watch(
 <style scoped>
 .app-sidebar {
   background: var(--app-surface);
+  height: 100vh !important;
+  max-height: 100vh;
+  position: sticky !important;
+  top: 0;
+  align-self: flex-start;
+}
+
+.app-sidebar :deep(.n-layout-sider-scroll-container) {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+}
+
+.app-sidebar__inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .app-sidebar__brand {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   height: var(--app-topbar-height);
-  padding: 0 16px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--app-border);
   overflow: hidden;
 }
@@ -398,23 +398,17 @@ watch(
   justify-content: center;
 }
 
-.app-sidebar__theme {
-  margin-top: auto;
-  padding: 12px 16px 16px;
-  border-top: 1px solid var(--app-border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.app-sidebar__theme-label {
-  font-size: 0.75rem;
-  color: var(--app-text-muted);
+.app-sidebar__menu {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .app-sidebar--drawer {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 100%;
 }
 </style>

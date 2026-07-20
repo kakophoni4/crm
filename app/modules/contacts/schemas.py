@@ -79,7 +79,8 @@ class ContactAdminResponse(ContactResponse):
 
 class ContactListResponse(BaseModel):
     items: list[dict[str, Any]]
-    next_cursor: str | None
+    next_cursor: str | None = None
+    total: int = 0
 
 
 class FieldChangeResponse(BaseModel):

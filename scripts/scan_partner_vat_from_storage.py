@@ -162,7 +162,13 @@ async def _amain() -> int:
         print("Analyzing...", flush=True)
         results: list[FileResult] = [analyze_file(p) for p in paths]
         csv_path = Path("/tmp/partner_vat_from_storage.csv")
-        print_report(results, by_org=True, by_file=True, csv_path=csv_path)
+        print_report(
+            results,
+            by_org=True,
+            by_file=True,
+            csv_path=csv_path,
+            dedupe=True,
+        )
 
         partner_n = sum(1 for r in results if r.kind == "partner")
         print()

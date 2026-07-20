@@ -31,9 +31,11 @@ import {
   downloadOptPaymentDocument,
   downloadOptRegistry,
   listOptOrders,
+  patchOptOrderPeriod,
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
+import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { peekOptOrders, prefetchOptOrders } from '@/features/chats/payments-cache'
 import { useChatsStore } from '@/features/chats/store'
 import { uploadFile } from '@/features/chats/api'
@@ -70,6 +72,8 @@ const uploading = ref(false)
 const deletingId = ref<number | null>(null)
 const downloadingId = ref<number | null>(null)
 const sendingId = ref<number | null>(null)
+const savingPeriodId = ref<number | null>(null)
+const periodOptions = OPT_PERIOD_OPTIONS
 const orders = ref<OptOrder[]>([])
 const selectedOrderId = ref<number | null>(null)
 const previewOpen = ref(false)
@@ -497,6 +501,23 @@ function openCommissionModal(): void {
   commissionOpen.value = true
 }
 
+async function onPeriodChange(value: string | null): Promise<void> {
+  const order = selectedOrder.value
+  if (!order || !value || value === order.period_code || props.disabled) return
+  savingPeriodId.value = order.id
+  try {
+    const updated = await patchOptOrderPeriod(order.id, value)
+    orders.value = orders.value.map((row) =>
+      row.id === order.id ? { ...row, period_code: updated.period_code } : row,
+    )
+    message.success('Период сохранён')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить период')
+  } finally {
+    savingPeriodId.value = null
+  }
+}
+
 async function onSaveCommission(): Promise<void> {
   if (!selectedOrder.value || props.leadId == null) return
   if (commissionForm.value.amount == null || commissionForm.value.amount <= 0) {
@@ -702,9 +723,21 @@ onUnmounted(() => {
               <dt>НДС</dt>
               <dd>{{ selectedOrder.vat_rate_percent ?? 22 }}%</dd>
             </div>
-            <div v-if="selectedOrder.period_code">
+            <div>
               <dt>Период</dt>
-              <dd>{{ selectedOrder.period_code }}</dd>
+              <dd>
+                <NSelect
+                  :value="selectedOrder.period_code || null"
+                  :options="periodOptions"
+                  size="small"
+                  filterable
+                  placeholder="Указать период"
+                  :disabled="disabled"
+                  :loading="savingPeriodId === selectedOrder.id"
+                  style="min-width: 180px"
+                  @update:value="(value) => onPeriodChange(value as string | null)"
+                />
+              </dd>
             </div>
             <div>
               <dt>К оплате</dt>

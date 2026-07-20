@@ -31,7 +31,14 @@ import {
   type StaffNotificationEvent,
   unlinkTelegram,
 } from '@/features/notifications/api'
+import {
+  peekNotificationHistoryCache,
+  peekNotificationSettingsCache,
+  setNotificationHistoryCache,
+  setNotificationSettingsCache,
+} from '@/features/notifications/cache'
 import { AppError } from '@/shared/api/http'
+import { useAuthStore } from '@/shared/store/auth'
 
 const KIND_LABEL: Record<string, string> = {
   inbound_message: 'Сообщение',
@@ -56,9 +63,14 @@ const STATUS_LABEL: Record<string, string> = {
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const chatNotifications = useChatNotificationsStore()
 
-const loading = ref(true)
+function tabFromRoute(): 'history' | 'settings' {
+  return String(route.query.tab || '') === 'settings' ? 'settings' : 'history'
+}
+
+const loading = ref(false)
 const savingEscalation = ref(false)
 const savingMute = ref(false)
 const savingToken = ref(false)
@@ -71,11 +83,35 @@ const mutePhrases = ref<string[]>([])
 const tokenInput = ref('')
 const hasToken = ref(true)
 
-const activeTab = ref<'history' | 'settings'>('settings')
+/** Default history — avoid settings flash while settings API loads. */
+const activeTab = ref<'history' | 'settings'>(tabFromRoute())
 
 const historyLoading = ref(false)
 const historyItems = ref<StaffNotificationEvent[]>([])
 const statusFilter = ref('')
+
+const userId = computed(() => auth.user?.id ?? null)
+
+function hydrateFromCache(): void {
+  const cachedSettings = peekNotificationSettingsCache(userId.value)
+  if (cachedSettings) {
+    settings.value = cachedSettings.settings
+    mutePhrases.value = [...(cachedSettings.settings.mute_phrases || [])]
+    chatNotifications.setMutePhrases(mutePhrases.value)
+    escalationPolicy.value = cachedSettings.escalation
+    timeoutMinutes.value = cachedSettings.escalation?.timeout_minutes ?? 15
+    hasToken.value = cachedSettings.hasToken
+    if (!cachedSettings.settings.can_view_history) {
+      activeTab.value = 'settings'
+    } else if (!route.query.tab) {
+      activeTab.value = 'history'
+    }
+  }
+  const cachedHistory = peekNotificationHistoryCache(userId.value, statusFilter.value)
+  if (cachedHistory) {
+    historyItems.value = cachedHistory.items
+  }
+}
 
 const statusOptions = [
   { label: 'Все', value: '' },
@@ -106,52 +142,77 @@ function fmt(iso: string | null): string {
 }
 
 async function loadSettings(): Promise<void> {
-  loading.value = true
+  const hadCache = settings.value != null
+  if (!hadCache) loading.value = true
   try {
-    settings.value = await getNotificationSettings()
-    mutePhrases.value = [...(settings.value.mute_phrases || [])]
+    const next = await getNotificationSettings()
+    settings.value = next
+    mutePhrases.value = [...(next.mute_phrases || [])]
     chatNotifications.setMutePhrases(mutePhrases.value)
-    if (settings.value.can_manage_escalation) {
-      escalationPolicy.value = await getEscalationPolicy()
-      timeoutMinutes.value = escalationPolicy.value.timeout_minutes
+
+    const [escalation, bot] = await Promise.all([
+      next.can_manage_escalation ? getEscalationPolicy() : Promise.resolve(null),
+      next.can_manage_bot ? getNotificationBot() : Promise.resolve(null),
+    ])
+
+    if (escalation) {
+      escalationPolicy.value = escalation
+      timeoutMinutes.value = escalation.timeout_minutes
     } else {
       escalationPolicy.value = null
       timeoutMinutes.value = 15
     }
-    if (settings.value.can_manage_bot) {
-      const bot = await getNotificationBot()
+
+    if (bot) {
       hasToken.value = bot.has_token
-      if (bot.bot_username) {
+      if (bot.bot_username && settings.value) {
         settings.value.bot_username = bot.bot_username
         settings.value.bot_enabled = bot.is_enabled
       }
     } else {
       hasToken.value = true
     }
-    if (settings.value.can_view_history) {
-      const tab = String(route.query.tab || '')
-      activeTab.value = tab === 'settings' ? 'settings' : 'history'
-    } else {
+
+    if (!next.can_view_history) {
       activeTab.value = 'settings'
+    } else {
+      // Keep route tab — do not bounce settings → history after load.
+      activeTab.value = tabFromRoute()
+    }
+
+    if (userId.value != null) {
+      setNotificationSettingsCache(userId.value, {
+        settings: settings.value,
+        escalation,
+        hasToken: hasToken.value,
+      })
     }
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить')
+    if (!hadCache) {
+      message.error(err instanceof AppError ? err.message : 'Не удалось загрузить')
+    }
   } finally {
     loading.value = false
   }
 }
 
 async function loadHistory(): Promise<void> {
-  if (!canViewHistory.value) return
-  historyLoading.value = true
+  if (settings.value && !canViewHistory.value) return
+  const hadCache = historyItems.value.length > 0
+  if (!hadCache) historyLoading.value = true
   try {
     const data = await getNotificationHistory({
       limit: 10,
       status: statusFilter.value || undefined,
     })
     historyItems.value = data.items
+    if (userId.value != null) {
+      setNotificationHistoryCache(userId.value, statusFilter.value, data.items)
+    }
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить историю')
+    if (!hadCache) {
+      message.error(err instanceof AppError ? err.message : 'Не удалось загрузить историю')
+    }
   } finally {
     historyLoading.value = false
   }
@@ -243,22 +304,31 @@ function onTabChange(name: string | number): void {
   const tab = name === 'history' ? 'history' : 'settings'
   activeTab.value = tab
   void router.replace({ query: { ...route.query, tab } })
-  if (tab === 'history' && !historyItems.value.length) {
+  if (tab === 'history') {
     void loadHistory()
   }
 }
 
-watch(canViewHistory, (ok) => {
-  if (ok && activeTab.value === 'history') {
-    void loadHistory()
-  }
-})
+watch(
+  () => route.query.tab,
+  () => {
+    if (canViewHistory.value || settings.value == null) {
+      activeTab.value = tabFromRoute()
+    }
+  },
+)
 
-onMounted(async () => {
-  await loadSettings()
-  if (canViewHistory.value && activeTab.value === 'history') {
-    await loadHistory()
-  }
+onMounted(() => {
+  hydrateFromCache()
+  const preferHistory = tabFromRoute() === 'history'
+  void Promise.all([
+    loadSettings(),
+    preferHistory ? loadHistory() : Promise.resolve(),
+  ]).then(() => {
+    if (canViewHistory.value && activeTab.value === 'history' && !historyItems.value.length) {
+      void loadHistory()
+    }
+  })
 })
 </script>
 
@@ -268,9 +338,9 @@ onMounted(async () => {
       <h1>Уведомления</h1>
     </header>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading && !settings">
       <NTabs
-        v-if="canViewHistory"
+        v-if="canViewHistory || (!settings && activeTab === 'history')"
         :value="activeTab"
         type="line"
         @update:value="onTabChange"

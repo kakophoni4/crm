@@ -7,7 +7,6 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/shared/store/auth'
 import { useThemeStore } from '@/shared/store/theme'
 import { disconnectContactsRealtime } from '@/shared/realtime/contacts-ws'
-import BrandMark from './BrandMark.vue'
 
 defineEmits<{
   toggleSidebar: []
@@ -42,9 +41,7 @@ async function onUserMenuSelect(key: string): Promise<void> {
           <NIcon><Menu /></NIcon>
         </template>
       </NButton>
-      <slot name="left">
-        <BrandMark class="app-topbar__logo" />
-      </slot>
+      <slot name="left" />
     </div>
     <div class="app-topbar__right">
       <slot name="right">
@@ -69,12 +66,14 @@ async function onUserMenuSelect(key: string): Promise<void> {
 
 <style scoped>
 .app-topbar {
+  flex-shrink: 0;
   height: var(--app-topbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
   background: var(--app-surface);
+  z-index: 10;
 }
 
 .app-topbar__left,
@@ -84,7 +83,4 @@ async function onUserMenuSelect(key: string): Promise<void> {
   gap: 8px;
 }
 
-.app-topbar__logo {
-  margin-left: 4px;
-}
 </style>

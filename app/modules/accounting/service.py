@@ -433,7 +433,11 @@ class AccountingService:
         order_id: int,
         period_code: str,
     ) -> tuple[int, str]:
-        from app.modules.leads.opt.period_access import resolve_writable_period_code
+        from app.modules.leads.opt.period_access import (
+            assert_supplier_inns_allowed_for_period,
+            normalize_requested_period,
+        )
+        from app.modules.leads.opt.periods import normalize_period_code
 
         supplier_inns = await self._visible_supplier_inns(actor)
         if not await self._repo.order_visible_for_supplier_inns(order_id, supplier_inns):
@@ -441,10 +445,14 @@ class AccountingService:
         order = await self._repo.get_order_for_registry(order_id)
         if order is None or order.status != _ACCOUNTING_ORDER_STATUS:
             raise NotFound(message="Заявка не найдена")
-        new_code = resolve_writable_period_code(
-            actor,
-            current=getattr(order, "period_code", None),
-            requested=period_code,
+        new_code = normalize_requested_period(period_code)
+        current = normalize_period_code(getattr(order, "period_code", None) or "")
+        if current == new_code:
+            return order.id, new_code
+        await assert_supplier_inns_allowed_for_period(
+            self._session,
+            period_code=new_code,
+            supplier_inns=[line.supplier_inn for line in order.lines],
         )
         order.period_code = new_code
         await self._session.flush()

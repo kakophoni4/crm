@@ -22,6 +22,7 @@ function buildListParams(params: ContactListParams): Record<string, string | num
   if (params.q) query.q = params.q
   if (params.status) query.status = params.status
   if (params.cursor) query.cursor = params.cursor
+  if (params.offset != null) query.offset = params.offset
   if (params.limit) query.limit = params.limit
   if (params.custom_field_filters) {
     for (const [key, value] of Object.entries(params.custom_field_filters)) {

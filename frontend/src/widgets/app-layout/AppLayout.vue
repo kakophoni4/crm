@@ -56,15 +56,31 @@ function toggleSidebar(): void {
 
 <style scoped>
 .app-layout {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   background: var(--app-bg);
 }
 
 .app-layout__main {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-layout__main :deep(.n-layout-scroll-container) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
 .app-layout__content {
-  min-height: calc(100vh - var(--app-topbar-height));
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

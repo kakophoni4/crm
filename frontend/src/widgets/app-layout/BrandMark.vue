@@ -4,8 +4,12 @@ withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false })
 
 <template>
   <div class="brand-mark" :class="{ 'brand-mark--collapsed': collapsed }">
-    <span class="brand-mark__badge" aria-hidden="true">X</span>
-    <span v-if="!collapsed" class="brand-mark__text">ХУИтРИКС</span>
+    <img
+      class="brand-mark__logo"
+      src="/brand/logo.png"
+      alt=""
+      draggable="false"
+    />
   </div>
 </template>
 
@@ -13,36 +17,29 @@ withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false })
 .brand-mark {
   display: flex;
   align-items: center;
-  gap: 10px;
   min-width: 0;
+  height: 100%;
 }
 
 .brand-mark--collapsed {
-  gap: 0;
   justify-content: center;
+  width: 100%;
 }
 
-.brand-mark__badge {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
+.brand-mark__logo {
+  display: block;
+  height: 36px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.brand-mark--collapsed .brand-mark__logo {
   height: 28px;
-  border-radius: 50%;
-  background: var(--app-accent);
-  color: #ffffff;
-  font-weight: 700;
-  font-size: 0.875rem;
-  line-height: 1;
-}
-
-.brand-mark__text {
-  font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: 28px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 6px;
 }
 </style>

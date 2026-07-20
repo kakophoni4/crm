@@ -40,7 +40,7 @@ from app.modules.leads.opt.schemas import (
     OptVolumeCategoryBreakdown,
 )
 from app.modules.leads.opt.pricing import commission_base_from_breakdown
-from app.modules.leads.opt.periods import read_lead_opt_period
+from app.modules.leads.opt.periods import normalize_period_code, read_lead_opt_period
 from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
 from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
@@ -412,6 +412,7 @@ class OptOrderService:
         chat_id: int | None = None,
         payment_status: str | None = None,
         period_code: str | None = None,
+        manager_user_id: int | None = None,
         open_only: bool = False,
         offset: int = 0,
         limit: int = 50,
@@ -419,6 +420,7 @@ class OptOrderService:
         from sqlalchemy import func, select
 
         from app.modules.db.models.contact import Contact
+        from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
         from app.modules.db.models.department import Department
         from app.modules.db.models.group import Group
         from app.modules.db.models.lead import Lead
@@ -448,14 +450,23 @@ class OptOrderService:
                 filters.append(LeadOptOrder.payment_status.in_(statuses))
         if period_code:
             filters.append(LeadOptOrder.period_code == period_code.strip())
+        if manager_user_id is not None:
+            filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
         if open_only:
             filters.append(Lead.closed_at.is_(None))
+
+        manager_join = (
+            ContactGroupAssignment,
+            (ContactGroupAssignment.contact_id == Lead.contact_id)
+            & (ContactGroupAssignment.group_id == Lead.group_id),
+        )
 
         count_stmt = (
             select(func.count())
             .select_from(LeadOptOrder)
             .join(Lead, Lead.id == LeadOptOrder.lead_id)
             .join(Group, Group.id == Lead.group_id)
+            .outerjoin(*manager_join)
         )
         if filters:
             count_stmt = count_stmt.where(*filters)
@@ -471,11 +482,15 @@ class OptOrderService:
                 Group.name,
                 Group.department_id,
                 Department.name,
+                User.id,
+                User.full_name,
             )
             .join(Lead, Lead.id == LeadOptOrder.lead_id)
             .join(Group, Group.id == Lead.group_id)
             .outerjoin(Department, Department.id == Group.department_id)
             .outerjoin(Contact, Contact.id == Lead.contact_id)
+            .outerjoin(*manager_join)
+            .outerjoin(User, User.id == ContactGroupAssignment.owner_user_id)
             .options(
                 selectinload(LeadOptOrder.lines),
                 selectinload(LeadOptOrder.payments).selectinload(
@@ -501,6 +516,8 @@ class OptOrderService:
             group_name,
             dept_id,
             dept_name,
+            manager_id,
+            manager_name,
         ) in result.all():
             commission_due = Decimal(str(order.commission_due or 0))
             amount_paid = Decimal(str(order.amount_paid or 0))
@@ -517,6 +534,8 @@ class OptOrderService:
                     group_name=group_name,
                     department_id=dept_id,
                     department_name=dept_name,
+                    manager_user_id=manager_id,
+                    manager_name=manager_name,
                     status=order.status,
                     payment_status=order.payment_status or "unpaid",
                     period_code=getattr(order, "period_code", None),
@@ -546,12 +565,15 @@ class OptOrderService:
         contact_id: int | None = None,
         payment_type: str | None = None,
         payment_status: str | None = None,
+        period_code: str | None = None,
+        manager_user_id: int | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> OptPaymentLedgerListResponse:
         from sqlalchemy import func, select
 
         from app.modules.db.models.contact import Contact
+        from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
         from app.modules.db.models.department import Department
         from app.modules.db.models.group import Group
         from app.modules.db.models.lead import Lead
@@ -583,6 +605,16 @@ class OptOrderService:
                 filters.append(LeadOptOrder.payment_status == statuses[0])
             elif statuses:
                 filters.append(LeadOptOrder.payment_status.in_(statuses))
+        if period_code:
+            filters.append(LeadOptOrder.period_code == period_code.strip())
+        if manager_user_id is not None:
+            filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
+
+        manager_join = (
+            ContactGroupAssignment,
+            (ContactGroupAssignment.contact_id == Lead.contact_id)
+            & (ContactGroupAssignment.group_id == Lead.group_id),
+        )
 
         count_stmt = (
             select(func.count())
@@ -590,6 +622,7 @@ class OptOrderService:
             .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderPayment.order_id)
             .join(Lead, Lead.id == LeadOptOrder.lead_id)
             .join(Group, Group.id == Lead.group_id)
+            .outerjoin(*manager_join)
         )
         if filters:
             count_stmt = count_stmt.where(*filters)
@@ -606,12 +639,16 @@ class OptOrderService:
                 Group.name,
                 Group.department_id,
                 Department.name,
+                User.id,
+                User.full_name,
             )
             .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderPayment.order_id)
             .join(Lead, Lead.id == LeadOptOrder.lead_id)
             .join(Group, Group.id == Lead.group_id)
             .outerjoin(Department, Department.id == Group.department_id)
             .outerjoin(Contact, Contact.id == Lead.contact_id)
+            .outerjoin(*manager_join)
+            .outerjoin(User, User.id == ContactGroupAssignment.owner_user_id)
             .options(selectinload(LeadOptOrderPayment.creator))
         )
         if filters:
@@ -633,6 +670,8 @@ class OptOrderService:
             group_name,
             dept_id,
             dept_name,
+            manager_id,
+            manager_name,
         ) in result.all():
             doc_ids = self._payment_document_ids(payment)
             creator = payment.creator
@@ -649,6 +688,9 @@ class OptOrderService:
                     group_name=group_name,
                     department_id=dept_id,
                     department_name=dept_name,
+                    manager_user_id=manager_id,
+                    manager_name=manager_name,
+                    period_code=getattr(order, "period_code", None),
                     amount=Decimal(str(payment.amount)),
                     paid_at=payment.paid_at,
                     payment_type=payment.payment_type,
@@ -1129,17 +1171,28 @@ class OptOrderService:
         order_id: int,
         period_code: str,
     ) -> tuple[int, int, str]:
-        """Set/change period for an order visible in actor lead scope."""
-        from app.modules.leads.opt.period_access import resolve_writable_period_code
+        """Set/change period for an order visible in actor lead scope.
+
+        Any user with lead access may change period; lavkas must be allowed
+        for the target period (opt_unit_period_availability).
+        """
+        from app.modules.leads.opt.period_access import (
+            assert_supplier_inns_allowed_for_period,
+            normalize_requested_period,
+        )
 
         order = await self._repo.get_order(order_id)
         if order is None:
             raise NotFound(message="OPT order not found")
         await self._get_lead_for_actor(actor, order.lead_id)
-        new_code = resolve_writable_period_code(
-            actor,
-            current=getattr(order, "period_code", None),
-            requested=period_code,
+        new_code = normalize_requested_period(period_code)
+        current = normalize_period_code(getattr(order, "period_code", None) or "")
+        if current == new_code:
+            return order.id, order.lead_id, new_code
+        await assert_supplier_inns_allowed_for_period(
+            self._session,
+            period_code=new_code,
+            supplier_inns=[line.supplier_inn for line in order.lines],
         )
         order.period_code = new_code
         await self._session.flush()

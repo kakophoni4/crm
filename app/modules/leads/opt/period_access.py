@@ -1,62 +1,52 @@
-"""Who may set / change OPT order period_code."""
+"""OPT order period_code: normalize + lavka availability checks."""
 
 from __future__ import annotations
 
-from app.modules.db.models.enums import UserRole
-from app.modules.db.models.user import User
+from collections.abc import Iterable
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.db.models.opt_unit import OptUnit
+from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability
 from app.modules.leads.opt.periods import list_opt_period_codes, normalize_period_code
-from app.modules.rbac.permissions import Permission
-from app.modules.rbac.role_map import has_permission
-from app.shared.exceptions import PermissionDenied, ValidationError
+from app.shared.exceptions import ValidationError
 
 
-def _role(actor: User) -> UserRole:
-    return actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
-
-
-def can_change_order_period(actor: User) -> bool:
-    """Admin or chief accountant (accounting.manage)."""
-    role = _role(actor)
-    if role == UserRole.ADMIN:
-        return True
-    return has_permission(role, Permission.ACCOUNTING_MANAGE)
-
-
-def can_set_missing_order_period(actor: User) -> bool:
-    """Set period when empty: seniors + accountants + those who may change."""
-    if can_change_order_period(actor):
-        return True
-    role = _role(actor)
-    return role in {
-        UserRole.SENIOR,
-        UserRole.GROUP_SENIOR,
-        UserRole.ACCOUNTANT,
-        UserRole.CHIEF_ACCOUNTANT,
-    }
-
-
-def resolve_writable_period_code(
-    actor: User,
-    *,
-    current: str | None,
-    requested: str,
-) -> str:
-    """Validate period and enforce set-vs-change rules. Returns normalized code."""
+def normalize_requested_period(requested: str) -> str:
     new_code = normalize_period_code(requested)
     if new_code is None or new_code not in set(list_opt_period_codes()):
         raise ValidationError(message="Некорректный период")
-
-    current_code = normalize_period_code(current) if current else None
-    if current_code is None:
-        if not can_set_missing_order_period(actor):
-            raise PermissionDenied(message="Недостаточно прав для указания периода")
-        return new_code
-
-    if current_code == new_code:
-        return new_code
-
-    if not can_change_order_period(actor):
-        raise PermissionDenied(
-            message="Менять период может только главный бухгалтер или администратор",
-        )
     return new_code
+
+
+async def assert_supplier_inns_allowed_for_period(
+    session: AsyncSession,
+    *,
+    period_code: str,
+    supplier_inns: Iterable[str],
+) -> None:
+    """Reject period change if any order lavka is not allowed for that period."""
+    inns = sorted({str(inn).strip() for inn in supplier_inns if str(inn).strip()})
+    if not inns:
+        return
+
+    result = await session.execute(
+        select(OptUnitPeriodAvailability.inn)
+        .join(OptUnit, OptUnit.inn == OptUnitPeriodAvailability.inn)
+        .where(
+            OptUnitPeriodAvailability.period_code == period_code,
+            OptUnitPeriodAvailability.inn.in_(inns),
+            OptUnit.is_active.is_(True),
+        ),
+    )
+    allowed = {str(inn) for inn in result.scalars().all()}
+    blocked = [inn for inn in inns if inn not in allowed]
+    if blocked:
+        raise ValidationError(
+            message=(
+                f"Нельзя сменить период на {period_code}: лавки не доступны для этого периода: "
+                + ", ".join(blocked)
+            ),
+            details={"period_code": period_code, "blocked_inns": blocked},
+        )

@@ -50,7 +50,9 @@ html,
 body,
 #app {
   margin: 0;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
 }
 
 body {

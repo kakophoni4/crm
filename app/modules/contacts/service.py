@@ -75,11 +75,12 @@ class ContactService:
         telegram_username: str | None,
         custom_field_filters: dict[str, str],
         cursor: str | None,
+        offset: int | None,
         limit: int,
     ) -> ContactListResponse:
         ctx = await self._ctx(actor)
         self._ensure_filter_in_scope(ctx, assigned_user_id)
-        rows, next_cursor = await self._repo.list_contacts(
+        rows, next_cursor, total = await self._repo.list_contacts(
             ctx=ctx,
             q=q,
             status=status,
@@ -87,10 +88,11 @@ class ContactService:
             telegram_username=telegram_username,
             custom_field_filters=custom_field_filters,
             cursor=cursor,
+            offset=offset,
             limit=limit,
         )
         items = [to_contact_response(row, actor=actor) for row in rows]
-        return ContactListResponse(items=items, next_cursor=next_cursor)
+        return ContactListResponse(items=items, next_cursor=next_cursor, total=total)
 
     async def get_contact(
         self,

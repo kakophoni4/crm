@@ -22,9 +22,9 @@ import {
 import {
   Calculator,
   CalendarRange,
-  Check,
   Download,
   Eye,
+  MailOpen,
   Percent,
   Plus,
   RefreshCw,
@@ -61,15 +61,13 @@ import {
   formatAccountingMoney,
   formatAccountingPayment,
 } from '@/features/accounting/types'
-import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
-import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
-const auth = useAuthStore()
 
 const loading = ref(false)
 const syncingRequirements = ref(false)
@@ -88,39 +86,11 @@ const expandedLavki = ref<string[]>([])
 const periodFilterOptions = OPT_PERIOD_OPTIONS
 const savingPeriodOrderId = ref<number | null>(null)
 
-/** Change existing period: admin or accounting.manage (главный бухгалтер). */
-const canChangeOrderPeriod = computed(
-  () =>
-    auth.isAdmin ||
-    auth.user?.permissions.includes('accounting.manage') === true,
-)
-/** Set period when empty: seniors + accountants + those who may change. */
-const canSetOrderPeriod = computed(
-  () =>
-    canChangeOrderPeriod.value ||
-    auth.isSenior ||
-    auth.isGroupSenior ||
-    auth.isAccountant,
-)
-
-function canEditOrderPeriod(row: AccountingUnitOrder): boolean {
-  if (!row.period_code) return canSetOrderPeriod.value
-  return canChangeOrderPeriod.value
-}
-
 async function onOrderPeriodChange(
   row: AccountingUnitOrder,
   value: string | null,
 ): Promise<void> {
   if (!value || value === row.period_code) return
-  if (!canEditOrderPeriod(row)) {
-    message.error(
-      row.period_code
-        ? 'Менять период может только главный бухгалтер или администратор'
-        : 'Недостаточно прав для указания периода',
-    )
-    return
-  }
   savingPeriodOrderId.value = row.order_id
   try {
     const updated = await patchAccountingOrderPeriod(row.order_id, value)
@@ -532,7 +502,9 @@ async function onSetRequirementStatus(
   answeringReqId.value = row.id
   try {
     await patchAccountingRequirementStatus(row.id, status)
-    message.success(status === 'answered' ? 'Отмечено как отвеченное' : 'Вернуто в неотвеченные')
+    message.success(
+      status === 'answered' ? 'Отмечено как прочитанное' : 'Вернуто в непрочитанные',
+    )
     await loadRequirements()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось обновить статус')
@@ -689,11 +661,8 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
       title: 'Период',
       key: 'period_code',
       width: 180,
-      render: (row) => {
-        if (!canEditOrderPeriod(row)) {
-          return formatOptPeriodLabel(row.period_code)
-        }
-        return h(NSelect, {
+      render: (row) =>
+        h(NSelect, {
           value: row.period_code || null,
           options: periodFilterOptions,
           size: 'small',
@@ -703,8 +672,7 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
           loading: savingPeriodOrderId.value === row.order_id,
           style: 'min-width: 160px',
           onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
-        })
-      },
+        }),
     },
     {
       title: 'Заявка',
@@ -808,7 +776,7 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
   {
     title: 'Файл',
     key: 'pdf',
-    width: 340,
+    width: 420,
     render: (row) => {
       const actions = []
       if (row.has_pdf) {
@@ -851,12 +819,13 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
               size: 'small',
               type: 'primary',
               secondary: true,
+              title: 'Отметить требование как прочитанное',
               loading: answeringReqId.value === row.id,
               onClick: () => onSetRequirementStatus(row, 'answered'),
             },
             {
-              icon: () => h(Check, { size: 14 }),
-              default: () => 'Отвечено',
+              icon: () => h(MailOpen, { size: 14 }),
+              default: () => 'Отметить прочитанным',
             },
           ),
         )
@@ -867,12 +836,13 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
             {
               size: 'small',
               quaternary: true,
+              title: 'Вернуть в непрочитанные',
               loading: answeringReqId.value === row.id,
               onClick: () => onSetRequirementStatus(row, 'new'),
             },
             {
               icon: () => h(Undo2, { size: 14 }),
-              default: () => 'Вернуть',
+              default: () => 'В непрочитанные',
             },
           ),
         )
@@ -1022,53 +992,56 @@ onUnmounted(() => {
         </NTabPane>
 
         <NTabPane name="requirements" tab="Требования">
-          <NTabs v-model:value="requirementsStatusTab" type="segment" size="small" animated>
-            <NTabPane name="new" tab="Неотвеченные" />
-            <NTabPane name="answered" tab="Отвеченные" />
-          </NTabs>
-          <div class="accounting-page__filters">
-            <NInput
-              v-model:value="reqSearch"
-              clearable
-              placeholder="Поиск по названию или ID"
-              style="min-width: 240px"
-              @keyup.enter="loadRequirements"
-            />
-            <NButton type="primary" @click="loadRequirements">Найти</NButton>
-            <NButton
-              :loading="syncingRequirements"
-              title="Автосинхронизация — 2 раза в день; кнопка запускает фоновый забор"
-              @click="onSyncRequirements"
-            >
-              <template #icon><RefreshCw :size="16" /></template>
-              Забрать из СБИС сейчас
-            </NButton>
-          </div>
-          <NSpin :show="loading">
-            <NEmpty
-              v-if="!loading && requirements.length === 0"
-              :description="
-                requirementsStatusTab === 'answered'
-                  ? 'Нет отвеченных требований'
-                  : 'Нет неотвеченных требований'
-              "
-            />
-            <NDataTable
-              v-else
-              :columns="requirementColumns"
-              :data="requirements"
-              :bordered="false"
-              :scroll-x="900"
-              size="small"
-            />
-            <div class="accounting-page__pagination">
-              <NPagination
-                v-model:page="requirementsPage"
-                :page-size="requirementsPageSize"
-                :item-count="requirementsTotal"
+          <div class="accounting-page__requirements">
+            <NTabs v-model:value="requirementsStatusTab" type="segment" size="small" animated>
+              <NTabPane name="new" tab="Непрочитанные" />
+              <NTabPane name="answered" tab="Прочитанные" />
+            </NTabs>
+            <div class="accounting-page__filters">
+              <NInput
+                v-model:value="reqSearch"
+                clearable
+                placeholder="Поиск по названию или ID"
+                style="min-width: 240px"
+                @keyup.enter="loadRequirements"
               />
+              <NButton type="primary" @click="loadRequirements">Найти</NButton>
+              <NButton
+                :loading="syncingRequirements"
+                title="Автосинхронизация — 2 раза в день; кнопка запускает фоновый забор"
+                @click="onSyncRequirements"
+              >
+                <template #icon><RefreshCw :size="16" /></template>
+                Забрать из СБИС сейчас
+              </NButton>
             </div>
-          </NSpin>
+            <NSpin :show="loading">
+              <NEmpty
+                v-if="!loading && requirements.length === 0"
+                :description="
+                  requirementsStatusTab === 'answered'
+                    ? 'Нет прочитанных требований'
+                    : 'Нет непрочитанных требований'
+                "
+              />
+              <div v-else class="accounting-page__requirements-table">
+                <NDataTable
+                  :columns="requirementColumns"
+                  :data="requirements"
+                  :bordered="false"
+                  :scroll-x="980"
+                  size="small"
+                />
+              </div>
+              <div class="accounting-page__pagination">
+                <NPagination
+                  v-model:page="requirementsPage"
+                  :page-size="requirementsPageSize"
+                  :item-count="requirementsTotal"
+                />
+              </div>
+            </NSpin>
+          </div>
         </NTabPane>
 
         <NTabPane v-if="isChief" name="assignments" tab="Назначения лавок">
@@ -1374,6 +1347,27 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.accounting-page__requirements {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+}
+
+.accounting-page__requirements-table {
+  width: 100%;
+}
+
+.accounting-page__requirements-table :deep(.n-data-table) {
+  width: 100%;
+}
+
+.accounting-page__requirements .accounting-page__filters {
+  justify-content: center;
+}
+
+.accounting-page__requirements .accounting-page__pagination {
+  justify-content: center;
 }
 
 .accounting-page__pagination {
