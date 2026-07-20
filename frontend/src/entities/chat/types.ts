@@ -135,9 +135,3 @@ export const CHAT_STATUS_OPTIONS = [
   { label: 'Закрыт', value: 'closed' as const },
   { label: 'Архив', value: 'archived' as const },
 ]
-
-export const CHAT_SORT_OPTIONS = [
-  { label: 'По последнему сообщению', value: 'last_message_at_desc' as const },
-  { label: 'По дате создания', value: 'created_at_desc' as const },
-  { label: 'Сначала непрочитанные', value: 'unread_first' as const },
-]

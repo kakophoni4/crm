@@ -71,7 +71,6 @@ export const useChatsStore = defineStore('chats', () => {
 
   const filters = ref({
     q: '',
-    chatStatusId: null as number | null,
     botId: null as number | null,
     unreadOnly: false,
     leadStatusId: null as number | null,
@@ -130,7 +129,6 @@ export const useChatsStore = defineStore('chats', () => {
     const me = auth.user?.id
     const params: ChatListParams = {
       q: filters.value.q.trim() || undefined,
-      status_id: filters.value.chatStatusId ?? undefined,
       bot_id: filters.value.botId ?? undefined,
       unread_only: filters.value.unreadOnly || undefined,
       sort: filters.value.sort,
@@ -569,12 +567,10 @@ export const useChatsStore = defineStore('chats', () => {
     () =>
       [
         listTab.value,
-        filters.value.chatStatusId,
         filters.value.botId,
         filters.value.unreadOnly,
         filters.value.leadStatusId,
         filters.value.leadOpenOnly,
-        filters.value.sort,
       ] as const,
     () => {
       void fetchList()

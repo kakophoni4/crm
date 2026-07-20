@@ -387,6 +387,7 @@ watch(
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   height: var(--app-topbar-height);
   padding: 0 12px;
   border-bottom: 1px solid var(--app-border);
@@ -395,7 +396,6 @@ watch(
 
 .app-sidebar__brand--collapsed {
   padding: 0;
-  justify-content: center;
 }
 
 .app-sidebar__menu {

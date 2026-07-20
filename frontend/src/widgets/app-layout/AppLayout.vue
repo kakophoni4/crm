@@ -38,7 +38,7 @@ function toggleSidebar(): void {
       @close-drawer="drawerVisible = false"
     />
     <NLayout class="app-layout__main">
-      <AppTopbar @toggle-sidebar="toggleSidebar">
+      <AppTopbar :show-menu-button="isMobile" @toggle-sidebar="toggleSidebar">
         <template #left>
           <slot name="topbar-left" />
         </template>

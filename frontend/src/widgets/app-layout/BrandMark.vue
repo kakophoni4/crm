@@ -17,18 +17,15 @@ withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false })
 .brand-mark {
   display: flex;
   align-items: center;
+  justify-content: center;
+  width: 100%;
   min-width: 0;
   height: 100%;
 }
 
-.brand-mark--collapsed {
-  justify-content: center;
-  width: 100%;
-}
-
 .brand-mark__logo {
   display: block;
-  height: 36px;
+  height: 40px;
   width: auto;
   max-width: 100%;
   object-fit: contain;
@@ -36,10 +33,9 @@ withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false })
 }
 
 .brand-mark--collapsed .brand-mark__logo {
-  height: 28px;
-  width: 28px;
-  object-fit: cover;
-  object-position: center;
-  border-radius: 6px;
+  height: 32px;
+  width: auto;
+  max-width: 48px;
+  object-fit: contain;
 }
 </style>

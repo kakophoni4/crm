@@ -44,7 +44,6 @@ import { useRoute, useRouter } from 'vue-router'
 
 import type { BotListItem } from '@/entities/bot/types'
 import type { ChatListItem, ChatListTab, ChatMessage } from '@/entities/chat/types'
-import { CHAT_SORT_OPTIONS } from '@/entities/chat/types'
 import ContactOwnerBadge from '@/entities/contact/ContactOwnerBadge.vue'
 import { listBots } from '@/features/bots/api'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
@@ -57,7 +56,6 @@ import {
   chatListItemStatusLabel,
   chatOwnerBadgeEscalated,
   chatOwnerBadgePending,
-  filterChatWorkflowStatuses,
   filterLeadPipelineStatuses,
   filterOpenLeadPipelineStatuses,
   formatContactClientLabel,
@@ -115,7 +113,6 @@ const bots = ref<BotListItem[]>([])
 const botsLoading = ref(false)
 const pipelineStatuses = ref<StatusOption[]>([])
 const openPipelineStatuses = ref<StatusOption[]>([])
-const chatWorkflowStatuses = ref<StatusOption[]>([])
 
 const botOptions = computed(() =>
   bots.value.map((bot) => ({ label: bot.name, value: bot.id })),
@@ -135,10 +132,6 @@ const lostStatusId = computed(() =>
   resolveTerminalStatusId(pipelineStatuses.value, ['lost', 'lead_lost']),
 )
 
-const chatWorkflowStatusOptions = computed(() =>
-  chatWorkflowStatuses.value.map((row) => ({ label: row.label, value: row.id })),
-)
-
 const chatWorkflowLabel = computed(() => store.currentChat?.chat_label?.label?.trim() || null)
 
 const contactClientLabel = computed(() =>
@@ -148,21 +141,12 @@ const contactClientLabel = computed(() =>
 type RightPaneTab = 'deal' | 'payments' | 'notifications'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
-const listTabs: { name: ChatListTab; label: string }[] = [
-  { name: 'mine', label: 'Мои карточки' },
-  { name: 'group', label: 'Вся группа' },
-  { name: 'needs_response', label: 'Нужен ответ' },
+/** Short labels always — fits list pane with WhatsApp action in one row. */
+const listTabsForPane: { name: ChatListTab; label: string }[] = [
+  { name: 'mine', label: 'Мои' },
+  { name: 'group', label: 'Группа' },
+  { name: 'needs_response', label: 'Ответ' },
 ]
-
-const listTabsForPane = computed(() => {
-  const compact = Boolean(store.currentChat) && !isNarrow.value
-  if (!compact) return listTabs
-  return [
-    { name: 'mine' as const, label: 'Мои' },
-    { name: 'group' as const, label: 'Группа' },
-    { name: 'needs_response' as const, label: 'Ответ' },
-  ]
-})
 
 function goToContact(): void {
   const contactId = store.currentChat?.contact_id
@@ -330,15 +314,6 @@ async function loadLeadStatuses(): Promise<void> {
   }
 }
 
-async function loadChatWorkflowStatuses(): Promise<void> {
-  try {
-    const items = await statusesStore.fetchByKind('chat_label')
-    chatWorkflowStatuses.value = filterChatWorkflowStatuses(items)
-  } catch {
-    chatWorkflowStatuses.value = []
-  }
-}
-
 function openChatFromQuery(): void {
   const rawChat = route.query.chatId
   const chatId = typeof rawChat === 'string' ? Number(rawChat) : NaN
@@ -401,7 +376,6 @@ onMounted(() => {
   void connectOwnershipRealtime()
   void notifications.ensureConnected()
   void loadLeadStatuses()
-  void loadChatWorkflowStatuses()
 
   stopInvalidate = onChatsInvalidate(() => {
     void store.fetchList()
@@ -448,12 +422,18 @@ onUnmounted(() => {
             type="segment"
             size="small"
             class="chats-page__tabs"
+            animated
           >
             <NTab v-for="tab in listTabsForPane" :key="tab.name" :name="tab.name" :tab="tab.label" />
           </NTabs>
 
-          <NSpace :size="6" class="chats-page__list-actions" :wrap="false">
-            <NButton type="primary" size="small" @click="newWhatsappChatVisible = true">
+          <div class="chats-page__list-actions">
+            <NButton
+              type="primary"
+              size="small"
+              class="chats-page__wa-btn"
+              @click="newWhatsappChatVisible = true"
+            >
               WhatsApp
             </NButton>
             <NButton
@@ -462,12 +442,12 @@ onUnmounted(() => {
               size="small"
               @click="transferInboxOpen = true"
             >
-              Уведомления
+              Увед.
               <template v-if="notifications.unreadCount">
                 ({{ notifications.unreadCount }})
               </template>
             </NButton>
-          </NSpace>
+          </div>
         </div>
 
 
@@ -480,13 +460,6 @@ onUnmounted(() => {
             clearable
             placeholder="Поиск по контакту…"
             aria-label="Поиск в списке чатов"
-          />
-
-          <NSelect
-            v-model:value="store.filters.chatStatusId"
-            :options="chatWorkflowStatusOptions"
-            placeholder="Статус чата"
-            clearable
           />
 
           <NSelect
@@ -513,12 +486,6 @@ onUnmounted(() => {
             <span>Только с открытой сделкой</span>
             <NSwitch v-model:value="store.filters.leadOpenOnly" size="small" />
           </label>
-
-          <NSelect
-            v-model:value="store.filters.sort"
-            :options="CHAT_SORT_OPTIONS"
-            placeholder="Сортировка"
-          />
         </NSpace>
 
         <div v-if="store.listInitialLoading" class="chats-page__skeleton">
@@ -863,33 +830,49 @@ onUnmounted(() => {
 
 .chats-page__list-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   flex-shrink: 0;
 }
 
 .chats-page__list-toolbar .chats-page__tabs {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
   min-width: 0;
   margin-bottom: 0;
 }
 
 .chats-page__list-actions {
+  display: flex;
   flex-shrink: 0;
-  margin-left: auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.chats-page__wa-btn {
+  white-space: nowrap;
 }
 
 .chats-page__tabs {
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
-/* Узкая колонка списка: не даём длинным подписям наезжать друг на друга. */
+.chats-page__tabs :deep(.n-tabs-nav) {
+  width: 100%;
+}
+
+.chats-page__tabs :deep(.n-tabs-rail),
+.chats-page__tabs :deep(.n-tabs-wrapper) {
+  width: 100%;
+}
+
 .chats-page__tabs :deep(.n-tabs-tab) {
-  font-size: 0.75rem;
-  padding-left: 6px;
-  padding-right: 6px;
+  flex: 1 1 0;
+  justify-content: center;
+  font-size: 0.8rem;
+  padding-left: 4px;
+  padding-right: 4px;
   white-space: nowrap;
 }
 
@@ -924,11 +907,6 @@ onUnmounted(() => {
   grid-template-columns: minmax(240px, 280px) 1fr minmax(340px, 400px);
 }
 
-.chats-page__split--deal-open .chats-page__tabs :deep(.n-tabs-tab) {
-  font-size: 0.75rem;
-  padding-left: 4px;
-  padding-right: 4px;
-}
 
 .chats-page__contact-link,
 .chats-page__contact-name {

@@ -8,6 +8,14 @@ import { useAuthStore } from '@/shared/store/auth'
 import { useThemeStore } from '@/shared/store/theme'
 import { disconnectContactsRealtime } from '@/shared/realtime/contacts-ws'
 
+withDefaults(
+  defineProps<{
+    /** Hamburger only needed on mobile drawer. */
+    showMenuButton?: boolean
+  }>(),
+  { showMenuButton: false },
+)
+
 defineEmits<{
   toggleSidebar: []
 }>()
@@ -36,7 +44,13 @@ async function onUserMenuSelect(key: string): Promise<void> {
 <template>
   <NLayoutHeader bordered class="app-topbar">
     <div class="app-topbar__left">
-      <NButton quaternary circle aria-label="Меню" @click="$emit('toggleSidebar')">
+      <NButton
+        v-if="showMenuButton"
+        quaternary
+        circle
+        aria-label="Меню"
+        @click="$emit('toggleSidebar')"
+      >
         <template #icon>
           <NIcon><Menu /></NIcon>
         </template>
