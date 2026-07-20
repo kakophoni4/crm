@@ -71,7 +71,8 @@ function toggleSidebar(): void {
   min-width: 0;
 }
 
-.app-layout__main :deep(.n-layout-scroll-container) {
+/* Only the main column shell — do not lock nested content scroll. */
+.app-layout__main > :deep(.n-layout-scroll-container) {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -81,6 +82,13 @@ function toggleSidebar(): void {
 .app-layout__content {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+
+/* Actual page scroll lives here (Naive wraps slot in this container). */
+.app-layout__content :deep(.n-layout-scroll-container) {
+  height: 100%;
+  overflow: auto !important;
+  overscroll-behavior: contain;
 }
 </style>
