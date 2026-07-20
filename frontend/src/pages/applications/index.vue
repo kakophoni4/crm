@@ -162,28 +162,6 @@ const groupFilterOptions = computed(() => [
   })),
 ])
 
-const groupedByGroup = computed(() => {
-  const map = new Map<string, { label: string; rows: OptOrderRegistryItem[] }>()
-  for (const row of items.value) {
-    const key = String(row.group_id)
-    const label = row.group_name || `Группа #${row.group_id}`
-    if (!map.has(key)) map.set(key, { label, rows: [] })
-    map.get(key)!.rows.push(row)
-  }
-  return [...map.values()]
-})
-
-const groupedPaymentsByGroup = computed(() => {
-  const map = new Map<string, { label: string; rows: OptPaymentLedgerItem[] }>()
-  for (const row of paymentItems.value) {
-    const key = String(row.group_id)
-    const label = row.group_name || `Группа #${row.group_id}`
-    if (!map.has(key)) map.set(key, { label, rows: [] })
-    map.get(key)!.rows.push(row)
-  }
-  return [...map.values()]
-})
-
 const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
   const cols: DataTableColumns<OptOrderRegistryItem> = [
     {
@@ -573,24 +551,17 @@ onMounted(() => {
     <NSpin :show="loading">
       <template v-if="activeTab === 'orders'">
         <NEmpty v-if="!items.length && !loading" description="Заявок пока нет" />
-        <div v-else class="applications-page__groups">
-          <AppCard
-            v-for="group in groupedByGroup"
-            :key="group.label"
-            class="applications-page__card"
-          >
-            <h2 class="applications-page__group-title">{{ group.label }}</h2>
-            <NDataTable
-              size="small"
-              :columns="columns"
-              :data="group.rows"
-              :row-key="rowKey"
-              :row-props="rowProps"
-              :bordered="false"
-              :pagination="false"
-            />
-          </AppCard>
-        </div>
+        <AppCard v-else class="applications-page__card">
+          <NDataTable
+            size="small"
+            :columns="columns"
+            :data="items"
+            :row-key="rowKey"
+            :row-props="rowProps"
+            :bordered="false"
+            :pagination="false"
+          />
+        </AppCard>
       </template>
 
       <template v-else>
@@ -598,24 +569,17 @@ onMounted(() => {
           v-if="!paymentItems.length && !loading"
           description="Проведённых оплат пока нет"
         />
-        <div v-else class="applications-page__groups">
-          <AppCard
-            v-for="group in groupedPaymentsByGroup"
-            :key="group.label"
-            class="applications-page__card"
-          >
-            <h2 class="applications-page__group-title">{{ group.label }}</h2>
-            <NDataTable
-              size="small"
-              :columns="paymentColumns"
-              :data="group.rows"
-              :row-key="paymentRowKey"
-              :row-props="paymentRowProps"
-              :bordered="false"
-              :pagination="false"
-            />
-          </AppCard>
-        </div>
+        <AppCard v-else class="applications-page__card">
+          <NDataTable
+            size="small"
+            :columns="paymentColumns"
+            :data="paymentItems"
+            :row-key="paymentRowKey"
+            :row-props="paymentRowProps"
+            :bordered="false"
+            :pagination="false"
+          />
+        </AppCard>
       </template>
     </NSpin>
 
@@ -854,18 +818,6 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.applications-page__groups {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.applications-page__group-title {
-  margin: 0 0 10px;
-  font-size: 0.95rem;
-  font-weight: 700;
 }
 
 .applications-page__pager {

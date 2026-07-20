@@ -3,7 +3,7 @@ import { NEmpty, NSpin, NTag } from 'naive-ui'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { Reply } from 'lucide-vue-next'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ChatMessage } from '@/entities/chat/types'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
@@ -31,9 +31,16 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const viewportRef = ref<HTMLElement | null>(null)
+const itemsRef = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
 const loadingOlderGuard = ref(false)
 const anchorHeight = ref<number | null>(null)
+let contentResizeObserver: ResizeObserver | null = null
+
+function messageKey(msg: ChatMessage | undefined): string | number | null {
+  if (!msg) return null
+  return msg._clientKey ?? msg.id
+}
 
 const sorted = computed(() =>
   [...props.messages].sort(
@@ -115,14 +122,48 @@ function shouldShowMessageText(msg: ChatMessage): boolean {
   return !fn || text !== fn
 }
 
-function scrollToBottom(smooth = false): void {
+function scrollToBottom(): void {
   const el = viewportRef.value
   if (!el) return
-  el.scrollTo({
-    top: el.scrollHeight,
-    behavior: smooth ? 'smooth' : 'auto',
-  })
+  // Instant jump — smooth scroll often undershoots when height is still growing.
+  el.scrollTop = el.scrollHeight
 }
+
+async function scrollToBottomAfterLayout(): Promise<void> {
+  await nextTick()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  if (!stickToBottom.value) return
+  scrollToBottom()
+  // Attachments/images often bump height after the first paint.
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  if (stickToBottom.value) scrollToBottom()
+}
+
+function bindContentResizeObserver(): void {
+  contentResizeObserver?.disconnect()
+  contentResizeObserver = null
+  const target = itemsRef.value
+  if (!target || typeof ResizeObserver === 'undefined') return
+  contentResizeObserver = new ResizeObserver(() => {
+    if (!stickToBottom.value || loadingOlderGuard.value || anchorHeight.value != null) return
+    scrollToBottom()
+  })
+  contentResizeObserver.observe(target)
+}
+
+watch(itemsRef, () => bindContentResizeObserver())
+
+onMounted(() => {
+  // Remounted per chat (`:key="chatId"`) with messages already filled — watches may not fire.
+  stickToBottom.value = true
+  bindContentResizeObserver()
+  void scrollToBottomAfterLayout()
+})
+
+onBeforeUnmount(() => {
+  contentResizeObserver?.disconnect()
+  contentResizeObserver = null
+})
 
 function onViewportScroll(): void {
   const el = viewportRef.value
@@ -148,7 +189,6 @@ watch(
   async (loading, wasLoading) => {
     if (!loading) {
       loadingOlderGuard.value = false
-      anchorHeight.value = null
     }
     if (wasLoading && !loading && anchorHeight.value != null) {
       await nextTick()
@@ -167,36 +207,44 @@ watch(
     stickToBottom.value = true
     loadingOlderGuard.value = false
     anchorHeight.value = null
-    void nextTick(() => scrollToBottom(false))
+    void scrollToBottomAfterLayout()
   },
 )
 
 watch(
   () => props.loading,
-  async (loading, wasLoading) => {
+  (loading, wasLoading) => {
     if (wasLoading && !loading && stickToBottom.value) {
-      await nextTick()
-      scrollToBottom(false)
+      void scrollToBottomAfterLayout()
     }
   },
 )
 
 watch(
   () => props.messages,
-  async (next, prev) => {
-    if (!stickToBottom.value || next === prev) return
-    const prevLast = prev?.[prev.length - 1]
+  (next, prev) => {
+    if (!stickToBottom.value) return
     const nextLast = next[next.length - 1]
     if (!nextLast) return
+
+    const prevLastKey = messageKey(prev?.[prev.length - 1])
+    const nextLastKey = messageKey(nextLast)
+    const prevFirstKey = messageKey(prev?.[0])
+    const nextFirstKey = messageKey(next[0])
     const isPrepend =
       prev != null &&
       prev.length > 0 &&
       next.length > prev.length &&
-      prev[0]?.id !== next[0]?.id &&
-      prevLast?.id === nextLast?.id
+      prevFirstKey !== nextFirstKey &&
+      prevLastKey === nextLastKey
     if (isPrepend) return
-    await nextTick()
-    scrollToBottom(prev == null || next.length > prev.length)
+
+    // Deep watch: same array ref on in-place push/replace — must NOT bail on next === prev.
+    const lengthChanged = (prev?.length ?? 0) !== next.length
+    const tipChanged = prevLastKey !== nextLastKey
+    if (prev != null && !lengthChanged && !tipChanged) return
+
+    void scrollToBottomAfterLayout()
   },
   { deep: true },
 )
@@ -210,7 +258,7 @@ watch(
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />
         </div>
-        <div class="message-list__items">
+        <div ref="itemsRef" class="message-list__items">
           <template v-for="(msg, index) in sorted" :key="msg._clientKey ?? msg.id">
             <div v-if="shouldShowDateSeparator(index)" class="message-list__date-separator">
               {{ formatDateSeparator(msg.created_at) }}
