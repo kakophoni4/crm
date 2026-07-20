@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DataTableColumns, DataTableRowKey } from 'naive-ui'
+import type { DataTableColumns, DataTableRowKey, SelectOption } from 'naive-ui'
 import {
   NButton,
   NDataTable,
@@ -91,13 +91,12 @@ const paymentStatusOptions = computed(() => {
   ]
 })
 
-const managerOptions = computed(() => [
-  { label: 'Все менеджеры', value: null as number | null },
-  ...managers.value.map((row) => ({
+const managerOptions = computed<SelectOption[]>(() =>
+  managers.value.map((row) => ({
     value: row.id,
     label: row.full_name || row.username,
   })),
-])
+)
 
 function onSelectedPeriodChange(value: string | null): void {
   if (!selected.value) return
