@@ -87,6 +87,7 @@ export async function uploadOptFromChatAttachment(
     message_id: number
     attachment_index: number
     vat_rate_percent?: OptVatRatePercent
+    period_code?: string
   },
 ): Promise<OptOrder> {
   const { data } = await http.post<OptOrder>(

@@ -178,6 +178,7 @@ async def upload_opt_from_chat_attachment(
         message_id=body.message_id,
         attachment_index=body.attachment_index,
         vat_rate_percent=body.vat_rate_percent,
+        period_code=body.period_code,
     )
 
 

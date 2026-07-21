@@ -730,15 +730,22 @@ class OptOrderService:
             items=[self._to_response(order, document_names=names) for order in orders],
         )
 
-    async def _ensure_lead_service_opt(self, lead: Lead) -> None:
+    async def _ensure_lead_service_opt(
+        self,
+        lead: Lead,
+        *,
+        period_code: str | None = None,
+    ) -> None:
         fields = dict(lead.custom_fields or {})
         order = fields.get("order")
-        if isinstance(order, dict) and order.get("service") == OPT_SERVICE_NAME:
-            return
         if not isinstance(order, dict):
             order = {}
-        order = {**order, "service": OPT_SERVICE_NAME}
-        fields["order"] = order
+        next_order = {**order, "service": OPT_SERVICE_NAME}
+        if period_code:
+            next_order["period"] = period_code
+        if next_order == order and order.get("service") == OPT_SERVICE_NAME:
+            return
+        fields["order"] = next_order
         lead.custom_fields = fields
         await self._leads.update_lead_fields(lead.id, custom_fields=fields)
 
@@ -823,6 +830,7 @@ class OptOrderService:
         message_id: int,
         attachment_index: int,
         vat_rate_percent: Decimal | float | int | None = None,
+        period_code: str | None = None,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
         existing = await self._repo.get_order_by_source_attachment(message_id, attachment_index)
@@ -844,6 +852,7 @@ class OptOrderService:
             source_message_id=message_id,
             source_attachment_index=attachment_index,
             vat_rate_percent=vat_rate_percent,
+            period_code=period_code,
         )
 
     async def upload_application(
@@ -856,6 +865,7 @@ class OptOrderService:
         source_message_id: int | None = None,
         source_attachment_index: int | None = None,
         vat_rate_percent: Decimal | float | int | None = None,
+        period_code: str | None = None,
     ) -> OptOrderResponse:
         lead = await self._get_lead_for_actor(actor, lead_id)
 
@@ -884,7 +894,12 @@ class OptOrderService:
         buyer_inn = parsed.buyer_inn
         buyer_kpp, buyer_name = await resolve_buyer_requisites(self._repo, buyer_inn)
 
-        period_code = read_lead_opt_period(lead.custom_fields)
+        from app.modules.leads.opt.period_access import normalize_requested_period
+
+        if period_code and str(period_code).strip():
+            period_code = normalize_requested_period(str(period_code))
+        else:
+            period_code = read_lead_opt_period(lead.custom_fields)
         if period_code is None:
             raise ValidationError(
                 message=(
@@ -969,7 +984,7 @@ class OptOrderService:
             vat_rate_percent=float(vat_rate),
             period_code=period_code,
         )
-        await self._ensure_lead_service_opt(lead)
+        await self._ensure_lead_service_opt(lead, period_code=period_code)
         await self._session.commit()
         await enqueue_opt_submit(order.id)
         refreshed = await self._repo.get_order(order.id)

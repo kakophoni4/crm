@@ -2,11 +2,13 @@
 import { NButton, NSelect, NSpin, useMessage } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
+import { getLead } from '@/features/leads/api'
 import {
   probeOptChatAttachment,
   uploadOptFromChatAttachment,
 } from '@/features/leads/opt-api'
 import type { OptAttachmentProbeResult, OptVatRatePercent } from '@/features/leads/opt-types'
+import { OPT_PERIOD_OPTIONS, readLeadDealFields } from '@/features/leads/order-fields'
 import { useChatsStore } from '@/features/chats/store'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import { AppError } from '@/shared/api/http'
@@ -25,10 +27,12 @@ const probing = ref(false)
 const submitting = ref(false)
 const probeResult = ref<OptAttachmentProbeResult | null>(null)
 const vatRatePercent = ref<OptVatRatePercent>(22)
+const periodCode = ref<string | null>(null)
 const vatRateOptions = [
   { label: 'НДС 22%', value: 22 as OptVatRatePercent },
   { label: 'НДС 20%', value: 20 as OptVatRatePercent },
 ]
+const periodOptions = OPT_PERIOD_OPTIONS
 
 const attachmentRow = computed(() => props.attachment as Record<string, unknown>)
 const isSpreadsheet = computed(
@@ -47,6 +51,22 @@ const canScan = computed(
 
 const existingOrder = computed(() => probeResult.value?.existing_order ?? null)
 const isApplication = computed(() => probeResult.value?.is_application === true)
+const canSubmit = computed(() => Boolean(periodCode.value) && !submitting.value)
+
+async function loadLeadPeriod(): Promise<void> {
+  if (leadId.value == null) {
+    periodCode.value = null
+    return
+  }
+  try {
+    const lead = await getLead(leadId.value)
+    const fields = readLeadDealFields(lead.custom_fields)
+    const fromLead = fields.order?.period?.toString().trim() || null
+    periodCode.value = fromLead
+  } catch {
+    // Keep current selection if lead fetch fails.
+  }
+}
 
 async function runProbe(): Promise<void> {
   if (!canScan.value || props.chatId == null || leadId.value == null) {
@@ -68,7 +88,12 @@ async function runProbe(): Promise<void> {
 }
 
 async function submitApplication(): Promise<void> {
-  if (!canScan.value || props.chatId == null || leadId.value == null) return
+  if (!canScan.value || props.chatId == null || leadId.value == null || !periodCode.value) {
+    if (!periodCode.value) {
+      message.warning('Выберите период заявки')
+    }
+    return
+  }
   submitting.value = true
   try {
     await uploadOptFromChatAttachment(leadId.value, {
@@ -76,8 +101,11 @@ async function submitApplication(): Promise<void> {
       message_id: props.messageId,
       attachment_index: props.attachmentIndex,
       vat_rate_percent: vatRatePercent.value,
+      period_code: periodCode.value,
     })
-    message.success(`Заявка отправлена в обработку (НДС ${vatRatePercent.value}%)`)
+    message.success(
+      `Заявка отправлена в обработку (НДС ${vatRatePercent.value}%, период ${periodCode.value})`,
+    )
     store.bumpOptOrdersRefresh()
     await runProbe()
   } catch (err) {
@@ -92,6 +120,7 @@ watch(
   () => [canScan.value, props.messageId, props.attachmentIndex, leadId.value] as const,
   () => {
     void runProbe()
+    void loadLeadPeriod()
   },
   { immediate: true },
 )
@@ -114,6 +143,14 @@ watch(
       </p>
       <div class="opt-attachment-bar__actions">
         <NSelect
+          v-model:value="periodCode"
+          size="small"
+          :options="periodOptions"
+          placeholder="Период"
+          :disabled="submitting"
+          style="width: 168px"
+        />
+        <NSelect
           v-model:value="vatRatePercent"
           size="small"
           :options="vatRateOptions"
@@ -124,6 +161,7 @@ watch(
           size="small"
           type="primary"
           :loading="submitting"
+          :disabled="!canSubmit"
           @click="submitApplication"
         >
           Отправить заявку
@@ -149,14 +187,18 @@ watch(
   line-height: 1.35;
 }
 
+.opt-attachment-bar__hint {
+  color: var(--app-text-muted, #6b7280);
+}
+
 .opt-attachment-bar__note {
-  color: var(--app-text-muted);
+  color: var(--n-warning-color, #c27803);
 }
 
 .opt-attachment-bar__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 </style>

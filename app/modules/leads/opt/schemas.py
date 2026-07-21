@@ -218,6 +218,8 @@ class OptUploadFromAttachmentRequest(BaseModel):
     message_id: int
     attachment_index: int = Field(ge=0)
     vat_rate_percent: Literal[20, 22] = 22
+    # OPT period, e.g. "2/26". Overrides deal period when set.
+    period_code: str | None = Field(default=None, max_length=16)
 
 
 class OptOrderPeriodUpdateRequest(BaseModel):
