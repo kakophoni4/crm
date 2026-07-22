@@ -17,8 +17,9 @@ import { ClipboardList, MessageSquare } from 'lucide-vue-next'
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { listGroups, listUsers, type AdminUser, type Group } from '@/features/admin/api'
+import { listGroups, type Group } from '@/features/admin/api'
 import {
+  listOptOrderManagers,
   listOptOrders,
   listOptOrdersRegistry,
   listOptPaymentsLedger,
@@ -29,6 +30,7 @@ import type {
   OptOrderRegistryItem,
   OptPayment,
   OptPaymentLedgerItem,
+  OptRegistryManagerItem,
   OptSync1cResponse,
 } from '@/features/leads/opt-types'
 import {
@@ -60,7 +62,7 @@ const periodFilter = ref<string | null>(null)
 const selectedGroupKey = ref<string>('all')
 const managerFilter = ref<number | null>(null)
 const groups = ref<Group[]>([])
-const managers = ref<AdminUser[]>([])
+const managers = ref<OptRegistryManagerItem[]>([])
 const periodOptions = OPT_PERIOD_OPTIONS
 const savingPeriodOrderId = ref<number | null>(null)
 const syncing1c = ref(false)
@@ -100,7 +102,7 @@ const paymentStatusOptions = computed(() => {
 const managerOptions = computed<SelectOption[]>(() =>
   managers.value.map((row) => ({
     value: row.id,
-    label: row.full_name || row.username,
+    label: row.full_name || `user #${row.id}`,
   })),
 )
 
@@ -368,14 +370,10 @@ async function loadManagers(): Promise<void> {
     return
   }
   try {
-    const params: { department_id?: number; group_id?: number } = {}
-    const groupId = groupFilterId()
-    if (groupId != null) {
-      params.group_id = groupId
-    } else if (!auth.isAdmin && auth.user?.department_id != null) {
-      params.department_id = auth.user.department_id
-    }
-    managers.value = (await listUsers(params)).filter((row) => row.status === 'active')
+    managers.value = await listOptOrderManagers({
+      group_id: groupFilterId(),
+      period_code: periodFilter.value || undefined,
+    })
     if (
       managerFilter.value != null &&
       !managers.value.some((row) => row.id === managerFilter.value)
@@ -513,6 +511,10 @@ watch([page, paymentStatusFilter, periodFilter, selectedGroupKey, managerFilter,
 })
 
 watch(selectedGroupKey, () => {
+  void loadManagers()
+})
+
+watch(periodFilter, () => {
   void loadManagers()
 })
 

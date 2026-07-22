@@ -39,6 +39,7 @@ from app.modules.leads.opt.schemas import (
     OptOrderRegistryListResponse,
     OptOrderResponse,
     OptPaymentLedgerListResponse,
+    OptRegistryManagersResponse,
     OptSendRegistryResponse,
     OptSync1cRequest,
     OptSync1cResponse,
@@ -83,6 +84,22 @@ async def list_opt_orders_registry(
         open_only=open_only,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
+    )
+
+
+@router.get("/opt-orders/managers", response_model=OptRegistryManagersResponse)
+async def list_opt_orders_managers(
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    department_id: int | None = None,
+    group_id: int | None = None,
+    period_code: str | None = None,
+) -> OptRegistryManagersResponse:
+    return await service.list_registry_managers(
+        actor,
+        department_id=department_id,
+        group_id=group_id,
+        period_code=(period_code or "").strip() or None,
     )
 
 

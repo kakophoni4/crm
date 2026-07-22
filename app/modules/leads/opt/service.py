@@ -46,6 +46,8 @@ from app.modules.leads.opt.schemas import (
     OptPaymentLedgerItem,
     OptPaymentLedgerListResponse,
     OptPaymentResponse,
+    OptRegistryManagerItem,
+    OptRegistryManagersResponse,
     OptSync1cActionItem,
     OptSync1cResponse,
     OptVolumeCategoryBreakdown,
@@ -571,6 +573,62 @@ class OptOrderService:
                 ),
             )
         return OptOrderRegistryListResponse(items=items, total=total)
+
+    async def list_registry_managers(
+        self,
+        actor: User,
+        *,
+        department_id: int | None = None,
+        group_id: int | None = None,
+        period_code: str | None = None,
+    ) -> OptRegistryManagersResponse:
+        """Distinct card owners that appear on at least one OPT order in scope."""
+        from sqlalchemy import select
+
+        from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
+        from app.modules.db.models.group import Group
+        from app.modules.db.models.lead import Lead
+        from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids
+
+        ctx = await self._scope_loader.load(actor)
+        scoped = visible_group_ids(ctx)
+        if scoped != SCOPE_ALL and not scoped:
+            return OptRegistryManagersResponse(items=[])
+
+        filters = [
+            ContactGroupAssignment.owner_user_id.is_not(None),
+        ]
+        if scoped != SCOPE_ALL:
+            filters.append(Lead.group_id.in_(scoped))
+        if department_id is not None:
+            filters.append(Group.department_id == department_id)
+        if group_id is not None:
+            filters.append(Lead.group_id == group_id)
+        if period_code:
+            filters.append(LeadOptOrder.period_code == period_code.strip())
+
+        stmt = (
+            select(User.id, User.full_name)
+            .select_from(LeadOptOrder)
+            .join(Lead, Lead.id == LeadOptOrder.lead_id)
+            .join(Group, Group.id == Lead.group_id)
+            .join(
+                ContactGroupAssignment,
+                (ContactGroupAssignment.contact_id == Lead.contact_id)
+                & (ContactGroupAssignment.group_id == Lead.group_id),
+            )
+            .join(User, User.id == ContactGroupAssignment.owner_user_id)
+            .where(*filters)
+            .distinct()
+            .order_by(User.full_name.asc().nulls_last(), User.id.asc())
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return OptRegistryManagersResponse(
+            items=[
+                OptRegistryManagerItem(id=int(user_id), full_name=full_name)
+                for user_id, full_name in rows
+            ],
+        )
 
     async def list_payments_ledger(
         self,

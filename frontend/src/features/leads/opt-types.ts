@@ -132,6 +132,15 @@ export interface OptOrderRegistryListResponse {
   total: number
 }
 
+export interface OptRegistryManagerItem {
+  id: number
+  full_name?: string | null
+}
+
+export interface OptRegistryManagersResponse {
+  items: OptRegistryManagerItem[]
+}
+
 export interface OptPaymentLedgerItem {
   id: number
   order_id: number

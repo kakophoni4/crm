@@ -4,6 +4,8 @@ import type {
   OptOrderListResponse,
   OptOrderRegistryListResponse,
   OptPaymentLedgerListResponse,
+  OptRegistryManagerItem,
+  OptRegistryManagersResponse,
   OptSync1cResponse,
   OptVatRatePercent,
 } from '@/features/leads/opt-types'
@@ -28,6 +30,15 @@ export async function listOptOrdersRegistry(params?: {
 }): Promise<OptOrderRegistryListResponse> {
   const { data } = await http.get<OptOrderRegistryListResponse>('/opt-orders', { params })
   return data
+}
+
+export async function listOptOrderManagers(params?: {
+  department_id?: number
+  group_id?: number
+  period_code?: string
+}): Promise<OptRegistryManagerItem[]> {
+  const { data } = await http.get<OptRegistryManagersResponse>('/opt-orders/managers', { params })
+  return data.items
 }
 
 export async function patchOptOrderPeriod(

@@ -154,6 +154,15 @@ class OptOrderRegistryListResponse(BaseModel):
     total: int
 
 
+class OptRegistryManagerItem(BaseModel):
+    id: int
+    full_name: str | None = None
+
+
+class OptRegistryManagersResponse(BaseModel):
+    items: list[OptRegistryManagerItem] = Field(default_factory=list)
+
+
 class OptPaymentLedgerItem(BaseModel):
     id: int
     order_id: int
