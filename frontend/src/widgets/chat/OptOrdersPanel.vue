@@ -225,6 +225,19 @@ function paymentTagType(status: string): 'default' | 'success' | 'error' | 'warn
   return 'error'
 }
 
+function paymentPillClass(status: string): string {
+  if (status === 'paid') return 'opt-orders__pill opt-orders__pill--ok'
+  if (status === 'partial') return 'opt-orders__pill opt-orders__pill--warn'
+  return 'opt-orders__pill opt-orders__pill--danger'
+}
+
+function statusPillClass(status: string): string {
+  if (status === 'submitted') return 'opt-orders__pill opt-orders__pill--ok'
+  if (status === 'failed') return 'opt-orders__pill opt-orders__pill--danger'
+  if (status === 'submitting') return 'opt-orders__pill opt-orders__pill--info'
+  return 'opt-orders__pill opt-orders__pill--warn'
+}
+
 function volumeRows(order: OptOrder): Array<{ key: string; label: string; volume: number; rate: number; commission: number }> {
   return Object.entries(order.volume_by_category || {}).map(([key, row]) => ({
     key,
@@ -688,7 +701,11 @@ onUnmounted(() => {
             @click="selectedOrderId = order.id"
           >
             <span class="opt-orders__tab-no">{{ orderLabel(order) }}</span>
-            <NTag size="tiny" :type="statusTagType(order.status)" :bordered="false">
+            <NTag
+              size="tiny"
+              :bordered="false"
+              :class="statusPillClass(order.status)"
+            >
               {{ statusLabel(order.status) }}
             </NTag>
           </button>
@@ -705,12 +722,19 @@ onUnmounted(() => {
                 {{ selectedOrder.source_filename || selectedOrder.crm_id }}
               </span>
             </div>
-            <NTag size="small" :type="statusTagType(selectedOrder.status)" :bordered="false">
+            <NTag
+              size="small"
+              :bordered="false"
+              :class="statusPillClass(selectedOrder.status)"
+            >
               {{ statusLabel(selectedOrder.status) }}
             </NTag>
           </div>
 
-          <p v-if="statusHint(selectedOrder.status)" class="opt-orders__hint">
+          <p
+            v-if="statusHint(selectedOrder.status) && selectedOrder.status !== 'submitted'"
+            class="opt-orders__hint"
+          >
             {{ statusHint(selectedOrder.status) }}
           </p>
 
@@ -763,7 +787,11 @@ onUnmounted(() => {
             <div>
               <dt>Оплата</dt>
               <dd>
-                <NTag size="small" :type="paymentTagType(selectedOrder.payment_status)" :bordered="false">
+                <NTag
+                  size="small"
+                  :bordered="false"
+                  :class="paymentPillClass(selectedOrder.payment_status)"
+                >
                   {{ optPaymentStatusLabel(selectedOrder.payment_status) }}
                 </NTag>
               </dd>
@@ -805,17 +833,22 @@ onUnmounted(() => {
 
           <div class="opt-orders__payments">
             <div class="opt-orders__history-head">
-              <h4 class="opt-orders__subheading">История оплат</h4>
+              <h4 class="opt-orders__subheading">
+                История оплат
+                <span class="opt-orders__meta">
+                  ·
+                  {{
+                    selectedPaymentsNewestFirst.length
+                      ? `${selectedPaymentsNewestFirst.length} шт.`
+                      : 'пока нет'
+                  }}
+                </span>
+              </h4>
               <NButton size="tiny" quaternary @click="openPreview('payments')">
                 Открыть
               </NButton>
             </div>
-            <NEmpty
-              v-if="!selectedPaymentsNewestFirst.length"
-              description="Оплат пока нет"
-              size="small"
-            />
-            <ul v-else class="opt-orders__payments-list">
+            <ul v-if="selectedPaymentsNewestFirst.length" class="opt-orders__payments-list">
               <li
                 v-for="payment in selectedPaymentsNewestFirst.slice(0, 2)"
                 :key="payment.id"
@@ -837,25 +870,16 @@ onUnmounted(() => {
             class="opt-orders__history"
           >
             <div class="opt-orders__history-head">
-              <h4 class="opt-orders__subheading">История суммы к оплате</h4>
+              <h4 class="opt-orders__subheading">
+                История суммы к оплате
+                <span class="opt-orders__meta">
+                  · {{ selectedOrder.commission_history.length }} изм.
+                </span>
+              </h4>
               <NButton size="tiny" quaternary @click="openPreview('commission')">
                 Открыть
               </NButton>
             </div>
-            <ul class="opt-orders__history-list">
-              <li
-                v-for="item in selectedOrder.commission_history.slice(0, 2)"
-                :key="item.id"
-              >
-                <span>
-                  {{ formatMoney(item.old_commission_due) }} →
-                  {{ formatMoney(item.new_commission_due) }} ₽
-                </span>
-                <span class="opt-orders__meta">
-                  {{ new Date(item.created_at).toLocaleString('ru-RU') }}
-                </span>
-              </li>
-            </ul>
           </div>
 
           <NDataTable
@@ -864,7 +888,7 @@ onUnmounted(() => {
             :data="selectedOrder.lines"
             :bordered="false"
             :pagination="false"
-            :max-height="isWide ? 320 : 220"
+            :max-height="isWide ? 240 : 200"
             :scroll-x="720"
             class="opt-orders__table"
           />
@@ -1281,27 +1305,66 @@ onUnmounted(() => {
 }
 
 .opt-orders--wide {
-  gap: 12px;
+  gap: 8px;
 }
 
 .opt-orders--wide .opt-orders__detail {
-  padding: 14px 16px;
+  padding: 10px 12px;
+  gap: 8px;
 }
 
 .opt-orders--wide .opt-orders__facts {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px 18px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
 }
 
 .opt-orders--wide .opt-orders__actions {
   position: sticky;
   bottom: 0;
-  z-index: 2;
-  margin-top: 8px;
-  padding: 10px 0 2px;
+  z-index: 3;
+  margin-top: 6px;
+  margin-left: -12px;
+  margin-right: -12px;
+  margin-bottom: -10px;
+  padding: 10px 12px;
   border-top: 1px solid var(--app-border);
-  background: color-mix(in srgb, var(--app-bg, #121212) 92%, transparent);
-  backdrop-filter: blur(6px);
+  background: var(--app-surface);
+  box-shadow: 0 -8px 16px color-mix(in srgb, #000 25%, transparent);
+}
+
+.opt-orders__pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #fff !important;
+  background: var(--app-text-muted);
+}
+
+.opt-orders__pill--ok {
+  background: #1a7f37;
+}
+
+.opt-orders__pill--danger {
+  background: #cf222e;
+}
+
+.opt-orders__pill--warn {
+  background: #9a6700;
+}
+
+.opt-orders__pill--info {
+  background: #0969da;
+}
+
+/* Override Naive tag soft colors when our pill class is applied */
+.opt-orders__pill.n-tag {
+  --n-color: transparent !important;
+  --n-text-color: #fff !important;
+  border: 0 !important;
 }
 
 @media (max-width: 900px) {

@@ -244,7 +244,16 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       render: (row) =>
         h(
           NTag,
-          { size: 'small', type: paymentTagType(row.payment_status), bordered: false },
+          {
+            size: 'small',
+            bordered: false,
+            class:
+              row.payment_status === 'paid'
+                ? 'applications-page__pill applications-page__pill--ok'
+                : row.payment_status === 'partial'
+                  ? 'applications-page__pill applications-page__pill--warn'
+                  : 'applications-page__pill applications-page__pill--danger',
+          },
           { default: () => optPaymentStatusLabel(row.payment_status) },
         ),
     },
@@ -655,42 +664,17 @@ onMounted(() => {
       :segmented="{ content: true, footer: 'soft' }"
     >
       <template v-if="selected">
-        <dl class="applications-page__facts">
-          <div>
-            <dt>Клиент</dt>
-            <dd>{{ selected.contact_name || '—' }}</dd>
-          </div>
-          <div>
-            <dt>Покупатель</dt>
-            <dd>{{ selected.buyer.name || `ИНН ${selected.buyer.inn}` }}</dd>
-          </div>
-          <div>
-            <dt>Менеджер</dt>
-            <dd>{{ selected.manager_name || '—' }}</dd>
-          </div>
-          <div>
-            <dt>Период</dt>
-            <dd>
-              <NSelect
-                :value="selected.period_code || null"
-                :options="periodOptions"
-                size="small"
-                filterable
-                placeholder="Указать период"
-                :loading="savingPeriodOrderId === selected.id"
-                style="min-width: 180px"
-                @update:value="(value) => onSelectedPeriodChange(value as string | null)"
-              />
-            </dd>
-          </div>
-          <div>
-            <dt>Отдел / группа</dt>
-            <dd>
-              {{ selected.department_name || '—' }} /
-              {{ selected.group_name || `Группа #${selected.group_id}` }}
-            </dd>
-          </div>
-        </dl>
+        <div class="applications-page__meta">
+          <span>{{ selected.contact_name || '—' }}</span>
+          <span class="applications-page__meta-sep">·</span>
+          <span>{{ selected.manager_name || 'менеджер не назначен' }}</span>
+          <span class="applications-page__meta-sep">·</span>
+          <span>{{ selected.group_name || `Группа #${selected.group_id}` }}</span>
+          <span class="applications-page__meta-sep">·</span>
+          <span class="applications-page__meta-buyer">
+            {{ selected.buyer.name || `ИНН ${selected.buyer.inn}` }}
+          </span>
+        </div>
 
         <div class="applications-page__panel">
           <OptOrdersPanel
@@ -955,6 +939,27 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
+.applications-page__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  margin: 0 0 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--n-border-color);
+  font-size: 0.82rem;
+  color: var(--app-text-muted);
+}
+
+.applications-page__meta-sep {
+  opacity: 0.5;
+}
+
+.applications-page__meta-buyer {
+  color: var(--app-text);
+  font-weight: 600;
+}
+
 .applications-page__facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1062,5 +1067,25 @@ onMounted(() => {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.applications-page__pill.n-tag {
+  --n-color: transparent !important;
+  --n-text-color: #fff !important;
+  border: 0 !important;
+  color: #fff !important;
+  font-weight: 700;
+}
+
+.applications-page__pill--ok.n-tag {
+  background: #1a7f37 !important;
+}
+
+.applications-page__pill--danger.n-tag {
+  background: #cf222e !important;
+}
+
+.applications-page__pill--warn.n-tag {
+  background: #9a6700 !important;
 }
 </style>
