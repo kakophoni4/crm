@@ -864,7 +864,8 @@ onUnmounted(() => {
             :data="selectedOrder.lines"
             :bordered="false"
             :pagination="false"
-            :max-height="isWide ? 360 : 220"
+            :max-height="isWide ? 320 : 220"
+            :scroll-x="720"
             class="opt-orders__table"
           />
 
@@ -1293,9 +1294,14 @@ onUnmounted(() => {
 }
 
 .opt-orders--wide .opt-orders__actions {
-  padding-top: 4px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 8px;
+  padding: 10px 0 2px;
   border-top: 1px solid var(--app-border);
-  margin-top: 4px;
+  background: color-mix(in srgb, var(--app-bg, #121212) 92%, transparent);
+  backdrop-filter: blur(6px);
 }
 
 @media (max-width: 900px) {
@@ -1365,6 +1371,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .opt-orders__detail-head {
@@ -1419,6 +1427,13 @@ onUnmounted(() => {
 
 .opt-orders__table :deep(.n-data-table-td) {
   font-size: 0.78rem;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.opt-orders__table {
+  width: 100%;
+  min-width: 0;
 }
 
 .opt-orders__doc-no {

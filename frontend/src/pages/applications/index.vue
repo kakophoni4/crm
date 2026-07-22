@@ -175,6 +175,8 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
     {
       title: 'Заявка',
       key: 'order',
+      width: 170,
+      ellipsis: { tooltip: true },
       render: (row) => `Сделка №${row.lead_id} · №${row.order_no}`,
     },
     {
@@ -191,7 +193,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
             filterable: true,
             placeholder: 'Указать период',
             loading: savingPeriodOrderId.value === row.id,
-            style: 'min-width: 160px',
+            style: 'width: 160px',
             onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
           }),
         ]),
@@ -199,6 +201,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
     {
       title: 'Клиент',
       key: 'contact',
+      minWidth: 160,
       ellipsis: { tooltip: true },
       render: (row) => row.contact_name || row.buyer.name || `ИНН ${row.buyer.inn}`,
     },
@@ -207,6 +210,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
     cols.push({
       title: 'Менеджер',
       key: 'manager',
+      width: 140,
       ellipsis: { tooltip: true },
       render: (row) => row.manager_name || '—',
     })
@@ -215,23 +219,28 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
     {
       title: 'Группа',
       key: 'group',
+      width: 150,
+      ellipsis: { tooltip: true },
       render: (row) => row.group_name || `Группа #${row.group_id}`,
     },
     {
       title: 'К оплате',
       key: 'commission_due',
+      width: 130,
       align: 'right',
       render: (row) => `${formatMoney(row.commission_due)} ₽`,
     },
     {
       title: 'Оплачено',
       key: 'amount_paid',
+      width: 120,
       align: 'right',
       render: (row) => `${formatMoney(row.amount_paid)} ₽`,
     },
     {
       title: 'Оплата',
       key: 'payment_status',
+      width: 120,
       render: (row) =>
         h(
           NTag,
@@ -608,6 +617,7 @@ onMounted(() => {
             :row-props="rowProps"
             :bordered="false"
             :pagination="false"
+            :scroll-x="1180"
           />
         </AppCard>
       </template>
@@ -626,6 +636,7 @@ onMounted(() => {
             :row-props="paymentRowProps"
             :bordered="false"
             :pagination="false"
+            :scroll-x="1280"
           />
         </AppCard>
       </template>
@@ -894,6 +905,20 @@ onMounted(() => {
   gap: 16px;
   padding: 16px 20px 24px;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.applications-page__card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.applications-page__panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .applications-page__header {
@@ -953,10 +978,6 @@ onMounted(() => {
   font-weight: 600;
   line-height: 1.35;
   word-break: break-word;
-}
-
-.applications-page__panel {
-  min-height: 0;
 }
 
 .applications-page__footer {
@@ -1025,10 +1046,21 @@ onMounted(() => {
 
 <style>
 .applications-page__modal.n-card {
-  max-height: calc(100vh - 40px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.applications-page__modal.n-card > .n-card-header,
+.applications-page__modal.n-card > .n-card__footer {
+  flex-shrink: 0;
 }
 
 .applications-page__modal.n-card > .n-card__content {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 </style>
