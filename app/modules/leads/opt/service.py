@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -18,6 +19,7 @@ from app.modules.leads.opt.mole_client import (
     MoleApiError,
     delete_order as mole_delete_order,
     filter_orders as mole_filter_orders,
+    mole_session,
     post_opt_order,
     put_order as mole_put_order,
 )
@@ -1338,7 +1340,6 @@ class OptOrderService:
             try:
                 payload = self._build_mole_payload(order)
             except ValidationError as exc:
-                # Skip incomplete orders from auto-apply; surface as error.
                 logger.warning(
                     "opt_sync_skip_local_order",
                     crm_id=order.crm_id,
@@ -1348,23 +1349,57 @@ class OptOrderService:
             local_payloads[order.crm_id] = payload
             local_by_crm[order.crm_id] = order
 
-        mole_orders = await mole_filter_orders(period_iso=period_iso)
-        planned = plan_sync_actions(
-            local_crm_ids=set(local_payloads),
-            local_payloads=local_payloads,
-            mole_orders=mole_orders,
-        )
-
         report = OptSync1cResponse(period_code=normalized, period_iso=period_iso)
-        for kind, crm_id in planned:
-            try:
-                if kind == "unchanged":
-                    report.unchanged += 1
-                    report.actions.append(OptSync1cActionItem(action=kind, crm_id=crm_id))
-                    continue
 
+        async with mole_session():
+            mole_orders = await mole_filter_orders(period_iso=period_iso)
+            planned = plan_sync_actions(
+                local_crm_ids=set(local_payloads),
+                local_payloads=local_payloads,
+                mole_orders=mole_orders,
+            )
+            report.unchanged = sum(1 for kind, _ in planned if kind == "unchanged")
+            mutators = [(kind, crm_id) for kind, crm_id in planned if kind != "unchanged"]
+
+            # HTTP only in parallel (no DB). Then apply DB writes sequentially.
+            sem = asyncio.Semaphore(5)
+
+            async def _http_one(
+                kind: str,
+                crm_id: str,
+            ) -> tuple[str, str, dict[str, Any] | None, str | None]:
+                async with sem:
+                    try:
+                        if kind == "delete_extra":
+                            await mole_delete_order(crm_id)
+                            return kind, crm_id, None, None
+                        payload = local_payloads[crm_id]
+                        if kind == "update":
+                            response = await mole_put_order(crm_id, payload)
+                            return kind, crm_id, response, None
+                        try:
+                            response = await mole_put_order(crm_id, payload)
+                        except MoleApiError:
+                            response = await post_opt_order(payload)
+                        return kind, crm_id, response, None
+                    except MoleApiError as exc:
+                        return kind, crm_id, None, exc.message
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("opt_sync_action_failed", crm_id=crm_id, action=kind)
+                        return kind, crm_id, None, str(exc)[:500]
+
+            http_results = await asyncio.gather(
+                *[_http_one(kind, crm_id) for kind, crm_id in mutators],
+            )
+
+        for kind, crm_id, response, error in http_results:
+            if error:
+                report.errors.append(
+                    OptSync1cActionItem(action=kind, crm_id=crm_id, detail=error),
+                )
+                continue
+            try:
                 if kind == "delete_extra":
-                    await mole_delete_order(crm_id)
                     report.deleted_extra += 1
                     report.actions.append(
                         OptSync1cActionItem(
@@ -1374,52 +1409,26 @@ class OptOrderService:
                         ),
                     )
                     continue
-
                 order = local_by_crm[crm_id]
                 payload = local_payloads[crm_id]
-                if kind == "update":
-                    response = await mole_put_order(crm_id, payload)
-                    await self._apply_mole_submit_success(
-                        order,
-                        actor_id=actor.id,
-                        payload=payload,
-                        response=response,
-                    )
-                    report.updated += 1
-                    report.actions.append(
-                        OptSync1cActionItem(
-                            action=kind,
-                            crm_id=crm_id,
-                            detail="Обновлена в 1С по данным CRM",
-                        ),
-                    )
-                    continue
-
-                # restore: soft-deleted or missing in 1C
-                try:
-                    response = await mole_put_order(crm_id, payload)
-                except MoleApiError:
-                    response = await post_opt_order(payload)
+                assert response is not None
                 await self._apply_mole_submit_success(
                     order,
                     actor_id=actor.id,
                     payload=payload,
                     response=response,
                 )
-                report.restored += 1
+                if kind == "update":
+                    report.updated += 1
+                    detail = "Обновлена в 1С по данным CRM"
+                else:
+                    report.restored += 1
+                    detail = "Восстановлена в 1С"
                 report.actions.append(
-                    OptSync1cActionItem(
-                        action=kind,
-                        crm_id=crm_id,
-                        detail="Восстановлена в 1С",
-                    ),
+                    OptSync1cActionItem(action=kind, crm_id=crm_id, detail=detail),
                 )
-            except MoleApiError as exc:
-                report.errors.append(
-                    OptSync1cActionItem(action=kind, crm_id=crm_id, detail=exc.message),
-                )
-            except Exception as exc:  # noqa: BLE001 — surface per-order failures in report
-                logger.exception("opt_sync_action_failed", crm_id=crm_id, action=kind)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("opt_sync_db_apply_failed", crm_id=crm_id, action=kind)
                 report.errors.append(
                     OptSync1cActionItem(action=kind, crm_id=crm_id, detail=str(exc)[:500]),
                 )

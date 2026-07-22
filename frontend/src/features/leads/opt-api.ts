@@ -42,9 +42,12 @@ export async function patchOptOrderPeriod(
 }
 
 export async function syncOptOrdersWith1c(periodCode: string): Promise<OptSync1cResponse> {
-  const { data } = await http.post<OptSync1cResponse>('/opt-orders/sync-1c', {
-    period_code: periodCode,
-  })
+  // Large quarters (e.g. 2/26) can take minutes — default axios timeout is 15s.
+  const { data } = await http.post<OptSync1cResponse>(
+    '/opt-orders/sync-1c',
+    { period_code: periodCode },
+    { timeout: 600_000 },
+  )
   return data
 }
 
