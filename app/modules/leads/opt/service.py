@@ -14,13 +14,20 @@ from app.modules.db.models.lead_opt_order_payment import LeadOptOrderPayment
 from app.modules.db.models.user import User
 from sqlalchemy.orm import selectinload
 from app.modules.leads.access import actor_can_access_lead
-from app.modules.leads.opt.mole_client import MoleApiError, post_opt_order
+from app.modules.leads.opt.mole_client import (
+    MoleApiError,
+    delete_order as mole_delete_order,
+    filter_orders as mole_filter_orders,
+    post_opt_order,
+    put_order as mole_put_order,
+)
 from app.modules.leads.opt.requisites import ensure_unit_requisites, resolve_buyer_requisites
 from app.modules.leads.opt.fingerprint import compute_application_fingerprint
 from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
+from app.modules.leads.opt.sync_diff import plan_sync_actions
 from app.modules.leads.opt.schemas import (
     OptAttachmentProbeResponse,
     OptCommissionHistoryItem,
@@ -37,12 +44,19 @@ from app.modules.leads.opt.schemas import (
     OptPaymentLedgerItem,
     OptPaymentLedgerListResponse,
     OptPaymentResponse,
+    OptSync1cActionItem,
+    OptSync1cResponse,
     OptVolumeCategoryBreakdown,
 )
 from app.modules.leads.opt.pricing import commission_base_from_breakdown
-from app.modules.leads.opt.periods import normalize_period_code, read_lead_opt_period
+from app.modules.leads.opt.periods import (
+    normalize_period_code,
+    period_code_to_mole_iso,
+    read_lead_opt_period,
+)
 from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
 from app.modules.leads.repository import LeadRepository
+from app.modules.rbac.role_checks import is_admin, is_group_senior, is_department_senior
 from app.realtime.events import publish
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.shared.settings import get_settings
@@ -993,12 +1007,11 @@ class OptOrderService:
 
     @staticmethod
     def _mole_party(*, inn: str, kpp: str | None, name: str) -> dict[str, str]:
-        party: dict[str, str] = {"ИНН": inn, "Наименование": name}
-        if kpp:
-            party["КПП"] = kpp
-        return party
+        # Mole always reads .КПП; missing key fails. Empty string is OK for individuals.
+        return {"ИНН": inn, "КПП": (kpp or "").strip(), "Наименование": name}
 
-    def _build_mole_payload(self, order: LeadOptOrder) -> dict[str, Any]:
+    @staticmethod
+    def _build_mole_payload(order: LeadOptOrder) -> dict[str, Any]:
         if not order.buyer_name:
             raise ValidationError(
                 message=(
@@ -1021,7 +1034,7 @@ class OptOrderService:
             registry.append(
                 {
                     "CRMid": line.crm_id,
-                    "Поставщик": self._mole_party(
+                    "Поставщик": OptOrderService._mole_party(
                         inn=line.supplier_inn,
                         kpp=line.supplier_kpp,
                         name=line.supplier_name,
@@ -1035,7 +1048,7 @@ class OptOrderService:
 
         return {
             "CRMid": order.crm_id,
-            "Покупатель": self._mole_party(
+            "Покупатель": OptOrderService._mole_party(
                 inn=order.buyer_inn,
                 kpp=order.buyer_kpp,
                 name=order.buyer_name,
@@ -1098,11 +1111,23 @@ class OptOrderService:
                 line_numbers=line_numbers,
             )
         except MoleApiError as exc:
+            details = exc.details or {}
+            body = details.get("body")
+            response_payload: dict[str, object] | None
+            if isinstance(body, dict):
+                response_payload = body
+            elif details.get("text") is not None:
+                response_payload = {
+                    "text": details.get("text"),
+                    "http_status": details.get("http_status"),
+                }
+            else:
+                response_payload = None
             await self._repo.mark_failed(
                 order,
                 actor_id=actor_id,
                 request_payload=payload,
-                response_payload=exc.details.get("body") if exc.details else None,
+                response_payload=response_payload,
                 error_message=exc.message,
             )
             await self._publish_status(order)
@@ -1293,3 +1318,133 @@ class OptOrderService:
         await self._hydrate_registry_requisites(order)
         await self._session.commit()
         return self._registry_bytes(order)
+
+    async def sync_orders_with_1c(self, actor: User, period_code: str) -> OptSync1cResponse:
+        if not (
+            is_admin(actor.role)
+            or is_department_senior(actor.role)
+            or is_group_senior(actor.role)
+        ):
+            raise PermissionDenied(message="Сверка с 1С доступна старшим и администраторам")
+
+        normalized = normalize_period_code(period_code)
+        if normalized is None:
+            raise ValidationError(message="Некорректный период (ожидается формат Q/YY, например 2/26)")
+        period_iso = period_code_to_mole_iso(normalized)
+        if period_iso is None:
+            raise ValidationError(message="Некорректный период")
+
+        local_orders = await self._repo.list_submitted_by_period(normalized)
+        local_payloads: dict[str, dict[str, Any]] = {}
+        local_by_crm: dict[str, LeadOptOrder] = {}
+        for order in local_orders:
+            await self._ensure_order_requisites(order)
+            try:
+                payload = self._build_mole_payload(order)
+            except ValidationError as exc:
+                # Skip incomplete orders from auto-apply; surface as error.
+                logger.warning(
+                    "opt_sync_skip_local_order",
+                    crm_id=order.crm_id,
+                    error=exc.message,
+                )
+                continue
+            local_payloads[order.crm_id] = payload
+            local_by_crm[order.crm_id] = order
+
+        mole_orders = await mole_filter_orders(period_iso=period_iso)
+        planned = plan_sync_actions(
+            local_crm_ids=set(local_payloads),
+            local_payloads=local_payloads,
+            mole_orders=mole_orders,
+        )
+
+        report = OptSync1cResponse(period_code=normalized, period_iso=period_iso)
+        for kind, crm_id in planned:
+            try:
+                if kind == "unchanged":
+                    report.unchanged += 1
+                    report.actions.append(OptSync1cActionItem(action=kind, crm_id=crm_id))
+                    continue
+
+                if kind == "delete_extra":
+                    await mole_delete_order(crm_id)
+                    report.deleted_extra += 1
+                    report.actions.append(
+                        OptSync1cActionItem(
+                            action=kind,
+                            crm_id=crm_id,
+                            detail="Удалена лишняя заявка в 1С",
+                        ),
+                    )
+                    continue
+
+                order = local_by_crm[crm_id]
+                payload = local_payloads[crm_id]
+                if kind == "update":
+                    response = await mole_put_order(crm_id, payload)
+                    await self._apply_mole_submit_success(
+                        order,
+                        actor_id=actor.id,
+                        payload=payload,
+                        response=response,
+                    )
+                    report.updated += 1
+                    report.actions.append(
+                        OptSync1cActionItem(
+                            action=kind,
+                            crm_id=crm_id,
+                            detail="Обновлена в 1С по данным CRM",
+                        ),
+                    )
+                    continue
+
+                # restore: soft-deleted or missing in 1C
+                try:
+                    response = await mole_put_order(crm_id, payload)
+                except MoleApiError:
+                    response = await post_opt_order(payload)
+                await self._apply_mole_submit_success(
+                    order,
+                    actor_id=actor.id,
+                    payload=payload,
+                    response=response,
+                )
+                report.restored += 1
+                report.actions.append(
+                    OptSync1cActionItem(
+                        action=kind,
+                        crm_id=crm_id,
+                        detail="Восстановлена в 1С",
+                    ),
+                )
+            except MoleApiError as exc:
+                report.errors.append(
+                    OptSync1cActionItem(action=kind, crm_id=crm_id, detail=exc.message),
+                )
+            except Exception as exc:  # noqa: BLE001 — surface per-order failures in report
+                logger.exception("opt_sync_action_failed", crm_id=crm_id, action=kind)
+                report.errors.append(
+                    OptSync1cActionItem(action=kind, crm_id=crm_id, detail=str(exc)[:500]),
+                )
+
+        await self._session.flush()
+        return report
+
+    async def _apply_mole_submit_success(
+        self,
+        order: LeadOptOrder,
+        *,
+        actor_id: int,
+        payload: dict[str, Any],
+        response: dict[str, Any],
+    ) -> None:
+        line_numbers = self._extract_line_numbers(response)
+        await self._repo.mark_submitted(
+            order,
+            actor_id=actor_id,
+            request_payload=payload,
+            response_payload=response,
+            line_numbers=line_numbers,
+        )
+        await self._publish_status(order)

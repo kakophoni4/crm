@@ -23,11 +23,13 @@ import {
   listOptOrdersRegistry,
   listOptPaymentsLedger,
   patchOptOrderPeriod,
+  syncOptOrdersWith1c,
 } from '@/features/leads/opt-api'
 import type {
   OptOrderRegistryItem,
   OptPayment,
   OptPaymentLedgerItem,
+  OptSync1cResponse,
 } from '@/features/leads/opt-types'
 import {
   optPaymentRecipientLabel,
@@ -61,11 +63,17 @@ const groups = ref<Group[]>([])
 const managers = ref<AdminUser[]>([])
 const periodOptions = OPT_PERIOD_OPTIONS
 const savingPeriodOrderId = ref<number | null>(null)
+const syncing1c = ref(false)
+const syncReportOpen = ref(false)
+const syncReport = ref<OptSync1cResponse | null>(null)
 
 const canFilterGroup = computed(
   () => auth.isAdmin || auth.isSenior || auth.isGroupSenior,
 )
 const canFilterManager = computed(() => auth.isAdmin || auth.isSenior)
+const canSync1c = computed(
+  () => auth.isAdmin || auth.isSenior || auth.isGroupSenior,
+)
 
 const detailOpen = ref(false)
 const selected = ref<OptOrderRegistryItem | null>(null)
@@ -443,6 +451,35 @@ async function load(): Promise<void> {
   }
 }
 
+async function onSyncWith1c(): Promise<void> {
+  if (!periodFilter.value) {
+    message.warning('Выберите период для сверки с 1С')
+    return
+  }
+  syncing1c.value = true
+  try {
+    const report = await syncOptOrdersWith1c(periodFilter.value)
+    syncReport.value = report
+    syncReportOpen.value = true
+    const parts = [
+      `без изменений: ${report.unchanged}`,
+      `обновлено: ${report.updated}`,
+      `восстановлено: ${report.restored}`,
+      `удалено лишних: ${report.deleted_extra}`,
+    ]
+    if (report.errors.length) {
+      message.warning(`Сверка завершена с ошибками (${report.errors.length}). ${parts.join(', ')}`)
+    } else {
+      message.success(`Сверка с 1С выполнена. ${parts.join(', ')}`)
+    }
+    await load()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось синхронизировать с 1С')
+  } finally {
+    syncing1c.value = false
+  }
+}
+
 function onDetailPaymentsChanged(): void {
   void load()
 }
@@ -540,6 +577,17 @@ onMounted(() => {
           size="small"
           clearable
         />
+        <NButton
+          v-if="canSync1c && activeTab === 'orders'"
+          size="small"
+          type="primary"
+          secondary
+          :loading="syncing1c"
+          :disabled="!periodFilter || syncing1c"
+          @click="onSyncWith1c"
+        >
+          Синхронизировать с 1С
+        </NButton>
       </div>
     </header>
 
@@ -776,6 +824,63 @@ onMounted(() => {
             <template #icon><MessageSquare :size="16" /></template>
             Перейти в чат
           </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="syncReportOpen"
+      preset="card"
+      title="Сверка с 1С"
+      class="applications-page__modal"
+      :style="{ width: 'min(640px, 96vw)' }"
+      :segmented="{ content: true, footer: 'soft' }"
+    >
+      <template v-if="syncReport">
+        <dl class="applications-page__facts applications-page__facts--payment">
+          <div>
+            <dt>Период</dt>
+            <dd>{{ syncReport.period_code }} ({{ syncReport.period_iso }})</dd>
+          </div>
+          <div>
+            <dt>Без изменений</dt>
+            <dd>{{ syncReport.unchanged }}</dd>
+          </div>
+          <div>
+            <dt>Обновлено</dt>
+            <dd>{{ syncReport.updated }}</dd>
+          </div>
+          <div>
+            <dt>Восстановлено</dt>
+            <dd>{{ syncReport.restored }}</dd>
+          </div>
+          <div>
+            <dt>Удалено лишних в 1С</dt>
+            <dd>{{ syncReport.deleted_extra }}</dd>
+          </div>
+          <div>
+            <dt>Ошибок</dt>
+            <dd>{{ syncReport.errors.length }}</dd>
+          </div>
+        </dl>
+
+        <template v-if="syncReport.errors.length">
+          <h3 class="applications-page__section-title">Ошибки</h3>
+          <ul class="applications-page__history">
+            <li v-for="(row, idx) in syncReport.errors" :key="`${row.crm_id}-${idx}`">
+              <div class="applications-page__history-top">
+                <strong>{{ row.crm_id }}</strong>
+                <span>{{ row.action }}</span>
+              </div>
+              <p class="applications-page__muted">{{ row.detail || '—' }}</p>
+            </li>
+          </ul>
+        </template>
+      </template>
+
+      <template #footer>
+        <div class="applications-page__footer">
+          <NButton type="primary" @click="syncReportOpen = false">Закрыть</NButton>
         </div>
       </template>
     </NModal>

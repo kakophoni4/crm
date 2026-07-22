@@ -303,6 +303,21 @@ class OptOrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_submitted_by_period(self, period_code: str) -> list[LeadOptOrder]:
+        result = await self._session.execute(
+            select(LeadOptOrder)
+            .where(
+                LeadOptOrder.period_code == period_code,
+                LeadOptOrder.status == "submitted",
+            )
+            .options(
+                selectinload(LeadOptOrder.lines),
+                selectinload(LeadOptOrder.payments),
+            )
+            .order_by(LeadOptOrder.id.asc()),
+        )
+        return list(result.scalars().all())
+
     async def get_order_by_source_attachment(
         self,
         message_id: int,

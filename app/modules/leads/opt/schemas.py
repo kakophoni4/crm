@@ -230,3 +230,24 @@ class OptOrderPeriodUpdateResponse(BaseModel):
     order_id: int
     lead_id: int
     period_code: str
+
+
+class OptSync1cRequest(BaseModel):
+    period_code: str = Field(min_length=1, max_length=16)
+
+
+class OptSync1cActionItem(BaseModel):
+    action: str
+    crm_id: str
+    detail: str | None = None
+
+
+class OptSync1cResponse(BaseModel):
+    period_code: str
+    period_iso: str
+    unchanged: int = 0
+    updated: int = 0
+    restored: int = 0
+    deleted_extra: int = 0
+    errors: list[OptSync1cActionItem] = Field(default_factory=list)
+    actions: list[OptSync1cActionItem] = Field(default_factory=list)

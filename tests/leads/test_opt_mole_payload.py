@@ -54,7 +54,7 @@ def test_build_mole_payload_matches_1c_contract() -> None:
     assert row["СуммаБезНДС"] == 257993.44
 
 
-def test_build_mole_payload_omits_kpp_when_missing() -> None:
+def test_build_mole_payload_sends_empty_kpp_when_missing() -> None:
     order = _Order()
     order.buyer_kpp = None
     order.lines[0].supplier_kpp = None
@@ -63,14 +63,14 @@ def test_build_mole_payload_omits_kpp_when_missing() -> None:
 
     assert payload["Покупатель"] == {
         "ИНН": "7700000100",
+        "КПП": "",
         "Наименование": 'ООО "Тестовый покупатель"',
     }
-    assert "КПП" not in payload["Покупатель"]
     assert payload["Реестр"][0]["Поставщик"] == {
         "ИНН": "7700000001",
+        "КПП": "",
         "Наименование": 'ООО "Тестовая лавка 1"',
     }
-    assert "КПП" not in payload["Реестр"][0]["Поставщик"]
 
 
 def test_extract_line_numbers_accepts_crmid() -> None:

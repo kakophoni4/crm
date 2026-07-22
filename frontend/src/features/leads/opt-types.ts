@@ -167,6 +167,23 @@ export interface OptPaymentLedgerListResponse {
   total: number
 }
 
+export interface OptSync1cActionItem {
+  action: string
+  crm_id: string
+  detail?: string | null
+}
+
+export interface OptSync1cResponse {
+  period_code: string
+  period_iso: string
+  unchanged: number
+  updated: number
+  restored: number
+  deleted_extra: number
+  errors: OptSync1cActionItem[]
+  actions: OptSync1cActionItem[]
+}
+
 export const OPT_PAYMENT_TYPE_OPTIONS = [
   { label: 'На карту', value: 'card' as const },
   { label: 'Крипта', value: 'crypto' as const },

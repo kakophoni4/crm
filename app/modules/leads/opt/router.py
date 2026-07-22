@@ -40,6 +40,8 @@ from app.modules.leads.opt.schemas import (
     OptOrderResponse,
     OptPaymentLedgerListResponse,
     OptSendRegistryResponse,
+    OptSync1cRequest,
+    OptSync1cResponse,
     OptUploadFromAttachmentRequest,
 )
 from app.modules.leads.opt.service import OptOrderService
@@ -103,6 +105,18 @@ async def patch_opt_order_period(
         lead_id=lead_id,
         period_code=period_code,
     )
+
+
+@router.post("/opt-orders/sync-1c", response_model=OptSync1cResponse)
+async def sync_opt_orders_with_1c(
+    body: OptSync1cRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OptSync1cResponse:
+    report = await service.sync_orders_with_1c(actor, body.period_code)
+    await db.commit()
+    return report
 
 
 @router.get("/opt-payments", response_model=OptPaymentLedgerListResponse)

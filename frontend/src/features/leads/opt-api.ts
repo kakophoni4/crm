@@ -4,6 +4,7 @@ import type {
   OptOrderListResponse,
   OptOrderRegistryListResponse,
   OptPaymentLedgerListResponse,
+  OptSync1cResponse,
   OptVatRatePercent,
 } from '@/features/leads/opt-types'
 import { http } from '@/shared/api/http'
@@ -37,6 +38,13 @@ export async function patchOptOrderPeriod(
     `/opt-orders/${orderId}/period`,
     { period_code: periodCode },
   )
+  return data
+}
+
+export async function syncOptOrdersWith1c(periodCode: string): Promise<OptSync1cResponse> {
+  const { data } = await http.post<OptSync1cResponse>('/opt-orders/sync-1c', {
+    period_code: periodCode,
+  })
   return data
 }
 
