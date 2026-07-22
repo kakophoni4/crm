@@ -38,8 +38,8 @@ function onPick(emoji: string): void {
         <p class="emoji-picker__label">{{ group.label }}</p>
         <div class="emoji-picker__grid">
           <button
-            v-for="emoji in group.emojis"
-            :key="emoji"
+            v-for="(emoji, idx) in group.emojis"
+            :key="`${group.label}-${idx}-${emoji}`"
             type="button"
             class="emoji-picker__item"
             @click="onPick(emoji)"
