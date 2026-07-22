@@ -106,11 +106,6 @@ const managerOptions = computed<SelectOption[]>(() =>
   })),
 )
 
-function onSelectedPeriodChange(value: string | null): void {
-  if (!selected.value) return
-  void onOrderPeriodChange(selected.value, value)
-}
-
 async function onOrderPeriodChange(
   row: OptOrderRegistryItem,
   value: string | null,

@@ -219,12 +219,6 @@ function openPreview(tab: 'application' | 'commission' | 'payments' = 'applicati
   previewOpen.value = true
 }
 
-function paymentTagType(status: string): 'default' | 'success' | 'error' | 'warning' {
-  if (status === 'paid') return 'success'
-  if (status === 'partial') return 'warning'
-  return 'error'
-}
-
 function paymentPillClass(status: string): string {
   if (status === 'paid') return 'opt-orders__pill opt-orders__pill--ok'
   if (status === 'partial') return 'opt-orders__pill opt-orders__pill--warn'
@@ -382,13 +376,6 @@ async function onDownloadPaymentDocument(paymentId: number, fileId?: number | nu
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось скачать документ')
   }
-}
-
-function statusTagType(status: string): 'default' | 'success' | 'error' | 'warning' | 'info' {
-  if (status === 'submitted') return 'success'
-  if (status === 'failed') return 'error'
-  if (status === 'submitting') return 'info'
-  return 'warning'
 }
 
 function statusLabel(status: string): string {
