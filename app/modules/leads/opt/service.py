@@ -56,7 +56,7 @@ from app.modules.leads.opt.periods import (
 )
 from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
 from app.modules.leads.repository import LeadRepository
-from app.modules.rbac.role_checks import is_admin, is_group_senior, is_department_senior
+from app.modules.rbac.role_checks import is_admin
 from app.realtime.events import publish
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.shared.settings import get_settings
@@ -1320,12 +1320,8 @@ class OptOrderService:
         return self._registry_bytes(order)
 
     async def sync_orders_with_1c(self, actor: User, period_code: str) -> OptSync1cResponse:
-        if not (
-            is_admin(actor.role)
-            or is_department_senior(actor.role)
-            or is_group_senior(actor.role)
-        ):
-            raise PermissionDenied(message="Сверка с 1С доступна старшим и администраторам")
+        if not is_admin(actor.role):
+            raise PermissionDenied(message="Сверка с 1С доступна только администраторам")
 
         normalized = normalize_period_code(period_code)
         if normalized is None:

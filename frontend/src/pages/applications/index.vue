@@ -71,9 +71,7 @@ const canFilterGroup = computed(
   () => auth.isAdmin || auth.isSenior || auth.isGroupSenior,
 )
 const canFilterManager = computed(() => auth.isAdmin || auth.isSenior)
-const canSync1c = computed(
-  () => auth.isAdmin || auth.isSenior || auth.isGroupSenior,
-)
+const canSync1c = computed(() => auth.isAdmin)
 
 const detailOpen = ref(false)
 const selected = ref<OptOrderRegistryItem | null>(null)
@@ -583,7 +581,7 @@ onMounted(() => {
           type="primary"
           secondary
           :loading="syncing1c"
-          :disabled="!periodFilter || syncing1c"
+          :disabled="syncing1c"
           @click="onSyncWith1c"
         >
           Синхронизировать с 1С
