@@ -79,18 +79,27 @@ def _sheet_looks_like_nds(ws: Worksheet) -> tuple[int, dict[str, int]] | None:
     return None
 
 
-def looks_like_nds_request(content: bytes) -> bool:
+def _quick_has_nds_headers(content: bytes) -> bool:
+    """Fast path: only first rows via read_only — avoids loading huge non-NDS books."""
     try:
         workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
     except Exception:
         return False
     try:
         for ws in workbook.worksheets:
-            if _sheet_looks_like_nds(ws) is not None:
-                return True
+            for row in ws.iter_rows(min_row=1, max_row=8, max_col=20, values_only=True):
+                blob = " ".join(_cell_text(v) for v in row if v is not None)
+                if all(marker in blob for marker in _HEADER_MARKERS):
+                    return True
         return False
     finally:
         workbook.close()
+
+
+def looks_like_nds_request(content: bytes) -> bool:
+    if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return False
+    return _quick_has_nds_headers(content)
 
 
 def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
@@ -99,6 +108,10 @@ def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
             matched=False,
             reason="xls_legacy_not_supported",
         )
+    # Skip full openpyxl load for unrelated huge workbooks (Раздел-8/9 etc.).
+    if not _quick_has_nds_headers(content):
+        return NdsRequestParseResult(matched=False, reason="header_not_found")
+
     try:
         workbook = load_workbook(BytesIO(content), data_only=True)
     except Exception as exc:

@@ -213,6 +213,7 @@ async def _scan_storage(
         scanned += 1
         pct = (100 * scanned) // total if total else 100
         prefix = f"[{scanned}/{total} {pct}%] [{cand.source}] {cand.name!r}"
+        _log(f"{prefix} … processing")
 
         try:
             content, _ctype = await storage.get_bytes(cand.storage_key)
