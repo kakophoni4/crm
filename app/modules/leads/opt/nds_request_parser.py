@@ -94,6 +94,11 @@ def looks_like_nds_request(content: bytes) -> bool:
 
 
 def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
+    if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return NdsRequestParseResult(
+            matched=False,
+            reason="xls_legacy_not_supported",
+        )
     try:
         workbook = load_workbook(BytesIO(content), data_only=True)
     except Exception as exc:

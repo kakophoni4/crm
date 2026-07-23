@@ -224,10 +224,9 @@ async def _scan_storage(
         parsed = parse_nds_request_workbook(content)
         if not parsed.matched:
             skipped += 1
-            if verbose_skip:
-                _log(f"{prefix} → SKIP ({parsed.reason or 'header_not_found'})")
-            else:
-                _log(f"{prefix} → SKIP")
+            reason = parsed.reason or "header_not_found"
+            # Always show why — silent SKIP is confusing for ops.
+            _log(f"{prefix} → SKIP ({reason})")
             continue
 
         if parsed.application is None:
