@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Scan storage Excel files that look like «ЗАПРОС НДС» and sum CRM «к оплате».
+"""Scan storage for partner applications and sum CRM «к оплате».
 
-Detection is by workbook CONTENT only (headers: ИНН покупателя /
-Стоимость покупки / ИНН продавца) — filenames are ignored.
+Detection by CONTENT only (not filename):
+  - nds_request: Заявка на НДС (стоимость покупки / ИНН продавца)
+  - partner_forma: Forma_zayavki (сумма в т.ч. НДС / ИНН организации)
+
+OPT upload format and CRM registry exports are skipped on purpose.
 
 Sources (deduped by storage_key):
   - uploaded_files
@@ -50,6 +53,7 @@ class FileHit:
     volume: Decimal
     commission: Decimal
     sheet_name: str | None
+    form_kind: str | None
 
 
 @dataclass(frozen=True)
@@ -168,7 +172,8 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
         return []
     volume, commission = _price(parsed.application, units)
     _log(
-        f"[1/1 100%] [local] {path.name!r} → HIT buyer={parsed.application.buyer_inn} "
+        f"[1/1 100%] [local] {path.name!r} → HIT kind={parsed.form_kind} "
+        f"buyer={parsed.application.buyer_inn} "
         f"lines={len(parsed.application.lines)} volume={_money(volume)} "
         f"commission={_money(commission)}",
     )
@@ -182,6 +187,7 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
             volume=volume,
             commission=commission,
             sheet_name=parsed.sheet_name,
+            form_kind=parsed.form_kind,
         ),
     ]
 
@@ -233,7 +239,7 @@ async def _scan_storage(
         if parsed.application is None:
             empty_templates += 1
             _log(
-                f"{prefix} → EMPTY sheet={parsed.sheet_name!r} "
+                f"{prefix} → EMPTY kind={parsed.form_kind} sheet={parsed.sheet_name!r} "
                 f"({parsed.reason})",
             )
             continue
@@ -250,10 +256,12 @@ async def _scan_storage(
                 volume=volume,
                 commission=commission,
                 sheet_name=parsed.sheet_name,
+                form_kind=parsed.form_kind,
             ),
         )
         _log(
-            f"{prefix} → HIT buyer={parsed.application.buyer_inn} "
+            f"{prefix} → HIT kind={parsed.form_kind} "
+            f"buyer={parsed.application.buyer_inn} "
             f"lines={len(parsed.application.lines)} "
             f"volume={_money(volume)} commission={_money(commission)} "
             f"| running_к_оплате={_money(running_commission)} "
@@ -291,14 +299,24 @@ async def _run(
     total_commission = sum((h.commission for h in hits), Decimal("0"))
     _log(f"total_volume (стоимость покупок): {_money(total_volume)} ₽")
     _log(f"total_commission (к оплате CRM):  {_money(total_commission)} ₽")
+    by_kind: dict[str, list[FileHit]] = {}
+    for hit in hits:
+        by_kind.setdefault(hit.form_kind or "unknown", []).append(hit)
+    for kind, kind_hits in sorted(by_kind.items()):
+        kv = sum((h.volume for h in kind_hits), Decimal("0"))
+        kc = sum((h.commission for h in kind_hits), Decimal("0"))
+        _log(
+            f"  kind={kind}: files={len(kind_hits)} "
+            f"volume={_money(kv)} commission={_money(kc)}",
+        )
     if hits:
         _log("")
         _log("per file:")
         for hit in hits:
             _log(
-                f"  - [{hit.source}] buyer={hit.buyer_inn} lines={hit.lines} "
-                f"volume={_money(hit.volume)} к_оплате={_money(hit.commission)} "
-                f"| {hit.name}",
+                f"  - [{hit.source}] kind={hit.form_kind} buyer={hit.buyer_inn} "
+                f"lines={hit.lines} volume={_money(hit.volume)} "
+                f"к_оплате={_money(hit.commission)} | {hit.name}",
             )
     return 0
 

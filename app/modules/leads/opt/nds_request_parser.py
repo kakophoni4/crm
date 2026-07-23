@@ -1,18 +1,30 @@
-"""Detect and parse client «ЗАПРОС НДС» Excel workbooks by content."""
+"""Detect and parse partner «ЗАПРОС НДС» / Forma_zayavki Excel by content.
+
+Two partner layouts (OPT upload format is intentionally NOT handled here):
+
+1) nds_request — sheet «Заявка на НДС»
+   ИНН покупателя | Стоимость покупки | ИНН продавца | дата счета-фактуры
+
+2) partner_forma — Forma_zayavki
+   ИНН покупателя | Сумма (в т.ч. НДС) | ИНН организации | дата (дд.мм.гг)
+
+CRM registry exports (№ документа / поставщик / сумма без НДС) are rejected.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 from io import BytesIO
-from typing import Any
+from typing import Any, Literal
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.modules.leads.opt.contact_buyer import normalize_inn, parse_decimal, parse_excel_date
 from app.modules.leads.opt.parser import ParsedApplication, ParsedApplicationLine
+
+FormKind = Literal["nds_request", "partner_forma"]
 
 
 @dataclass(frozen=True)
@@ -21,12 +33,24 @@ class NdsRequestParseResult:
     sheet_name: str | None = None
     application: ParsedApplication | None = None
     reason: str | None = None
+    form_kind: FormKind | None = None
 
 
-_HEADER_MARKERS = (
+_NDS_MARKERS = (
     "инн покупателя",
     "стоимость покупки",
     "инн продавца",
+)
+
+_PARTNER_FORMA_MARKERS = (
+    "инн покупателя",
+    "сумма (в т.ч. ндс)",
+    "инн организации",
+)
+
+_CRM_REGISTRY_MARKERS = (
+    "сумма без ндс",
+    "№ документа",
 )
 
 
@@ -34,6 +58,18 @@ def _cell_text(value: object) -> str:
     if value is None:
         return ""
     return " ".join(str(value).strip().lower().split())
+
+
+def _blob(values: list[object] | tuple[object, ...]) -> str:
+    return " ".join(_cell_text(v) for v in values if v is not None)
+
+
+def _is_crm_registry_blob(blob: str) -> bool:
+    return (
+        "сумма без ндс" in blob
+        and ("№ документа" in blob or "номер документа" in blob)
+        and "поставщик" in blob
+    )
 
 
 def _header_map(row_values: list[object]) -> dict[str, int]:
@@ -45,42 +81,79 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             continue
         if "инн покупателя" in text:
             mapping["buyer_inn"] = idx
+        elif "инн организации" in text:
+            mapping["supplier_inn"] = idx
         elif "инн продавца" in text or ("инн" in text and "продав" in text):
             mapping["supplier_inn"] = idx
-        elif "стоимость покупки" in text or ("стоимость" in text and "ндс" in text):
+        elif "стоимость покупки" in text:
             mapping["amount"] = idx
+        elif "сумма (в т.ч. ндс)" in text or "сумма в т.ч. ндс" in text:
+            mapping["amount"] = idx
+        elif text == "сумма ндс" or text.startswith("сумма ндс "):
+            # VAT-only column — not purchase amount.
+            continue
         elif "дата счета" in text or "дата счёта" in text or "дата счет" in text:
+            mapping["document_date"] = idx
+        elif text.startswith("дата (дд") or text == "дата":
             mapping["document_date"] = idx
         elif text.startswith("наименование покупателя"):
             mapping["buyer_name"] = idx
-        elif "наименование продавца" in text:
+        elif "наименование продавца" in text or "наименование организации" in text:
             mapping["supplier_name"] = idx
     return mapping
+
+
+def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
+    required = {"buyer_inn", "supplier_inn", "amount", "document_date"}
+    if not required.issubset(mapping):
+        return None
+    if _is_crm_registry_blob(blob):
+        return None
+    if all(m in blob for m in _NDS_MARKERS):
+        return "nds_request"
+    # Partner Forma: amount column is «Сумма (в т.ч. НДС)», seller is «ИНН организации».
+    if "инн организации" in blob and (
+        "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
+    ):
+        return "partner_forma"
+    if all(m in blob for m in _PARTNER_FORMA_MARKERS):
+        return "partner_forma"
+    # Accept near-match with mapped columns (e.g. стоимость / инн продавца wording variants).
+    if "инн покупателя" in blob and "инн" in blob and (
+        "стоимость" in blob or "сумма (в т.ч" in blob
+    ):
+        if "инн продавца" in blob:
+            return "nds_request"
+        if "инн организации" in blob:
+            return "partner_forma"
+    return None
 
 
 def _row_values(ws: Worksheet, row_idx: int, max_col: int) -> list[object]:
     return [ws.cell(row_idx, col).value for col in range(1, max_col + 1)]
 
 
-def _sheet_looks_like_nds(ws: Worksheet) -> tuple[int, dict[str, int]] | None:
+def _sheet_looks_like_partner(
+    ws: Worksheet,
+) -> tuple[int, dict[str, int], FormKind] | None:
     max_col = min(int(ws.max_column or 0), 20)
     max_row = min(int(ws.max_row or 0), 8)
-    if max_col < 5 or max_row < 1:
+    if max_col < 4 or max_row < 1:
         return None
     for row_idx in range(1, max_row + 1):
         values = _row_values(ws, row_idx, max_col)
-        blob = " ".join(_cell_text(v) for v in values if v is not None)
-        if not all(marker in blob for marker in _HEADER_MARKERS):
+        blob = _blob(values)
+        if not blob or _is_crm_registry_blob(blob):
             continue
         mapping = _header_map(values)
-        required = {"buyer_inn", "supplier_inn", "amount", "document_date"}
-        if required.issubset(mapping):
-            return row_idx, mapping
+        kind = _detect_layout(blob, mapping)
+        if kind is not None:
+            return row_idx, mapping, kind
     return None
 
 
-def _quick_has_nds_headers(content: bytes) -> bool:
-    """Fast path: only first rows via read_only — avoids loading huge non-NDS books."""
+def _quick_has_partner_headers(content: bytes) -> bool:
+    """Fast path: only first rows via read_only — avoids loading huge unrelated books."""
     try:
         workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
     except Exception:
@@ -88,8 +161,14 @@ def _quick_has_nds_headers(content: bytes) -> bool:
     try:
         for ws in workbook.worksheets:
             for row in ws.iter_rows(min_row=1, max_row=8, max_col=20, values_only=True):
-                blob = " ".join(_cell_text(v) for v in row if v is not None)
-                if all(marker in blob for marker in _HEADER_MARKERS):
+                blob = _blob(row)
+                if not blob or _is_crm_registry_blob(blob):
+                    continue
+                if all(m in blob for m in _NDS_MARKERS):
+                    return True
+                if "инн покупателя" in blob and "инн организации" in blob and (
+                    "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
+                ):
                     return True
         return False
     finally:
@@ -99,7 +178,7 @@ def _quick_has_nds_headers(content: bytes) -> bool:
 def looks_like_nds_request(content: bytes) -> bool:
     if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
         return False
-    return _quick_has_nds_headers(content)
+    return _quick_has_partner_headers(content)
 
 
 def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
@@ -108,8 +187,7 @@ def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
             matched=False,
             reason="xls_legacy_not_supported",
         )
-    # Skip full openpyxl load for unrelated huge workbooks (Раздел-8/9 etc.).
-    if not _quick_has_nds_headers(content):
+    if not _quick_has_partner_headers(content):
         return NdsRequestParseResult(matched=False, reason="header_not_found")
 
     try:
@@ -118,10 +196,10 @@ def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
         return NdsRequestParseResult(matched=False, reason=f"excel_open_failed: {exc}")
 
     for ws in workbook.worksheets:
-        found = _sheet_looks_like_nds(ws)
+        found = _sheet_looks_like_partner(ws)
         if found is None:
             continue
-        header_row, cols = found
+        header_row, cols, form_kind = found
         lines: list[ParsedApplicationLine] = []
         buyer_inn: str | None = None
         max_row = int(ws.max_row or 0)
@@ -133,7 +211,6 @@ def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
 
             if supplier_inn is None and row_buyer is None and amount is None:
                 if lines:
-                    # Trailing empty block — stop.
                     empty_ahead = True
                     for peek in range(row_idx + 1, min(row_idx + 3, max_row + 1)):
                         if normalize_inn(ws.cell(peek, cols["supplier_inn"]).value):
@@ -162,12 +239,14 @@ def parse_nds_request_workbook(content: bytes) -> NdsRequestParseResult:
                 matched=True,
                 sheet_name=ws.title,
                 reason="no_data_rows",
+                form_kind=form_kind,
             )
         assert buyer_inn is not None
         return NdsRequestParseResult(
             matched=True,
             sheet_name=ws.title,
             application=ParsedApplication(buyer_inn=buyer_inn, lines=lines),
+            form_kind=form_kind,
         )
 
     return NdsRequestParseResult(matched=False, reason="header_not_found")
