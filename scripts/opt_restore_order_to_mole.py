@@ -35,10 +35,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.modules.db.models.lead_opt_order import LeadOptOrder
-from app.modules.leads.opt.mole_client import delete_order, get_order, post_opt_order, put_order
+from app.modules.leads.opt.mole_client import (
+    delete_order,
+    filter_orders,
+    get_order,
+    post_opt_order,
+    put_order,
+)
 from app.modules.leads.opt.periods import period_code_to_mole_iso
 from app.modules.leads.opt.repository import OptOrderRepository
 from app.modules.leads.opt.service import OptOrderService
+from app.modules.leads.opt.sync_diff import mole_crm_id, mole_is_deleted
 from app.shared.db import get_session_factory
 
 
@@ -87,6 +94,28 @@ def _build_payload(service: OptOrderService, order: LeadOptOrder, period_code: s
     if period:
         payload["Период"] = period
     return payload
+
+
+def _filter_row_sum(row: dict[str, Any]) -> Decimal:
+    for key in ("СуммаИтого", "Сумма", "Итого", "Total", "volume"):
+        if key in row and row[key] is not None:
+            try:
+                return _amt(row[key])
+            except Exception:
+                pass
+    return Decimal("0.00")
+
+
+async def _check_in_filter(period_code: str, crm_id: str) -> tuple[bool, Decimal, bool]:
+    iso = period_code_to_mole_iso(period_code)
+    if not iso:
+        return False, Decimal("0.00"), True
+    rows = await filter_orders(period_iso=iso)
+    for row in rows:
+        if mole_crm_id(row) != crm_id:
+            continue
+        return True, _filter_row_sum(row), mole_is_deleted(row)
+    return False, Decimal("0.00"), True
 
 
 async def main() -> int:
@@ -163,7 +192,7 @@ async def main() -> int:
 
         # --- fresh CRMid path (bypass dead shell) ---
         if args.fresh_crm_ids:
-            print("\n--- FRESH CRM IDs + POST ---")
+            print("\n--- FRESH CRM IDs + POST + PUT ---")
             order.crm_id = repo.new_crm_id("crm-order")
             for line in order.lines:
                 line.crm_id = repo.new_crm_id("crm-line")
@@ -183,9 +212,13 @@ async def main() -> int:
                 return 4
 
             print("POST response (trim):")
-            print(json.dumps(post_resp, ensure_ascii=False, default=str)[:4000])
+            print(json.dumps(post_resp, ensure_ascii=False, default=str)[:2500])
             line_numbers = service._extract_line_numbers(post_resp)
             print(f"POST doc numbers: {len(line_numbers)}/{len(order.lines)}")
+            if len(line_numbers) != len(order.lines):
+                print("ABORT — incomplete POST registry")
+                await session.rollback()
+                return 4
             for line in sorted(order.lines, key=lambda x: x.line_no):
                 old = line.document_number
                 new = line_numbers.get(line.crm_id)
@@ -193,16 +226,40 @@ async def main() -> int:
                     line.document_number = new
                 print(f"  L{line.line_no} {old} -> {line.document_number}")
 
+            # Fresh POST often leaves Удален=false but sum=0 / period=0001.
+            # PUT on that live shell is what actually fills amounts (PUT on
+            # Удален=true shells is a no-op).
+            print("\n--- PUT after fresh POST ---")
+            try:
+                put_resp = await put_order(order.crm_id, payload)
+                print(json.dumps(put_resp, ensure_ascii=False, default=str)[:2500])
+            except Exception as exc:  # noqa: BLE001
+                print(f"PUT FAIL: {exc}")
+                put_resp = None
+
             try:
                 final = await get_order(order.crm_id)
             except Exception as exc:  # noqa: BLE001
-                print(f"GET after POST FAIL: {exc}")
+                print(f"GET after PUT FAIL: {exc}")
                 await session.rollback()
                 return 5
 
-            _dump_header("GET after fresh POST", final)
-            final_ok = (not _is_deleted(final)) and _sum_get(final) == crm_vol
-            print(f"verdict_after_fresh: ok={final_ok}")
+            _dump_header("GET after POST+PUT", final)
+            get_sum = _sum_get(final)
+            get_ok = (not _is_deleted(final)) and get_sum == crm_vol
+
+            in_filter, filter_sum, filter_del = await _check_in_filter(period_code, order.crm_id)
+            print(
+                f"filter period={period_code}: present={in_filter} deleted={filter_del} "
+                f"sum={filter_sum} (crm={crm_vol})"
+            )
+            filter_ok = (
+                in_filter and (not filter_del) and filter_sum == crm_vol
+            )
+            # GET registry is often empty; trust GET/filter totals only.
+            final_ok = get_ok or filter_ok
+            print(f"verdict_after_fresh: get_ok={get_ok} filter_ok={filter_ok} ok={final_ok}")
+
             if not final_ok:
                 print("ABORT commit — Mole still bad; CRM crm_ids/docs NOT saved")
                 await session.rollback()
@@ -211,7 +268,11 @@ async def main() -> int:
             order.status = "submitted"
             order.submission_error = None
             order.submission_request = payload
-            order.submission_response = post_resp
+            order.submission_response = {
+                "post": post_resp,
+                "put": put_resp,
+                "get": {k: final.get(k) for k in final if k not in {"Реестр", "Registry"}},
+            }
             await session.commit()
             print(f"CRM committed with new crm_id={order.crm_id}")
             print(f"Old dead shell left in Mole: {old_order_crm} (ignore / admin purge)")
