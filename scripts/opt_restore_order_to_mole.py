@@ -151,6 +151,11 @@ async def main() -> int:
         action="store_true",
         help="Include Период in payload (usually BAD — default omits it like live submit)",
     )
+    parser.add_argument(
+        "--put-after-post",
+        action="store_true",
+        help="After fresh POST, also PUT (often zeroes sum — off by default)",
+    )
     args = parser.parse_args()
 
     if args.fresh_crm_ids and not args.apply:
@@ -242,25 +247,29 @@ async def main() -> int:
                     line.document_number = new
                 print(f"  L{line.line_no} {old} -> {line.document_number}")
 
-            # Fresh POST often leaves Удален=false but sum=0 / period=0001.
-            # PUT on that live shell is what actually fills amounts (PUT on
-            # Удален=true shells is a no-op).
-            print("\n--- PUT after fresh POST ---")
-            try:
-                put_resp = await put_order(order.crm_id, payload)
-                print(json.dumps(put_resp, ensure_ascii=False, default=str)[:2500])
-            except Exception as exc:  # noqa: BLE001
-                print(f"PUT FAIL: {exc}")
-                put_resp = None
+            # IMPORTANT: PUT after POST has been observed to leave GET/filter sum=0
+            # while PUT response shows ~2x volume. Default is POST-only; pass
+            # --put-after-post only if you really want the extra PUT.
+            put_resp: dict[str, Any] | None = None
+            if args.put_after_post:
+                print("\n--- PUT after fresh POST ---")
+                try:
+                    put_resp = await put_order(order.crm_id, payload)
+                    print(json.dumps(put_resp, ensure_ascii=False, default=str)[:2500])
+                except Exception as exc:  # noqa: BLE001
+                    print(f"PUT FAIL: {exc}")
+                    put_resp = None
+            else:
+                print("\n--- skip PUT after POST (default; use --put-after-post to force) ---")
 
             try:
                 final = await get_order(order.crm_id)
             except Exception as exc:  # noqa: BLE001
-                print(f"GET after PUT FAIL: {exc}")
+                print(f"GET after POST FAIL: {exc}")
                 await session.rollback()
                 return 5
 
-            _dump_header("GET after POST+PUT", final)
+            _dump_header("GET after fresh POST", final)
             get_sum = _sum_get(final)
             get_ok = (not _is_deleted(final)) and get_sum == crm_vol
 
