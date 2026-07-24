@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Verify Mole state for a CRM OPT order and restore it via PUT (keep CRM doc numbers).
+"""Restore a CRM OPT order into Mole when GET shows deleted/empty shell.
 
-Use when GET shows Удален=true / sum=0 / wrong period, but CRM has full registry.
+PUT on Удален=true shells is a no-op in Mole. Same-crm_id DELETE+POST can also
+stick to the dead shell (POST returns numbers, GET still sum=0/Удален).
 
-Flow:
-  1) GET before
-  2) PUT payload (+ Период) — Mole rejects unknown keys like Удален
-  3) GET after — require sum ≈ CRM volume and Удален!=true
-  4) optional --allow-remake: DELETE+POST if PUT left sum wrong
-     WARNING: remake gets NEW 1C doc numbers and writes them into CRM
+Preferred path when that happens: --fresh-crm-ids (new order+line CRMid, POST).
 
 Usage:
   docker cp scripts/opt_restore_order_to_mole.py crm-staging-api:/app/scripts/
-  # check only
+
+  # check
   docker exec crm-staging-api python /app/scripts/opt_restore_order_to_mole.py --order-id 273
-  # restore
-  docker exec crm-staging-api python /app/scripts/opt_restore_order_to_mole.py --order-id 273 --apply
+
+  # after failed remake on dead shell:
+  docker exec crm-staging-api python /app/scripts/opt_restore_order_to_mole.py \\
+    --order-id 273 --apply --fresh-crm-ids
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ from sqlalchemy.orm import selectinload
 from app.modules.db.models.lead_opt_order import LeadOptOrder
 from app.modules.leads.opt.mole_client import delete_order, get_order, post_opt_order, put_order
 from app.modules.leads.opt.periods import period_code_to_mole_iso
+from app.modules.leads.opt.repository import OptOrderRepository
 from app.modules.leads.opt.service import OptOrderService
 from app.shared.db import get_session_factory
 
@@ -63,6 +63,16 @@ def _is_deleted(body: dict[str, Any]) -> bool:
     return str(raw or "").strip().lower() in {"true", "1", "yes", "да"}
 
 
+def _period_for_payload(period_code: str) -> str | None:
+    iso = period_code_to_mole_iso(period_code) if period_code else None
+    if not iso:
+        return None
+    # Mole stores datetime; plain date often becomes 0001-01-01 on dead docs.
+    if "T" not in iso:
+        return f"{iso}T00:00:00"
+    return iso
+
+
 def _dump_header(label: str, body: dict[str, Any]) -> None:
     slim = {k: body.get(k) for k in sorted(body) if k not in {"Реестр", "Registry"}}
     print(f"\n=== {label} ===")
@@ -71,20 +81,43 @@ def _dump_header(label: str, body: dict[str, Any]) -> None:
     print(f"registry_lines={len(reg) if isinstance(reg, list) else 0} sum={_sum_get(body)}")
 
 
+def _build_payload(service: OptOrderService, order: LeadOptOrder, period_code: str) -> dict[str, Any]:
+    payload = service._build_mole_payload(order)
+    period = _period_for_payload(period_code)
+    if period:
+        payload["Период"] = period
+    return payload
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--order-id", type=int, required=True)
-    parser.add_argument("--apply", action="store_true", help="PUT (and optional remake) for real")
+    parser.add_argument("--apply", action="store_true")
     parser.add_argument(
         "--allow-remake",
         action="store_true",
-        help="If PUT leaves wrong sum: DELETE+POST (NEW doc numbers → CRM)",
+        help="DELETE+POST same crm_id (often fails on dead shells)",
+    )
+    parser.add_argument(
+        "--fresh-crm-ids",
+        action="store_true",
+        help="Assign new order/line CRMid then POST (recommended after failed remake)",
+    )
+    parser.add_argument(
+        "--skip-put",
+        action="store_true",
+        help="Skip PUT attempt (use with --fresh-crm-ids / --allow-remake)",
     )
     args = parser.parse_args()
+
+    if args.fresh_crm_ids and not args.apply:
+        print("--fresh-crm-ids requires --apply")
+        return 1
 
     sf = get_session_factory()
     async with sf() as session:
         service = OptOrderService(session)
+        repo = OptOrderRepository(session)
         order = (
             await session.execute(
                 select(LeadOptOrder)
@@ -100,73 +133,129 @@ async def main() -> int:
             return 1
 
         await service._ensure_order_requisites(order)
-        payload = service._build_mole_payload(order)
         period_code = (order.period_code or "").strip()
-        iso = period_code_to_mole_iso(period_code) if period_code else None
-        if iso:
-            payload["Период"] = iso
-        # Mole PUT rejects unknown keys like Удален — never send it.
-
         crm_vol = _amt(order.total_volume)
-        docs = sum(1 for ln in order.lines if ln.document_number)
+        old_order_crm = order.crm_id
+
         print(
             f"CRM order={order.id} no={order.order_no} lead={order.lead_id} "
             f"crm={order.crm_id} status={order.status} period={period_code} "
-            f"lines={len(order.lines)} docs={docs} vol={crm_vol}"
+            f"lines={len(order.lines)} vol={crm_vol}"
         )
-        print(f"payload: registry={len(payload.get('Реестр') or [])} period={payload.get('Период')}")
-        print(f"payload keys={sorted(payload.keys())}")
 
-        before = await get_order(order.crm_id)
-        _dump_header("GET before", before)
-        before_sum = _sum_get(before)
-        before_del = _is_deleted(before)
-        print(
-            f"verdict_before: deleted={before_del} sum_match={before_sum == crm_vol} "
-            f"(mole={before_sum} crm={crm_vol})"
-        )
+        try:
+            before = await get_order(order.crm_id)
+            _dump_header("GET before (old crm_id)", before)
+            print(
+                f"verdict_before: deleted={_is_deleted(before)} "
+                f"sum={_sum_get(before)} crm={crm_vol}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"GET before fail: {exc}")
+            before = None
 
         if not args.apply:
-            print("\ndry-run: pass --apply to PUT restore")
-            if before_del or before_sum != crm_vol:
-                print("expected: PUT with Реестр + Период (no Удален key — Mole rejects it)")
+            print("\ndry-run. If shell is deleted/empty after failed remake, use:")
+            print(
+                "  ... --order-id 273 --apply --fresh-crm-ids --skip-put"
+            )
             return 0
 
-        print("\n--- PUT ---")
-        try:
-            put_resp = await put_order(order.crm_id, payload)
-            print(json.dumps(put_resp, ensure_ascii=False, default=str)[:2500])
-        except Exception as exc:  # noqa: BLE001
-            print(f"PUT FAIL: {exc}")
-            return 2
+        # --- fresh CRMid path (bypass dead shell) ---
+        if args.fresh_crm_ids:
+            print("\n--- FRESH CRM IDs + POST ---")
+            order.crm_id = repo.new_crm_id("crm-order")
+            for line in order.lines:
+                line.crm_id = repo.new_crm_id("crm-line")
+            print(f"new order crm_id: {old_order_crm} -> {order.crm_id}")
 
-        after = await get_order(order.crm_id)
-        _dump_header("GET after PUT", after)
-        after_sum = _sum_get(after)
-        after_del = _is_deleted(after)
-        ok = (not after_del) and after_sum == crm_vol
-        print(f"verdict_after_put: deleted={after_del} sum_match={after_sum == crm_vol} ok={ok}")
+            payload = _build_payload(service, order, period_code)
+            print(
+                f"payload: registry={len(payload.get('Реестр') or [])} "
+                f"period={payload.get('Период')}"
+            )
 
-        if ok:
-            # Keep CRM document_number; only refresh audit blobs.
+            try:
+                post_resp = await post_opt_order(payload)
+            except Exception as exc:  # noqa: BLE001
+                print(f"POST FAIL: {exc}")
+                await session.rollback()
+                return 4
+
+            print("POST response (trim):")
+            print(json.dumps(post_resp, ensure_ascii=False, default=str)[:4000])
+            line_numbers = service._extract_line_numbers(post_resp)
+            print(f"POST doc numbers: {len(line_numbers)}/{len(order.lines)}")
+            for line in sorted(order.lines, key=lambda x: x.line_no):
+                old = line.document_number
+                new = line_numbers.get(line.crm_id)
+                if new:
+                    line.document_number = new
+                print(f"  L{line.line_no} {old} -> {line.document_number}")
+
+            try:
+                final = await get_order(order.crm_id)
+            except Exception as exc:  # noqa: BLE001
+                print(f"GET after POST FAIL: {exc}")
+                await session.rollback()
+                return 5
+
+            _dump_header("GET after fresh POST", final)
+            final_ok = (not _is_deleted(final)) and _sum_get(final) == crm_vol
+            print(f"verdict_after_fresh: ok={final_ok}")
+            if not final_ok:
+                print("ABORT commit — Mole still bad; CRM crm_ids/docs NOT saved")
+                await session.rollback()
+                return 5
+
             order.status = "submitted"
             order.submission_error = None
             order.submission_request = payload
-            order.submission_response = put_resp if isinstance(put_resp, dict) else after
+            order.submission_response = post_resp
             await session.commit()
-            print("CRM: submission audit updated; document numbers UNCHANGED")
+            print(f"CRM committed with new crm_id={order.crm_id}")
+            print(f"Old dead shell left in Mole: {old_order_crm} (ignore / admin purge)")
             return 0
+
+        payload = _build_payload(service, order, period_code)
+        print(
+            f"payload: registry={len(payload.get('Реестр') or [])} "
+            f"period={payload.get('Период')} keys={sorted(payload.keys())}"
+        )
+
+        if not args.skip_put:
+            print("\n--- PUT ---")
+            try:
+                put_resp = await put_order(order.crm_id, payload)
+                print(json.dumps(put_resp, ensure_ascii=False, default=str)[:2500])
+            except Exception as exc:  # noqa: BLE001
+                print(f"PUT FAIL: {exc}")
+                put_resp = None
+
+            after = await get_order(order.crm_id)
+            _dump_header("GET after PUT", after)
+            ok = (not _is_deleted(after)) and _sum_get(after) == crm_vol
+            print(f"verdict_after_put: ok={ok}")
+            if ok:
+                order.status = "submitted"
+                order.submission_error = None
+                order.submission_request = payload
+                order.submission_response = put_resp if isinstance(put_resp, dict) else after
+                await session.commit()
+                print("CRM: submission audit updated; document numbers UNCHANGED")
+                return 0
 
         if not args.allow_remake:
             print(
-                "\nPUT did not fully restore. Re-run with --allow-remake to DELETE+POST "
-                "(WARNING: new 1C doc numbers will overwrite CRM)."
+                "\nPUT did not restore. Prefer:\n"
+                "  ... --apply --fresh-crm-ids --skip-put\n"
+                "or same-id remake (often fails):\n"
+                "  ... --apply --allow-remake --skip-put"
             )
             await session.rollback()
             return 3
 
-        print("\n--- DELETE + POST (remake) ---")
-        print("WARNING: Mole will assign NEW document numbers")
+        print("\n--- DELETE + POST (same crm_id) ---")
         try:
             await delete_order(order.crm_id)
             print("DELETE ok")
@@ -180,6 +269,7 @@ async def main() -> int:
             await session.rollback()
             return 4
 
+        print(json.dumps(post_resp, ensure_ascii=False, default=str)[:4000])
         line_numbers = service._extract_line_numbers(post_resp)
         print(f"POST doc numbers: {len(line_numbers)}/{len(order.lines)}")
         for line in sorted(order.lines, key=lambda x: x.line_no):
@@ -189,17 +279,24 @@ async def main() -> int:
                 line.document_number = new
             print(f"  L{line.line_no} {old} -> {new or old}")
 
+        final = await get_order(order.crm_id)
+        _dump_header("GET after POST", final)
+        final_ok = (not _is_deleted(final)) and _sum_get(final) == crm_vol
+        print(f"verdict_after_post: ok={final_ok}")
+        if not final_ok:
+            print(
+                "Same-crm_id remake stuck on dead shell. "
+                "Rollback CRM doc changes and use --fresh-crm-ids."
+            )
+            await session.rollback()
+            return 5
+
         order.status = "submitted"
         order.submission_error = None
         order.submission_request = payload
         order.submission_response = post_resp
         await session.commit()
-
-        final = await get_order(order.crm_id)
-        _dump_header("GET after POST", final)
-        final_ok = (not _is_deleted(final)) and _sum_get(final) == crm_vol
-        print(f"verdict_after_post: ok={final_ok}")
-        return 0 if final_ok else 5
+        return 0
 
 
 if __name__ == "__main__":
