@@ -27,7 +27,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, text
+from sqlalchemy import text
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -158,6 +158,7 @@ async def _list_orders(order_ids: list[int]) -> int:
 
 
 async def _repair(order_ids: list[int], *, dry_run: bool) -> int:
+    """Append only missing Excel lines — keep existing line crm_id / document_number."""
     session_factory = get_session_factory()
     repaired = 0
     async with session_factory() as session:
@@ -177,26 +178,45 @@ async def _repair(order_ids: list[int], *, dry_run: bool) -> int:
                 _log(f"order={oid}: parse fail: {exc}")
                 continue
 
+            def _key(inn: str, d: object, amount: object) -> tuple[str, str, str]:
+                from datetime import date as date_cls
+                from datetime import datetime as datetime_cls
+
+                if isinstance(d, datetime_cls):
+                    ds = d.date().isoformat()
+                elif isinstance(d, date_cls):
+                    ds = d.isoformat()
+                else:
+                    ds = str(d)
+                return (str(inn), ds, f"{Decimal(str(amount)).quantize(Decimal('0.01'))}")
+
+            existing_keys = {
+                _key(ln.supplier_inn, ln.document_date, ln.amount) for ln in order.lines
+            }
+            missing = [
+                pl
+                for pl in parsed.lines
+                if _key(pl.supplier_inn, pl.document_date, pl.amount) not in existing_keys
+            ]
             old_n = len(order.lines)
             old_vol = Decimal(str(order.total_volume or 0))
-            new_n = len(parsed.lines)
-            new_vol = sum((ln.amount for ln in parsed.lines), Decimal("0"))
-            if new_n <= old_n and abs(new_vol - old_vol) <= Decimal("0.05"):
+            if not missing:
                 _log(f"order={oid}: already complete ({old_n} lines) — skip")
                 continue
 
+            add_vol = sum((pl.amount for pl in missing), Decimal("0"))
             _log(
                 f"order={oid} lead={order.lead_id} no={order.order_no}: "
-                f"{old_n}→{new_n} lines, vol {_money(old_vol)}→{_money(new_vol)} "
-                f"via={how} dry_run={dry_run}",
+                f"keep {old_n} lines, append {len(missing)} "
+                f"(+{_money(add_vol)}), via={how} dry_run={dry_run}",
             )
             if dry_run:
                 continue
 
             vat_rate = normalize_opt_vat_rate(order.vat_rate_percent)
             period_code = order.period_code
-            line_payloads: list[dict[str, object]] = []
-            for parsed_line in parsed.lines:
+            next_no = max((ln.line_no for ln in order.lines), default=0) + 1
+            for parsed_line in missing:
                 unit = None
                 if period_code:
                     unit = await repo.get_unit_by_inn_for_period(
@@ -206,48 +226,35 @@ async def _repair(order_ids: list[int], *, dry_run: bool) -> int:
                 if unit is None:
                     unit = await repo.get_unit_by_inn(parsed_line.supplier_inn)
                 total, vat, wo_vat = split_vat_included(parsed_line.amount, rate_percent=vat_rate)
-                line_payloads.append(
-                    {
-                        "crm_id": repo.new_crm_id("crm-line"),
-                        "supplier_inn": parsed_line.supplier_inn,
-                        "supplier_kpp": unit.kpp if unit else None,
-                        "supplier_name": unit.name if unit else None,
-                        "document_date": parsed_line.document_date,
-                        "amount": float(total),
-                        "vat_amount": float(vat),
-                        "amount_without_vat": float(wo_vat),
-                    },
-                )
-
-            await session.execute(
-                delete(LeadOptOrderLine).where(LeadOptOrderLine.order_id == order.id),
-            )
-            for idx, line_data in enumerate(line_payloads, start=1):
                 session.add(
                     LeadOptOrderLine(
                         order_id=order.id,
-                        crm_id=str(line_data["crm_id"]),
-                        line_no=idx,
-                        supplier_inn=str(line_data["supplier_inn"]),
-                        supplier_kpp=line_data.get("supplier_kpp"),  # type: ignore[arg-type]
-                        supplier_name=line_data.get("supplier_name"),  # type: ignore[arg-type]
-                        document_date=line_data["document_date"],  # type: ignore[arg-type]
-                        amount=line_data["amount"],  # type: ignore[arg-type]
-                        vat_amount=line_data["vat_amount"],  # type: ignore[arg-type]
-                        amount_without_vat=line_data["amount_without_vat"],  # type: ignore[arg-type]
+                        crm_id=repo.new_crm_id("crm-line"),
+                        line_no=next_no,
+                        supplier_inn=parsed_line.supplier_inn,
+                        supplier_kpp=unit.kpp if unit else None,
+                        supplier_name=unit.name if unit else None,
+                        document_date=parsed_line.document_date,
+                        amount=float(total),
+                        vat_amount=float(vat),
+                        amount_without_vat=float(wo_vat),
                     ),
                 )
+                next_no += 1
+
             await session.flush()
             await session.refresh(order, attribute_names=["lines"])
             await repo.apply_pricing_snapshot(order)
             order.content_fingerprint = compute_application_fingerprint(parsed)
+            # Re-submit same order.crm_id so 1C updates registry; existing line CRMids stay.
             order.status = "queued"
             order.submission_error = None
             await session.commit()
             await enqueue_opt_submit(order.id)
             repaired += 1
             _log(
-                f"  REPAIRED order={oid} commission_due={_money(Decimal(str(order.commission_due or 0)))} "
+                f"  APPENDED order={oid} now_lines={len(order.lines)} "
+                f"commission_due={_money(Decimal(str(order.commission_due or 0)))} "
                 f"queued for 1C",
             )
 
