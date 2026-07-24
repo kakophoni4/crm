@@ -164,6 +164,10 @@ class OptOrderRepository:
         order.deleted_at = utc_now()
         order.deleted_by = actor_id
         order.delete_snapshot = snapshot
+        # Vacate order_no so renumber / next_order_no cannot collide with the
+        # unique (lead_id, order_no) index while the row is soft-deleted.
+        if order.id is not None:
+            order.order_no = -int(order.id)
         await self._session.flush()
 
     async def restore_order(self, order: LeadOptOrder) -> None:
@@ -171,6 +175,9 @@ class OptOrderRepository:
             return
         order.deleted_at = None
         order.deleted_by = None
+        # Temporary unique slot until renumber_orders_for_lead assigns 1..N.
+        if order.id is not None:
+            order.order_no = -int(order.id)
         # Keep snapshot for audit trail.
         await self._session.flush()
 
@@ -427,11 +434,12 @@ class OptOrderRepository:
 
     async def next_order_no(self, lead_id: int) -> int:
         result = await self._session.execute(
-            select(func.count())
+            select(func.coalesce(func.max(LeadOptOrder.order_no), 0))
             .select_from(LeadOptOrder)
             .where(
                 LeadOptOrder.lead_id == lead_id,
                 LeadOptOrder.deleted_at.is_(None),
+                LeadOptOrder.order_no > 0,
             ),
         )
         return int(result.scalar_one()) + 1

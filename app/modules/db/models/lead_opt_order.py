@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Index, Integer, Numeric, Text, func
+from sqlalchemy import BigInteger, Date, ForeignKey, Index, Integer, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,7 +22,13 @@ class LeadOptOrder(Base):
     __tablename__ = "lead_opt_orders"
     __table_args__ = (
         Index("idx_lead_opt_orders_lead_id", "lead_id"),
-        Index("uq_lead_opt_orders_lead_order_no", "lead_id", "order_no", unique=True),
+        Index(
+            "uq_lead_opt_orders_lead_order_no",
+            "lead_id",
+            "order_no",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

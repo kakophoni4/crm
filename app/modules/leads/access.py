@@ -50,13 +50,11 @@ async def actor_can_access_lead(
         if actor_groups and lead.group_id in actor_groups:
             return True
 
+    # Any deal on a chat the actor can view (not only current_lead) —
+    # side panel lets managers open/close older deals on the same chat.
     if lead.chat_id is not None:
         chat = await session.get(Chat, lead.chat_id)
-        if (
-            chat is not None
-            and chat.current_lead_id == lead.id
-            and await can_view_chat_async(session, ctx, chat)
-        ):
+        if chat is not None and await can_view_chat_async(session, ctx, chat):
             return True
 
     return False
