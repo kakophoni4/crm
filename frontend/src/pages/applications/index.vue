@@ -55,8 +55,16 @@ const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const paymentItems = ref<OptPaymentLedgerItem[]>([])
 const total = ref(0)
+const totalVolumeSum = ref(0)
 const commissionDueSum = ref(0)
 const amountPaidSum = ref(0)
+
+const totalsScopeHint = computed(() => {
+  if (auth.isAdmin) return 'по всем отделам'
+  if (auth.isSenior) return 'по вашему отделу'
+  if (auth.isGroupSenior) return 'по вашим группам'
+  return 'по вашим заявкам'
+})
 const page = ref(1)
 const pageSize = 30
 const paymentStatusFilter = ref<string | null>(null)
@@ -219,6 +227,13 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       width: 150,
       ellipsis: { tooltip: true },
       render: (row) => row.group_name || `Группа #${row.group_id}`,
+    },
+    {
+      title: 'Объём',
+      key: 'total_volume',
+      width: 120,
+      align: 'right',
+      render: (row) => `${formatMoney(row.total_volume)} ₽`,
     },
     {
       title: 'К оплате',
@@ -438,6 +453,7 @@ async function load(): Promise<void> {
       paymentItems.value = data.items
       items.value = []
       total.value = data.total
+      totalVolumeSum.value = 0
       commissionDueSum.value = 0
       amountPaidSum.value = 0
     } else {
@@ -448,6 +464,7 @@ async function load(): Promise<void> {
       items.value = data.items
       paymentItems.value = []
       total.value = data.total
+      totalVolumeSum.value = Number(data.total_volume_sum ?? 0)
       commissionDueSum.value = Number(data.commission_due_sum ?? 0)
       amountPaidSum.value = Number(data.amount_paid_sum ?? 0)
     }
@@ -463,6 +480,7 @@ async function load(): Promise<void> {
       items.value = []
       paymentItems.value = []
       total.value = 0
+      totalVolumeSum.value = 0
       commissionDueSum.value = 0
       amountPaidSum.value = 0
     }
@@ -561,7 +579,7 @@ onMounted(() => {
           <template v-if="auth.isAdmin">Все данные по всем отделам</template>
           <template v-else-if="auth.isSenior">Данные вашего отдела</template>
           <template v-else-if="auth.isGroupSenior">Данные ваших групп</template>
-          <template v-else>Данные вашей группы</template>
+          <template v-else>Только ваши заявки</template>
         </p>
       </div>
       <div class="applications-page__filters">
@@ -620,6 +638,27 @@ onMounted(() => {
       <NTabPane name="payments" tab="Все оплаты" />
     </NTabs>
 
+    <div
+      v-if="activeTab === 'orders' && (items.length > 0 || total > 0)"
+      class="applications-page__totals"
+    >
+      <span class="applications-page__totals-label">
+        Итого {{ totalsScopeHint }} · заявок: {{ total }}
+      </span>
+      <span class="applications-page__totals-metric">
+        <span class="applications-page__totals-key">Объём</span>
+        <strong>{{ formatMoney(totalVolumeSum) }} ₽</strong>
+      </span>
+      <span class="applications-page__totals-metric">
+        <span class="applications-page__totals-key">К оплате</span>
+        <strong>{{ formatMoney(commissionDueSum) }} ₽</strong>
+      </span>
+      <span class="applications-page__totals-metric">
+        <span class="applications-page__totals-key">Оплачено</span>
+        <strong>{{ formatMoney(amountPaidSum) }} ₽</strong>
+      </span>
+    </div>
+
     <NSpin :show="loading && items.length === 0 && paymentItems.length === 0">
       <template v-if="activeTab === 'orders'">
         <NEmpty v-if="!items.length && !loading" description="Заявок пока нет" />
@@ -632,21 +671,8 @@ onMounted(() => {
             :row-props="rowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="1180"
+            :scroll-x="1300"
           />
-          <div class="applications-page__totals">
-            <span class="applications-page__totals-label">
-              Итого по фильтру · заявок: {{ total }}
-            </span>
-            <span>
-              К оплате:
-              <strong>{{ formatMoney(commissionDueSum) }} ₽</strong>
-            </span>
-            <span>
-              Оплачено:
-              <strong>{{ formatMoney(amountPaidSum) }} ₽</strong>
-            </span>
-          </div>
         </AppCard>
       </template>
 
@@ -922,21 +948,36 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 12px 20px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--n-border-color);
-  font-size: 0.9rem;
+  justify-content: flex-end;
+  gap: 10px 22px;
+  padding: 10px 14px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--n-color) 92%, var(--app-text-muted));
+  font-size: 0.88rem;
   color: var(--app-text);
 }
 
 .applications-page__totals-label {
   color: var(--app-text-muted);
   margin-right: auto;
+  font-size: 0.82rem;
+}
+
+.applications-page__totals-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.applications-page__totals-key {
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
 }
 
 .applications-page__totals strong {
   font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }
 
 .applications-page__panel {

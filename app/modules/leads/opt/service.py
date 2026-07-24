@@ -444,15 +444,24 @@ class OptOrderService:
         from app.modules.db.models.lead import Lead
         from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids
 
+        from app.modules.db.models.enums import UserRole
+
         ctx = await self._scope_loader.load(actor)
         scoped = visible_group_ids(ctx)
         if scoped != SCOPE_ALL and not scoped:
             return OptOrderRegistryListResponse(
                 items=[],
                 total=0,
+                total_volume_sum=Decimal("0"),
                 commission_due_sum=Decimal("0"),
                 amount_paid_sum=Decimal("0"),
             )
+
+        role = (
+            actor.role
+            if isinstance(actor.role, UserRole)
+            else UserRole(str(actor.role))
+        )
 
         filters = []
         if scoped != SCOPE_ALL:
@@ -473,7 +482,10 @@ class OptOrderService:
                 filters.append(LeadOptOrder.payment_status.in_(statuses))
         if period_code:
             filters.append(LeadOptOrder.period_code == period_code.strip())
-        if manager_user_id is not None:
+        # Operators see only their own cards; seniors/admins keep group/dept/all scope.
+        if role == UserRole.USER:
+            filters.append(ContactGroupAssignment.owner_user_id == actor.id)
+        elif manager_user_id is not None:
             filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
         if open_only:
             filters.append(Lead.closed_at.is_(None))
@@ -489,6 +501,7 @@ class OptOrderService:
         stats_stmt = (
             select(
                 func.count(),
+                func.coalesce(func.sum(LeadOptOrder.total_volume), 0),
                 func.coalesce(func.sum(LeadOptOrder.commission_due), 0),
                 func.coalesce(func.sum(LeadOptOrder.amount_paid), 0),
             )
@@ -499,8 +512,11 @@ class OptOrderService:
         )
         if filters:
             stats_stmt = stats_stmt.where(*filters)
-        total_raw, due_raw, paid_raw = (await self._session.execute(stats_stmt)).one()
+        total_raw, volume_raw, due_raw, paid_raw = (
+            await self._session.execute(stats_stmt)
+        ).one()
         total = int(total_raw or 0)
+        total_volume_sum = Decimal(str(volume_raw or 0)).quantize(Decimal("0.01"))
         commission_due_sum = Decimal(str(due_raw or 0)).quantize(Decimal("0.01"))
         amount_paid_sum = Decimal(str(paid_raw or 0)).quantize(Decimal("0.01"))
 
@@ -589,6 +605,7 @@ class OptOrderService:
         return OptOrderRegistryListResponse(
             items=items,
             total=total,
+            total_volume_sum=total_volume_sum,
             commission_due_sum=commission_due_sum,
             amount_paid_sum=amount_paid_sum,
         )

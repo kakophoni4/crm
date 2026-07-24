@@ -152,6 +152,7 @@ class OptOrderRegistryItem(BaseModel):
 class OptOrderRegistryListResponse(BaseModel):
     items: list[OptOrderRegistryItem]
     total: int
+    total_volume_sum: Decimal = Decimal("0")
     commission_due_sum: Decimal = Decimal("0")
     amount_paid_sum: Decimal = Decimal("0")
 
