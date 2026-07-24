@@ -43,6 +43,7 @@ COPY --chown=appuser:appuser scripts/scan_nds_request_files.py ./scripts/scan_nd
 COPY --chown=appuser:appuser scripts/opt_deleted_orders.py ./scripts/opt_deleted_orders.py
 COPY --chown=appuser:appuser scripts/opt_compare_1c_extras.py ./scripts/opt_compare_1c_extras.py
 COPY --chown=appuser:appuser scripts/opt_scan_truncated_orders.py ./scripts/opt_scan_truncated_orders.py
+COPY --chown=appuser:appuser scripts/opt_repair_truncated_orders.py ./scripts/opt_repair_truncated_orders.py
 COPY --chown=appuser:appuser scripts/opt_reopen_lost_with_orders.py ./scripts/opt_reopen_lost_with_orders.py
 COPY --chown=appuser:appuser scripts/opt_find_deleted_orders.sh ./scripts/opt_find_deleted_orders.sh
 COPY --chown=appuser:appuser scripts/bots/resync_bot_group_assignments.py ./scripts/resync_bot_group_assignments.py
