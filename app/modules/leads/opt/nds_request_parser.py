@@ -114,11 +114,16 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             mapping["supplier_inn"] = idx
         elif "стоимость покупки" in text:
             mapping["amount"] = idx
+        elif "сумма покупки" in text and "ндс" in text:
+            # Таврида / «Заявка новая»: Сумма покупки по СФ, в т.ч. НДС
+            mapping["amount"] = idx
         elif "сумма покупок" in text and "ндс" in text:
             mapping["amount"] = idx
         elif "сумма сделок" in text and "ндс" in text:
             mapping["amount"] = idx
         elif "сумма (в т.ч. ндс)" in text or "сумма в т.ч. ндс" in text:
+            mapping["amount"] = idx
+        elif "в т.ч. ндс" in text and "сумма" in text and "сумма ндс" not in text:
             mapping["amount"] = idx
         elif text == "сумма ндс" or text.startswith("сумма ндс "):
             continue
@@ -151,7 +156,9 @@ def _is_park_zapros_blob(blob: str) -> bool:
     has_amount = (
         "сумма сделок" in blob
         or "сумма покупок" in blob
+        or "сумма покупки" in blob
         or "стоимость покупки" in blob
+        or ("сумма" in blob and "в т.ч" in blob and "ндс" in blob)
     )
     return has_parties and has_amount and "дата" in blob
 
@@ -167,13 +174,19 @@ def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
     if _is_park_zapros_blob(blob):
         return "partner_forma"
     if "инн организации" in blob and (
-        "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
+        "сумма (в т.ч. ндс)" in blob
+        or "сумма в т.ч. ндс" in blob
+        or ("сумма" in blob and "в т.ч" in blob and "ндс" in blob)
     ):
         return "partner_forma"
     if all(m in blob for m in _PARTNER_FORMA_MARKERS):
         return "partner_forma"
     if "инн покупателя" in blob and "инн" in blob and (
-        "стоимость" in blob or "сумма (в т.ч" in blob or "сумма покупок" in blob
+        "стоимость" in blob
+        or "сумма (в т.ч" in blob
+        or "сумма покупок" in blob
+        or "сумма покупки" in blob
+        or ("сумма" in blob and "в т.ч" in blob and "ндс" in blob)
     ):
         if "инн продавца" in blob or "продав" in blob:
             return "nds_request"
@@ -301,6 +314,15 @@ def _blob_has_partner_headers(blob: str) -> bool:
     ):
         return True
     if _is_park_zapros_blob(blob):
+        return True
+    # Таврида / Заявка новая: ИНН продавца+покупателя + сумма покупки по СФ
+    if (
+        "инн" in blob
+        and "покупател" in blob
+        and "продав" in blob
+        and ("сумма покупки" in blob or ("сумма" in blob and "в т.ч" in blob and "ндс" in blob))
+        and "дата" in blob
+    ):
         return True
     return False
 

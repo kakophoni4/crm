@@ -216,6 +216,37 @@ def test_parse_easy_goldman_zapros_headers() -> None:
     assert result.application.lines[1].amount == 99_000
 
 
+def test_parse_tavrida_summa_pokupki_po_sf() -> None:
+    """Таврида / Заявка новая: Сумма покупки по СФ, в т.ч. НДС."""
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append([None, None, None])
+    ws.append([None, None, "Ставка НДС :", 22, "%"])
+    ws.append(
+        [
+            None,
+            "ИНН ПРОДАВЦА\n",
+            "ИНН ПОКУПАТЕЛЯ\n",
+            "Дата СФ\n(в виде дд. мм. гггг)",
+            "Сумма покупки по СФ, в т.ч. НДС\n",
+        ],
+    )
+    ws.append([None, "9709103059", "6678133104", "09.07.2024", 489_000])
+    ws.append([None, "9709103059", "6678133104", "10.07.2024", 99_000])
+    buf = BytesIO()
+    wb.save(buf)
+    content = buf.getvalue()
+    assert looks_like_nds_request(content)
+    result = parse_nds_request_workbook(content)
+    assert result.matched
+    assert result.form_kind == "nds_request"
+    assert result.application is not None
+    assert result.application.buyer_inn == "6678133104"
+    assert len(result.application.lines) == 2
+    assert result.application.lines[0].amount == 489_000
+
+
 def test_partner_forma_header_below_row_8() -> None:
     wb = Workbook()
     ws = wb.active
