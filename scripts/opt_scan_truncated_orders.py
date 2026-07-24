@@ -208,10 +208,16 @@ async def _scan_orders(
     missing = 0
     checked = 0
     async with session_factory() as session:
+        params: dict[str, object] = {"lim": limit}
+        lead_filter = ""
+        if lead_id is not None:
+            lead_filter = "AND o.lead_id = :lead_id"
+            params["lead_id"] = lead_id
+
         rows = (
             await session.execute(
                 text(
-                    """
+                    f"""
                     SELECT o.id AS order_id,
                            o.lead_id,
                            o.order_no,
@@ -230,12 +236,12 @@ async def _scan_orders(
                     FROM lead_opt_orders o
                     JOIN leads l ON l.id = o.lead_id
                     WHERE o.deleted_at IS NULL
-                      AND (:lead_id IS NULL OR o.lead_id = :lead_id)
+                      {lead_filter}
                     ORDER BY o.id DESC
                     LIMIT :lim
                     """
                 ),
-                {"lead_id": lead_id, "lim": limit},
+                params,
             )
         ).mappings().all()
 
