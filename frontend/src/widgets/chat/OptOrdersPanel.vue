@@ -133,13 +133,9 @@ const hasPendingSubmission = computed(() =>
   ),
 )
 
-function canDeleteOrder(order: OptOrder): boolean {
-  if (props.disabled) return false
-  // Submitted / in-flight: hide delete for managers (admin can still via API).
-  if (order.status === 'submitted' || order.status === 'queued' || order.status === 'submitting') {
-    return false
-  }
-  return true
+function canDeleteOrder(_order: OptOrder): boolean {
+  // Soft-delete on API; double-confirm modal. Allowed for any status when lead is editable.
+  return !props.disabled
 }
 
 function canAdjustCommission(order: OptOrder): boolean {
@@ -1156,9 +1152,11 @@ onUnmounted(() => {
         </template>
         <template v-else>
           <p class="opt-orders__preview-text">
-            Это действие необратимо. Заявка, фактуры
-            <template v-if="deleteTarget.payments.length"> и оплаты</template>
-            будут удалены без восстановления.
+            Подтвердите удаление заявки {{ orderLabel(deleteTarget) }}.
+            Заявка скроется из списка (мягкое удаление); восстановить может администратор.
+          </p>
+          <p v-if="deleteTarget.payments.length" class="opt-orders__meta opt-orders__meta--warning">
+            Оплаты по заявке тоже будут скрыты вместе с ней.
           </p>
           <p v-if="deleteTarget.status === 'submitted'" class="opt-orders__meta opt-orders__meta--warning">
             Запись в 1С не удаляется автоматически.
@@ -1177,7 +1175,7 @@ onUnmounted(() => {
             :loading="deleteTarget != null && deletingId === deleteTarget.id"
             @click="void onDelete()"
           >
-            Удалить безвозвратно
+            Удалить заявку
           </NButton>
         </div>
       </template>

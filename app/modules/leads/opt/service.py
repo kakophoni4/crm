@@ -1308,16 +1308,6 @@ class OptOrderService:
         if order.deleted_at is not None:
             raise NotFound(message="OPT order not found")
 
-        # Submitted / in-flight orders: only admin may soft-delete.
-        protected = {"submitted", "queued", "submitting"}
-        if order.status in protected and not is_admin(actor.role):
-            raise PermissionDenied(
-                message=(
-                    f"Нельзя удалить заявку в статусе «{order.status}» — "
-                    "только администратор (мягкое удаление)"
-                ),
-            )
-
         lead_id_value = order.lead_id
         order_no = order.order_no
         snapshot = self._order_delete_snapshot(order)
