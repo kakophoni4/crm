@@ -42,6 +42,35 @@ def test_rate_percent_for_unit_prefers_custom_rate() -> None:
     assert rate_percent_for_unit(None, category_code=OPT_CATEGORY_TECH) == Decimal("1.3")
 
 
+def test_mixed_custom_rates_same_category_not_collapsed() -> None:
+    """Кохер @2.8% must not inherit 3.5% from another Абсолют (L) supplier."""
+    from types import SimpleNamespace
+
+    from app.modules.leads.opt.tariffs import OPT_CATEGORY_ELITE
+
+    class Line:
+        def __init__(self, inn: str, amount: str) -> None:
+            self.supplier_inn = inn
+            self.amount = Decimal(amount)
+
+    units = {
+        "7718139114": SimpleNamespace(category_code=OPT_CATEGORY_ELITE, commission_rate_percent=3.5),
+        "7734474261": SimpleNamespace(category_code=OPT_CATEGORY_ELITE, commission_rate_percent=2.8),
+        "9729097741": SimpleNamespace(category_code=OPT_CATEGORY_ELITE, commission_rate_percent=3.5),
+    }
+    lines = [
+        Line("7718139114", "100000"),
+        Line("7734474261", "200000"),
+        Line("9729097741", "100000"),
+    ]
+    total, commission, breakdown = compute_order_pricing(lines, units)  # type: ignore[arg-type]
+    assert total == Decimal("400000")
+    # 100k*3.5% + 200k*2.8% + 100k*3.5% = 3500 + 5600 + 3500 = 12600
+    assert commission == Decimal("12600.00")
+    assert any(abs(float(row["rate_percent"]) - 2.8) < 0.001 for row in breakdown.values())
+    assert any(abs(float(row["rate_percent"]) - 3.5) < 0.001 for row in breakdown.values())
+
+
 def test_commission_base_from_breakdown() -> None:
     breakdown = {
         "TECH": {
