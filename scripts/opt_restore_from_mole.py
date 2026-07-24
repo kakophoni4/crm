@@ -94,7 +94,10 @@ def _registry_lines(body: dict[str, Any], *, vat_rate: Decimal) -> list[dict[str
             vat_amount = Decimal(str(vat_raw))
             amount_without_vat = Decimal(str(wo_raw))
         else:
-            amount_without_vat, vat_amount = split_vat_included(amount, vat_rate)
+            _total, vat_amount, amount_without_vat = split_vat_included(
+                amount,
+                rate_percent=vat_rate,
+            )
         lines.append(
             {
                 "crm_id": line_crm,
