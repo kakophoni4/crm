@@ -88,11 +88,20 @@ def _dump_header(label: str, body: dict[str, Any]) -> None:
     print(f"registry_lines={len(reg) if isinstance(reg, list) else 0} sum={_sum_get(body)}")
 
 
-def _build_payload(service: OptOrderService, order: LeadOptOrder, period_code: str) -> dict[str, Any]:
+def _build_payload(
+    service: OptOrderService,
+    order: LeadOptOrder,
+    period_code: str,
+    *,
+    with_period: bool,
+) -> dict[str, Any]:
+    # Normal CRM submit sends ONLY CRMid/Покупатель/Реестр — no Период.
+    # Sending Период made Mole store 0001-01-01 and exclude the order from filter.
     payload = service._build_mole_payload(order)
-    period = _period_for_payload(period_code)
-    if period:
-        payload["Период"] = period
+    if with_period:
+        period = _period_for_payload(period_code)
+        if period:
+            payload["Период"] = period
     return payload
 
 
@@ -136,6 +145,11 @@ async def main() -> int:
         "--skip-put",
         action="store_true",
         help="Skip PUT attempt (use with --fresh-crm-ids / --allow-remake)",
+    )
+    parser.add_argument(
+        "--with-period",
+        action="store_true",
+        help="Include Период in payload (usually BAD — default omits it like live submit)",
     )
     args = parser.parse_args()
 
@@ -198,10 +212,12 @@ async def main() -> int:
                 line.crm_id = repo.new_crm_id("crm-line")
             print(f"new order crm_id: {old_order_crm} -> {order.crm_id}")
 
-            payload = _build_payload(service, order, period_code)
+            payload = _build_payload(
+                service, order, period_code, with_period=args.with_period
+            )
             print(
                 f"payload: registry={len(payload.get('Реестр') or [])} "
-                f"period={payload.get('Период')}"
+                f"period={payload.get('Период')!r} keys={sorted(payload.keys())}"
             )
 
             try:
@@ -278,10 +294,12 @@ async def main() -> int:
             print(f"Old dead shell left in Mole: {old_order_crm} (ignore / admin purge)")
             return 0
 
-        payload = _build_payload(service, order, period_code)
+        payload = _build_payload(
+            service, order, period_code, with_period=args.with_period
+        )
         print(
             f"payload: registry={len(payload.get('Реестр') or [])} "
-            f"period={payload.get('Период')} keys={sorted(payload.keys())}"
+            f"period={payload.get('Период')!r} keys={sorted(payload.keys())}"
         )
 
         if not args.skip_put:
