@@ -18,6 +18,11 @@ State / resume:
   Results are stored in a JSON state file (storage_key → status) so re-runs
   skip already processed keys. Headers of SKIP files are kept for audit.
 
+Dedup (default on):
+  Totals count unique registry LINES across all files:
+  (buyer_inn, supplier_inn, document_date, amount).
+  Duplicate uploads (Forma_заявки.xls + «запрос».xls) do not inflate к_оплате.
+
 Usage on VPS:
   docker exec -e PYTHONUNBUFFERED=1 crm-staging-api \\
     python scripts/scan_nds_request_files.py --resume
@@ -50,6 +55,7 @@ from app.modules.leads.opt.nds_request_parser import (  # noqa: E402
     parse_nds_request_workbook,
     peek_workbook_headers,
 )
+from app.modules.leads.opt.parser import ParsedApplication, ParsedApplicationLine  # noqa: E402
 from app.modules.leads.opt.pricing import compute_order_pricing  # noqa: E402
 from app.shared.db import get_session_factory  # noqa: E402
 from app.shared.storage import get_file_storage  # noqa: E402
@@ -64,10 +70,39 @@ class FileHit:
     storage_key: str | None
     buyer_inn: str
     lines: int
+    lines_unique: int
+    lines_dup: int
     volume: Decimal
     commission: Decimal
     sheet_name: str | None
     form_kind: str | None
+
+
+def _line_fingerprint(line: ParsedApplicationLine) -> str:
+    """Stable key for one registry row across duplicate files."""
+    amount = Decimal(str(line.amount)).quantize(Decimal("0.01"))
+    return (
+        f"{line.buyer_inn}|{line.supplier_inn}|"
+        f"{line.document_date.isoformat()}|{amount}"
+    )
+
+
+def _split_unique_lines(
+    lines: list[ParsedApplicationLine],
+    seen: set[str],
+) -> tuple[list[ParsedApplicationLine], list[str], int]:
+    unique: list[ParsedApplicationLine] = []
+    keys: list[str] = []
+    dup_n = 0
+    for line in lines:
+        key = _line_fingerprint(line)
+        if key in seen:
+            dup_n += 1
+            continue
+        seen.add(key)
+        unique.append(line)
+        keys.append(key)
+    return unique, keys, dup_n
 
 
 @dataclass(frozen=True)
@@ -271,12 +306,15 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
         for row in peek_workbook_headers(content):
             _log(f"  header_peek: {row}")
         return []
-    volume, commission = _price(parsed.application, units)
+    seen: set[str] = set()
+    unique, _keys, dup_n = _split_unique_lines(parsed.application.lines, seen)
+    app = ParsedApplication(buyer_inn=parsed.application.buyer_inn, lines=unique)
+    volume, commission = _price(app, units)
     _log(
         f"[1/1 100%] [local] {path.name!r} → HIT kind={parsed.form_kind} "
         f"buyer={parsed.application.buyer_inn} "
-        f"lines={len(parsed.application.lines)} volume={_money(volume)} "
-        f"commission={_money(commission)}",
+        f"lines={len(unique)}/{len(parsed.application.lines)} "
+        f"(dup={dup_n}) volume={_money(volume)} commission={_money(commission)}",
     )
     return [
         FileHit(
@@ -285,6 +323,8 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
             storage_key=None,
             buyer_inn=parsed.application.buyer_inn,
             lines=len(parsed.application.lines),
+            lines_unique=len(unique),
+            lines_dup=dup_n,
             volume=volume,
             commission=commission,
             sheet_name=parsed.sheet_name,
@@ -302,7 +342,8 @@ async def _scan_storage(
     state_path: Path,
     contact_like: str | None,
     name_like: str | None,
-) -> tuple[list[FileHit], int, int, int, int]:
+    dedupe_lines: bool,
+) -> tuple[list[FileHit], int, int, int, int, int]:
     units = await _load_units()
     candidates = await _collect_candidates(
         limit=limit,
@@ -319,12 +360,39 @@ async def _scan_storage(
     empty_templates = 0
     skipped = 0
     resumed = 0
+    dup_files = 0
     total = len(candidates)
     running_commission = Decimal("0")
+    running_volume = Decimal("0")
+    seen_lines: set[str] = set()
+    candidate_keys = {c.storage_key for c in candidates}
+
+    # Keep fingerprints of registries already counted (other files / prior resume).
+    # On --force only drop keys belonging to candidates being rescanned.
+    for sk, meta in files_state.items():
+        if not isinstance(meta, dict):
+            continue
+        if force and sk in candidate_keys:
+            continue
+        if meta.get("status") not in {"hit", "dup"}:
+            continue
+        for k in meta.get("line_keys") or []:
+            seen_lines.add(str(k))
+        if meta.get("status") == "hit" and sk not in candidate_keys:
+            try:
+                running_commission += Decimal(str(meta.get("commission") or 0))
+                running_volume += Decimal(str(meta.get("volume") or 0))
+            except Exception:
+                pass
+    if resume and not force:
+        raw_keys = state.get("line_keys")
+        if isinstance(raw_keys, list):
+            seen_lines.update(str(k) for k in raw_keys if k)
 
     _log(
         f"Candidates: {total} | state={state_path} "
-        f"| resume={resume} force={force}",
+        f"| resume={resume} force={force} dedupe_lines={dedupe_lines} "
+        f"| seed_unique_lines={len(seen_lines)}",
     )
     if contact_like:
         _log(f"Filter contact_like={contact_like!r}")
@@ -332,9 +400,8 @@ async def _scan_storage(
         _log(f"Filter name_like={name_like!r}")
     _log("Matching by CONTENT headers only (filename ignored for kind).")
     _log(
-        "Note: «Раздел-9» FNS books usually SKIP(header_not_found). "
-        "Partner Forma: ИНН покупателя + Сумма (в т.ч. НДС) + ИНН организации. "
-        ".xls supported via xlrd.",
+        "Dedup registry rows by buyer|supplier|date|amount — "
+        "duplicate files do not inflate totals.",
     )
 
     for cand in candidates:
@@ -343,12 +410,13 @@ async def _scan_storage(
             resume
             and not force
             and isinstance(prev, dict)
-            and prev.get("status") in {"hit", "skip", "empty", "error"}
+            and prev.get("status") in {"hit", "skip", "empty", "error", "dup"}
         ):
             resumed += 1
             if prev.get("status") == "hit":
                 try:
                     running_commission += Decimal(str(prev.get("commission") or 0))
+                    running_volume += Decimal(str(prev.get("volume") or 0))
                 except Exception:
                     pass
             continue
@@ -409,15 +477,61 @@ async def _scan_storage(
             }
             continue
 
-        volume, commission = _price(parsed.application, units)
+        raw_n = len(parsed.application.lines)
+        if dedupe_lines:
+            unique, line_keys, dup_n = _split_unique_lines(
+                parsed.application.lines,
+                seen_lines,
+            )
+        else:
+            unique = list(parsed.application.lines)
+            line_keys = [_line_fingerprint(ln) for ln in unique]
+            dup_n = 0
+            for k in line_keys:
+                seen_lines.add(k)
+
+        if not unique:
+            dup_files += 1
+            _log(
+                f"{prefix} → DUP kind={parsed.form_kind} "
+                f"buyer={parsed.application.buyer_inn} "
+                f"lines={raw_n} all already counted "
+                f"| unique_к_оплате={_money(running_commission)}",
+            )
+            files_state[cand.storage_key] = {
+                "status": "dup",
+                "form_kind": parsed.form_kind,
+                "buyer_inn": parsed.application.buyer_inn,
+                "lines": raw_n,
+                "lines_unique": 0,
+                "lines_dup": dup_n,
+                "volume": "0",
+                "commission": "0",
+                "line_keys": [],
+                "name": cand.name,
+                "source": cand.source,
+                "contact_name": cand.contact_name,
+                "sheet": parsed.sheet_name,
+                "scanned_at": _utc_now(),
+            }
+            continue
+
+        app = ParsedApplication(
+            buyer_inn=parsed.application.buyer_inn,
+            lines=unique,
+        )
+        volume, commission = _price(app, units)
         running_commission += commission
+        running_volume += volume
         hits.append(
             FileHit(
                 source=cand.source,
                 name=cand.name,
                 storage_key=cand.storage_key,
                 buyer_inn=parsed.application.buyer_inn,
-                lines=len(parsed.application.lines),
+                lines=raw_n,
+                lines_unique=len(unique),
+                lines_dup=dup_n,
                 volume=volume,
                 commission=commission,
                 sheet_name=parsed.sheet_name,
@@ -428,9 +542,12 @@ async def _scan_storage(
             "status": "hit",
             "form_kind": parsed.form_kind,
             "buyer_inn": parsed.application.buyer_inn,
-            "lines": len(parsed.application.lines),
+            "lines": raw_n,
+            "lines_unique": len(unique),
+            "lines_dup": dup_n,
             "volume": str(volume),
             "commission": str(commission),
+            "line_keys": line_keys,
             "name": cand.name,
             "source": cand.source,
             "contact_name": cand.contact_name,
@@ -440,18 +557,44 @@ async def _scan_storage(
         _log(
             f"{prefix} → HIT kind={parsed.form_kind} "
             f"buyer={parsed.application.buyer_inn} "
-            f"lines={len(parsed.application.lines)} "
+            f"lines={len(unique)}/{raw_n} (dup={dup_n}) "
             f"volume={_money(volume)} commission={_money(commission)} "
-            f"| running_к_оплате={_money(running_commission)} "
-            f"(hits={len(hits)} empty={empty_templates} skip={skipped} "
-            f"resume_skip={resumed} err={errors})",
+            f"| unique_к_оплате={_money(running_commission)} "
+            f"(hits={len(hits)} dup_files={dup_files} empty={empty_templates} "
+            f"skip={skipped} resume_skip={resumed} err={errors})",
         )
 
+    # Rebuild global unique set from all hit records (survives filtered rescans).
+    all_line_keys: set[str] = set()
+    global_commission = Decimal("0")
+    global_volume = Decimal("0")
+    for meta in files_state.values():
+        if not isinstance(meta, dict):
+            continue
+        for k in meta.get("line_keys") or []:
+            all_line_keys.add(str(k))
+        if meta.get("status") == "hit":
+            try:
+                global_commission += Decimal(str(meta.get("commission") or 0))
+                global_volume += Decimal(str(meta.get("volume") or 0))
+            except Exception:
+                pass
+
     state["files"] = files_state
+    state["line_keys"] = sorted(all_line_keys)
+    state["unique_volume"] = str(global_volume)
+    state["unique_commission"] = str(global_commission)
     state["updated_at"] = _utc_now()
     _save_state(state_path, state)
-    _log(f"State saved: {state_path} (keys={len(files_state)})")
-    return hits, scanned, errors, empty_templates, resumed
+    _log(
+        f"State saved: {state_path} "
+        f"(files={len(files_state)} unique_lines={len(all_line_keys)})",
+    )
+    _log(
+        f"UNIQUE TOTALS (all state hits): volume={_money(global_volume)} "
+        f"к_оплате={_money(global_commission)} lines={len(all_line_keys)}",
+    )
+    return hits, scanned, errors, empty_templates, resumed, dup_files
 
 
 async def _run(
@@ -465,17 +608,19 @@ async def _run(
     contact_like: str | None,
     name_like: str | None,
     show_state_summary: bool,
+    dedupe_lines: bool,
 ) -> int:
     state_path = Path(state_file)
     units = await _load_units()
     empty_templates = 0
     resumed = 0
+    dup_files = 0
     if local_file:
         hits = await _scan_local(Path(local_file), units)
         scanned = 1
         errors = 0
     else:
-        hits, scanned, errors, empty_templates, resumed = await _scan_storage(
+        hits, scanned, errors, empty_templates, resumed, dup_files = await _scan_storage(
             limit=limit,
             resume=resume,
             force=force,
@@ -483,6 +628,7 @@ async def _run(
             state_path=state_path,
             contact_like=contact_like,
             name_like=name_like,
+            dedupe_lines=dedupe_lines,
         )
 
     if show_state_summary and state_path.exists():
@@ -503,11 +649,19 @@ async def _run(
         _log(f"state_file: {state_path}")
         for k, v in sorted(by_status.items()):
             _log(f"  {k}: {v}")
+        uniq_c = st.get("unique_commission")
+        uniq_v = st.get("unique_volume")
+        uniq_n = len(st.get("line_keys") or [])
+        if uniq_c is not None:
+            _log(
+                f"unique_registry: lines={uniq_n} "
+                f"volume={_money(Decimal(str(uniq_v or 0)))} "
+                f"к_оплате={_money(Decimal(str(uniq_c or 0)))}",
+            )
         if skip_reasons:
             _log("skip reasons:")
             for k, v in sorted(skip_reasons.items(), key=lambda x: -x[1])[:15]:
                 _log(f"  {k}: {v}")
-        # show a few skip headers that look almost partner-like
         near = []
         for meta in files.values():
             if not isinstance(meta, dict) or meta.get("status") != "skip":
@@ -523,23 +677,31 @@ async def _run(
                 _log(f"  - {name}: {h.get('headers')}")
 
     _log("")
-    _log("=== SUMMARY ===")
+    _log("=== SUMMARY (unique registry lines) ===")
     _log(f"scanned_new: {scanned}")
     _log(f"resume_skipped: {resumed}")
-    _log(f"matched_with_data (this run): {len(hits)}")
+    _log(f"files_with_new_lines (this run): {len(hits)}")
+    _log(f"files_all_duplicate: {dup_files}")
     _log(f"empty_templates: {empty_templates}")
     _log(f"download_errors: {errors}")
     total_volume = sum((h.volume for h in hits), Decimal("0"))
     total_commission = sum((h.commission for h in hits), Decimal("0"))
-    _log(f"total_volume (this run): {_money(total_volume)} ₽")
-    _log(f"total_commission (this run): {_money(total_commission)} ₽")
+    total_uniq_lines = sum((h.lines_unique for h in hits), 0)
+    total_raw_lines = sum((h.lines for h in hits), 0)
+    _log(
+        f"new_unique_lines (this run): {total_uniq_lines} "
+        f"(raw in those files: {total_raw_lines})",
+    )
+    _log(f"unique_volume (this run): {_money(total_volume)} ₽")
+    _log(f"unique_к_оплате (this run): {_money(total_commission)} ₽")
     if hits:
         _log("")
-        _log("per file (this run):")
+        _log("per file (new unique lines only):")
         for hit in hits:
             _log(
                 f"  - [{hit.source}] kind={hit.form_kind} buyer={hit.buyer_inn} "
-                f"lines={hit.lines} volume={_money(hit.volume)} "
+                f"lines={hit.lines_unique}/{hit.lines} (dup={hit.lines_dup}) "
+                f"volume={_money(hit.volume)} "
                 f"к_оплате={_money(hit.commission)} | {hit.name}",
             )
     return 0
@@ -592,6 +754,11 @@ def main() -> None:
         help="Print aggregated state stats after run",
     )
     parser.add_argument(
+        "--no-dedupe",
+        action="store_true",
+        help="Disable line-level dedup (sum every file as-is)",
+    )
+    parser.add_argument(
         "--verbose-skip",
         action="store_true",
         help=argparse.SUPPRESS,
@@ -609,6 +776,7 @@ def main() -> None:
                 contact_like=args.contact_like,
                 name_like=args.name_like,
                 show_state_summary=args.state_summary or True,
+                dedupe_lines=not args.no_dedupe,
             ),
         ),
     )
