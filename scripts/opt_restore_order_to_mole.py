@@ -5,7 +5,7 @@ Use when GET shows Удален=true / sum=0 / wrong period, but CRM has full re
 
 Flow:
   1) GET before
-  2) PUT payload (+ Период, Удален=false) — does NOT overwrite CRM document_number
+  2) PUT payload (+ Период) — Mole rejects unknown keys like Удален
   3) GET after — require sum ≈ CRM volume and Удален!=true
   4) optional --allow-remake: DELETE+POST if PUT left sum wrong
      WARNING: remake gets NEW 1C doc numbers and writes them into CRM
@@ -105,7 +105,7 @@ async def main() -> int:
         iso = period_code_to_mole_iso(period_code) if period_code else None
         if iso:
             payload["Период"] = iso
-        payload["Удален"] = False
+        # Mole PUT rejects unknown keys like Удален — never send it.
 
         crm_vol = _amt(order.total_volume)
         docs = sum(1 for ln in order.lines if ln.document_number)
@@ -115,6 +115,7 @@ async def main() -> int:
             f"lines={len(order.lines)} docs={docs} vol={crm_vol}"
         )
         print(f"payload: registry={len(payload.get('Реестр') or [])} period={payload.get('Период')}")
+        print(f"payload keys={sorted(payload.keys())}")
 
         before = await get_order(order.crm_id)
         _dump_header("GET before", before)
@@ -128,7 +129,7 @@ async def main() -> int:
         if not args.apply:
             print("\ndry-run: pass --apply to PUT restore")
             if before_del or before_sum != crm_vol:
-                print("expected: PUT with Период + Удален=false should revive shell")
+                print("expected: PUT with Реестр + Период (no Удален key — Mole rejects it)")
             return 0
 
         print("\n--- PUT ---")
