@@ -19,7 +19,6 @@ import type { BotListItem } from '@/entities/bot/types'
 import {
   getCachedLeadDetail,
   getChatDealsSnapshot,
-  isChatDealsSnapshotFresh,
   pickPreferredLeadId,
   setCachedLeadDetail,
   setChatDealsSnapshot,
@@ -162,10 +161,17 @@ async function refreshOptPaymentGate(leadId: number | null): Promise<void> {
   }
 }
 
+function isLeadDetailStaleVsList(leadId: number, detail: LeadDetail): boolean {
+  const listRow = leadItems.value.find((lead) => lead.id === leadId)
+  if (listRow == null) return false
+  // List endpoint was refreshed (e.g. after reopen) but detail cache still has old closed_at.
+  return Boolean(detail.closed_at) !== Boolean(listRow.closed_at)
+}
+
 async function loadLeadDetail(leadId: number, forceRefresh = false): Promise<void> {
   if (!forceRefresh) {
     const cached = getCachedLeadDetail(leadId)
-    if (cached) {
+    if (cached && !isLeadDetailStaleVsList(leadId, cached)) {
       applyLeadDetail(cached)
       await refreshOptPaymentGate(cached.id)
       return
@@ -219,10 +225,8 @@ async function loadLeads(forceRefresh = false): Promise<void> {
       leadDetail.value = null
       resetOrderForm()
     }
-    if (!forceRefresh && isChatDealsSnapshotFresh(chat.id)) {
-      await store.selectLead(preferredId)
-      return
-    }
+    // Do not return early on «fresh» snapshot: list/detail can be stale after admin/SQL reopen
+    // (dropdown already shows open status while badge still says «закрыта»).
   } else {
     // No cache for this chat — clear previous chat's deals immediately.
     leadItems.value = []
@@ -249,15 +253,15 @@ async function loadLeads(forceRefresh = false): Promise<void> {
         ? selectedLeadId.value
         : pickPreferredLeadId(items)
     setChatDealsSnapshot(chat.id, items, preferredId)
-    if (preferredId != null) {
-      try {
-        setCachedLeadDetail(await getLead(preferredId))
-      } catch {
-        /* detail load is optional here; loadLeadDetail will retry */
-      }
-    }
     if (props.chat?.id !== chat.id) return
     await store.selectLead(preferredId)
+    // selectLead may no-op when id unchanged — always re-apply fresh detail after list refresh
+    // (fixes badge «закрыта» after SQL/admin reopen while dropdown already shows open status).
+    const idToShow = selectedLeadId.value ?? preferredId
+    if (idToShow != null) {
+      await loadLeadDetail(idToShow, true)
+      store.bumpOptOrdersRefresh()
+    }
   } catch (err) {
     if (props.chat?.id === chat.id) {
       leadItems.value = []
