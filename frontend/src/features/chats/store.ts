@@ -505,11 +505,21 @@ export const useChatsStore = defineStore('chats', () => {
     )
   }
 
-  async function fetchList(append = false): Promise<void> {
-    listLoading.value = true
+  async function fetchList(
+    append = false,
+    opts?: { silent?: boolean },
+  ): Promise<void> {
+    // Background refresh (WS / inbound / load-more) must NOT overlay NSpin — it blocks clicks.
+    const silent =
+      opts?.silent === true || (listLoaded.value && listItems.value.length > 0)
+    if (!silent) listLoading.value = true
     if (!append) listError.value = null
     try {
-      await ensureGroupDirectory()
+      try {
+        await ensureGroupDirectory()
+      } catch {
+        // Fail-soft: list still works without group name enrichment.
+      }
       const data = await chatsApi.listChats(buildListQuery(append))
       const items = enrichWithGroupNames(data?.items ?? [])
       listItems.value = enrichListWithOwnership(append ? [...listItems.value, ...items] : items).map(
@@ -919,7 +929,7 @@ export const useChatsStore = defineStore('chats', () => {
       }
     } else {
       priorityPrefetchChat(chatId)
-      void fetchList()
+      void fetchList(false, { silent: true })
     }
   }
 

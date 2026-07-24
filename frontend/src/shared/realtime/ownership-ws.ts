@@ -106,7 +106,7 @@ function routeOwnershipTopic(
 
       invalidateChatsQueries()
 
-      void store.fetchList()
+      void store.fetchList(false, { silent: true })
 
       break
 

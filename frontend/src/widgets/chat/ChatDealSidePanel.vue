@@ -177,15 +177,18 @@ async function loadLeadDetail(leadId: number, forceRefresh = false): Promise<voi
       return
     }
   }
-  loadingLead.value = true
+  // Keep current detail visible while refreshing — don't freeze the whole side panel.
+  loadingLead.value = leadDetail.value?.id !== leadId
   try {
     const detail = await getLead(leadId)
     setCachedLeadDetail(detail)
     applyLeadDetail(detail)
     await refreshOptPaymentGate(detail.id)
   } catch {
-    leadDetail.value = null
-    resetOrderForm()
+    if (leadDetail.value?.id === leadId) {
+      leadDetail.value = null
+      resetOrderForm()
+    }
   } finally {
     loadingLead.value = false
   }
@@ -234,7 +237,7 @@ async function loadLeads(forceRefresh = false): Promise<void> {
     resetOrderForm()
   }
 
-  loadingLeads.value = !cached
+  loadingLeads.value = !cached && leadItems.value.length === 0
   try {
     const data = await listContactLeads(chat.contact_id, {
       group_id: chat.assigned_group_id ?? undefined,
@@ -264,15 +267,15 @@ async function loadLeads(forceRefresh = false): Promise<void> {
     }
   } catch (err) {
     if (props.chat?.id === chat.id) {
-      leadItems.value = []
+      if (leadItems.value.length === 0) {
+        leadItems.value = []
+      }
       message.error(
         err instanceof AppError ? err.message : 'Не удалось загрузить сделки по контакту',
       )
     }
   } finally {
-    if (props.chat?.id === chat.id) {
-      loadingLeads.value = false
-    }
+    loadingLeads.value = false
   }
 }
 
@@ -403,7 +406,7 @@ async function saveLeadComment(): Promise<void> {
     </header>
 
     <div class="deal-side__scroll">
-      <NSpin :show="loadingLeads || loadingLead" class="deal-side__spin">
+      <NSpin :show="(loadingLeads || loadingLead) && leadItems.length === 0 && leadDetail == null" class="deal-side__spin">
         <div v-if="!chat" class="deal-side__empty">Выберите чат</div>
 
         <div v-else-if="chat.assigned_group_id == null" class="deal-side__empty">

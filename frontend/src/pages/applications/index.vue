@@ -418,7 +418,8 @@ async function loadGroups(): Promise<void> {
 }
 
 async function load(): Promise<void> {
-  loading.value = true
+  const hasRows = items.value.length > 0 || paymentItems.value.length > 0
+  if (!hasRows) loading.value = true
   try {
     const common = {
       group_id: groupFilterId(),
@@ -452,9 +453,11 @@ async function load(): Promise<void> {
           ? 'Не удалось загрузить оплаты'
           : 'Не удалось загрузить заявки',
     )
-    items.value = []
-    paymentItems.value = []
-    total.value = 0
+    if (!hasRows) {
+      items.value = []
+      paymentItems.value = []
+      total.value = 0
+    }
   } finally {
     loading.value = false
   }
@@ -609,7 +612,7 @@ onMounted(() => {
       <NTabPane name="payments" tab="Все оплаты" />
     </NTabs>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading && items.length === 0 && paymentItems.length === 0">
       <template v-if="activeTab === 'orders'">
         <NEmpty v-if="!items.length && !loading" description="Заявок пока нет" />
         <AppCard v-else class="applications-page__card">

@@ -27,6 +27,8 @@ export async function ensureGroupDirectory(): Promise<void> {
   loadPromise = refreshGroupDirectory()
   try {
     await loadPromise
+  } catch {
+    // Keep last successful directory; callers must not hang the whole chats UI.
   } finally {
     loadPromise = null
   }

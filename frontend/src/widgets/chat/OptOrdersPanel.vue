@@ -429,7 +429,7 @@ function startPolling(): void {
   if (pollTimer != null || !hasLead.value) return
   pollTimer = setInterval(() => {
     void loadOrders({ silent: true })
-  }, 2500)
+  }, 4000)
 }
 
 async function loadOrders(options?: { silent?: boolean }): Promise<void> {
@@ -448,7 +448,7 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
       selectedOrderId.value ?? props.initialOrderId ?? null,
     )
   }
-  if (!options?.silent && !cached?.length) loading.value = true
+  if (!options?.silent && !cached?.length && orders.value.length === 0) loading.value = true
   try {
     await prefetchOptOrders(leadId, true)
     const fresh = peekOptOrders(leadId)
@@ -459,7 +459,7 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
       selectedOrderId.value ?? props.initialOrderId ?? null,
     )
   } catch (err) {
-    if (!options?.silent && !cached?.length) {
+    if (!options?.silent && !cached?.length && orders.value.length === 0) {
       message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
       orders.value = []
       selectedOrderId.value = null
@@ -665,7 +665,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading && orders.length === 0">
       <p v-if="disabled && hasLead" class="opt-orders__hint">
         Сначала выберите период сделки ОПТ — без него заявку загрузить нельзя.
       </p>
