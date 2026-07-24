@@ -107,3 +107,46 @@ def test_reject_random_bytes() -> None:
     assert not looks_like_nds_request(b"not-an-excel")
     result = parse_nds_request_workbook(b"not-an-excel")
     assert result.matched is False
+
+
+def test_partner_forma_header_below_row_8() -> None:
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    for _ in range(10):
+        ws.append(["title", "banner"])
+    ws.append(
+        [
+            "Ваши контактные данные (ник теле, номер телефона): XXX",
+            "Наименование покупателя",
+            "ИНН Покупателя",
+            "КПП Покупателя",
+            "Вид товара/работы/услуги и ОКВЭД",
+            "Дата (дд.мм.гг)",
+            "Сумма (в т.ч. НДС)",
+            "Сумма НДС",
+            "ИНН Организации",
+            "Ставка НДС",
+        ],
+    )
+    ws.append(
+        [
+            "tg",
+            'ООО "ДОМ ЗАПЧАСТЕЙ"',
+            "3 525 462 748",
+            "3 525 010 01",
+            "услуги",
+            "08.04.2026",
+            85360,
+            "15392,79",
+            "9704271074",
+            22,
+        ],
+    )
+    buf = BytesIO()
+    wb.save(buf)
+    result = parse_nds_request_workbook(buf.getvalue())
+    assert result.matched
+    assert result.form_kind == "partner_forma"
+    assert result.application is not None
+    assert result.application.buyer_inn == "3525462748"

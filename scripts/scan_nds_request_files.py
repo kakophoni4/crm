@@ -6,26 +6,37 @@ Detection by CONTENT only (not filename):
   - partner_forma: Forma_zayavki (сумма в т.ч. НДС / ИНН организации)
 
 OPT upload format and CRM registry exports are skipped on purpose.
+Files named «Раздел-9» are usually FNS books — SKIP is expected unless they
+actually contain partner headers.
 
 Sources (deduped by storage_key):
   - uploaded_files
   - group_chat_files
   - message attachments (JSON)
 
+State / resume:
+  Results are stored in a JSON state file (storage_key → status) so re-runs
+  skip already processed keys. Headers of SKIP files are kept for audit.
+
 Usage on VPS:
-  docker exec crm-staging-api python scripts/scan_nds_request_files.py
-  docker exec crm-staging-api python scripts/scan_nds_request_files.py --limit 50
-  docker exec crm-staging-api python scripts/scan_nds_request_files.py --local-file /tmp/file.xlsx
+  docker exec -e PYTHONUNBUFFERED=1 crm-staging-api \\
+    python scripts/scan_nds_request_files.py --resume
+  docker exec crm-staging-api python scripts/scan_nds_request_files.py --force
+  docker exec crm-staging-api python scripts/scan_nds_request_files.py \\
+    --contact-like 'пит' --dump-headers
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select, text
 
@@ -37,10 +48,13 @@ from app.modules.db.models.opt_unit import OptUnit  # noqa: E402
 from app.modules.leads.opt.nds_request_parser import (  # noqa: E402
     lines_for_pricing,
     parse_nds_request_workbook,
+    peek_workbook_headers,
 )
 from app.modules.leads.opt.pricing import compute_order_pricing  # noqa: E402
 from app.shared.db import get_session_factory  # noqa: E402
 from app.shared.storage import get_file_storage  # noqa: E402
+
+_DEFAULT_STATE = Path("/tmp/crm_nds_scan_state.json")
 
 
 @dataclass
@@ -61,10 +75,42 @@ class Candidate:
     storage_key: str
     name: str
     source: str
+    created_at: str | None = None
+    contact_name: str | None = None
 
 
 def _money(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01')):,.2f}".replace(",", " ")
+
+
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _load_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "files": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "files": {}}
+    if not isinstance(data, dict):
+        return {"version": 1, "files": {}}
+    files = data.get("files")
+    if not isinstance(files, dict):
+        data["files"] = {}
+    return data
+
+
+def _save_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 async def _load_units() -> dict[str, OptUnit]:
@@ -82,46 +128,101 @@ def _price(application, units: dict[str, OptUnit]) -> tuple[Decimal, Decimal]:
     return volume, commission
 
 
-async def _collect_candidates(*, limit: int | None) -> list[Candidate]:
-    """All spreadsheet-like objects in DB, deduped by storage_key."""
+async def _collect_candidates(
+    *,
+    limit: int | None,
+    contact_like: str | None,
+    name_like: str | None,
+) -> list[Candidate]:
+    """Newest spreadsheets first; optional filters for chat contact / filename."""
     session_factory = get_session_factory()
     found: dict[str, Candidate] = {}
+    contact_pat = f"%{contact_like.strip()}%" if contact_like else None
+    name_pat = f"%{name_like.strip()}%" if name_like else None
 
     async with session_factory() as session:
-        queries: list[tuple[str, str]] = [
-            (
-                "uploaded_files",
-                """
-                SELECT storage_key, original_name AS name, 'uploaded_files' AS source
+        # group_chat_files — primary source for manager chat forms
+        gsql = """
+            SELECT
+              g.storage_key,
+              g.original_name AS name,
+              'group_chat_files' AS source,
+              g.created_at::text AS created_at,
+              COALESCE(ct.full_name, g.sender_display_name, '') AS contact_name
+            FROM group_chat_files g
+            LEFT JOIN chats c ON c.id = g.chat_id
+            LEFT JOIN contacts ct ON ct.id = c.contact_id
+            WHERE (
+                lower(g.original_name) LIKE '%.xlsx'
+                OR lower(g.original_name) LIKE '%.xlsm'
+                OR lower(g.original_name) LIKE '%.xls'
+                OR g.mime_type ILIKE '%spreadsheet%'
+                OR g.mime_type ILIKE '%excel%'
+            )
+        """
+        params: dict[str, object] = {}
+        if contact_pat:
+            gsql += """
+              AND (
+                ct.full_name ILIKE :contact_pat
+                OR g.sender_display_name ILIKE :contact_pat
+              )
+            """
+            params["contact_pat"] = contact_pat
+        if name_pat:
+            gsql += " AND g.original_name ILIKE :name_pat"
+            params["name_pat"] = name_pat
+        gsql += " ORDER BY g.created_at DESC NULLS LAST, g.id DESC"
+
+        for row in (await session.execute(text(gsql), params)).mappings().all():
+            key = str(row["storage_key"] or "").strip()
+            if not key or key in found:
+                continue
+            found[key] = Candidate(
+                storage_key=key,
+                name=str(row["name"] or key),
+                source=str(row["source"]),
+                created_at=str(row["created_at"] or "") or None,
+                contact_name=str(row["contact_name"] or "") or None,
+            )
+
+        if not contact_pat:
+            # uploaded_files + message attachments (global), newest first
+            u_sql = """
+                SELECT storage_key, original_name AS name, 'uploaded_files' AS source,
+                       created_at::text AS created_at, NULL::text AS contact_name
                 FROM uploaded_files
-                WHERE lower(original_name) LIKE '%.xlsx'
-                   OR lower(original_name) LIKE '%.xlsm'
-                   OR lower(original_name) LIKE '%.xls'
-                   OR mime_type ILIKE '%spreadsheet%'
-                   OR mime_type ILIKE '%excel%'
-                ORDER BY id DESC
-                """,
-            ),
-            (
-                "group_chat_files",
-                """
-                SELECT storage_key, original_name AS name, 'group_chat_files' AS source
-                FROM group_chat_files
-                WHERE lower(original_name) LIKE '%.xlsx'
-                   OR lower(original_name) LIKE '%.xlsm'
-                   OR lower(original_name) LIKE '%.xls'
-                   OR mime_type ILIKE '%spreadsheet%'
-                   OR mime_type ILIKE '%excel%'
-                ORDER BY id DESC
-                """,
-            ),
-            (
-                "message_attachments",
-                """
+                WHERE (
+                    lower(original_name) LIKE '%.xlsx'
+                    OR lower(original_name) LIKE '%.xlsm'
+                    OR lower(original_name) LIKE '%.xls'
+                    OR mime_type ILIKE '%spreadsheet%'
+                    OR mime_type ILIKE '%excel%'
+                )
+            """
+            u_params: dict[str, object] = {}
+            if name_pat:
+                u_sql += " AND original_name ILIKE :name_pat"
+                u_params["name_pat"] = name_pat
+            u_sql += " ORDER BY created_at DESC NULLS LAST, id DESC"
+            for row in (await session.execute(text(u_sql), u_params)).mappings().all():
+                key = str(row["storage_key"] or "").strip()
+                if not key or key in found:
+                    continue
+                found[key] = Candidate(
+                    storage_key=key,
+                    name=str(row["name"] or key),
+                    source="uploaded_files",
+                    created_at=str(row["created_at"] or "") or None,
+                )
+
+            m_sql = """
                 SELECT
                   att->>'storage_key' AS storage_key,
                   COALESCE(att->>'filename', att->>'name', 'attachment.xlsx') AS name,
-                  'message_attachments' AS source
+                  'message_attachments' AS source,
+                  m.created_at::text AS created_at,
+                  NULL::text AS contact_name
                 FROM messages m
                 CROSS JOIN LATERAL jsonb_array_elements(
                   CASE WHEN jsonb_typeof(m.attachments) = 'array'
@@ -136,32 +237,30 @@ async def _collect_candidates(*, limit: int | None) -> list[Candidate]:
                     OR lower(COALESCE(att->>'mime', '')) LIKE '%spreadsheet%'
                     OR lower(COALESCE(att->>'mime', '')) LIKE '%excel%'
                   )
-                """,
-            ),
-        ]
-
-        for _label, sql in queries:
-            rows = (await session.execute(text(sql))).mappings().all()
-            for row in rows:
+            """
+            m_params: dict[str, object] = {}
+            if name_pat:
+                m_sql += """
+                  AND COALESCE(att->>'filename', att->>'name', '') ILIKE :name_pat
+                """
+                m_params["name_pat"] = name_pat
+            m_sql += " ORDER BY m.created_at DESC NULLS LAST, m.id DESC"
+            for row in (await session.execute(text(m_sql), m_params)).mappings().all():
                 key = str(row["storage_key"] or "").strip()
                 if not key or key in found:
                     continue
                 found[key] = Candidate(
                     storage_key=key,
                     name=str(row["name"] or key),
-                    source=str(row["source"]),
+                    source="message_attachments",
+                    created_at=str(row["created_at"] or "") or None,
                 )
 
     items = list(found.values())
-    # Prefer recently-seen sources already ordered in SQL; keep stable by name
-    items.sort(key=lambda c: c.name.lower())
+    items.sort(key=lambda c: c.created_at or "", reverse=True)
     if limit is not None:
         items = items[:limit]
     return items
-
-
-def _log(msg: str) -> None:
-    print(msg, flush=True)
 
 
 async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
@@ -169,6 +268,8 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
     parsed = parse_nds_request_workbook(content)
     if not parsed.matched or parsed.application is None:
         _log(f"[1/1 100%] [local] {path.name!r} → SKIP ({parsed.reason})")
+        for row in peek_workbook_headers(content):
+            _log(f"  header_peek: {row}")
         return []
     volume, commission = _price(parsed.application, units)
     _log(
@@ -195,30 +296,66 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
 async def _scan_storage(
     *,
     limit: int | None,
-    verbose_skip: bool,
-) -> tuple[list[FileHit], int, int, int]:
+    resume: bool,
+    force: bool,
+    dump_headers: bool,
+    state_path: Path,
+    contact_like: str | None,
+    name_like: str | None,
+) -> tuple[list[FileHit], int, int, int, int]:
     units = await _load_units()
-    candidates = await _collect_candidates(limit=limit)
+    candidates = await _collect_candidates(
+        limit=limit,
+        contact_like=contact_like,
+        name_like=name_like,
+    )
     storage = get_file_storage()
+    state = _load_state(state_path)
+    files_state: dict[str, Any] = state.setdefault("files", {})
+
     hits: list[FileHit] = []
     scanned = 0
     errors = 0
     empty_templates = 0
     skipped = 0
+    resumed = 0
     total = len(candidates)
     running_commission = Decimal("0")
 
     _log(
-        f"Candidates (xlsx/xls from uploaded_files + group_chat_files "
-        f"+ message attachments): {total}",
+        f"Candidates: {total} | state={state_path} "
+        f"| resume={resume} force={force}",
     )
-    _log("Matching by CONTENT headers only (filename ignored).")
-    _log(f"Progress: every file logged as [n/{total}] STATUS ...")
+    if contact_like:
+        _log(f"Filter contact_like={contact_like!r}")
+    if name_like:
+        _log(f"Filter name_like={name_like!r}")
+    _log("Matching by CONTENT headers only (filename ignored for kind).")
+    _log(
+        "Note: «Раздел-9» FNS books usually SKIP(header_not_found) — "
+        "partner Forma has ИНН покупателя + Сумма (в т.ч. НДС) + ИНН организации.",
+    )
 
     for cand in candidates:
+        prev = files_state.get(cand.storage_key) if isinstance(files_state, dict) else None
+        if (
+            resume
+            and not force
+            and isinstance(prev, dict)
+            and prev.get("status") in {"hit", "skip", "empty", "error"}
+        ):
+            resumed += 1
+            if prev.get("status") == "hit":
+                try:
+                    running_commission += Decimal(str(prev.get("commission") or 0))
+                except Exception:
+                    pass
+            continue
+
         scanned += 1
-        pct = (100 * scanned) // total if total else 100
-        prefix = f"[{scanned}/{total} {pct}%] [{cand.source}] {cand.name!r}"
+        pct = (100 * scanned) // max(total - resumed, 1)
+        who = f" contact={cand.contact_name!r}" if cand.contact_name else ""
+        prefix = f"[{scanned}/{total} ~{pct}%] [{cand.source}] {cand.name!r}{who}"
         _log(f"{prefix} … processing")
 
         try:
@@ -226,14 +363,33 @@ async def _scan_storage(
         except Exception as exc:  # noqa: BLE001
             errors += 1
             _log(f"{prefix} → DOWNLOAD_FAIL ({exc})")
+            files_state[cand.storage_key] = {
+                "status": "error",
+                "reason": f"download_fail: {exc}",
+                "name": cand.name,
+                "source": cand.source,
+                "scanned_at": _utc_now(),
+            }
             continue
 
         parsed = parse_nds_request_workbook(content)
         if not parsed.matched:
             skipped += 1
             reason = parsed.reason or "header_not_found"
-            # Always show why — silent SKIP is confusing for ops.
+            header_rows = peek_workbook_headers(content)
             _log(f"{prefix} → SKIP ({reason})")
+            if dump_headers:
+                for row in header_rows[:3]:
+                    _log(f"  headers: {row}")
+            files_state[cand.storage_key] = {
+                "status": "skip",
+                "reason": reason,
+                "name": cand.name,
+                "source": cand.source,
+                "contact_name": cand.contact_name,
+                "headers": header_rows[:3],
+                "scanned_at": _utc_now(),
+            }
             continue
 
         if parsed.application is None:
@@ -242,6 +398,14 @@ async def _scan_storage(
                 f"{prefix} → EMPTY kind={parsed.form_kind} sheet={parsed.sheet_name!r} "
                 f"({parsed.reason})",
             )
+            files_state[cand.storage_key] = {
+                "status": "empty",
+                "reason": parsed.reason,
+                "form_kind": parsed.form_kind,
+                "name": cand.name,
+                "source": cand.source,
+                "scanned_at": _utc_now(),
+            }
             continue
 
         volume, commission = _price(parsed.application, units)
@@ -259,59 +423,118 @@ async def _scan_storage(
                 form_kind=parsed.form_kind,
             ),
         )
+        files_state[cand.storage_key] = {
+            "status": "hit",
+            "form_kind": parsed.form_kind,
+            "buyer_inn": parsed.application.buyer_inn,
+            "lines": len(parsed.application.lines),
+            "volume": str(volume),
+            "commission": str(commission),
+            "name": cand.name,
+            "source": cand.source,
+            "contact_name": cand.contact_name,
+            "sheet": parsed.sheet_name,
+            "scanned_at": _utc_now(),
+        }
         _log(
             f"{prefix} → HIT kind={parsed.form_kind} "
             f"buyer={parsed.application.buyer_inn} "
             f"lines={len(parsed.application.lines)} "
             f"volume={_money(volume)} commission={_money(commission)} "
             f"| running_к_оплате={_money(running_commission)} "
-            f"(hits={len(hits)} empty={empty_templates} skip={skipped} err={errors})",
+            f"(hits={len(hits)} empty={empty_templates} skip={skipped} "
+            f"resume_skip={resumed} err={errors})",
         )
 
-    return hits, scanned, errors, empty_templates
+    state["files"] = files_state
+    state["updated_at"] = _utc_now()
+    _save_state(state_path, state)
+    _log(f"State saved: {state_path} (keys={len(files_state)})")
+    return hits, scanned, errors, empty_templates, resumed
 
 
 async def _run(
     *,
     local_file: str | None,
     limit: int | None,
-    verbose_skip: bool,
+    resume: bool,
+    force: bool,
+    dump_headers: bool,
+    state_file: str,
+    contact_like: str | None,
+    name_like: str | None,
+    show_state_summary: bool,
 ) -> int:
+    state_path = Path(state_file)
     units = await _load_units()
     empty_templates = 0
+    resumed = 0
     if local_file:
         hits = await _scan_local(Path(local_file), units)
         scanned = 1
         errors = 0
     else:
-        hits, scanned, errors, empty_templates = await _scan_storage(
+        hits, scanned, errors, empty_templates, resumed = await _scan_storage(
             limit=limit,
-            verbose_skip=verbose_skip,
+            resume=resume,
+            force=force,
+            dump_headers=dump_headers,
+            state_path=state_path,
+            contact_like=contact_like,
+            name_like=name_like,
         )
+
+    if show_state_summary and state_path.exists():
+        st = _load_state(state_path)
+        files = st.get("files") or {}
+        by_status: dict[str, int] = {}
+        skip_reasons: dict[str, int] = {}
+        for meta in files.values():
+            if not isinstance(meta, dict):
+                continue
+            status = str(meta.get("status") or "?")
+            by_status[status] = by_status.get(status, 0) + 1
+            if status == "skip":
+                reason = str(meta.get("reason") or "?")
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+        _log("")
+        _log("=== STATE SUMMARY ===")
+        _log(f"state_file: {state_path}")
+        for k, v in sorted(by_status.items()):
+            _log(f"  {k}: {v}")
+        if skip_reasons:
+            _log("skip reasons:")
+            for k, v in sorted(skip_reasons.items(), key=lambda x: -x[1])[:15]:
+                _log(f"  {k}: {v}")
+        # show a few skip headers that look almost partner-like
+        near = []
+        for meta in files.values():
+            if not isinstance(meta, dict) or meta.get("status") != "skip":
+                continue
+            for h in meta.get("headers") or []:
+                blob = str(h.get("blob") or "")
+                if "инн" in blob and ("сумма" in blob or "стоимость" in blob):
+                    near.append((meta.get("name"), h))
+                    break
+        if near:
+            _log("SKIP but header mentions ИНН+сумма (review):")
+            for name, h in near[:20]:
+                _log(f"  - {name}: {h.get('headers')}")
 
     _log("")
     _log("=== SUMMARY ===")
-    _log(f"scanned_spreadsheets: {scanned}")
-    _log(f"matched_with_data (content): {len(hits)}")
-    _log(f"empty_templates (content match, no rows): {empty_templates}")
+    _log(f"scanned_new: {scanned}")
+    _log(f"resume_skipped: {resumed}")
+    _log(f"matched_with_data (this run): {len(hits)}")
+    _log(f"empty_templates: {empty_templates}")
     _log(f"download_errors: {errors}")
     total_volume = sum((h.volume for h in hits), Decimal("0"))
     total_commission = sum((h.commission for h in hits), Decimal("0"))
-    _log(f"total_volume (стоимость покупок): {_money(total_volume)} ₽")
-    _log(f"total_commission (к оплате CRM):  {_money(total_commission)} ₽")
-    by_kind: dict[str, list[FileHit]] = {}
-    for hit in hits:
-        by_kind.setdefault(hit.form_kind or "unknown", []).append(hit)
-    for kind, kind_hits in sorted(by_kind.items()):
-        kv = sum((h.volume for h in kind_hits), Decimal("0"))
-        kc = sum((h.commission for h in kind_hits), Decimal("0"))
-        _log(
-            f"  kind={kind}: files={len(kind_hits)} "
-            f"volume={_money(kv)} commission={_money(kc)}",
-        )
+    _log(f"total_volume (this run): {_money(total_volume)} ₽")
+    _log(f"total_commission (this run): {_money(total_commission)} ₽")
     if hits:
         _log("")
-        _log("per file:")
+        _log("per file (this run):")
         for hit in hits:
             _log(
                 f"  - [{hit.source}] kind={hit.form_kind} buyer={hit.buyer_inn} "
@@ -322,21 +545,55 @@ async def _run(
 
 
 def main() -> None:
-    # Line-buffered stdout even when redirected to a file.
     try:
         sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
     except Exception:
         pass
 
     parser = argparse.ArgumentParser(
-        description="Scan ЗАПРОС НДС files in storage by CONTENT (not filename)",
+        description="Scan ЗАПРОС НДС / Forma files in storage by CONTENT",
     )
     parser.add_argument("--local-file", help="Parse a single local xlsx instead of storage")
     parser.add_argument("--limit", type=int, default=None, help="Max spreadsheet candidates")
     parser.add_argument(
+        "--state-file",
+        default=str(_DEFAULT_STATE),
+        help=f"JSON state path (default {_DEFAULT_STATE})",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip storage_keys already recorded in state-file",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rescan even if key exists in state-file",
+    )
+    parser.add_argument(
+        "--dump-headers",
+        action="store_true",
+        help="Print first header-like row for every SKIP",
+    )
+    parser.add_argument(
+        "--contact-like",
+        default=None,
+        help="Only group_chat_files for contact/sender ILIKE %%value%% (e.g. пит)",
+    )
+    parser.add_argument(
+        "--name-like",
+        default=None,
+        help="Only filenames ILIKE %%value%%",
+    )
+    parser.add_argument(
+        "--state-summary",
+        action="store_true",
+        help="Print aggregated state stats after run",
+    )
+    parser.add_argument(
         "--verbose-skip",
         action="store_true",
-        help="Print reason for SKIP lines (header_not_found etc.)",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
     raise SystemExit(
@@ -344,7 +601,13 @@ def main() -> None:
             _run(
                 local_file=args.local_file,
                 limit=args.limit,
-                verbose_skip=args.verbose_skip,
+                resume=args.resume,
+                force=args.force,
+                dump_headers=args.dump_headers or bool(args.verbose_skip),
+                state_file=args.state_file,
+                contact_like=args.contact_like,
+                name_like=args.name_like,
+                show_state_summary=args.state_summary or True,
             ),
         ),
     )

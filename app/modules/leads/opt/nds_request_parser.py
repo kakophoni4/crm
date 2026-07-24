@@ -94,8 +94,15 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             continue
         elif "дата счета" in text or "дата счёта" in text or "дата счет" in text:
             mapping["document_date"] = idx
-        elif text.startswith("дата (дд") or text == "дата":
-            mapping["document_date"] = idx
+        elif (
+            text.startswith("дата (дд")
+            or text.startswith("дата(дд")
+            or text == "дата"
+            or text.startswith("дата реализации")
+        ):
+            # Prefer purchase/invoice date; «Дата Реализации» is a last-resort for partner forms.
+            if "document_date" not in mapping or "реализац" not in text:
+                mapping["document_date"] = idx
         elif text.startswith("наименование покупателя"):
             mapping["buyer_name"] = idx
         elif "наименование продавца" in text or "наименование организации" in text:
@@ -133,11 +140,15 @@ def _row_values(ws: Worksheet, row_idx: int, max_col: int) -> list[object]:
     return [ws.cell(row_idx, col).value for col in range(1, max_col + 1)]
 
 
+_HEADER_SCAN_ROWS = 20
+_HEADER_SCAN_COLS = 24
+
+
 def _sheet_looks_like_partner(
     ws: Worksheet,
 ) -> tuple[int, dict[str, int], FormKind] | None:
-    max_col = min(int(ws.max_column or 0), 20)
-    max_row = min(int(ws.max_row or 0), 8)
+    max_col = min(int(ws.max_column or 0), _HEADER_SCAN_COLS)
+    max_row = min(int(ws.max_row or 0), _HEADER_SCAN_ROWS)
     if max_col < 4 or max_row < 1:
         return None
     for row_idx in range(1, max_row + 1):
@@ -160,7 +171,12 @@ def _quick_has_partner_headers(content: bytes) -> bool:
         return False
     try:
         for ws in workbook.worksheets:
-            for row in ws.iter_rows(min_row=1, max_row=8, max_col=20, values_only=True):
+            for row in ws.iter_rows(
+                min_row=1,
+                max_row=_HEADER_SCAN_ROWS,
+                max_col=_HEADER_SCAN_COLS,
+                values_only=True,
+            ):
                 blob = _blob(row)
                 if not blob or _is_crm_registry_blob(blob):
                     continue
@@ -173,6 +189,43 @@ def _quick_has_partner_headers(content: bytes) -> bool:
         return False
     finally:
         workbook.close()
+
+
+def peek_workbook_headers(content: bytes, *, max_rows: int = 8) -> list[dict[str, object]]:
+    """Return first non-empty rows per sheet (for SKIP diagnostics / audit)."""
+    if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return [{"sheet": None, "reason": "xls_legacy_not_supported"}]
+    try:
+        workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
+    except Exception as exc:
+        return [{"sheet": None, "reason": f"excel_open_failed: {exc}"}]
+    out: list[dict[str, object]] = []
+    try:
+        for ws in workbook.worksheets:
+            for row_idx, row in enumerate(
+                ws.iter_rows(
+                    min_row=1,
+                    max_row=max_rows,
+                    max_col=_HEADER_SCAN_COLS,
+                    values_only=True,
+                ),
+                start=1,
+            ):
+                cells = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                if len(cells) < 2:
+                    continue
+                out.append(
+                    {
+                        "sheet": ws.title,
+                        "row": row_idx,
+                        "headers": cells[:16],
+                        "blob": _blob(row)[:240],
+                    },
+                )
+                break
+    finally:
+        workbook.close()
+    return out
 
 
 def looks_like_nds_request(content: bytes) -> bool:
