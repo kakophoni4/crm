@@ -152,6 +152,39 @@ def test_parse_partner_forma_xls() -> None:
     assert result.application.lines[0].amount == 1_000_000
 
 
+def test_parse_park_zapros_xls_headers() -> None:
+    """Alternate layout: ИНН нашей/вашей компании + сумма сделок."""
+    xlwt = pytest.importorskip("xlwt")
+    book = xlwt.Workbook()
+    sheet = book.add_sheet("Sheet1")
+    # title rows like real files
+    sheet.write(0, 0, "Запрос")
+    sheet.write(1, 0, "")
+    headers = [
+        "Требуемый ОКВЭД",
+        "ИНН нашей компании",
+        "ИНН Вашей компании",
+        "Дата с/ф\n(дд. мм. гггг)",
+        "Сумма сделок\n(НДС в том числе)",
+    ]
+    for col, text in enumerate(headers):
+        sheet.write(2, col, text)
+    sheet.write(3, 0, "62.01")
+    sheet.write(3, 1, "9704271074")
+    sheet.write(3, 2, "3525479879")
+    sheet.write(3, 3, "10.04.2026")
+    sheet.write(3, 4, 500_000)
+    buf = BytesIO()
+    book.save(buf)
+    result = parse_nds_request_workbook(buf.getvalue())
+    assert result.matched
+    assert result.form_kind == "partner_forma"
+    assert result.application is not None
+    assert result.application.buyer_inn == "3525479879"
+    assert result.application.lines[0].supplier_inn == "9704271074"
+    assert result.application.lines[0].amount == 500_000
+
+
 def test_partner_forma_header_below_row_8() -> None:
     wb = Workbook()
     ws = wb.active

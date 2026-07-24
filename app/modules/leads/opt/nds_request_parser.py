@@ -92,16 +92,26 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             continue
         if "инн покупателя" in text:
             mapping["buyer_inn"] = idx
+        elif "инн вашей компании" in text or text.startswith("инн вашей"):
+            # Alternate park form: buyer = «ИНН Вашей компании»
+            mapping["buyer_inn"] = idx
+        elif "инн нашей компании" in text or text.startswith("инн нашей"):
+            # Alternate park form: seller/unit = «ИНН нашей компании»
+            mapping["supplier_inn"] = idx
         elif "инн организации" in text:
             mapping["supplier_inn"] = idx
         elif "инн продавца" in text or ("инн" in text and "продав" in text):
             mapping["supplier_inn"] = idx
         elif "стоимость покупки" in text:
             mapping["amount"] = idx
+        elif "сумма сделок" in text and "ндс" in text:
+            mapping["amount"] = idx
         elif "сумма (в т.ч. ндс)" in text or "сумма в т.ч. ндс" in text:
             mapping["amount"] = idx
         elif text == "сумма ндс" or text.startswith("сумма ндс "):
             continue
+        elif "дата с/ф" in text or "дата сф" in text or "дата с / ф" in text:
+            mapping["document_date"] = idx
         elif "дата счета" in text or "дата счёта" in text or "дата счет" in text:
             mapping["document_date"] = idx
         elif (
@@ -127,6 +137,9 @@ def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
         return None
     if all(m in blob for m in _NDS_MARKERS):
         return "nds_request"
+    # «Запрос» park form: ИНН нашей / ИНН вашей / сумма сделок
+    if "инн вашей" in blob and "инн нашей" in blob and "сумма сделок" in blob:
+        return "partner_forma"
     if "инн организации" in blob and (
         "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
     ):
@@ -255,6 +268,8 @@ def _blob_has_partner_headers(blob: str) -> bool:
     if "инн покупателя" in blob and "инн организации" in blob and (
         "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
     ):
+        return True
+    if "инн вашей" in blob and "инн нашей" in blob and "сумма сделок" in blob:
         return True
     return False
 
