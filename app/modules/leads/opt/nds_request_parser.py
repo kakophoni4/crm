@@ -13,6 +13,9 @@ Two partner layouts (OPT upload format is intentionally NOT handled here):
    | Дата с/ф | Сумма покупок (НДС в том числе)
    (also: ИНН нашей/вашей компании + Сумма сделок)
 
+4) «Запрос на подписание» (Улитин-style)
+   ИНН покупателя | Дата с-ф | Сумма с-ф | ИНН продавца
+
 Supports .xlsx (openpyxl) and legacy .xls (xlrd).
 CRM registry exports (№ документа / поставщик / сумма без НДС) are rejected.
 """
@@ -114,6 +117,9 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             mapping["supplier_inn"] = idx
         elif "стоимость покупки" in text:
             mapping["amount"] = idx
+        elif "сумма с-ф" in text or "сумма сф" in text or text.startswith("сумма с-ф"):
+            # «Запрос на подписание»: Сумма с-ф
+            mapping["amount"] = idx
         elif "сумма покупки" in text and "ндс" in text:
             # Таврида / «Заявка новая»: Сумма покупки по СФ, в т.ч. НДС
             mapping["amount"] = idx
@@ -127,7 +133,12 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             mapping["amount"] = idx
         elif text == "сумма ндс" or text.startswith("сумма ндс "):
             continue
-        elif "дата с/ф" in text or "дата сф" in text or "дата с / ф" in text:
+        elif (
+            "дата с/ф" in text
+            or "дата с-ф" in text
+            or "дата сф" in text
+            or "дата с / ф" in text
+        ):
             mapping["document_date"] = idx
         elif "дата счета" in text or "дата счёта" in text or "дата счет" in text:
             mapping["document_date"] = idx
@@ -186,6 +197,8 @@ def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
         or "сумма (в т.ч" in blob
         or "сумма покупок" in blob
         or "сумма покупки" in blob
+        or "сумма с-ф" in blob
+        or "сумма сф" in blob
         or ("сумма" in blob and "в т.ч" in blob and "ндс" in blob)
     ):
         if "инн продавца" in blob or "продав" in blob:
@@ -322,6 +335,15 @@ def _blob_has_partner_headers(blob: str) -> bool:
         and "продав" in blob
         and ("сумма покупки" in blob or ("сумма" in blob and "в т.ч" in blob and "ндс" in blob))
         and "дата" in blob
+    ):
+        return True
+    # «Запрос на подписание»: Дата с-ф + Сумма с-ф + ИНН покупателя/продавца
+    if (
+        "инн" in blob
+        and "покупател" in blob
+        and "продав" in blob
+        and ("сумма с-ф" in blob or "сумма сф" in blob)
+        and ("дата с-ф" in blob or "дата сф" in blob or "дата с/ф" in blob)
     ):
         return True
     return False

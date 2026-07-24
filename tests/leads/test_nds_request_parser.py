@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
@@ -214,6 +215,60 @@ def test_parse_easy_goldman_zapros_headers() -> None:
     assert result.application.lines[0].supplier_inn == "9709103059"
     assert result.application.lines[0].amount == 489_000
     assert result.application.lines[1].amount == 99_000
+
+
+def test_parse_zapros_na_podpisanie_summa_sf() -> None:
+    """«Запрос на подписание»: Дата с-ф / Сумма с-ф / ИНН продавца."""
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Запрос"
+    ws.append(["Запрос на подписание"])
+    ws.append(
+        [
+            "Название покупателя",
+            "ИНН\nпокупателя",
+            "Вид деятельности\n(номенклатура)",
+            "Товар \nили услуга",
+            "Дата с-ф",
+            "Сумма с-ф",
+            "20%",
+            "№СЧЕТ-ФАКТУРЫ",
+            "№ \nдоговора",
+            "Дата договора",
+            "Название продавца",
+            "ИНН \nпродавца",
+            "Дубль?",
+        ],
+    )
+    ws.append(
+        [
+            "ИП УЛИТИН Д.В",
+            "775102650650",
+            "строительные материалы",
+            "товар",
+            "03.07.2025",
+            174_106.9,
+            0.2,
+            None,
+            "СМ-25/07-03",
+            "03.07.2025",
+            "ООО СПЕКТР",
+            "7733418909",
+        ],
+    )
+    buf = BytesIO()
+    wb.save(buf)
+    content = buf.getvalue()
+    assert looks_like_nds_request(content)
+    result = parse_nds_request_workbook(content)
+    assert result.matched
+    assert result.form_kind == "nds_request"
+    assert result.application is not None
+    assert result.application.buyer_inn == "775102650650"
+    assert len(result.application.lines) == 1
+    assert result.application.lines[0].supplier_inn == "7733418909"
+    assert result.application.lines[0].amount == Decimal("174106.9")
 
 
 def test_parse_tavrida_summa_pokupki_po_sf() -> None:
