@@ -8,6 +8,11 @@ Two partner layouts (OPT upload format is intentionally NOT handled here):
 2) partner_forma — Forma_zayavki
    ИНН покупателя | Сумма (в т.ч. НДС) | ИНН организации | дата (дд.мм.гг)
 
+3) park / Easy Goldman zapros
+   ИНН Компании-продавца (Наши) | ИНН Компании-покупатели (Ваши)
+   | Дата с/ф | Сумма покупок (НДС в том числе)
+   (also: ИНН нашей/вашей компании + Сумма сделок)
+
 Supports .xlsx (openpyxl) and legacy .xls (xlrd).
 CRM registry exports (№ документа / поставщик / сумма без НДС) are rejected.
 """
@@ -90,19 +95,26 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
         text = _cell_text(raw)
         if not text:
             continue
-        if "инн покупателя" in text:
+        # Buyer first: «покупателя/покупатели», «Вашей/Ваши компании»
+        if "инн" in text and "покупател" in text:
             mapping["buyer_inn"] = idx
-        elif "инн вашей компании" in text or text.startswith("инн вашей"):
-            # Alternate park form: buyer = «ИНН Вашей компании»
+        elif "инн вашей" in text or "инн вашей компании" in text:
             mapping["buyer_inn"] = idx
-        elif "инн нашей компании" in text or text.startswith("инн нашей"):
-            # Alternate park form: seller/unit = «ИНН нашей компании»
+        elif "ваши компани" in text and "инн" in text:
+            # Easy Goldman: «ИНН Компании-покупатели (Ваши компании)»
+            mapping["buyer_inn"] = idx
+        elif "инн нашей" in text or "инн нашей компании" in text:
+            mapping["supplier_inn"] = idx
+        elif "наши компани" in text and "инн" in text:
+            # Easy Goldman: «ИНН Компании-продавца (Наши компании)»
             mapping["supplier_inn"] = idx
         elif "инн организации" in text:
             mapping["supplier_inn"] = idx
         elif "инн продавца" in text or ("инн" in text and "продав" in text):
             mapping["supplier_inn"] = idx
         elif "стоимость покупки" in text:
+            mapping["amount"] = idx
+        elif "сумма покупок" in text and "ндс" in text:
             mapping["amount"] = idx
         elif "сумма сделок" in text and "ндс" in text:
             mapping["amount"] = idx
@@ -129,6 +141,21 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
     return mapping
 
 
+def _is_park_zapros_blob(blob: str) -> bool:
+    """Park / Easy Goldman «Заявка» layouts (наши/ваши + сумма покупок/сделок)."""
+    has_parties = (
+        ("инн вашей" in blob and "инн нашей" in blob)
+        or ("ваши компани" in blob and "наши компани" in blob)
+        or ("покупател" in blob and "продав" in blob and "инн" in blob)
+    )
+    has_amount = (
+        "сумма сделок" in blob
+        or "сумма покупок" in blob
+        or "стоимость покупки" in blob
+    )
+    return has_parties and has_amount and "дата" in blob
+
+
 def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
     required = {"buyer_inn", "supplier_inn", "amount", "document_date"}
     if not required.issubset(mapping):
@@ -137,8 +164,7 @@ def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
         return None
     if all(m in blob for m in _NDS_MARKERS):
         return "nds_request"
-    # «Запрос» park form: ИНН нашей / ИНН вашей / сумма сделок
-    if "инн вашей" in blob and "инн нашей" in blob and "сумма сделок" in blob:
+    if _is_park_zapros_blob(blob):
         return "partner_forma"
     if "инн организации" in blob and (
         "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
@@ -147,9 +173,9 @@ def _detect_layout(blob: str, mapping: dict[str, int]) -> FormKind | None:
     if all(m in blob for m in _PARTNER_FORMA_MARKERS):
         return "partner_forma"
     if "инн покупателя" in blob and "инн" in blob and (
-        "стоимость" in blob or "сумма (в т.ч" in blob
+        "стоимость" in blob or "сумма (в т.ч" in blob or "сумма покупок" in blob
     ):
-        if "инн продавца" in blob:
+        if "инн продавца" in blob or "продав" in blob:
             return "nds_request"
         if "инн организации" in blob:
             return "partner_forma"
@@ -269,7 +295,7 @@ def _blob_has_partner_headers(blob: str) -> bool:
         "сумма (в т.ч. ндс)" in blob or "сумма в т.ч. ндс" in blob
     ):
         return True
-    if "инн вашей" in blob and "инн нашей" in blob and "сумма сделок" in blob:
+    if _is_park_zapros_blob(blob):
         return True
     return False
 

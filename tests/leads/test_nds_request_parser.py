@@ -185,6 +185,37 @@ def test_parse_park_zapros_xls_headers() -> None:
     assert result.application.lines[0].amount == 500_000
 
 
+def test_parse_easy_goldman_zapros_headers() -> None:
+    """Easy Goldman: Компании-продавца/покупатели + Сумма покупок."""
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append(["Заявка", "Ставка НДС:", 20, "%"])
+    ws.append(
+        [
+            "ИНН Компании-продавца (Наши компании)",
+            "ИНН Компании-покупатели (Ваши компании)",
+            "Дата с/ф (дд. мм. гггг)",
+            "Сумма покупок (НДС в том числе)",
+        ],
+    )
+    ws.append(["9709103059", "6678133104", "09.07.2024", 489_000])
+    ws.append(["9709103059", "6678133104", "10.07.2024", 99_000])
+    buf = BytesIO()
+    wb.save(buf)
+    content = buf.getvalue()
+    assert looks_like_nds_request(content)
+    result = parse_nds_request_workbook(content)
+    assert result.matched
+    assert result.form_kind == "partner_forma"
+    assert result.application is not None
+    assert result.application.buyer_inn == "6678133104"
+    assert len(result.application.lines) == 2
+    assert result.application.lines[0].supplier_inn == "9709103059"
+    assert result.application.lines[0].amount == 489_000
+    assert result.application.lines[1].amount == 99_000
+
+
 def test_partner_forma_header_below_row_8() -> None:
     wb = Workbook()
     ws = wb.active
