@@ -36,7 +36,15 @@ def parse_excel_date(value: Any) -> date | None:
     text = str(value).strip()
     if not text:
         return None
-    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+    for fmt in (
+        "%Y-%m-%d",
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%d.%m.%y",
+        "%d/%m/%y",
+    ):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
@@ -49,7 +57,16 @@ def parse_decimal(value: Any) -> Decimal | None:
         return None
     if isinstance(value, (int, float, Decimal)):
         return Decimal(str(value))
-    text = str(value).strip().replace(" ", "").replace(",", ".")
+    text = (
+        str(value)
+        .strip()
+        .replace(" ", "")
+        .replace("\u00a0", "")
+        .replace("₽", "")
+        .replace("руб.", "")
+        .replace("руб", "")
+        .replace(",", ".")
+    )
     if not text:
         return None
     try:
