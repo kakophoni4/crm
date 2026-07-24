@@ -54,10 +54,15 @@ from app.shared.db import get_session_factory
 
 def _load_match_mod() -> Any:
     match_path = Path(__file__).resolve().parent / "opt_match_accountant_registry.py"
-    spec = importlib.util.spec_from_file_location("opt_match_accountant_registry", match_path)
+    name = "opt_match_accountant_registry"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, match_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {match_path}")
     mod = importlib.util.module_from_spec(spec)
+    # dataclasses need the module present in sys.modules during class creation
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
