@@ -255,28 +255,33 @@ def _load_xls_sheets(content: bytes) -> list[_SheetMatrix]:
 
     book = xlrd.open_workbook(file_contents=content, formatting_info=False)
     sheets: list[_SheetMatrix] = []
-    for sheet in book.sheets():
-        rows: list[list[object]] = []
-        max_col = min(int(sheet.ncols), _HEADER_SCAN_COLS)
-        for r in range(sheet.nrows):
-            row_vals: list[object] = []
-            for c in range(max_col):
-                cell = sheet.cell(r, c)
-                if cell.ctype == xlrd.XL_CELL_EMPTY:
-                    row_vals.append(None)
-                elif cell.ctype == xlrd.XL_CELL_DATE:
-                    try:
-                        dt = xldate_as_datetime(cell.value, book.datemode)
-                        row_vals.append(dt.date() if isinstance(dt, datetime) else dt)
-                    except Exception:
+    try:
+        for sheet in book.sheets():
+            rows: list[list[object]] = []
+            max_col = min(int(sheet.ncols), _HEADER_SCAN_COLS)
+            for r in range(sheet.nrows):
+                row_vals: list[object] = []
+                for c in range(max_col):
+                    cell = sheet.cell(r, c)
+                    if cell.ctype == xlrd.XL_CELL_EMPTY:
+                        row_vals.append(None)
+                    elif cell.ctype == xlrd.XL_CELL_DATE:
+                        try:
+                            dt = xldate_as_datetime(cell.value, book.datemode)
+                            row_vals.append(dt.date() if isinstance(dt, datetime) else dt)
+                        except Exception:
+                            row_vals.append(cell.value)
+                    elif cell.ctype == xlrd.XL_CELL_NUMBER:
+                        # Keep as number; normalize_inn/parse_decimal handle floats.
                         row_vals.append(cell.value)
-                elif cell.ctype == xlrd.XL_CELL_NUMBER:
-                    # Keep as number; normalize_inn/parse_decimal handle floats.
-                    row_vals.append(cell.value)
-                else:
-                    row_vals.append(cell.value)
-            rows.append(row_vals)
-        sheets.append(_SheetMatrix(title=sheet.name, rows=rows))
+                    else:
+                        row_vals.append(cell.value)
+                rows.append(row_vals)
+            sheets.append(_SheetMatrix(title=sheet.name, rows=rows))
+    finally:
+        release = getattr(book, "release_resources", None)
+        if callable(release):
+            release()
     return sheets
 
 

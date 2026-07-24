@@ -518,9 +518,11 @@ async def _scan_storage(
         to_work.append(cand)
 
     workers = max(1, int(workers))
+    # Batches keep peak RAM bounded — full gather of ~800 xlsx OOMs near the end.
+    batch_size = max(workers * 2, 32)
     _log(
         f"Candidates: {total} | to_scan={len(to_work)} | workers={workers} "
-        f"| state={state_path} | resume={resume} force={force} "
+        f"batch={batch_size} | state={state_path} | resume={resume} force={force} "
         f"dedupe_lines={dedupe_lines} fast_skip_names={fast_skip_names} "
         f"| seed_unique_lines={len(seen_lines)}",
     )
@@ -528,97 +530,152 @@ async def _scan_storage(
         _log(f"Filter contact_like={contact_like!r}")
     if name_like:
         _log(f"Filter name_like={name_like!r}")
-    _log("Download/parse parallel; dedup applied in candidate order.")
+    _log(
+        "Download/parse in batches (workbook closed after each file); "
+        "dedup in candidate order; state flushed each batch.",
+    )
 
     sem = asyncio.Semaphore(workers)
     progress: dict[str, Any] = {"n": 0, "lock": asyncio.Lock()}
-    fetched = await asyncio.gather(
-        *[
-            _fetch_one(
-                sem=sem,
-                storage=storage,
-                cand=cand,
-                dump_headers=dump_headers,
-                fast_skip_names=fast_skip_names,
-                progress=progress,
-                total_work=len(to_work),
-            )
-            for cand in to_work
-        ],
-    )
+    total_work = len(to_work)
 
-    # Apply in original candidate order so dedup is deterministic.
-    by_key = {fr.cand.storage_key: fr for fr in fetched}
-    for cand in to_work:
-        fr = by_key[cand.storage_key]
-        scanned += 1
-        who = f" contact={cand.contact_name!r}" if cand.contact_name else ""
-        prefix = (
-            f"[sum {scanned}/{len(to_work)}] [{cand.source}] {cand.name!r}{who}"
+    for batch_start in range(0, total_work, batch_size):
+        batch = to_work[batch_start : batch_start + batch_size]
+        _log(
+            f"--- batch {batch_start + 1}-{batch_start + len(batch)} "
+            f"/ {total_work} ---",
         )
+        fetched = await asyncio.gather(
+            *[
+                _fetch_one(
+                    sem=sem,
+                    storage=storage,
+                    cand=cand,
+                    dump_headers=dump_headers,
+                    fast_skip_names=fast_skip_names,
+                    progress=progress,
+                    total_work=total_work,
+                )
+                for cand in batch
+            ],
+        )
+        by_key = {fr.cand.storage_key: fr for fr in fetched}
 
-        if fr.status == "error":
-            errors += 1
-            files_state[cand.storage_key] = {
-                "status": "error",
-                "reason": fr.reason,
-                "name": cand.name,
-                "source": cand.source,
-                "scanned_at": _utc_now(),
-            }
-            continue
-
-        if fr.status == "skip":
-            skipped += 1
-            files_state[cand.storage_key] = {
-                "status": "skip",
-                "reason": fr.reason,
-                "name": cand.name,
-                "source": cand.source,
-                "contact_name": cand.contact_name,
-                "headers": fr.headers[:3],
-                "scanned_at": _utc_now(),
-            }
-            continue
-
-        if fr.status == "empty":
-            empty_templates += 1
-            files_state[cand.storage_key] = {
-                "status": "empty",
-                "reason": fr.reason,
-                "form_kind": fr.form_kind,
-                "name": cand.name,
-                "source": cand.source,
-                "scanned_at": _utc_now(),
-            }
-            continue
-
-        assert fr.application is not None
-        raw_n = len(fr.application.lines)
-        if dedupe_lines:
-            unique, line_keys, dup_n = _split_unique_lines(
-                fr.application.lines,
-                seen_lines,
+        for cand in batch:
+            fr = by_key[cand.storage_key]
+            scanned += 1
+            who = f" contact={cand.contact_name!r}" if cand.contact_name else ""
+            prefix = (
+                f"[sum {scanned}/{total_work}] [{cand.source}] {cand.name!r}{who}"
             )
-        else:
-            unique = list(fr.application.lines)
-            line_keys = [_line_fingerprint(ln) for ln in unique]
-            dup_n = 0
-            for k in line_keys:
-                seen_lines.add(k)
 
-        if not unique:
-            dup_files += 1
+            if fr.status == "error":
+                errors += 1
+                files_state[cand.storage_key] = {
+                    "status": "error",
+                    "reason": fr.reason,
+                    "name": cand.name,
+                    "source": cand.source,
+                    "scanned_at": _utc_now(),
+                }
+                continue
+
+            if fr.status == "skip":
+                skipped += 1
+                files_state[cand.storage_key] = {
+                    "status": "skip",
+                    "reason": fr.reason,
+                    "name": cand.name,
+                    "source": cand.source,
+                    "contact_name": cand.contact_name,
+                    "headers": fr.headers[:3],
+                    "scanned_at": _utc_now(),
+                }
+                continue
+
+            if fr.status == "empty":
+                empty_templates += 1
+                files_state[cand.storage_key] = {
+                    "status": "empty",
+                    "reason": fr.reason,
+                    "form_kind": fr.form_kind,
+                    "name": cand.name,
+                    "source": cand.source,
+                    "scanned_at": _utc_now(),
+                }
+                continue
+
+            assert fr.application is not None
+            raw_n = len(fr.application.lines)
+            if dedupe_lines:
+                unique, line_keys, dup_n = _split_unique_lines(
+                    fr.application.lines,
+                    seen_lines,
+                )
+            else:
+                unique = list(fr.application.lines)
+                line_keys = [_line_fingerprint(ln) for ln in unique]
+                dup_n = 0
+                for k in line_keys:
+                    seen_lines.add(k)
+
+            if not unique:
+                dup_files += 1
+                files_state[cand.storage_key] = {
+                    "status": "dup",
+                    "form_kind": fr.form_kind,
+                    "buyer_inn": fr.application.buyer_inn,
+                    "lines": raw_n,
+                    "lines_unique": 0,
+                    "lines_dup": dup_n,
+                    "volume": "0",
+                    "commission": "0",
+                    "line_keys": [],
+                    "name": cand.name,
+                    "source": cand.source,
+                    "contact_name": cand.contact_name,
+                    "sheet": fr.sheet_name,
+                    "scanned_at": _utc_now(),
+                }
+                _log(
+                    f"{prefix} → DUP kind={fr.form_kind} "
+                    f"buyer={fr.application.buyer_inn} lines={raw_n} "
+                    f"| unique_к_оплате={_money(running_commission)}",
+                )
+                continue
+
+            app = ParsedApplication(
+                buyer_inn=fr.application.buyer_inn,
+                lines=unique,
+            )
+            volume, commission = _price(app, units)
+            running_commission += commission
+            running_volume += volume
+            hits.append(
+                FileHit(
+                    source=cand.source,
+                    name=cand.name,
+                    storage_key=cand.storage_key,
+                    buyer_inn=fr.application.buyer_inn,
+                    lines=raw_n,
+                    lines_unique=len(unique),
+                    lines_dup=dup_n,
+                    volume=volume,
+                    commission=commission,
+                    sheet_name=fr.sheet_name,
+                    form_kind=fr.form_kind,
+                ),
+            )
             files_state[cand.storage_key] = {
-                "status": "dup",
+                "status": "hit",
                 "form_kind": fr.form_kind,
                 "buyer_inn": fr.application.buyer_inn,
                 "lines": raw_n,
-                "lines_unique": 0,
+                "lines_unique": len(unique),
                 "lines_dup": dup_n,
-                "volume": "0",
-                "commission": "0",
-                "line_keys": [],
+                "volume": str(volume),
+                "commission": str(commission),
+                "line_keys": line_keys,
                 "name": cand.name,
                 "source": cand.source,
                 "contact_name": cand.contact_name,
@@ -626,64 +683,27 @@ async def _scan_storage(
                 "scanned_at": _utc_now(),
             }
             _log(
-                f"{prefix} → DUP kind={fr.form_kind} "
-                f"buyer={fr.application.buyer_inn} lines={raw_n} "
-                f"| unique_к_оплате={_money(running_commission)}",
+                f"{prefix} → HIT kind={fr.form_kind} "
+                f"buyer={fr.application.buyer_inn} "
+                f"lines={len(unique)}/{raw_n} (dup={dup_n}) "
+                f"volume={_money(volume)} commission={_money(commission)} "
+                f"| unique_к_оплате={_money(running_commission)} "
+                f"(hits={len(hits)} dup_files={dup_files} empty={empty_templates} "
+                f"skip={skipped} resume_skip={resumed} err={errors})",
             )
-            continue
 
-        app = ParsedApplication(
-            buyer_inn=fr.application.buyer_inn,
-            lines=unique,
-        )
-        volume, commission = _price(app, units)
-        running_commission += commission
-        running_volume += volume
-        hits.append(
-            FileHit(
-                source=cand.source,
-                name=cand.name,
-                storage_key=cand.storage_key,
-                buyer_inn=fr.application.buyer_inn,
-                lines=raw_n,
-                lines_unique=len(unique),
-                lines_dup=dup_n,
-                volume=volume,
-                commission=commission,
-                sheet_name=fr.sheet_name,
-                form_kind=fr.form_kind,
-            ),
-        )
-        files_state[cand.storage_key] = {
-            "status": "hit",
-            "form_kind": fr.form_kind,
-            "buyer_inn": fr.application.buyer_inn,
-            "lines": raw_n,
-            "lines_unique": len(unique),
-            "lines_dup": dup_n,
-            "volume": str(volume),
-            "commission": str(commission),
-            "line_keys": line_keys,
-            "name": cand.name,
-            "source": cand.source,
-            "contact_name": cand.contact_name,
-            "sheet": fr.sheet_name,
-            "scanned_at": _utc_now(),
-        }
+        # Drop batch payloads, flush state — survives OOM/kill mid-run.
+        del fetched, by_key
+        state["files"] = files_state
+        state["line_keys"] = sorted(seen_lines)
+        state["unique_volume"] = str(running_volume)
+        state["unique_commission"] = str(running_commission)
+        state["updated_at"] = _utc_now()
+        _save_state(state_path, state)
         _log(
-            f"{prefix} → HIT kind={fr.form_kind} "
-            f"buyer={fr.application.buyer_inn} "
-            f"lines={len(unique)}/{raw_n} (dup={dup_n}) "
-            f"volume={_money(volume)} commission={_money(commission)} "
-            f"| unique_к_оплате={_money(running_commission)} "
-            f"(hits={len(hits)} dup_files={dup_files} empty={empty_templates} "
-            f"skip={skipped} resume_skip={resumed} err={errors})",
+            f"batch saved | unique_к_оплате={_money(running_commission)} "
+            f"lines={len(seen_lines)} files_state={len(files_state)}",
         )
-
-        if scanned % 50 == 0:
-            state["files"] = files_state
-            state["updated_at"] = _utc_now()
-            _save_state(state_path, state)
 
     all_line_keys: set[str] = set()
     global_commission = Decimal("0")
@@ -714,6 +734,7 @@ async def _scan_storage(
         f"UNIQUE TOTALS (all state hits): volume={_money(global_volume)} "
         f"к_оплате={_money(global_commission)} lines={len(all_line_keys)}",
     )
+    _log("DONE scan finished cleanly.")
     return hits, scanned, errors, empty_templates, resumed, dup_files
 
 
