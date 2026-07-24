@@ -19,9 +19,10 @@ State / resume:
   skip already processed keys. Headers of SKIP files are kept for audit.
 
 Dedup (default on):
-  Totals count unique registry LINES across all files:
-  (buyer_inn, supplier_inn, document_date, amount).
-  Duplicate uploads (Forma_заявки.xls + «запрос».xls) do not inflate к_оплате.
+  Totals count unique invoice LINES across all files by default:
+  (supplier_inn, document_date, amount) — счёт-фактура.
+  Buyer INN is NOT in the default key (forms often swap наши/ваши).
+  Use --dedupe-key buyer to require buyer too; --dedupe-key full for both.
 
 Speed:
   Downloads/parses in parallel (--workers, default 16).
@@ -84,24 +85,36 @@ class FileHit:
     form_kind: str | None
 
 
-def _line_fingerprint(line: ParsedApplicationLine) -> str:
-    """Stable key for one registry row across duplicate files."""
+def _line_fingerprint(
+    line: ParsedApplicationLine,
+    *,
+    dedupe_key: str = "invoice",
+) -> str:
+    """Stable key for one registry / invoice row across duplicate files.
+
+    invoice (default): supplier|date|amount — same SF even if buyer INN differs
+    buyer: buyer|supplier|date|amount
+    full: buyer|supplier|date|amount (alias of buyer)
+    """
     amount = Decimal(str(line.amount)).quantize(Decimal("0.01"))
-    return (
-        f"{line.buyer_inn}|{line.supplier_inn}|"
-        f"{line.document_date.isoformat()}|{amount}"
-    )
+    inv = f"{line.supplier_inn}|{line.document_date.isoformat()}|{amount}"
+    mode = (dedupe_key or "invoice").strip().lower()
+    if mode in {"buyer", "full"}:
+        return f"{line.buyer_inn}|{inv}"
+    return inv
 
 
 def _split_unique_lines(
     lines: list[ParsedApplicationLine],
     seen: set[str],
+    *,
+    dedupe_key: str = "invoice",
 ) -> tuple[list[ParsedApplicationLine], list[str], int]:
     unique: list[ParsedApplicationLine] = []
     keys: list[str] = []
     dup_n = 0
     for line in lines:
-        key = _line_fingerprint(line)
+        key = _line_fingerprint(line, dedupe_key=dedupe_key)
         if key in seen:
             dup_n += 1
             continue
@@ -326,7 +339,12 @@ async def _collect_candidates(
     return items
 
 
-async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
+async def _scan_local(
+    path: Path,
+    units: dict[str, OptUnit],
+    *,
+    dedupe_key: str = "invoice",
+) -> list[FileHit]:
     content = path.read_bytes()
     parsed = parse_nds_request_workbook(content)
     if not parsed.matched or parsed.application is None:
@@ -335,7 +353,11 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
             _log(f"  header_peek: {row}")
         return []
     seen: set[str] = set()
-    unique, _keys, dup_n = _split_unique_lines(parsed.application.lines, seen)
+    unique, _keys, dup_n = _split_unique_lines(
+        parsed.application.lines,
+        seen,
+        dedupe_key=dedupe_key,
+    )
     app = ParsedApplication(buyer_inn=parsed.application.buyer_inn, lines=unique)
     volume, commission = _price(app, units)
     _log(
@@ -452,6 +474,7 @@ async def _scan_storage(
     contact_like: str | None,
     name_like: str | None,
     dedupe_lines: bool,
+    dedupe_key: str,
     workers: int,
     fast_skip_names: bool,
 ) -> tuple[list[FileHit], int, int, int, int, int]:
@@ -523,7 +546,8 @@ async def _scan_storage(
     _log(
         f"Candidates: {total} | to_scan={len(to_work)} | workers={workers} "
         f"batch={batch_size} | state={state_path} | resume={resume} force={force} "
-        f"dedupe_lines={dedupe_lines} fast_skip_names={fast_skip_names} "
+        f"dedupe_lines={dedupe_lines} dedupe_key={dedupe_key} "
+        f"fast_skip_names={fast_skip_names} "
         f"| seed_unique_lines={len(seen_lines)}",
     )
     if contact_like:
@@ -531,8 +555,10 @@ async def _scan_storage(
     if name_like:
         _log(f"Filter name_like={name_like!r}")
     _log(
-        "Download/parse in batches (workbook closed after each file); "
-        "dedup in candidate order; state flushed each batch.",
+        "Download/parse in batches; dedup by invoice "
+        f"key={dedupe_key} (supplier|date|amount"
+        f"{' +buyer' if dedupe_key in {'buyer', 'full'} else ''}); "
+        "state flushed each batch.",
     )
 
     sem = asyncio.Semaphore(workers)
@@ -611,10 +637,13 @@ async def _scan_storage(
                 unique, line_keys, dup_n = _split_unique_lines(
                     fr.application.lines,
                     seen_lines,
+                    dedupe_key=dedupe_key,
                 )
             else:
                 unique = list(fr.application.lines)
-                line_keys = [_line_fingerprint(ln) for ln in unique]
+                line_keys = [
+                    _line_fingerprint(ln, dedupe_key=dedupe_key) for ln in unique
+                ]
                 dup_n = 0
                 for k in line_keys:
                     seen_lines.add(k)
@@ -750,6 +779,7 @@ async def _run(
     name_like: str | None,
     show_state_summary: bool,
     dedupe_lines: bool,
+    dedupe_key: str,
     workers: int,
     fast_skip_names: bool,
 ) -> int:
@@ -759,7 +789,11 @@ async def _run(
     resumed = 0
     dup_files = 0
     if local_file:
-        hits = await _scan_local(Path(local_file), units)
+        hits = await _scan_local(
+            Path(local_file),
+            units,
+            dedupe_key=dedupe_key,
+        )
         scanned = 1
         errors = 0
     else:
@@ -772,6 +806,7 @@ async def _run(
             contact_like=contact_like,
             name_like=name_like,
             dedupe_lines=dedupe_lines,
+            dedupe_key=dedupe_key,
             workers=workers,
             fast_skip_names=fast_skip_names,
         )
@@ -904,6 +939,15 @@ def main() -> None:
         help="Disable line-level dedup (sum every file as-is)",
     )
     parser.add_argument(
+        "--dedupe-key",
+        choices=("invoice", "buyer", "full"),
+        default="invoice",
+        help=(
+            "invoice=supplier|date|amount (default, SF identity); "
+            "buyer/full also require buyer_inn"
+        ),
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=16,
@@ -933,6 +977,7 @@ def main() -> None:
                 name_like=args.name_like,
                 show_state_summary=args.state_summary or True,
                 dedupe_lines=not args.no_dedupe,
+                dedupe_key=args.dedupe_key,
                 workers=args.workers,
                 fast_skip_names=not args.no_fast_skip_names,
             ),
