@@ -130,6 +130,8 @@ export interface OptOrderRegistryItem {
 export interface OptOrderRegistryListResponse {
   items: OptOrderRegistryItem[]
   total: number
+  commission_due_sum?: number
+  amount_paid_sum?: number
 }
 
 export interface OptRegistryManagerItem {

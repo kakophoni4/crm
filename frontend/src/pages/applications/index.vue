@@ -55,6 +55,8 @@ const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const paymentItems = ref<OptPaymentLedgerItem[]>([])
 const total = ref(0)
+const commissionDueSum = ref(0)
+const amountPaidSum = ref(0)
 const page = ref(1)
 const pageSize = 30
 const paymentStatusFilter = ref<string | null>(null)
@@ -436,6 +438,8 @@ async function load(): Promise<void> {
       paymentItems.value = data.items
       items.value = []
       total.value = data.total
+      commissionDueSum.value = 0
+      amountPaidSum.value = 0
     } else {
       const data = await listOptOrdersRegistry({
         ...common,
@@ -444,6 +448,8 @@ async function load(): Promise<void> {
       items.value = data.items
       paymentItems.value = []
       total.value = data.total
+      commissionDueSum.value = Number(data.commission_due_sum ?? 0)
+      amountPaidSum.value = Number(data.amount_paid_sum ?? 0)
     }
   } catch (err) {
     message.error(
@@ -457,6 +463,8 @@ async function load(): Promise<void> {
       items.value = []
       paymentItems.value = []
       total.value = 0
+      commissionDueSum.value = 0
+      amountPaidSum.value = 0
     }
   } finally {
     loading.value = false
@@ -626,6 +634,19 @@ onMounted(() => {
             :pagination="false"
             :scroll-x="1180"
           />
+          <div class="applications-page__totals">
+            <span class="applications-page__totals-label">
+              Итого по фильтру · заявок: {{ total }}
+            </span>
+            <span>
+              К оплате:
+              <strong>{{ formatMoney(commissionDueSum) }} ₽</strong>
+            </span>
+            <span>
+              Оплачено:
+              <strong>{{ formatMoney(amountPaidSum) }} ₽</strong>
+            </span>
+          </div>
         </AppCard>
       </template>
 
@@ -895,6 +916,27 @@ onMounted(() => {
 .applications-page__card {
   min-width: 0;
   overflow: hidden;
+}
+
+.applications-page__totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px 20px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--n-border-color);
+  font-size: 0.9rem;
+  color: var(--app-text);
+}
+
+.applications-page__totals-label {
+  color: var(--app-text-muted);
+  margin-right: auto;
+}
+
+.applications-page__totals strong {
+  font-variant-numeric: tabular-nums;
 }
 
 .applications-page__panel {

@@ -447,7 +447,12 @@ class OptOrderService:
         ctx = await self._scope_loader.load(actor)
         scoped = visible_group_ids(ctx)
         if scoped != SCOPE_ALL and not scoped:
-            return OptOrderRegistryListResponse(items=[], total=0)
+            return OptOrderRegistryListResponse(
+                items=[],
+                total=0,
+                commission_due_sum=Decimal("0"),
+                amount_paid_sum=Decimal("0"),
+            )
 
         filters = []
         if scoped != SCOPE_ALL:
@@ -481,16 +486,23 @@ class OptOrderService:
             & (ContactGroupAssignment.group_id == Lead.group_id),
         )
 
-        count_stmt = (
-            select(func.count())
+        stats_stmt = (
+            select(
+                func.count(),
+                func.coalesce(func.sum(LeadOptOrder.commission_due), 0),
+                func.coalesce(func.sum(LeadOptOrder.amount_paid), 0),
+            )
             .select_from(LeadOptOrder)
             .join(Lead, Lead.id == LeadOptOrder.lead_id)
             .join(Group, Group.id == Lead.group_id)
             .outerjoin(*manager_join)
         )
         if filters:
-            count_stmt = count_stmt.where(*filters)
-        total = int((await self._session.execute(count_stmt)).scalar_one())
+            stats_stmt = stats_stmt.where(*filters)
+        total_raw, due_raw, paid_raw = (await self._session.execute(stats_stmt)).one()
+        total = int(total_raw or 0)
+        commission_due_sum = Decimal(str(due_raw or 0)).quantize(Decimal("0.01"))
+        amount_paid_sum = Decimal(str(paid_raw or 0)).quantize(Decimal("0.01"))
 
         stmt = (
             select(
@@ -574,7 +586,12 @@ class OptOrderService:
                     payments_count=len(order.payments),
                 ),
             )
-        return OptOrderRegistryListResponse(items=items, total=total)
+        return OptOrderRegistryListResponse(
+            items=items,
+            total=total,
+            commission_due_sum=commission_due_sum,
+            amount_paid_sum=amount_paid_sum,
+        )
 
     async def list_registry_managers(
         self,
