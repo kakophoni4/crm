@@ -23,10 +23,15 @@ Dedup (default on):
   (buyer_inn, supplier_inn, document_date, amount).
   Duplicate uploads (Forma_заявки.xls + «запрос».xls) do not inflate к_оплате.
 
+Speed:
+  Downloads/parses in parallel (--workers, default 16).
+  Obvious FNS book names (Раздел-9 / книга покупок) skip download by default.
+
 Usage on VPS:
   docker exec -e PYTHONUNBUFFERED=1 crm-staging-api \\
+    python scripts/scan_nds_request_files.py --force --workers 16
+  docker exec -e PYTHONUNBUFFERED=1 crm-staging-api \\
     python scripts/scan_nds_request_files.py --resume
-  docker exec crm-staging-api python scripts/scan_nds_request_files.py --force
   docker exec crm-staging-api python scripts/scan_nds_request_files.py \\
     --contact-like 'пит' --dump-headers
 """
@@ -36,8 +41,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -103,6 +109,28 @@ def _split_unique_lines(
         unique.append(line)
         keys.append(key)
     return unique, keys, dup_n
+
+
+_JUNK_NAME_RE = re.compile(
+    r"(раздел[\s_-]*9|книга\s*покупок|книга\s*продаж)",
+    re.IGNORECASE,
+)
+
+
+def _is_obvious_junk_name(name: str) -> bool:
+    """FNS books — almost never partner forms; skip S3 download."""
+    return bool(_JUNK_NAME_RE.search(name.replace("ё", "е")))
+
+
+@dataclass
+class _FetchResult:
+    cand: Candidate
+    status: str  # error | skip | empty | ready
+    reason: str | None = None
+    form_kind: str | None = None
+    sheet_name: str | None = None
+    headers: list[dict[str, object]] = field(default_factory=list)
+    application: ParsedApplication | None = None
 
 
 @dataclass(frozen=True)
@@ -333,6 +361,87 @@ async def _scan_local(path: Path, units: dict[str, OptUnit]) -> list[FileHit]:
     ]
 
 
+async def _fetch_one(
+    *,
+    sem: asyncio.Semaphore,
+    storage: Any,
+    cand: Candidate,
+    dump_headers: bool,
+    fast_skip_names: bool,
+    progress: dict[str, Any],
+    total_work: int,
+) -> _FetchResult:
+    async with sem:
+        async with progress["lock"]:
+            progress["n"] += 1
+            n = progress["n"]
+        pct = (100 * n) // max(total_work, 1)
+        who = f" contact={cand.contact_name!r}" if cand.contact_name else ""
+        prefix = f"[dl {n}/{total_work} ~{pct}%] [{cand.source}] {cand.name!r}{who}"
+
+        if fast_skip_names and _is_obvious_junk_name(cand.name):
+            _log(f"{prefix} → SKIP (name_prefilter)")
+            return _FetchResult(
+                cand=cand,
+                status="skip",
+                reason="name_prefilter",
+            )
+
+        try:
+            content, _ctype = await storage.get_bytes(cand.storage_key)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"{prefix} → DOWNLOAD_FAIL ({exc})")
+            return _FetchResult(
+                cand=cand,
+                status="error",
+                reason=f"download_fail: {exc}",
+            )
+
+        parsed = await asyncio.to_thread(parse_nds_request_workbook, content)
+        if not parsed.matched:
+            reason = parsed.reason or "header_not_found"
+            headers: list[dict[str, object]] = []
+            if dump_headers:
+                headers = await asyncio.to_thread(peek_workbook_headers, content)
+                _log(f"{prefix} → SKIP ({reason})")
+                for row in headers[:3]:
+                    _log(f"  headers: {row}")
+            else:
+                _log(f"{prefix} → SKIP ({reason})")
+            return _FetchResult(
+                cand=cand,
+                status="skip",
+                reason=reason,
+                headers=headers[:3],
+            )
+
+        if parsed.application is None:
+            _log(
+                f"{prefix} → EMPTY kind={parsed.form_kind} "
+                f"sheet={parsed.sheet_name!r} ({parsed.reason})",
+            )
+            return _FetchResult(
+                cand=cand,
+                status="empty",
+                reason=parsed.reason,
+                form_kind=parsed.form_kind,
+                sheet_name=parsed.sheet_name,
+            )
+
+        _log(
+            f"{prefix} → PARSED kind={parsed.form_kind} "
+            f"buyer={parsed.application.buyer_inn} "
+            f"lines={len(parsed.application.lines)}",
+        )
+        return _FetchResult(
+            cand=cand,
+            status="ready",
+            form_kind=parsed.form_kind,
+            sheet_name=parsed.sheet_name,
+            application=parsed.application,
+        )
+
+
 async def _scan_storage(
     *,
     limit: int | None,
@@ -343,6 +452,8 @@ async def _scan_storage(
     contact_like: str | None,
     name_like: str | None,
     dedupe_lines: bool,
+    workers: int,
+    fast_skip_names: bool,
 ) -> tuple[list[FileHit], int, int, int, int, int]:
     units = await _load_units()
     candidates = await _collect_candidates(
@@ -367,8 +478,6 @@ async def _scan_storage(
     seen_lines: set[str] = set()
     candidate_keys = {c.storage_key for c in candidates}
 
-    # Keep fingerprints of registries already counted (other files / prior resume).
-    # On --force only drop keys belonging to candidates being rescanned.
     for sk, meta in files_state.items():
         if not isinstance(meta, dict):
             continue
@@ -389,21 +498,7 @@ async def _scan_storage(
         if isinstance(raw_keys, list):
             seen_lines.update(str(k) for k in raw_keys if k)
 
-    _log(
-        f"Candidates: {total} | state={state_path} "
-        f"| resume={resume} force={force} dedupe_lines={dedupe_lines} "
-        f"| seed_unique_lines={len(seen_lines)}",
-    )
-    if contact_like:
-        _log(f"Filter contact_like={contact_like!r}")
-    if name_like:
-        _log(f"Filter name_like={name_like!r}")
-    _log("Matching by CONTENT headers only (filename ignored for kind).")
-    _log(
-        "Dedup registry rows by buyer|supplier|date|amount — "
-        "duplicate files do not inflate totals.",
-    )
-
+    to_work: list[Candidate] = []
     for cand in candidates:
         prev = files_state.get(cand.storage_key) if isinstance(files_state, dict) else None
         if (
@@ -420,71 +515,93 @@ async def _scan_storage(
                 except Exception:
                     pass
             continue
+        to_work.append(cand)
 
+    workers = max(1, int(workers))
+    _log(
+        f"Candidates: {total} | to_scan={len(to_work)} | workers={workers} "
+        f"| state={state_path} | resume={resume} force={force} "
+        f"dedupe_lines={dedupe_lines} fast_skip_names={fast_skip_names} "
+        f"| seed_unique_lines={len(seen_lines)}",
+    )
+    if contact_like:
+        _log(f"Filter contact_like={contact_like!r}")
+    if name_like:
+        _log(f"Filter name_like={name_like!r}")
+    _log("Download/parse parallel; dedup applied in candidate order.")
+
+    sem = asyncio.Semaphore(workers)
+    progress: dict[str, Any] = {"n": 0, "lock": asyncio.Lock()}
+    fetched = await asyncio.gather(
+        *[
+            _fetch_one(
+                sem=sem,
+                storage=storage,
+                cand=cand,
+                dump_headers=dump_headers,
+                fast_skip_names=fast_skip_names,
+                progress=progress,
+                total_work=len(to_work),
+            )
+            for cand in to_work
+        ],
+    )
+
+    # Apply in original candidate order so dedup is deterministic.
+    by_key = {fr.cand.storage_key: fr for fr in fetched}
+    for cand in to_work:
+        fr = by_key[cand.storage_key]
         scanned += 1
-        pct = (100 * scanned) // max(total - resumed, 1)
         who = f" contact={cand.contact_name!r}" if cand.contact_name else ""
-        prefix = f"[{scanned}/{total} ~{pct}%] [{cand.source}] {cand.name!r}{who}"
-        _log(f"{prefix} … processing")
+        prefix = (
+            f"[sum {scanned}/{len(to_work)}] [{cand.source}] {cand.name!r}{who}"
+        )
 
-        try:
-            content, _ctype = await storage.get_bytes(cand.storage_key)
-        except Exception as exc:  # noqa: BLE001
+        if fr.status == "error":
             errors += 1
-            _log(f"{prefix} → DOWNLOAD_FAIL ({exc})")
             files_state[cand.storage_key] = {
                 "status": "error",
-                "reason": f"download_fail: {exc}",
+                "reason": fr.reason,
                 "name": cand.name,
                 "source": cand.source,
                 "scanned_at": _utc_now(),
             }
             continue
 
-        parsed = parse_nds_request_workbook(content)
-        if not parsed.matched:
+        if fr.status == "skip":
             skipped += 1
-            reason = parsed.reason or "header_not_found"
-            header_rows = peek_workbook_headers(content)
-            _log(f"{prefix} → SKIP ({reason})")
-            if dump_headers:
-                for row in header_rows[:3]:
-                    _log(f"  headers: {row}")
             files_state[cand.storage_key] = {
                 "status": "skip",
-                "reason": reason,
+                "reason": fr.reason,
                 "name": cand.name,
                 "source": cand.source,
                 "contact_name": cand.contact_name,
-                "headers": header_rows[:3],
+                "headers": fr.headers[:3],
                 "scanned_at": _utc_now(),
             }
             continue
 
-        if parsed.application is None:
+        if fr.status == "empty":
             empty_templates += 1
-            _log(
-                f"{prefix} → EMPTY kind={parsed.form_kind} sheet={parsed.sheet_name!r} "
-                f"({parsed.reason})",
-            )
             files_state[cand.storage_key] = {
                 "status": "empty",
-                "reason": parsed.reason,
-                "form_kind": parsed.form_kind,
+                "reason": fr.reason,
+                "form_kind": fr.form_kind,
                 "name": cand.name,
                 "source": cand.source,
                 "scanned_at": _utc_now(),
             }
             continue
 
-        raw_n = len(parsed.application.lines)
+        assert fr.application is not None
+        raw_n = len(fr.application.lines)
         if dedupe_lines:
             unique, line_keys, dup_n = _split_unique_lines(
-                parsed.application.lines,
+                fr.application.lines,
                 seen_lines,
             )
         else:
-            unique = list(parsed.application.lines)
+            unique = list(fr.application.lines)
             line_keys = [_line_fingerprint(ln) for ln in unique]
             dup_n = 0
             for k in line_keys:
@@ -492,16 +609,10 @@ async def _scan_storage(
 
         if not unique:
             dup_files += 1
-            _log(
-                f"{prefix} → DUP kind={parsed.form_kind} "
-                f"buyer={parsed.application.buyer_inn} "
-                f"lines={raw_n} all already counted "
-                f"| unique_к_оплате={_money(running_commission)}",
-            )
             files_state[cand.storage_key] = {
                 "status": "dup",
-                "form_kind": parsed.form_kind,
-                "buyer_inn": parsed.application.buyer_inn,
+                "form_kind": fr.form_kind,
+                "buyer_inn": fr.application.buyer_inn,
                 "lines": raw_n,
                 "lines_unique": 0,
                 "lines_dup": dup_n,
@@ -511,13 +622,18 @@ async def _scan_storage(
                 "name": cand.name,
                 "source": cand.source,
                 "contact_name": cand.contact_name,
-                "sheet": parsed.sheet_name,
+                "sheet": fr.sheet_name,
                 "scanned_at": _utc_now(),
             }
+            _log(
+                f"{prefix} → DUP kind={fr.form_kind} "
+                f"buyer={fr.application.buyer_inn} lines={raw_n} "
+                f"| unique_к_оплате={_money(running_commission)}",
+            )
             continue
 
         app = ParsedApplication(
-            buyer_inn=parsed.application.buyer_inn,
+            buyer_inn=fr.application.buyer_inn,
             lines=unique,
         )
         volume, commission = _price(app, units)
@@ -528,20 +644,20 @@ async def _scan_storage(
                 source=cand.source,
                 name=cand.name,
                 storage_key=cand.storage_key,
-                buyer_inn=parsed.application.buyer_inn,
+                buyer_inn=fr.application.buyer_inn,
                 lines=raw_n,
                 lines_unique=len(unique),
                 lines_dup=dup_n,
                 volume=volume,
                 commission=commission,
-                sheet_name=parsed.sheet_name,
-                form_kind=parsed.form_kind,
+                sheet_name=fr.sheet_name,
+                form_kind=fr.form_kind,
             ),
         )
         files_state[cand.storage_key] = {
             "status": "hit",
-            "form_kind": parsed.form_kind,
-            "buyer_inn": parsed.application.buyer_inn,
+            "form_kind": fr.form_kind,
+            "buyer_inn": fr.application.buyer_inn,
             "lines": raw_n,
             "lines_unique": len(unique),
             "lines_dup": dup_n,
@@ -551,12 +667,12 @@ async def _scan_storage(
             "name": cand.name,
             "source": cand.source,
             "contact_name": cand.contact_name,
-            "sheet": parsed.sheet_name,
+            "sheet": fr.sheet_name,
             "scanned_at": _utc_now(),
         }
         _log(
-            f"{prefix} → HIT kind={parsed.form_kind} "
-            f"buyer={parsed.application.buyer_inn} "
+            f"{prefix} → HIT kind={fr.form_kind} "
+            f"buyer={fr.application.buyer_inn} "
             f"lines={len(unique)}/{raw_n} (dup={dup_n}) "
             f"volume={_money(volume)} commission={_money(commission)} "
             f"| unique_к_оплате={_money(running_commission)} "
@@ -564,7 +680,11 @@ async def _scan_storage(
             f"skip={skipped} resume_skip={resumed} err={errors})",
         )
 
-    # Rebuild global unique set from all hit records (survives filtered rescans).
+        if scanned % 50 == 0:
+            state["files"] = files_state
+            state["updated_at"] = _utc_now()
+            _save_state(state_path, state)
+
     all_line_keys: set[str] = set()
     global_commission = Decimal("0")
     global_volume = Decimal("0")
@@ -609,6 +729,8 @@ async def _run(
     name_like: str | None,
     show_state_summary: bool,
     dedupe_lines: bool,
+    workers: int,
+    fast_skip_names: bool,
 ) -> int:
     state_path = Path(state_file)
     units = await _load_units()
@@ -629,6 +751,8 @@ async def _run(
             contact_like=contact_like,
             name_like=name_like,
             dedupe_lines=dedupe_lines,
+            workers=workers,
+            fast_skip_names=fast_skip_names,
         )
 
     if show_state_summary and state_path.exists():
@@ -759,6 +883,17 @@ def main() -> None:
         help="Disable line-level dedup (sum every file as-is)",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=16,
+        help="Parallel S3 download/parse workers (default 16)",
+    )
+    parser.add_argument(
+        "--no-fast-skip-names",
+        action="store_true",
+        help="Do not skip Раздел-9 / книга покупок by filename before download",
+    )
+    parser.add_argument(
         "--verbose-skip",
         action="store_true",
         help=argparse.SUPPRESS,
@@ -777,6 +912,8 @@ def main() -> None:
                 name_like=args.name_like,
                 show_state_summary=args.state_summary or True,
                 dedupe_lines=not args.no_dedupe,
+                workers=args.workers,
+                fast_skip_names=not args.no_fast_skip_names,
             ),
         ),
     )
