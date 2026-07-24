@@ -133,8 +133,13 @@ const hasPendingSubmission = computed(() =>
   ),
 )
 
-function canDeleteOrder(_order: OptOrder): boolean {
-  return !props.disabled
+function canDeleteOrder(order: OptOrder): boolean {
+  if (props.disabled) return false
+  // Submitted / in-flight: hide delete for managers (admin can still via API).
+  if (order.status === 'submitted' || order.status === 'queued' || order.status === 'submitting') {
+    return false
+  }
+  return true
 }
 
 function canAdjustCommission(order: OptOrder): boolean {

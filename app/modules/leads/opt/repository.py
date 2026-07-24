@@ -107,7 +107,10 @@ class OptOrderRepository:
     async def list_orders_for_lead(self, lead_id: int) -> list[LeadOptOrder]:
         result = await self._session.execute(
             select(LeadOptOrder)
-            .where(LeadOptOrder.lead_id == lead_id)
+            .where(
+                LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_(None),
+            )
             .options(
                 selectinload(LeadOptOrder.lines),
                 selectinload(LeadOptOrder.payments).selectinload(
@@ -118,6 +121,18 @@ class OptOrderRepository:
                 ),
             )
             .order_by(LeadOptOrder.order_no.asc()),
+        )
+        return list(result.scalars().unique().all())
+
+    async def list_deleted_orders_for_lead(self, lead_id: int) -> list[LeadOptOrder]:
+        result = await self._session.execute(
+            select(LeadOptOrder)
+            .where(
+                LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_not(None),
+            )
+            .options(selectinload(LeadOptOrder.lines))
+            .order_by(LeadOptOrder.deleted_at.desc()),
         )
         return list(result.scalars().unique().all())
 
@@ -137,8 +152,30 @@ class OptOrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def soft_delete_order(
+        self,
+        order: LeadOptOrder,
+        *,
+        actor_id: int,
+        snapshot: dict,
+    ) -> None:
+        from app.modules.chats.timeutil import utc_now
+
+        order.deleted_at = utc_now()
+        order.deleted_by = actor_id
+        order.delete_snapshot = snapshot
+        await self._session.flush()
+
+    async def restore_order(self, order: LeadOptOrder) -> None:
+        if order.deleted_at is None:
+            return
+        order.deleted_at = None
+        order.deleted_by = None
+        # Keep snapshot for audit trail.
+        await self._session.flush()
+
     async def delete_order(self, order: LeadOptOrder) -> None:
-        """Delete order via DB CASCADE; expunge ORM graph to avoid nulling child FKs on flush."""
+        """Hard delete — kept for migrations/tests; prefer soft_delete_order."""
         related = [
             order,
             *order.lines,
@@ -278,6 +315,7 @@ class OptOrderRepository:
         result = await self._session.execute(
             select(LeadOptOrder.id).where(
                 LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_(None),
                 LeadOptOrder.status.in_(self._PENDING_SUBMISSION_STATUSES),
             ).limit(1),
         )
@@ -287,7 +325,17 @@ class OptOrderRepository:
         result = await self._session.execute(
             select(LeadOptOrder.id).where(
                 LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_(None),
                 LeadOptOrder.payment_status != "paid",
+            ).limit(1),
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def lead_has_active_orders(self, lead_id: int) -> bool:
+        result = await self._session.execute(
+            select(LeadOptOrder.id).where(
+                LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_(None),
             ).limit(1),
         )
         return result.scalar_one_or_none() is not None
@@ -295,7 +343,10 @@ class OptOrderRepository:
     async def get_order_by_crm_id(self, crm_id: str) -> LeadOptOrder | None:
         result = await self._session.execute(
             select(LeadOptOrder)
-            .where(LeadOptOrder.crm_id == crm_id)
+            .where(
+                LeadOptOrder.crm_id == crm_id,
+                LeadOptOrder.deleted_at.is_(None),
+            )
             .options(
                 selectinload(LeadOptOrder.lines),
                 selectinload(LeadOptOrder.payments),
@@ -309,6 +360,7 @@ class OptOrderRepository:
             .where(
                 LeadOptOrder.period_code == period_code,
                 LeadOptOrder.status == "submitted",
+                LeadOptOrder.deleted_at.is_(None),
             )
             .options(
                 selectinload(LeadOptOrder.lines),
@@ -328,6 +380,7 @@ class OptOrderRepository:
             .where(
                 LeadOptOrder.source_message_id == message_id,
                 LeadOptOrder.source_attachment_index == attachment_index,
+                LeadOptOrder.deleted_at.is_(None),
             )
             .options(
                 selectinload(LeadOptOrder.lines),
@@ -341,6 +394,7 @@ class OptOrderRepository:
             select(LeadOptOrder)
             .where(
                 LeadOptOrder.content_fingerprint == fingerprint,
+                LeadOptOrder.deleted_at.is_(None),
                 LeadOptOrder.status.in_(("queued", "submitting", "submitted")),
             )
             .options(
@@ -356,7 +410,10 @@ class OptOrderRepository:
         """Dense 1..N numbering by created_at (after deletes gaps are closed)."""
         result = await self._session.execute(
             select(LeadOptOrder.id)
-            .where(LeadOptOrder.lead_id == lead_id)
+            .where(
+                LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_(None),
+            )
             .order_by(LeadOptOrder.created_at.asc(), LeadOptOrder.id.asc()),
         )
         order_ids = [int(row[0]) for row in result.all()]
@@ -372,7 +429,10 @@ class OptOrderRepository:
         result = await self._session.execute(
             select(func.count())
             .select_from(LeadOptOrder)
-            .where(LeadOptOrder.lead_id == lead_id),
+            .where(
+                LeadOptOrder.lead_id == lead_id,
+                LeadOptOrder.deleted_at.is_(None),
+            ),
         )
         return int(result.scalar_one()) + 1
 
@@ -483,7 +543,10 @@ class OptOrderRepository:
             return []
         result = await self._session.execute(
             select(LeadOptOrder.id)
-            .where(LeadOptOrder.status.in_(statuses))
+            .where(
+                LeadOptOrder.status.in_(statuses),
+                LeadOptOrder.deleted_at.is_(None),
+            )
             .order_by(LeadOptOrder.id.asc()),
         )
         return [int(row) for row in result.scalars()]
@@ -493,6 +556,7 @@ class OptOrderRepository:
         result = await self._session.execute(
             select(LeadOptOrder).where(
                 LeadOptOrder.status == "submitting",
+                LeadOptOrder.deleted_at.is_(None),
                 LeadOptOrder.updated_at < cutoff,
             ),
         )

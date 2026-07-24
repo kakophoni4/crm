@@ -65,6 +65,34 @@ async def purge_expired_leads(_job_type: str, _payload: dict[str, object]) -> No
 
             lead_ids = [int(row[0]) for row in rows]
             contact_ids.update(int(row[1]) for row in rows)
+
+            # Never purge deals that still have OPT applications.
+            from app.modules.db.models.lead_opt_order import LeadOptOrder
+
+            protected = (
+                await session.execute(
+                    select(LeadOptOrder.lead_id)
+                    .where(
+                        LeadOptOrder.lead_id.in_(lead_ids),
+                        LeadOptOrder.deleted_at.is_(None),
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+            protected_set = {int(x) for x in protected}
+            if protected_set:
+                logger.warning(
+                    "lead_purge_skipped_opt_orders",
+                    lead_ids=sorted(protected_set),
+                    count=len(protected_set),
+                )
+                lead_ids = [lid for lid in lead_ids if lid not in protected_set]
+            if not lead_ids:
+                await session.commit()
+                if len(rows) < _PURGE_BATCH_SIZE:
+                    break
+                continue
+
             await session.execute(delete(Lead).where(Lead.id.in_(lead_ids)))
             deleted_total += len(lead_ids)
             await session.commit()

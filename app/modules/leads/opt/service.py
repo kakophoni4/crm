@@ -122,7 +122,7 @@ class OptOrderService:
     async def _get_order_for_actor(self, actor: User, lead_id: int, order_id: int) -> LeadOptOrder:
         await self._get_lead_for_actor(actor, lead_id)
         order = await self._repo.get_order(order_id)
-        if order is None or order.lead_id != lead_id:
+        if order is None or order.lead_id != lead_id or order.deleted_at is not None:
             raise NotFound(message="OPT order not found")
         return order
 
@@ -473,6 +473,8 @@ class OptOrderService:
         if open_only:
             filters.append(Lead.closed_at.is_(None))
 
+        filters.append(LeadOptOrder.deleted_at.is_(None))
+
         manager_join = (
             ContactGroupAssignment,
             (ContactGroupAssignment.contact_id == Lead.contact_id)
@@ -597,6 +599,7 @@ class OptOrderService:
 
         filters = [
             ContactGroupAssignment.owner_user_id.is_not(None),
+            LeadOptOrder.deleted_at.is_(None),
         ]
         if scoped != SCOPE_ALL:
             filters.append(Lead.group_id.in_(scoped))
@@ -683,6 +686,8 @@ class OptOrderService:
             filters.append(LeadOptOrder.period_code == period_code.strip())
         if manager_user_id is not None:
             filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
+
+        filters.append(LeadOptOrder.deleted_at.is_(None))
 
         manager_join = (
             ContactGroupAssignment,
@@ -1300,19 +1305,90 @@ class OptOrderService:
 
     async def delete_order(self, actor: User, lead_id: int, order_id: int) -> None:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
+        if order.deleted_at is not None:
+            raise NotFound(message="OPT order not found")
+
+        # Submitted / in-flight orders: only admin may soft-delete.
+        protected = {"submitted", "queued", "submitting"}
+        if order.status in protected and not is_admin(actor.role):
+            raise PermissionDenied(
+                message=(
+                    f"Нельзя удалить заявку в статусе «{order.status}» — "
+                    "только администратор (мягкое удаление)"
+                ),
+            )
+
         lead_id_value = order.lead_id
         order_no = order.order_no
+        snapshot = self._order_delete_snapshot(order)
+
         try:
             await dequeue_opt_submit(order.id)
         except Exception:
             logger.warning("opt_submit_dequeue_failed", order_id=order.id, exc_info=True)
-        await self._repo.delete_order(order)
+
+        await self._repo.soft_delete_order(
+            order,
+            actor_id=int(actor.id),
+            snapshot=snapshot,
+        )
         await self._repo.renumber_orders_for_lead(lead_id_value)
         await self._session.commit()
         await publish(
             "opt.order.deleted",
-            {"lead_id": lead_id_value, "order_id": order_id, "order_no": order_no},
+            {
+                "lead_id": lead_id_value,
+                "order_id": order_id,
+                "order_no": order_no,
+                "soft": True,
+                "status": order.status,
+                "actor_id": int(actor.id),
+            },
         )
+
+    async def restore_order(self, actor: User, lead_id: int, order_id: int) -> OptOrderResponse:
+        if not is_admin(actor.role):
+            raise PermissionDenied(message="Восстановление заявок доступно только администраторам")
+        order = await self._repo.get_order(order_id)
+        if order is None or order.lead_id != lead_id or order.deleted_at is None:
+            raise NotFound(message="Удалённая OPT-заявка не найдена")
+        await self._get_lead_for_actor(actor, lead_id)
+        await self._repo.restore_order(order)
+        await self._repo.renumber_orders_for_lead(lead_id)
+        await self._session.commit()
+        restored = await self._repo.get_order(order_id)
+        assert restored is not None
+        await publish(
+            "opt.order.restored",
+            {"lead_id": lead_id, "order_id": order_id, "actor_id": int(actor.id)},
+        )
+        return self._to_response(restored)
+
+    def _order_delete_snapshot(self, order: LeadOptOrder) -> dict:
+        return {
+            "id": order.id,
+            "lead_id": order.lead_id,
+            "crm_id": order.crm_id,
+            "order_no": order.order_no,
+            "buyer_inn": order.buyer_inn,
+            "buyer_kpp": order.buyer_kpp,
+            "buyer_name": order.buyer_name,
+            "status": order.status,
+            "period_code": order.period_code,
+            "total_volume": float(order.total_volume or 0),
+            "commission_due": float(order.commission_due or 0),
+            "source_filename": order.source_filename,
+            "submission_error": order.submission_error,
+            "lines": [
+                {
+                    "crm_id": line.crm_id,
+                    "supplier_inn": line.supplier_inn,
+                    "document_date": str(line.document_date),
+                    "amount": float(line.amount),
+                }
+                for line in order.lines
+            ],
+        }
 
     async def send_registry_to_client(
         self,

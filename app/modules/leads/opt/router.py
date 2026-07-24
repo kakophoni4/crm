@@ -318,6 +318,16 @@ async def delete_opt_order(
     return {"deleted": True}
 
 
+@router.post("/leads/{lead_id}/opt-orders/{order_id}/restore", response_model=OptOrderResponse)
+async def restore_opt_order(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptOrderResponse:
+    return await service.restore_order(actor, lead_id, order_id)
+
+
 @router.post(
     "/leads/{lead_id}/opt-orders/{order_id}/send-registry",
     response_model=OptSendRegistryResponse,

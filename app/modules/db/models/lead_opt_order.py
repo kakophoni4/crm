@@ -79,6 +79,13 @@ class LeadOptOrder(Base):
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    deleted_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    delete_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
