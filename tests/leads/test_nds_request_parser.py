@@ -4,6 +4,7 @@ from datetime import date
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
 from app.modules.leads.opt.nds_request_parser import (
@@ -107,6 +108,48 @@ def test_reject_random_bytes() -> None:
     assert not looks_like_nds_request(b"not-an-excel")
     result = parse_nds_request_workbook(b"not-an-excel")
     assert result.matched is False
+
+
+def test_parse_partner_forma_xls() -> None:
+    xlwt = pytest.importorskip("xlwt")
+    book = xlwt.Workbook()
+    sheet = book.add_sheet("Лист_1")
+    headers = [
+        "Ваши контактные данные",
+        "Наименование покупателя",
+        "ИНН покупателя",
+        "КПП покупателя",
+        "Вид товара",
+        "Дата (дд.мм.гг)",
+        "Сумма (в т.ч. НДС)",
+        "Сумма НДС",
+        "ИНН организации",
+        "Ставка НДС",
+    ]
+    for col, text in enumerate(headers):
+        sheet.write(0, col, text)
+    sheet.write(1, 0, "tg")
+    sheet.write(1, 1, "ООО Тест")
+    sheet.write(1, 2, "7701234567")
+    sheet.write(1, 3, "770101001")
+    sheet.write(1, 4, "услуги")
+    sheet.write(1, 5, "15.04.2026")
+    sheet.write(1, 6, 1_000_000)
+    sheet.write(1, 7, 166_666.67)
+    sheet.write(1, 8, "9704271074")
+    sheet.write(1, 9, 22)
+    buf = BytesIO()
+    book.save(buf)
+    content = buf.getvalue()
+    assert content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    assert looks_like_nds_request(content)
+    result = parse_nds_request_workbook(content)
+    assert result.matched
+    assert result.form_kind == "partner_forma"
+    assert result.application is not None
+    assert result.application.buyer_inn == "7701234567"
+    assert len(result.application.lines) == 1
+    assert result.application.lines[0].amount == 1_000_000
 
 
 def test_partner_forma_header_below_row_8() -> None:

@@ -332,8 +332,9 @@ async def _scan_storage(
         _log(f"Filter name_like={name_like!r}")
     _log("Matching by CONTENT headers only (filename ignored for kind).")
     _log(
-        "Note: «Раздел-9» FNS books usually SKIP(header_not_found) — "
-        "partner Forma has ИНН покупателя + Сумма (в т.ч. НДС) + ИНН организации.",
+        "Note: «Раздел-9» FNS books usually SKIP(header_not_found). "
+        "Partner Forma: ИНН покупателя + Сумма (в т.ч. НДС) + ИНН организации. "
+        ".xls supported via xlrd.",
     )
 
     for cand in candidates:
