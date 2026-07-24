@@ -612,14 +612,31 @@ watch(needsPolling, (active) => {
   else stopPolling()
 })
 
+// Only reset selection when switching deals — refresh/WS must keep the open tab.
 watch(
-  () => [props.leadId, store.optOrdersRefreshNonce, props.initialOrderId] as const,
+  () => props.leadId,
   () => {
     selectedOrderId.value = null
     stopPolling()
     void loadOrders()
   },
   { immediate: true },
+)
+
+watch(
+  () => store.optOrdersRefreshNonce,
+  () => {
+    if (!hasLead.value) return
+    void loadOrders({ silent: true })
+  },
+)
+
+watch(
+  () => props.initialOrderId,
+  (id) => {
+    if (id == null || !orders.value.some((row) => row.id === id)) return
+    selectedOrderId.value = id
+  },
 )
 
 onUnmounted(() => {

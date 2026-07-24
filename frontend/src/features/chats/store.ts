@@ -648,7 +648,8 @@ export const useChatsStore = defineStore('chats', () => {
         ? { ...detail, assigned_group_name: groupName }
         : detail
 
-    messages.value = msgs.items
+    const merged = mergeNetworkMessages(msgs.items)
+    messages.value = merged
     messagesNextCursor.value = msgs.next_cursor
     finishMessagesLoad(seq)
 
@@ -656,7 +657,7 @@ export const useChatsStore = defineStore('chats', () => {
       chatId,
       {
         detail: currentChat.value,
-        messages: msgs.items,
+        messages: merged,
         nextCursor: msgs.next_cursor,
       },
       { prefetchAttachments: false },
@@ -665,10 +666,10 @@ export const useChatsStore = defineStore('chats', () => {
     void enrichMessagesWithReplyAudit(
       detail.contact_id,
       detail.assigned_group_id,
-      msgs.items,
+      merged,
     ).then((enriched) => {
       if (!isActiveChat(chatId, seq)) return
-      messages.value = enriched
+      messages.value = mergeNetworkMessages(enriched)
     })
 
     void chatsApi.markChatRead(chatId).catch(() => undefined)
@@ -883,6 +884,61 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
+  function appendOptimisticBubble(
+    chatId: number,
+    messageId: number,
+    direction: 'inbound' | 'outbound',
+    preview: string | undefined,
+    createdAt: string,
+  ): void {
+    if (!Number.isFinite(messageId) || messageId <= 0) return
+    if (messages.value.some((m) => m.id === messageId)) return
+    messages.value = [
+      ...messages.value,
+      {
+        id: messageId,
+        chat_id: chatId,
+        direction,
+        kind: 'text',
+        text: preview ?? null,
+        attachments: [],
+        sender_user_id: null,
+        sender_username: null,
+        reply_to_message_id: null,
+        created_at: createdAt,
+      },
+    ]
+    if (currentChat.value?.id === chatId) {
+      setChatSnapshot(
+        chatId,
+        {
+          detail: currentChat.value,
+          messages: messages.value,
+          nextCursor: messagesNextCursor.value,
+        },
+        { prefetchAttachments: false },
+      )
+    }
+  }
+
+  /** Keep WS stubs that API page has not caught up with yet. */
+  function mergeNetworkMessages(incoming: ChatMessage[]): ChatMessage[] {
+    if (!incoming.length) return messages.value
+    const byId = new Map(incoming.map((m) => [m.id, m]))
+    const maxNetId = incoming.reduce((max, m) => (m.id > max ? m.id : max), 0)
+    for (const local of messages.value) {
+      if (local.id > 0 && local.id > maxNetId && !byId.has(local.id)) {
+        byId.set(local.id, local)
+      }
+    }
+    return [...byId.values()].sort((a, b) => {
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? -1 : 1
+      }
+      return a.id - b.id
+    })
+  }
+
   async function handleInboundMessage(payload: Record<string, unknown>): Promise<void> {
     const chatId = Number(payload.chat_id)
     if (!Number.isFinite(chatId)) return
@@ -909,22 +965,7 @@ export const useChatsStore = defineStore('chats', () => {
     if (currentChatId.value === chatId) {
       if (Number.isFinite(messageId) && messageId > 0) {
         // Optimistic stub so the bubble appears even if listMessages is slow/fails.
-        if (!messages.value.some((m) => m.id === messageId)) {
-          messages.value = [
-            ...messages.value,
-            {
-              id: messageId,
-              chat_id: chatId,
-              direction: 'inbound',
-              kind: 'text',
-              text: preview ?? null,
-              attachments: [],
-              sender_user_id: null,
-              reply_to_message_id: null,
-              created_at: now,
-            },
-          ]
-        }
+        appendOptimisticBubble(chatId, messageId, 'inbound', preview, now)
         await refreshOpenChatMessages(chatId, messageId)
       }
     } else {
@@ -961,10 +1002,11 @@ export const useChatsStore = defineStore('chats', () => {
         last_message_at: now,
         ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
       }
-    }
-
-    if (currentChatId.value === chatId && Number.isFinite(messageId)) {
-      await refreshOpenChatMessages(chatId, messageId)
+      // Bot/other-session replies update the list instantly but used to wait on listMessages.
+      if (Number.isFinite(messageId) && messageId > 0) {
+        appendOptimisticBubble(chatId, messageId, 'outbound', preview, now)
+        await refreshOpenChatMessages(chatId, messageId)
+      }
     }
   }
 
@@ -984,19 +1026,13 @@ export const useChatsStore = defineStore('chats', () => {
       })
       if (!isActiveChat(chatId, seq) || !currentChat.value) return
 
-      const enriched = await enrichMessagesWithReplyAudit(
-        currentChat.value.contact_id,
-        currentChat.value.assigned_group_id,
-        msgs.items,
-      )
-      if (!isActiveChat(chatId, seq)) return
-
+      // Show API rows immediately; audit enrich is best-effort and must not delay the bubble.
       const existingIds = new Set(messages.value.map((m) => m.id))
-      const fresh = enriched.filter((m) => !existingIds.has(m.id))
+      const fresh = msgs.items.filter((m) => !existingIds.has(m.id))
       if (fresh.length > 0) {
-        messages.value = [...messages.value, ...fresh]
+        messages.value = mergeNetworkMessages([...messages.value, ...fresh])
       } else {
-        const updated = enriched.find((m) => m.id === messageId)
+        const updated = msgs.items.find((m) => m.id === messageId)
         if (updated) {
           const idx = messages.value.findIndex((m) => m.id === messageId)
           if (idx >= 0) {
@@ -1006,12 +1042,30 @@ export const useChatsStore = defineStore('chats', () => {
             messages.value = [...messages.value, updated]
           }
         } else if (!existingIds.has(messageId) && messageId > 0) {
-          const fallback = enriched.slice(-1)[0]
+          const fallback = msgs.items.slice(-1)[0]
           if (fallback) {
             messages.value = [...messages.value, fallback]
           }
         }
       }
+
+      const contactId = currentChat.value.contact_id
+      const groupId = currentChat.value.assigned_group_id
+      void enrichMessagesWithReplyAudit(contactId, groupId, messages.value).then((enriched) => {
+        if (!isActiveChat(chatId, seq)) return
+        messages.value = mergeNetworkMessages(enriched)
+        if (currentChat.value) {
+          setChatSnapshot(
+            chatId,
+            {
+              detail: currentChat.value,
+              messages: messages.value,
+              nextCursor: messagesNextCursor.value,
+            },
+            { prefetchAttachments: false },
+          )
+        }
+      })
 
       if (currentChat.value) {
         setChatSnapshot(
