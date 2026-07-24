@@ -20,21 +20,20 @@ import json
 import sys
 from pathlib import Path
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from app.modules.db.models.lead_opt_order import LeadOptOrder  # noqa: E402
-from app.modules.leads.opt.mole_client import filter_orders, mole_session  # noqa: E402
+from app.modules.leads.opt.mole_client import filter_orders  # noqa: E402
 from app.modules.leads.opt.periods import (  # noqa: E402
     normalize_period_code,
     period_code_to_mole_iso,
 )
 from app.modules.leads.opt.sync_diff import mole_crm_id, mole_is_deleted  # noqa: E402
 from app.shared.db import get_session_factory  # noqa: E402
-
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
@@ -171,8 +170,7 @@ async def _amain(period_raw: str, json_path: str | None, people: list[str]) -> i
     crm_ids = await _crm_ids(period)
     _log(f"CRM active orders in period: {len(crm_ids)}")
 
-    async with mole_session() as session:
-        mole_rows = await filter_orders({"Период": iso}, session=session)
+    mole_rows = await filter_orders(period_iso=iso)
 
     if not isinstance(mole_rows, list):
         _log(f"Unexpected Mole response type: {type(mole_rows)}")
