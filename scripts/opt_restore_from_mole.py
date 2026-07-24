@@ -153,13 +153,14 @@ async def _suggest_lead(buyer_inn: str) -> int | None:
             await session.execute(
                 text(
                     """
-                    SELECT o.lead_id, count(*) AS cnt
+                    SELECT o.lead_id, count(*) AS cnt,
+                           bool_or(l.closed_at IS NULL) AS any_open
                     FROM lead_opt_orders o
                     JOIN leads l ON l.id = o.lead_id
                     WHERE o.buyer_inn = :inn
                     GROUP BY o.lead_id
                     ORDER BY
-                      (l.closed_at IS NULL) DESC,
+                      bool_or(l.closed_at IS NULL) DESC,
                       count(*) DESC,
                       o.lead_id DESC
                     LIMIT 1
@@ -170,22 +171,26 @@ async def _suggest_lead(buyer_inn: str) -> int | None:
         ).first()
         if row:
             return int(row[0])
-        # fallback: any open lead whose contact has telegram — too weak, skip
         return None
 
 
 async def _dump_one(crm_id: str) -> dict[str, Any]:
     body = await get_order(crm_id)
     buyer_inn, buyer_kpp, buyer_name = _party(body.get("Покупатель") or body.get("Buyer"))
+    registry_raw = body.get("Реестр") or body.get("Registry") or body.get("реестр")
+    reg_len = len(registry_raw) if isinstance(registry_raw, list) else -1
     lines = _registry_lines(body, vat_rate=Decimal("22"))
     volume = sum(Decimal(str(x["amount"])) for x in lines)
     soft = await _find_soft_deleted(crm_id)
     suggest = await _suggest_lead(buyer_inn) if buyer_inn else None
+    top_keys = sorted(str(k) for k in body.keys()) if isinstance(body, dict) else []
     info = {
         "crm_id": crm_id,
         "deleted_flag": mole_is_deleted(body),
         "buyer_inn": buyer_inn,
         "buyer_name": buyer_name,
+        "mole_keys": top_keys,
+        "registry_raw_len": reg_len,
         "lines": len(lines),
         "volume": float(volume),
         "soft_deleted_order_id": soft.id if soft else None,
@@ -199,14 +204,22 @@ async def _dump_one(crm_id: str) -> dict[str, Any]:
             }
             for x in lines[:5]
         ],
+        "registry_sample": (registry_raw[:1] if isinstance(registry_raw, list) else registry_raw),
     }
     _log(
-        f"{crm_id} buyer={buyer_inn} {buyer_name!r} lines={len(lines)} "
-        f"volume={volume} soft={info['soft_deleted_order_id']} "
-        f"suggest_lead={suggest}",
+        f"{crm_id} buyer={buyer_inn} {buyer_name!r} "
+        f"registry_raw={reg_len} parsed_lines={len(lines)} volume={volume} "
+        f"soft={info['soft_deleted_order_id']} suggest_lead={suggest} "
+        f"keys={top_keys}",
     )
+    if reg_len == 0 or reg_len == -1:
+        _log(f"    EMPTY REGISTRY sample={info['registry_sample']!r}")
     for p in info["line_preview"]:
         _log(f"    {p}")
+    # also write per-order json for inspection
+    out = Path(f"/tmp/mole_order_{crm_id}.json")
+    out.write_text(json.dumps(body, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    _log(f"    wrote {out}")
     return info
 
 
