@@ -64,7 +64,7 @@ function routeChatTopic(
       break
     case 'chat.status_changed':
       invalidateChatsQueries()
-      void store.fetchList(false, { silent: true })
+      store.scheduleSilentListRefresh()
       break
     default:
       break

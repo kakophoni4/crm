@@ -16,8 +16,8 @@ export interface ReadyAttachmentRef {
 const cache = new Map<string, CachedAttachmentBlob>()
 const inflight = new Map<string, Promise<CachedAttachmentBlob>>()
 
-/** Parallel attachment warm-up while chat snapshots prefetch (browser ~6–10 per host). */
-const MAX_CONCURRENT_DOWNLOADS = 10
+/** Parallel attachment warm-up; keep below browser per-host connection budget. */
+const MAX_CONCURRENT_DOWNLOADS = 4
 const QUEUE_WAIT_MS = 120_000
 const DOWNLOAD_MS = 120_000
 
@@ -167,13 +167,24 @@ export function prefetchAttachmentBlobUrls(
   }
 }
 
+function isLightPreviewMime(mime: string | null): boolean {
+  if (!mime) return false
+  return mime.startsWith('image/') || mime.startsWith('audio/') || mime === 'application/pdf'
+}
+
 export function prefetchAttachmentsForMessages(
   messages: Iterable<{ attachments?: Record<string, unknown>[] }>,
-  options: { priority?: AttachmentDownloadPriority } = {},
+  options: { priority?: AttachmentDownloadPriority; limit?: number } = {},
 ): void {
   const priority = options.priority ?? 'normal'
+  // Background warm-up: only light previews, capped — heavy docs starve open-chat traffic.
+  const limit = options.limit ?? (priority === 'high' ? 24 : 6)
+  let queued = 0
   for (const { path, mime } of collectReadyAttachments(messages)) {
+    if (queued >= limit) break
+    if (priority !== 'high' && !isLightPreviewMime(mime)) continue
     if (peekAttachmentBlobUrl(path) || inflight.has(path)) continue
+    queued += 1
     void fetchAttachmentBlob(path, mime, priority).catch(() => undefined)
   }
 }

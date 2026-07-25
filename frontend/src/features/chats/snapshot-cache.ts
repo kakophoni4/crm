@@ -26,7 +26,8 @@ const cache = new Map<number, ChatSnapshot>()
 const inflight = new Set<number>()
 const queue: PrefetchQueueItem[] = []
 let activePrefetches = 0
-const PREFETCH_CONCURRENCY = 5
+/** Keep low — each prefetch is getChat + listMessages + attachment warm-up. */
+const PREFETCH_CONCURRENCY = 2
 
 function touch(chatId: number, snapshot: ChatSnapshot): void {
   cache.delete(chatId)

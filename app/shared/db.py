@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,8 +14,27 @@ from sqlalchemy.ext.asyncio import (
 
 from app.shared.settings import get_settings
 
+logger = structlog.get_logger(__name__)
+
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+_AFTER_COMMIT_HOOKS_KEY = "after_commit_hooks"
+
+
+def schedule_after_commit(
+    session: AsyncSession,
+    hook: Callable[[], Awaitable[Any]],
+) -> None:
+    """Run ``hook`` only after the request session successfully commits.
+
+    Prevents WS/API consumers from reading rows that are not visible yet.
+    """
+    hooks: list[Callable[[], Awaitable[Any]]] = session.info.setdefault(
+        _AFTER_COMMIT_HOOKS_KEY,
+        [],
+    )
+    hooks.append(hook)
 
 
 def get_engine() -> AsyncEngine:
@@ -47,7 +68,16 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     try:
         yield session
         await session.commit()
+        hooks: list[Callable[[], Awaitable[Any]]] = list(
+            session.info.pop(_AFTER_COMMIT_HOOKS_KEY, []),
+        )
+        for hook in hooks:
+            try:
+                await hook()
+            except Exception:
+                logger.exception("after_commit_hook_failed")
     except Exception:
+        session.info.pop(_AFTER_COMMIT_HOOKS_KEY, None)
         await session.rollback()
         raise
     finally:

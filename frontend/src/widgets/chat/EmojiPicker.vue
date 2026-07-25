@@ -33,7 +33,7 @@ function onPick(emoji: string): void {
         <Smile :size="18" />
       </button>
     </template>
-    <div class="emoji-picker">
+    <div v-if="open" class="emoji-picker">
       <section v-for="group in CHAT_EMOJI_GROUPS" :key="group.label" class="emoji-picker__group">
         <p class="emoji-picker__label">{{ group.label }}</p>
         <div class="emoji-picker__grid">

@@ -35,6 +35,7 @@ from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
 from app.modules.leads.repository import LeadRepository
 from app.realtime.events import publish
+from app.shared.db import schedule_after_commit
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 from app.workers.bots.dispatch_outbound import enqueue_outbound
 
@@ -209,6 +210,11 @@ class ChatMessagesService:
         if body.idempotency_key:
             existing = await self._repo.get_message_by_idempotency(body.idempotency_key)
             if existing is not None:
+                # Global unique key must never silently return a message from another chat.
+                if existing.chat_id != chat_id:
+                    raise ValidationError(
+                        message="idempotency_key already used in another chat",
+                    )
                 await upsert_read_state(
                     self._session,
                     user_id=actor.id,
@@ -324,17 +330,22 @@ class ChatMessagesService:
                         include_chat_id=False,
                     )
                     group_ctx["chat_id"] = chat_id
-                    await publish(
-                        "message.replied.on_behalf",
-                        {
-                            **group_ctx,
-                            "message_id": message.id,
-                            "card_owner_user_id": card_owner_id,
-                            "author_user_id": actor.id,
-                            "author_full_name": actor.full_name,
-                            "text_preview": preview,
-                        },
-                        scope={"user_id": owner_id},
+                    on_behalf_payload = {
+                        **group_ctx,
+                        "message_id": message.id,
+                        "card_owner_user_id": card_owner_id,
+                        "author_user_id": actor.id,
+                        "author_full_name": actor.full_name,
+                        "text_preview": preview,
+                    }
+                    on_behalf_owner_id = owner_id
+                    schedule_after_commit(
+                        self._session,
+                        lambda: publish(
+                            "message.replied.on_behalf",
+                            on_behalf_payload,
+                            scope={"user_id": on_behalf_owner_id},
+                        ),
                     )
                 await AuditService(self._session).write(
                     actor_id=actor.id,
@@ -360,14 +371,19 @@ class ChatMessagesService:
         if not scope and chat.assigned_user_id is not None:
             scope["user_id"] = chat.assigned_user_id
 
-        await publish(
-            "chat.message.outbound.requested",
-            {
-                "chat_id": chat_id,
-                "message_id": message.id,
-                "sender_user_id": actor.id,
-            },
-            scope=scope,
+        outbound_payload = {
+            "chat_id": chat_id,
+            "message_id": message.id,
+            "sender_user_id": actor.id,
+        }
+        outbound_scope = scope
+        schedule_after_commit(
+            self._session,
+            lambda: publish(
+                "chat.message.outbound.requested",
+                outbound_payload,
+                scope=outbound_scope,
+            ),
         )
 
         audit_payload = {

@@ -42,11 +42,38 @@ function messageKey(msg: ChatMessage | undefined): string | number | null {
   return msg._clientKey ?? msg.id
 }
 
-const sorted = computed(() =>
-  [...props.messages].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-  ),
-)
+const sorted = computed(() => {
+  const msgs = props.messages
+  if (msgs.length <= 1) return msgs
+  // Store keeps chronological order; avoid O(n log n) + copy on every WS tick.
+  let ordered = true
+  for (let i = 1; i < msgs.length; i += 1) {
+    const prev = msgs[i - 1]
+    const next = msgs[i]
+    if (
+      prev.created_at > next.created_at ||
+      (prev.created_at === next.created_at && prev.id > next.id)
+    ) {
+      ordered = false
+      break
+    }
+  }
+  if (ordered) return msgs
+  return [...msgs].sort((a, b) => {
+    if (a.created_at !== b.created_at) {
+      return a.created_at < b.created_at ? -1 : 1
+    }
+    return a.id - b.id
+  })
+})
+
+const messagesById = computed(() => {
+  const map = new Map<number, ChatMessage>()
+  for (const msg of sorted.value) {
+    if (msg.id > 0) map.set(msg.id, msg)
+  }
+  return map
+})
 
 function formatTime(iso: string): string {
   try {
@@ -109,7 +136,7 @@ function replyPreview(msg: ChatMessage): string {
 
 function quotedMessage(msg: ChatMessage): ChatMessage | null {
   if (msg.reply_to_message_id == null) return null
-  return sorted.value.find((item) => item.id === msg.reply_to_message_id) ?? null
+  return messagesById.value.get(msg.reply_to_message_id) ?? null
 }
 
 function shouldShowMessageText(msg: ChatMessage): boolean {
@@ -220,33 +247,35 @@ watch(
   },
 )
 
+// Tip/length only — deep watch on every attachment status tick was a major lag source.
 watch(
-  () => props.messages,
+  () => {
+    const msgs = props.messages
+    const last = msgs[msgs.length - 1]
+    const first = msgs[0]
+    return [msgs.length, messageKey(last), messageKey(first)] as const
+  },
   (next, prev) => {
     if (!stickToBottom.value) return
-    const nextLast = next[next.length - 1]
-    if (!nextLast) return
+    if (!next[0]) return
 
-    const prevLastKey = messageKey(prev?.[prev.length - 1])
-    const nextLastKey = messageKey(nextLast)
-    const prevFirstKey = messageKey(prev?.[0])
-    const nextFirstKey = messageKey(next[0])
+    const [nextLen, nextLastKey, nextFirstKey] = next
+    const prevLen = prev?.[0] ?? 0
+    const prevLastKey = prev?.[1] ?? null
+    const prevFirstKey = prev?.[2] ?? null
     const isPrepend =
-      prev != null &&
-      prev.length > 0 &&
-      next.length > prev.length &&
+      prevLen > 0 &&
+      nextLen > prevLen &&
       prevFirstKey !== nextFirstKey &&
       prevLastKey === nextLastKey
     if (isPrepend) return
 
-    // Deep watch: same array ref on in-place push/replace — must NOT bail on next === prev.
-    const lengthChanged = (prev?.length ?? 0) !== next.length
+    const lengthChanged = prevLen !== nextLen
     const tipChanged = prevLastKey !== nextLastKey
     if (prev != null && !lengthChanged && !tipChanged) return
 
     void scrollToBottomAfterLayout()
   },
-  { deep: true },
 )
 </script>
 
@@ -291,7 +320,10 @@ watch(
                 <p v-if="shouldShowMessageText(msg)" class="message-list__text">{{ msg.text }}</p>
                 <div v-if="msg.attachments?.length" class="message-list__attachments">
                   <template v-for="(att, i) in msg.attachments" :key="i">
-                    <MessageAttachment :att="att" eager />
+                    <MessageAttachment
+                      :att="att"
+                      :eager="index >= sorted.length - 8"
+                    />
                     <OptAttachmentBar
                       v-if="msg.direction === 'inbound'"
                       :chat-id="chatId"

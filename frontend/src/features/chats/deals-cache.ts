@@ -112,9 +112,10 @@ export async function prefetchChatDealsFromListItem(chat: {
 export function scheduleDealsPrefetchFromList(
   chats: Iterable<{ id: number; contact_id: number; assigned_group_id: number | null }>,
 ): void {
-  const list = [...chats].filter((c) => c.assigned_group_id != null).slice(0, CHAT_SNAPSHOT_CACHE_SIZE)
+  // Keep warm-up tiny — each item is listContactLeads + getLead and steals bandwidth from chat open/send.
+  const list = [...chats].filter((c) => c.assigned_group_id != null).slice(0, 6)
   let i = 0
-  const concurrency = 4
+  const concurrency = 2
   const workers = Array.from({ length: concurrency }, async () => {
     while (i < list.length) {
       const chat = list[i]

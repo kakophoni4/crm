@@ -34,6 +34,7 @@ import { scheduleDealsPrefetchFromList } from '@/features/chats/deals-cache'
 import {
   CHAT_SNAPSHOT_CACHE_SIZE,
   getChatSnapshot,
+  isChatSnapshotFresh,
   priorityPrefetchChat,
   scheduleChatSnapshotsPrefetch,
   setChatSnapshot,
@@ -90,6 +91,13 @@ export const useChatsStore = defineStore('chats', () => {
 
   /** Bumps on each openChat(); stale async results are ignored. */
   let openChatSeq = 0
+  /** Bumps on each non-append fetchList(); stale list responses are ignored. */
+  let listFetchSeq = 0
+  /** Coalesce overlapping WS-driven message refreshes per chat. */
+  const refreshInflight = new Map<number, Promise<void>>()
+  const refreshQueuedMessageId = new Map<number, number>()
+  /** Debounce silent list reloads so WS bursts don't stampede GET /chats. */
+  let silentListTimer: ReturnType<typeof setTimeout> | null = null
 
   function isActiveChat(chatId: number, seq: number): boolean {
     return seq === openChatSeq && currentChatId.value === chatId
@@ -99,6 +107,61 @@ export const useChatsStore = defineStore('chats', () => {
     if (seq === openChatSeq) {
       messagesLoading.value = false
     }
+  }
+
+  function toChronological(items: ChatMessage[]): ChatMessage[] {
+    if (items.length <= 1) return items
+    let ordered = true
+    for (let i = 1; i < items.length; i += 1) {
+      const prev = items[i - 1]
+      const next = items[i]
+      if (
+        prev.created_at > next.created_at ||
+        (prev.created_at === next.created_at && prev.id > next.id)
+      ) {
+        ordered = false
+        break
+      }
+    }
+    if (ordered) return items
+    return [...items].sort((a, b) => {
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? -1 : 1
+      }
+      return a.id - b.id
+    })
+  }
+
+  function persistOpenChatSnapshot(chatId: number): void {
+    if (!currentChat.value || currentChat.value.id !== chatId) return
+    setChatSnapshot(
+      chatId,
+      {
+        detail: currentChat.value,
+        messages: messages.value,
+        nextCursor: messagesNextCursor.value,
+      },
+      { prefetchAttachments: false },
+    )
+  }
+
+  function upsertMessageInList(list: ChatMessage[], saved: ChatMessage, clientKey: string): ChatMessage[] {
+    const idx = list.findIndex((m) => m._clientKey === clientKey || m.id === saved.id)
+    if (idx >= 0) {
+      const next = list.slice()
+      next[idx] = { ...saved, _clientKey: clientKey }
+      return next
+    }
+    return toChronological([...list, { ...saved, _clientKey: clientKey }])
+  }
+
+  /** Coalesce background list reloads from WS / invalidation. */
+  function scheduleSilentListRefresh(delayMs = 450): void {
+    if (silentListTimer != null) clearTimeout(silentListTimer)
+    silentListTimer = setTimeout(() => {
+      silentListTimer = null
+      void fetchList(false, { silent: true })
+    }, delayMs)
   }
 
   const activeTakeover = computed(() => {
@@ -498,9 +561,9 @@ export const useChatsStore = defineStore('chats', () => {
       listItems.value.filter((chat) => chatListItemNeedsResponse(chat)).map((chat) => chat.id),
     )
     // Warm deals/snapshots from list while network list refreshes.
-    scheduleDealsPrefetchFromList(listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE))
+    scheduleDealsPrefetchFromList(listItems.value.slice(0, 8))
     scheduleChatSnapshotsPrefetch(
-      listItems.value.slice(0, 5).map((c) => c.id),
+      listItems.value.slice(0, 2).map((c) => c.id),
       { priority: true },
     )
   }
@@ -512,6 +575,7 @@ export const useChatsStore = defineStore('chats', () => {
     // Background refresh (WS / inbound / load-more) must NOT overlay NSpin — it blocks clicks.
     const silent =
       opts?.silent === true || (listLoaded.value && listItems.value.length > 0)
+    const seq = append ? listFetchSeq : ++listFetchSeq
     if (!silent) listLoading.value = true
     if (!append) listError.value = null
     try {
@@ -521,6 +585,8 @@ export const useChatsStore = defineStore('chats', () => {
         // Fail-soft: list still works without group name enrichment.
       }
       const data = await chatsApi.listChats(buildListQuery(append))
+      // A newer non-append fetch won — drop this response (including stale append).
+      if (seq !== listFetchSeq) return
       const items = enrichWithGroupNames(data?.items ?? [])
       listItems.value = enrichListWithOwnership(append ? [...listItems.value, ...items] : items).map(
         (chat) => ({
@@ -542,6 +608,7 @@ export const useChatsStore = defineStore('chats', () => {
       }
       listNextCursor.value = data?.next_cursor ?? null
     } catch (err) {
+      if (seq !== listFetchSeq) return
       if (!append) {
         // Keep disk-hydrated list on network failure instead of wiping UI.
         if (listItems.value.length === 0) {
@@ -551,16 +618,19 @@ export const useChatsStore = defineStore('chats', () => {
       }
       throw err
     } finally {
-      listLoading.value = false
-      listLoaded.value = true
-      if (!append && listItems.value.length > 0) {
-        const topIds = listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE).map((chat) => chat.id)
-        scheduleChatSnapshotsPrefetch(topIds.slice(0, 3), { priority: true })
-        if (topIds.length > 3) {
-          scheduleChatSnapshotsPrefetch(topIds.slice(3))
+      if (seq === listFetchSeq) {
+        listLoading.value = false
+        listLoaded.value = true
+      }
+      if (!append && seq === listFetchSeq && listItems.value.length > 0) {
+        // Keep background warm-up small — full-list prefetch saturates the browser.
+        const topIds = listItems.value.slice(0, 8).map((chat) => chat.id)
+        scheduleChatSnapshotsPrefetch(topIds.slice(0, 2), { priority: true })
+        if (topIds.length > 2) {
+          scheduleChatSnapshotsPrefetch(topIds.slice(2))
         }
         // Deals/заявки — сразу с list item, не ждать полного snapshot сообщений.
-        scheduleDealsPrefetchFromList(listItems.value.slice(0, CHAT_SNAPSHOT_CACHE_SIZE))
+        scheduleDealsPrefetchFromList(listItems.value.slice(0, 6))
       }
     }
   }
@@ -602,7 +672,8 @@ export const useChatsStore = defineStore('chats', () => {
       })
       if (!isActiveChat(chatId, seq)) return
 
-      messages.value = msgs.items
+      const chronological = toChronological(msgs.items)
+      messages.value = chronological
       messagesNextCursor.value = msgs.next_cursor
       finishMessagesLoad(seq)
 
@@ -610,7 +681,7 @@ export const useChatsStore = defineStore('chats', () => {
         chatId,
         {
           detail: currentChat.value,
-          messages: msgs.items,
+          messages: chronological,
           nextCursor: msgs.next_cursor,
         },
         { prefetchAttachments: false },
@@ -619,10 +690,10 @@ export const useChatsStore = defineStore('chats', () => {
       void enrichMessagesWithReplyAudit(
         currentChat.value.contact_id,
         currentChat.value.assigned_group_id,
-        msgs.items,
+        chronological,
       ).then((enriched) => {
         if (!isActiveChat(chatId, seq)) return
-        messages.value = enriched
+        messages.value = toChronological(enriched)
       })
     } finally {
       finishMessagesLoad(seq)
@@ -648,7 +719,7 @@ export const useChatsStore = defineStore('chats', () => {
         ? { ...detail, assigned_group_name: groupName }
         : detail
 
-    const merged = mergeNetworkMessages(msgs.items)
+    const merged = mergeNetworkMessages(toChronological(msgs.items))
     messages.value = merged
     messagesNextCursor.value = msgs.next_cursor
     finishMessagesLoad(seq)
@@ -683,6 +754,11 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   async function openChat(chatId: number): Promise<void> {
+    const prevChatId = currentChatId.value
+    if (prevChatId != null && prevChatId !== chatId) {
+      persistOpenChatSnapshot(prevChatId)
+    }
+
     const seq = ++openChatSeq
     loadingOlderMessages.value = false
     currentChatId.value = chatId
@@ -696,7 +772,7 @@ export const useChatsStore = defineStore('chats', () => {
     // Telegram-style: switch the thread pane immediately.
     // Never keep previous chat bubbles while waiting for prefetch/network.
     if (snapshot) {
-      messages.value = snapshot.messages
+      messages.value = toChronological(snapshot.messages)
       messagesNextCursor.value = snapshot.nextCursor
       messagesLoading.value = false
       priorityPrefetchAttachmentsForMessages(snapshot.messages)
@@ -710,12 +786,19 @@ export const useChatsStore = defineStore('chats', () => {
     try {
       void ensureGroupDirectory()
       if (snapshot) {
-        void syncChatFromNetwork(chatId, seq)
+        // Fresh cache: don't immediately fight the UI with getChat+listMessages.
+        if (isChatSnapshotFresh(chatId, 20_000)) {
+          window.setTimeout(() => {
+            if (isActiveChat(chatId, seq)) void syncChatFromNetwork(chatId, seq)
+          }, 1500)
+        } else {
+          void syncChatFromNetwork(chatId, seq)
+        }
         return
       }
 
       // Empty spinner is OK; wrong-chat content is not. Short wait for in-flight prefetch.
-      const waited = await waitForChatSnapshot(chatId, 900)
+      const waited = await waitForChatSnapshot(chatId, 600)
       if (!isActiveChat(chatId, seq)) return
       if (waited) {
         snapshot = waited
@@ -765,7 +848,7 @@ export const useChatsStore = defineStore('chats', () => {
       const older = await enrichMessagesWithReplyAudit(
         currentChat.value.contact_id,
         currentChat.value.assigned_group_id,
-        data.items,
+        toChronological(data.items),
       )
       if (!isActiveChat(chatId, seq)) return
       messages.value = [...older, ...messages.value]
@@ -802,6 +885,7 @@ export const useChatsStore = defineStore('chats', () => {
       _clientKey: clientKey,
     }
     messages.value.push(optimistic)
+    persistOpenChatSnapshot(chatId)
     bumpChatInList(chatId, {
       last_message_preview: text.slice(0, 200),
       last_message_at: optimistic.created_at,
@@ -818,11 +902,23 @@ export const useChatsStore = defineStore('chats', () => {
         idempotency_key: clientKey,
         reply_to_message_id: replyToMessageId,
       })
-      const idx = messages.value.findIndex((m) => m._clientKey === clientKey)
-      if (idx >= 0) {
-        messages.value[idx] = { ...saved, _clientKey: clientKey }
+      // Critical: never apply the POST result to a different open chat.
+      if (currentChatId.value === chatId) {
+        messages.value = upsertMessageInList(messages.value, saved, clientKey)
+        persistOpenChatSnapshot(chatId)
       } else {
-        messages.value.push(saved)
+        const snap = getChatSnapshot(chatId)
+        if (snap) {
+          setChatSnapshot(
+            chatId,
+            {
+              detail: snap.detail,
+              messages: upsertMessageInList(snap.messages, saved, clientKey),
+              nextCursor: snap.nextCursor,
+            },
+            { prefetchAttachments: false },
+          )
+        }
       }
       void chatsApi.markChatRead(chatId, { last_read_message_id: saved.id }).catch(() => undefined)
       clearNeedsResponseForChat(chatId)
@@ -839,11 +935,27 @@ export const useChatsStore = defineStore('chats', () => {
         currentChat.value = { ...currentChat.value, ...answeredPatch }
       }
     } catch (err) {
-      const idx = messages.value.findIndex((m) => m._clientKey === clientKey)
-      if (idx >= 0) {
-        messages.value[idx] = {
-          ...messages.value[idx],
-          _failed: true,
+      if (currentChatId.value === chatId) {
+        const idx = messages.value.findIndex((m) => m._clientKey === clientKey)
+        if (idx >= 0) {
+          messages.value[idx] = {
+            ...messages.value[idx],
+            _failed: true,
+          }
+        }
+      } else {
+        const snap = getChatSnapshot(chatId)
+        if (snap) {
+          const idx = snap.messages.findIndex((m) => m._clientKey === clientKey)
+          if (idx >= 0) {
+            const next = snap.messages.slice()
+            next[idx] = { ...next[idx], _failed: true }
+            setChatSnapshot(
+              chatId,
+              { detail: snap.detail, messages: next, nextCursor: snap.nextCursor },
+              { prefetchAttachments: false },
+            )
+          }
         }
       }
       throw err
@@ -969,8 +1081,12 @@ export const useChatsStore = defineStore('chats', () => {
         await refreshOpenChatMessages(chatId, messageId)
       }
     } else {
-      priorityPrefetchChat(chatId)
-      void fetchList(false, { silent: true })
+      // List row already patched above. Full GET /chats + snapshot prefetch on every
+      // inbound was the main UI stall under message bursts.
+      const known = listItems.value.some((c) => c.id === chatId)
+      if (!known) {
+        scheduleSilentListRefresh()
+      }
     }
   }
 
@@ -1002,8 +1118,12 @@ export const useChatsStore = defineStore('chats', () => {
         last_message_at: now,
         ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
       }
-      // Bot/other-session replies update the list instantly but used to wait on listMessages.
       if (Number.isFinite(messageId) && messageId > 0) {
+        // Own send already replaced optimistic via POST — skip expensive listMessages.
+        const existing = messages.value.find((m) => m.id === messageId)
+        if (existing && !existing._optimistic) {
+          return
+        }
         appendOptimisticBubble(chatId, messageId, 'outbound', preview, now)
         await refreshOpenChatMessages(chatId, messageId)
       }
@@ -1018,6 +1138,31 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   async function refreshOpenChatMessages(chatId: number, messageId: number): Promise<void> {
+    if (!Number.isFinite(chatId)) return
+    refreshQueuedMessageId.set(chatId, messageId)
+
+    // Join an in-flight burst; the loop below drains any ids queued while waiting.
+    const existing = refreshInflight.get(chatId)
+    if (existing) {
+      await existing
+      if (!refreshQueuedMessageId.has(chatId) || refreshInflight.has(chatId)) return
+    }
+
+    const run = (async () => {
+      // Drain coalesced refreshes: one network round-trip per burst.
+      while (refreshQueuedMessageId.has(chatId)) {
+        const targetMessageId = refreshQueuedMessageId.get(chatId) ?? 0
+        refreshQueuedMessageId.delete(chatId)
+        await refreshOpenChatMessagesOnce(chatId, targetMessageId)
+      }
+    })().finally(() => {
+      refreshInflight.delete(chatId)
+    })
+    refreshInflight.set(chatId, run)
+    await run
+  }
+
+  async function refreshOpenChatMessagesOnce(chatId: number, messageId: number): Promise<void> {
     const seq = openChatSeq
     if (!isActiveChat(chatId, seq) || !currentChat.value) return
     try {
@@ -1026,27 +1171,25 @@ export const useChatsStore = defineStore('chats', () => {
       })
       if (!isActiveChat(chatId, seq) || !currentChat.value) return
 
+      const page = toChronological(msgs.items)
       // Show API rows immediately; audit enrich is best-effort and must not delay the bubble.
       const existingIds = new Set(messages.value.map((m) => m.id))
-      const fresh = msgs.items.filter((m) => !existingIds.has(m.id))
+      const fresh = page.filter((m) => !existingIds.has(m.id))
       if (fresh.length > 0) {
         messages.value = mergeNetworkMessages([...messages.value, ...fresh])
       } else {
-        const updated = msgs.items.find((m) => m.id === messageId)
+        const updated = page.find((m) => m.id === messageId)
         if (updated) {
           const idx = messages.value.findIndex((m) => m.id === messageId)
           if (idx >= 0) {
             messages.value[idx] = updated
             messages.value = [...messages.value]
           } else if (messageId > 0) {
-            messages.value = [...messages.value, updated]
-          }
-        } else if (!existingIds.has(messageId) && messageId > 0) {
-          const fallback = msgs.items.slice(-1)[0]
-          if (fallback) {
-            messages.value = [...messages.value, fallback]
+            messages.value = mergeNetworkMessages([...messages.value, updated])
           }
         }
+        // Never invent a row from "last page item" — API is newest-first and that
+        // fallback was a major source of wrong-message / wrong-chat UI glitches.
       }
 
       const contactId = currentChat.value.contact_id
@@ -1054,30 +1197,10 @@ export const useChatsStore = defineStore('chats', () => {
       void enrichMessagesWithReplyAudit(contactId, groupId, messages.value).then((enriched) => {
         if (!isActiveChat(chatId, seq)) return
         messages.value = mergeNetworkMessages(enriched)
-        if (currentChat.value) {
-          setChatSnapshot(
-            chatId,
-            {
-              detail: currentChat.value,
-              messages: messages.value,
-              nextCursor: messagesNextCursor.value,
-            },
-            { prefetchAttachments: false },
-          )
-        }
+        persistOpenChatSnapshot(chatId)
       })
 
-      if (currentChat.value) {
-        setChatSnapshot(
-          chatId,
-          {
-            detail: currentChat.value,
-            messages: messages.value,
-            nextCursor: messagesNextCursor.value,
-          },
-          { prefetchAttachments: false },
-        )
-      }
+      persistOpenChatSnapshot(chatId)
     } catch {
       /* list refresh is best-effort; optimistic stub may already be visible */
     }
@@ -1195,6 +1318,7 @@ export const useChatsStore = defineStore('chats', () => {
     isInputBlocked,
     isSenior,
     fetchList,
+    scheduleSilentListRefresh,
     hydrateFromDisk,
     refreshCurrentChatOwner,
     openChat,

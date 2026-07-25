@@ -378,7 +378,7 @@ onMounted(() => {
   void loadLeadStatuses()
 
   stopInvalidate = onChatsInvalidate(() => {
-    void store.fetchList()
+    store.scheduleSilentListRefresh()
   })
 
   openChatFromQuery()
