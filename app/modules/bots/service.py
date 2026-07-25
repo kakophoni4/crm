@@ -536,7 +536,7 @@ class BotService:
             signature=signature,
         )
         await self._session.commit()
-        await enqueue("process_bot_event", {"event_id": event_id})
+        await enqueue("process_bot_event", {"event_id": event_id, "bot_id": bot.id})
         return "accepted"
 
     async def _emit_signature_invalid(self, bot_code: str, event_id: str, reason: str) -> None:

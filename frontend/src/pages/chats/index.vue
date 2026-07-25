@@ -26,6 +26,8 @@ import {
 
   NTabs,
 
+  NVirtualList,
+
   useMessage,
 
 } from 'naive-ui'
@@ -37,7 +39,7 @@ import { ru } from 'date-fns/locale'
 import { useWindowSize } from '@vueuse/core'
 import { ArrowLeft, MessageSquare, X } from 'lucide-vue-next'
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 
@@ -64,10 +66,7 @@ import {
 import type { StatusOption } from '@/features/leads/types'
 import { useStatusesStore } from '@/features/statuses/store'
 
-import TransferCardDialog from '@/features/contacts/transfer-card/TransferCardDialog.vue'
 import { useChatNotificationsStore } from '@/features/chats/notifications-store'
-import ChatDealSidePanel from '@/widgets/chat/ChatDealSidePanel.vue'
-import ChatPaymentsSidePanel from '@/widgets/chat/ChatPaymentsSidePanel.vue'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
 
 import { AppError } from '@/shared/api/http'
@@ -85,13 +84,29 @@ import MessageInput from '@/widgets/chat/MessageInput.vue'
 
 import MessageList from '@/widgets/chat/MessageList.vue'
 
-import NewWhatsappChatDialog from '@/widgets/chat/NewWhatsappChatDialog.vue'
-
 import TakeoverBadge from '@/widgets/chat/TakeoverBadge.vue'
+
+/** Heavy side panels / dialogs — load on first open, not with /chats TTI. */
+const TransferCardDialog = defineAsyncComponent(
+  () => import('@/features/contacts/transfer-card/TransferCardDialog.vue'),
+)
+const ChatDealSidePanel = defineAsyncComponent(
+  () => import('@/widgets/chat/ChatDealSidePanel.vue'),
+)
+const ChatPaymentsSidePanel = defineAsyncComponent(
+  () => import('@/widgets/chat/ChatPaymentsSidePanel.vue'),
+)
+const NewWhatsappChatDialog = defineAsyncComponent(
+  () => import('@/widgets/chat/NewWhatsappChatDialog.vue'),
+)
 
 
 
 const CHATS_NARROW_BREAKPOINT = 1024
+/** Fixed row height for NVirtualList (padding + avatar + preview + meta + gap). */
+const CHAT_LIST_ITEM_SIZE = 110
+const CHAT_LIST_LOAD_MORE_PX = 240
+const CHAT_LIST_LOAD_MORE_THROTTLE_MS = 500
 
 const store = useChatsStore()
 const notifications = useChatNotificationsStore()
@@ -213,20 +228,25 @@ function isHighlighted(chatId: number): boolean {
 
 
 
+const relativeTimeCache = new Map<string, string>()
+const relativeTimeTick = ref(0)
+let relativeTimeRefreshTimer: ReturnType<typeof setInterval> | undefined
+let chatListLoadMoreGuardUntil = 0
+const chatVirtualListRef = ref<{ listElRef?: HTMLElement | null } | null>(null)
+let chatListScrollEl: HTMLElement | null = null
+
 function formatRelative(iso: string | null): string {
-
   if (!iso) return ''
-
+  void relativeTimeTick.value
+  const cached = relativeTimeCache.get(iso)
+  if (cached !== undefined) return cached
   try {
-
-    return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: ru })
-
+    const formatted = formatDistanceToNow(new Date(iso), { addSuffix: true, locale: ru })
+    relativeTimeCache.set(iso, formatted)
+    return formatted
   } catch {
-
     return ''
-
   }
-
 }
 
 function chatMetaLine(chat: ChatListItem): string {
@@ -235,6 +255,51 @@ function chatMetaLine(chat: ChatListItem): string {
   if (!time) return status ?? ''
   if (!status) return time
   return `${time} · ${status}`
+}
+
+function maybeFetchMoreChats(): void {
+  if (!store.listNextCursor || store.listLoading) return
+  const now = Date.now()
+  if (now < chatListLoadMoreGuardUntil) return
+  chatListLoadMoreGuardUntil = now + CHAT_LIST_LOAD_MORE_THROTTLE_MS
+  void store.fetchList(true)
+}
+
+function onChatListScroll(e: Event): void {
+  const el = e.target as HTMLElement | null
+  if (!el || typeof el.scrollTop !== 'number') return
+  if (el.scrollHeight - el.scrollTop - el.clientHeight > CHAT_LIST_LOAD_MORE_PX) return
+  maybeFetchMoreChats()
+}
+
+function unbindChatListScroll(): void {
+  if (chatListScrollEl == null) return
+  chatListScrollEl.removeEventListener('scroll', onChatListScroll)
+  chatListScrollEl = null
+}
+
+function resolveChatListScrollEl(): HTMLElement | null {
+  const raw = chatVirtualListRef.value?.listElRef as
+    | HTMLElement
+    | { value?: HTMLElement | null }
+    | null
+    | undefined
+  if (raw == null) return null
+  if (typeof raw === 'object' && 'value' in raw) return raw.value ?? null
+  return raw
+}
+
+async function bindChatListScroll(): Promise<void> {
+  await nextTick()
+  let el = resolveChatListScrollEl()
+  if (el == null) {
+    await nextTick()
+    el = resolveChatListScrollEl()
+  }
+  if (el == null || el === chatListScrollEl) return
+  unbindChatListScroll()
+  chatListScrollEl = el
+  el.addEventListener('scroll', onChatListScroll, { passive: true })
 }
 
 function chatBotLabel(chat: ChatListItem): string | null {
@@ -382,6 +447,11 @@ onMounted(() => {
   })
 
   openChatFromQuery()
+
+  relativeTimeRefreshTimer = setInterval(() => {
+    relativeTimeCache.clear()
+    relativeTimeTick.value += 1
+  }, 60_000)
 })
 
 watch(
@@ -391,9 +461,23 @@ watch(
   },
 )
 
+watch(
+  () => !store.listInitialLoading && store.displayListItems.length > 0,
+  (ready) => {
+    if (ready) void bindChatListScroll()
+    else unbindChatListScroll()
+  },
+  { immediate: true },
+)
+
 onUnmounted(() => {
   registerChatListSearchFocus(null)
   stopInvalidate?.()
+  unbindChatListScroll()
+  if (relativeTimeRefreshTimer != null) {
+    clearInterval(relativeTimeRefreshTimer)
+    relativeTimeRefreshTimer = undefined
+  }
 })
 
 </script>
@@ -492,70 +576,58 @@ onUnmounted(() => {
           <NSkeleton v-for="n in 6" :key="n" text :repeat="2" style="margin-bottom: 12px" />
         </div>
 
-        <NSpin v-else :show="store.listLoading && store.listLoaded">
-          <ul v-if="store.displayListItems.length" class="chats-page__list">
-            <li
-              v-for="chat in store.displayListItems"
-
-              :key="chat.id"
-
-              class="chats-page__list-item"
-
-              :class="{
-
-                'chats-page__list-item--active': store.currentChatId === chat.id,
-
-                'chats-page__list-item--highlight':
-                  !chatListItemIsAnswered(chat) && isHighlighted(chat.id),
-
-                'chats-page__list-item--needs-response':
-                  !chatListItemIsAnswered(chat) &&
-                  (store.needsResponseChatIds.has(chat.id) ||
-                    chatListItemNeedsResponse(chat)),
-
-              }"
-
-              tabindex="0"
-              @mouseenter="prefetchChatOnHover(chat.id)"
-              @click="openChatMobile(chat.id)"
-
-            >
-
-              <div class="chats-page__list-row">
-
-                <ContactAvatar
-                  :contact-id="chat.contact_id"
-                  :full-name="chat.contact_name"
-                  :size="32"
+        <NSpin
+          v-else
+          class="chats-page__list-spin"
+          :show="store.listLoading && store.listLoaded"
+        >
+          <NVirtualList
+            v-if="store.displayListItems.length"
+            ref="chatVirtualListRef"
+            class="chats-page__list"
+            :items="store.displayListItems"
+            :item-size="CHAT_LIST_ITEM_SIZE"
+            key-field="id"
+          >
+            <template #default="{ item: chat }">
+              <div
+                class="chats-page__list-item"
+                :class="{
+                  'chats-page__list-item--active': store.currentChatId === chat.id,
+                  'chats-page__list-item--highlight':
+                    !chatListItemIsAnswered(chat) && isHighlighted(chat.id),
+                  'chats-page__list-item--needs-response':
+                    !chatListItemIsAnswered(chat) &&
+                    (store.needsResponseChatIds.has(chat.id) ||
+                      chatListItemNeedsResponse(chat)),
+                }"
+                tabindex="0"
+                @mouseenter="prefetchChatOnHover(chat.id)"
+                @click="openChatMobile(chat.id)"
+              >
+                <div class="chats-page__list-row">
+                  <ContactAvatar
+                    :contact-id="chat.contact_id"
+                    :full-name="chat.contact_name"
+                    :size="32"
+                  />
+                  <strong class="chats-page__list-name">{{ chat.contact_name }}</strong>
+                  <NBadge v-if="chat.unread_for_me" dot />
+                </div>
+                <ContactOwnerBadge
+                  class="chats-page__owner"
+                  :owner-full-name="chat.card_owner_full_name"
+                  :owner-user-id="chat.card_owner_user_id"
+                  :escalated="chatOwnerBadgeEscalated(chat)"
+                  :pending="chatOwnerBadgePending(chat)"
                 />
-
-                <strong class="chats-page__list-name">{{ chat.contact_name }}</strong>
-
-                <NBadge v-if="chat.unread_for_me" dot />
-
+                <p class="chats-page__preview">
+                  {{ formatChatMessagePreview(chat.last_message_preview) }}
+                </p>
+                <span class="chats-page__meta">{{ chatMetaLine(chat) }}</span>
               </div>
-
-              <ContactOwnerBadge
-
-                class="chats-page__owner"
-
-                :owner-full-name="chat.card_owner_full_name"
-
-                :owner-user-id="chat.card_owner_user_id"
-
-                :escalated="chatOwnerBadgeEscalated(chat)"
-
-                :pending="chatOwnerBadgePending(chat)"
-
-              />
-
-              <p class="chats-page__preview">{{ formatChatMessagePreview(chat.last_message_preview) }}</p>
-
-              <span class="chats-page__meta">{{ chatMetaLine(chat) }}</span>
-
-            </li>
-
-          </ul>
+            </template>
+          </NVirtualList>
 
           <div
             v-if="store.displayListItems.length && store.listNextCursor"
@@ -565,7 +637,7 @@ onUnmounted(() => {
               block
               secondary
               :loading="store.listLoading"
-              @click="store.fetchList(true)"
+              @click="maybeFetchMoreChats()"
             >
               Показать еще
             </NButton>
@@ -932,11 +1004,17 @@ onUnmounted(() => {
 
 .chats-page__list-pane {
 
+  display: flex;
+
+  flex-direction: column;
+
   border-right: 1px solid var(--app-border);
 
   padding: 12px;
 
-  overflow-y: auto;
+  overflow: hidden;
+
+  min-height: 0;
 
   background: var(--app-surface);
 
@@ -947,6 +1025,8 @@ onUnmounted(() => {
 .chats-page__filters {
 
   margin-bottom: 12px;
+
+  flex-shrink: 0;
 
 }
 
@@ -961,27 +1041,45 @@ onUnmounted(() => {
 
 .chats-page__skeleton {
   margin-top: 8px;
+  flex-shrink: 0;
 }
 
+.chats-page__list-spin {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
+.chats-page__list-spin :deep(.n-spin-container),
+.chats-page__list-spin :deep(.n-spin-content) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
 
 .chats-page__list {
-
-  list-style: none;
-
+  flex: 1;
+  min-height: 0;
+  height: 100%;
   margin: 0;
-
   padding: 0;
-
 }
 
 .chats-page__load-more {
+  flex-shrink: 0;
   padding: 8px 0 4px;
 }
 
 
 
 .chats-page__list-item {
+
+  box-sizing: border-box;
+
+  height: 106px;
 
   padding: 10px 12px;
 
@@ -990,6 +1088,8 @@ onUnmounted(() => {
   cursor: pointer;
 
   margin-bottom: 4px;
+
+  overflow: hidden;
 
   transition: background 0.15s;
 
@@ -1386,7 +1486,7 @@ onUnmounted(() => {
   }
 
   .chats-page__split--narrow.chats-page__split--show-list .chats-page__list-pane {
-    display: block;
+    display: flex;
     border-right: none;
   }
 

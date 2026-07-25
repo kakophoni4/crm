@@ -71,7 +71,7 @@ class Chat(Base):
     contact: Mapped[Contact] = relationship(lazy="selectin")
     assigned_user: Mapped[User | None] = relationship(
         foreign_keys=[assigned_user_id],
-        lazy="selectin",
+        lazy="select",
     )
     assigned_group: Mapped[Group | None] = relationship(
         foreign_keys=[assigned_group_id],
@@ -79,7 +79,7 @@ class Chat(Base):
     )
     assigned_department: Mapped[Department | None] = relationship(
         foreign_keys=[assigned_department_id],
-        lazy="selectin",
+        lazy="select",
     )
     business_status: Mapped[Status | None] = relationship(
         foreign_keys=[status_id],

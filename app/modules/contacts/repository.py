@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Select, exists, func, or_, select
+from sqlalchemy import Select, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.cursor import CursorError, decode_cursor
@@ -65,11 +65,12 @@ class ContactRepository:
         if q:
             pattern = f"%{q}%"
             stmt = stmt.where(
-                or_(
-                    Contact.full_name.ilike(pattern),
-                    Contact.phone.ilike(pattern),
-                    Contact.email.ilike(pattern),
-                    Contact.telegram_username.ilike(pattern),
+                trgm_or_ilike(
+                    Contact.full_name,
+                    Contact.phone,
+                    Contact.email,
+                    Contact.telegram_username,
+                    pattern=pattern,
                 ),
             )
         if status is not None:
@@ -101,17 +102,20 @@ class ContactRepository:
         cursor: str | None,
         offset: int | None,
         limit: int,
-    ) -> tuple[list[Contact], str | None, int]:
-        count_stmt = self._list_contacts_filters(
-            select(func.count()).select_from(Contact),
-            ctx=ctx,
-            q=q,
-            status=status,
-            assigned_user_id=assigned_user_id,
-            telegram_username=telegram_username,
-            custom_field_filters=custom_field_filters,
-        )
-        total = int((await self._session.execute(count_stmt)).scalar_one())
+        include_total: bool = False,
+    ) -> tuple[list[Contact], str | None, bool, int | None]:
+        total: int | None = None
+        if include_total:
+            count_stmt = self._list_contacts_filters(
+                select(func.count()).select_from(Contact),
+                ctx=ctx,
+                q=q,
+                status=status,
+                assigned_user_id=assigned_user_id,
+                telegram_username=telegram_username,
+                custom_field_filters=custom_field_filters,
+            )
+            total = int((await self._session.execute(count_stmt)).scalar_one())
 
         use_offset = offset is not None
         stmt = select(Contact).order_by(Contact.id.desc())
@@ -126,10 +130,13 @@ class ContactRepository:
         )
 
         if use_offset:
-            stmt = stmt.offset(max(0, offset or 0)).limit(limit)
+            stmt = stmt.offset(max(0, offset or 0)).limit(limit + 1)
             result = await self._session.execute(stmt)
             rows = list(result.scalars().all())
-            return rows, None, total
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            return rows, None, has_more, total
 
         stmt = stmt.limit(limit + 1)
         if cursor is not None:
@@ -141,13 +148,14 @@ class ContactRepository:
 
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
+        has_more = len(rows) > limit
         next_cursor: str | None = None
-        if len(rows) > limit:
+        if has_more:
             rows = rows[:limit]
             from app.modules.contacts.cursor import encode_cursor
 
             next_cursor = encode_cursor(rows[-1].id)
-        return rows, next_cursor, total
+        return rows, next_cursor, has_more, total
 
     async def search_contacts(
         self,

@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     login_rate_limit_per_minute: int = 10
     login_rate_limit_use_redis: bool = True
     bot_job_reclaim_idle_ms: int = 300_000
+    bot_job_concurrency: int = 4  # max parallel bot worker jobs per process
     bot_health_check_interval_seconds: int = 21_600
 
     wa_bridge_outbound_url: str = "http://host.docker.internal:8766/crm/cmd"

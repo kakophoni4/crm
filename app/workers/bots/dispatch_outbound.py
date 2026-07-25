@@ -106,7 +106,7 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                 delay = BACKOFF_SECONDS[min(retry_row.attempts - 1, len(BACKOFF_SECONDS) - 1)]
                 await enqueue(
                     "dispatch_outbound",
-                    {"outbound_log_id": log_id},
+                    {"outbound_log_id": log_id, "bot_id": row.bot_id},
                     delay_seconds=delay,
                 )
                 inc_bot_outbound("retry")
@@ -138,7 +138,7 @@ async def enqueue_outbound(
         log_id = row.id
 
     try:
-        await enqueue("dispatch_outbound", {"outbound_log_id": log_id})
+        await enqueue("dispatch_outbound", {"outbound_log_id": log_id, "bot_id": bot_id})
     except Exception as exc:
         async with session_factory() as fail_session:
             failed_row = await BotOutboundLogRepository(fail_session).get_by_id(log_id)

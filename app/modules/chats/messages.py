@@ -138,6 +138,7 @@ class ChatMessagesService:
         *,
         lead_id: int | None = None,
         cursor: str | None,
+        after_id: int | None = None,
         limit: int,
     ) -> dict[str, Any]:
         ctx = await self._scope_loader.load(actor)
@@ -156,6 +157,7 @@ class ChatMessagesService:
             chat_id,
             lead_id=lead_id,
             cursor=cursor,
+            after_id=after_id,
             limit=limit,
         )
         tg_bot_fallback = await self._telegram_bot_sender_fallback(chat.bot_id)
@@ -275,9 +277,15 @@ class ChatMessagesService:
         )
         message = await self._repo.add_message(message)
 
-        from app.modules.storage.indexing import index_message_attachments
+        if attachments:
+            from app.modules.storage.indexing import (
+                schedule_index_message_attachments_after_commit,
+            )
 
-        await index_message_attachments(self._session, message_id=message.id)
+            schedule_index_message_attachments_after_commit(
+                self._session,
+                message_id=message.id,
+            )
 
         await upsert_read_state(
             self._session,
@@ -376,6 +384,8 @@ class ChatMessagesService:
             "message_id": message.id,
             "sender_user_id": actor.id,
         }
+        if chat.last_message_preview:
+            outbound_payload["text_preview"] = chat.last_message_preview
         outbound_scope = scope
         schedule_after_commit(
             self._session,
@@ -417,26 +427,33 @@ class ChatMessagesService:
                     for a in attachments
                     if a.get("file_id") is not None
                 ]
-                outbound_payload = {
+                bot_outbound_payload = {
                     "internal_id": message.id,
                     "contact": {"telegram_user_id": telegram_user_id},
                     "message": {"text": message.text or ""},
                     "attachments": outbound_attachments,
                     "reply_to_external_id": reply_to_external_id,
                 }
-                try:
-                    await enqueue_outbound(
-                        bot_id=chat.bot_id,
-                        command="send_message",
-                        payload=outbound_payload,
-                    )
-                except Exception:
-                    logger.exception(
-                        "outbound_enqueue_failed",
-                        chat_id=chat_id,
-                        message_id=message.id,
-                        bot_id=chat.bot_id,
-                    )
+                bot_id_for_enqueue = chat.bot_id
+                message_id_for_log = message.id
+
+                async def _enqueue_bot_outbound() -> None:
+                    try:
+                        await enqueue_outbound(
+                            bot_id=bot_id_for_enqueue,
+                            command="send_message",
+                            payload=bot_outbound_payload,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "outbound_enqueue_failed",
+                            chat_id=chat_id,
+                            message_id=message_id_for_log,
+                            bot_id=bot_id_for_enqueue,
+                        )
+
+                # After parent commit so worker can see the message row.
+                schedule_after_commit(self._session, _enqueue_bot_outbound)
         owner_fields = await self._repo.get_message_owner_fields(message.id)
         return message, audit_payload, owner_fields
 

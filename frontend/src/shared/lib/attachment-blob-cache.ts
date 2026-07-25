@@ -13,8 +13,48 @@ export interface ReadyAttachmentRef {
   mime: string | null
 }
 
+const DEFAULT_MAX_CACHE_ENTRIES = 80
+const DEFAULT_MAX_CACHE_BYTES = 100 * 1024 * 1024
+
 const cache = new Map<string, CachedAttachmentBlob>()
 const inflight = new Map<string, Promise<CachedAttachmentBlob>>()
+let maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES
+let maxCacheBytes = DEFAULT_MAX_CACHE_BYTES
+let cacheTotalBytes = 0
+
+function touchCacheEntry(downloadPath: string): CachedAttachmentBlob | undefined {
+  const entry = cache.get(downloadPath)
+  if (!entry) return undefined
+  cache.delete(downloadPath)
+  cache.set(downloadPath, entry)
+  return entry
+}
+
+function removeCacheEntry(downloadPath: string): void {
+  const entry = cache.get(downloadPath)
+  if (!entry) return
+  URL.revokeObjectURL(entry.url)
+  cacheTotalBytes = Math.max(0, cacheTotalBytes - entry.blob.size)
+  cache.delete(downloadPath)
+}
+
+function evictLruCacheEntry(): void {
+  const oldest = cache.keys().next().value as string | undefined
+  if (oldest !== undefined) removeCacheEntry(oldest)
+}
+
+function setCacheEntry(downloadPath: string, entry: CachedAttachmentBlob): void {
+  removeCacheEntry(downloadPath)
+  const entryBytes = entry.blob.size
+  while (
+    cache.size > 0 &&
+    (cache.size >= maxCacheEntries || cacheTotalBytes + entryBytes > maxCacheBytes)
+  ) {
+    evictLruCacheEntry()
+  }
+  cache.set(downloadPath, entry)
+  cacheTotalBytes += entryBytes
+}
 
 /** Parallel attachment warm-up; keep below browser per-host connection budget. */
 const MAX_CONCURRENT_DOWNLOADS = 4
@@ -58,11 +98,11 @@ function releaseDownloadSlot(): void {
 }
 
 export function peekAttachmentBlobUrl(downloadPath: string): string | null {
-  return cache.get(downloadPath)?.url ?? null
+  return touchCacheEntry(downloadPath)?.url ?? null
 }
 
 export function peekAttachmentBlob(downloadPath: string): CachedAttachmentBlob | null {
-  return cache.get(downloadPath) ?? null
+  return touchCacheEntry(downloadPath) ?? null
 }
 
 function normalizeBlob(raw: Blob, mimeHint: string | null | undefined, headerMime: string | undefined): Blob {
@@ -81,7 +121,7 @@ export async function fetchAttachmentBlob(
   mimeHint?: string | null,
   priority: AttachmentDownloadPriority = 'high',
 ): Promise<CachedAttachmentBlob> {
-  const cached = cache.get(downloadPath)
+  const cached = touchCacheEntry(downloadPath)
   if (cached) return cached
 
   const pending = inflight.get(downloadPath)
@@ -106,7 +146,7 @@ export async function fetchAttachmentBlob(
       )
       const url = URL.createObjectURL(blob)
       const entry: CachedAttachmentBlob = { url, mime: blob.type, blob }
-      cache.set(downloadPath, entry)
+      setCacheEntry(downloadPath, entry)
       return entry
     } finally {
       releaseDownloadSlot()
@@ -197,10 +237,7 @@ export function priorityPrefetchAttachmentsForMessages(
 }
 
 export function releaseAttachmentBlobUrl(downloadPath: string): void {
-  const entry = cache.get(downloadPath)
-  if (!entry) return
-  URL.revokeObjectURL(entry.url)
-  cache.delete(downloadPath)
+  removeCacheEntry(downloadPath)
   inflight.delete(downloadPath)
 }
 
@@ -211,7 +248,19 @@ export function clearAttachmentBlobCache(): void {
   }
   cache.clear()
   inflight.clear()
+  cacheTotalBytes = 0
+  maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES
+  maxCacheBytes = DEFAULT_MAX_CACHE_BYTES
   activeDownloads = 0
   highWaitQueue.length = 0
   normalWaitQueue.length = 0
+}
+
+/** Test helper */
+export function setAttachmentBlobCacheLimitsForTests(
+  maxEntries?: number,
+  maxBytes?: number,
+): void {
+  if (maxEntries !== undefined) maxCacheEntries = maxEntries
+  if (maxBytes !== undefined) maxCacheBytes = maxBytes
 }

@@ -36,6 +36,10 @@ import { AppError } from '@/shared/api/http'
 import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import AppCard from '@/shared/ui/AppCard.vue'
+import {
+  VIRTUAL_DATA_TABLE_MAX_HEIGHT,
+  VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
+} from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
@@ -504,7 +508,14 @@ onMounted(async () => {
               </NButton>
             </NUpload>
             <NSpin :show="loading">
-              <NDataTable :columns="vaultColumns" :data="vaultFiles" :bordered="false" />
+              <NDataTable
+                :columns="vaultColumns"
+                :data="vaultFiles"
+                :bordered="false"
+                virtual-scroll
+                :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
+                :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
+              />
             </NSpin>
             <div v-for="file in vaultFiles" :key="file.id" class="share-list">
               <template v-for="link in file.share_links" :key="link.id">
@@ -548,6 +559,9 @@ onMounted(async () => {
                   :data="chat.files"
                   :bordered="false"
                   size="small"
+                  virtual-scroll
+                  :max-height="480"
+                  :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
                 />
               </div>
               <p v-if="!groupFilesByChat.length && !loading" class="empty-hint">

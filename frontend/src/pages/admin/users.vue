@@ -36,6 +36,10 @@ import {
 } from '@/features/admin/user-deletion-api'
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
+import {
+  VIRTUAL_DATA_TABLE_MAX_HEIGHT,
+  VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
+} from '@/shared/ui/virtual-data-table'
 
 const message = useMessage()
 const auth = useAuthStore()
@@ -535,7 +539,14 @@ onMounted(() => void load())
     </header>
 
     <NSpin :show="loading">
-      <NDataTable :columns="columns" :data="rows" :row-key="(r: AdminUser) => r.id" />
+      <NDataTable
+        :columns="columns"
+        :data="rows"
+        :row-key="(r: AdminUser) => r.id"
+        virtual-scroll
+        :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
+        :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
+      />
     </NSpin>
 
     <NModal

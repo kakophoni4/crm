@@ -150,6 +150,7 @@ async def download_attachment(_job_type: str, payload: dict[str, Any]) -> None:
                         "message_id": message_id,
                         "attachment_index": attachment_index,
                         "attempt": attempt + 1,
+                        "chat_id": chat_id,
                     },
                     delay_seconds=delay,
                 )

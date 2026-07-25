@@ -95,6 +95,10 @@ export const useChatsStore = defineStore('chats', () => {
   /** Coalesce overlapping WS-driven message refreshes per chat. */
   const refreshInflight = new Map<number, Promise<void>>()
   const refreshQueuedMessageId = new Map<number, number>()
+  /** Debounce open-chat listMessages refreshes so WS bursts don't stampede. */
+  const REFRESH_OPEN_CHAT_DEBOUNCE_MS = 120
+  const refreshDebounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
+  const refreshDebouncePendingId = new Map<number, number>()
   /** Debounce silent list reloads so WS bursts don't stampede GET /chats. */
   let silentListTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -212,11 +216,69 @@ export const useChatsStore = defineStore('chats', () => {
     return params
   }
 
-  function patchChatLead(chatId: number, lead: CurrentLeadSnippet | null): void {
-    const idx = listItems.value.findIndex((c) => c.id === chatId)
-    if (idx >= 0) {
-      listItems.value[idx] = { ...listItems.value[idx], current_lead: lead }
+  /** O(1) lookup; invalidated whenever listItems is replaced or spliced. */
+  let listIndexById = new Map<number, number>()
+  let listIndexDirty = true
+
+  function invalidateListIndex(): void {
+    listIndexDirty = true
+  }
+
+  function rebuildListIndex(): void {
+    listIndexById = new Map()
+    const items = listItems.value
+    for (let i = 0; i < items.length; i += 1) {
+      listIndexById.set(items[i].id, i)
     }
+    listIndexDirty = false
+  }
+
+  function listIndexOf(chatId: number): number {
+    if (listIndexDirty) rebuildListIndex()
+    return listIndexById.get(chatId) ?? -1
+  }
+
+  function patchListRow(chatId: number, patch: Partial<ChatListItem>): number {
+    const idx = listIndexOf(chatId)
+    if (idx >= 0) {
+      listItems.value[idx] = { ...listItems.value[idx], ...patch }
+      invalidateListIndex()
+    }
+    return idx
+  }
+
+  function removeListRow(chatId: number): boolean {
+    const idx = listIndexOf(chatId)
+    if (idx < 0) return false
+    listItems.value.splice(idx, 1)
+    invalidateListIndex()
+    return true
+  }
+
+  function patchListRowsForOwnership(
+    contactId: number,
+    groupId: number,
+    ownership: GroupOwnershipItem,
+  ): void {
+    for (let i = 0; i < listItems.value.length; i += 1) {
+      const chat = listItems.value[i]
+      if (chat.contact_id !== contactId || chat.assigned_group_id !== groupId) continue
+      listItems.value[i] = applyOwnershipToChat(chat, ownership)
+    }
+  }
+
+  function patchListRowsForContactOwnership(contactId: number, groupIds: Set<number>): void {
+    for (let i = 0; i < listItems.value.length; i += 1) {
+      const chat = listItems.value[i]
+      if (chat.contact_id !== contactId || chat.assigned_group_id == null) continue
+      if (!groupIds.has(chat.assigned_group_id)) continue
+      const key = ownershipKey(contactId, chat.assigned_group_id)
+      listItems.value[i] = applyOwnershipToChat(chat, ownershipByKey.value[key])
+    }
+  }
+
+  function patchChatLead(chatId: number, lead: CurrentLeadSnippet | null): void {
+    patchListRow(chatId, { current_lead: lead })
     if (currentChatId.value === chatId && currentChat.value) {
       currentChat.value = { ...currentChat.value, current_lead: lead }
     }
@@ -229,14 +291,10 @@ export const useChatsStore = defineStore('chats', () => {
       const detail = await chatsApi.getChat(chatId)
       if (currentChatId.value !== chatId) return
       currentChat.value = detail
-      const idx = listItems.value.findIndex((c) => c.id === chatId)
-      if (idx >= 0) {
-        listItems.value[idx] = {
-          ...listItems.value[idx],
-          card_owner_user_id: detail.card_owner_user_id,
-          card_owner_full_name: detail.card_owner_full_name,
-        }
-      }
+      patchListRow(chatId, {
+        card_owner_user_id: detail.card_owner_user_id,
+        card_owner_full_name: detail.card_owner_full_name,
+      })
     } catch {
       /* best-effort */
     }
@@ -247,10 +305,7 @@ export const useChatsStore = defineStore('chats', () => {
       const detail = await chatsApi.getChat(chatId)
       patchChatLead(chatId, detail.current_lead ?? null)
       if (detail.chat_label) {
-        const idx = listItems.value.findIndex((c) => c.id === chatId)
-        if (idx >= 0) {
-          listItems.value[idx] = { ...listItems.value[idx], chat_label: detail.chat_label }
-        }
+        patchListRow(chatId, { chat_label: detail.chat_label })
         if (currentChatId.value === chatId && currentChat.value) {
           currentChat.value = {
             ...currentChat.value,
@@ -323,10 +378,7 @@ export const useChatsStore = defineStore('chats', () => {
     if (currentChatId.value == null) return
     const detail = await chatsApi.patchChatStatusId(currentChatId.value, statusId)
     currentChat.value = detail
-    const idx = listItems.value.findIndex((c) => c.id === currentChatId.value)
-    if (idx >= 0) {
-      listItems.value[idx] = { ...listItems.value[idx], chat_label: detail.chat_label }
-    }
+    patchListRow(currentChatId.value, { chat_label: detail.chat_label })
   }
 
   async function updateCurrentLeadStatus(statusId: number): Promise<void> {
@@ -445,10 +497,7 @@ export const useChatsStore = defineStore('chats', () => {
       [key]: ownership,
     }
 
-    listItems.value = listItems.value.map((chat) => {
-      if (chat.contact_id !== contactId || chat.assigned_group_id !== groupId) return chat
-      return applyOwnershipToChat(chat, ownership)
-    })
+    patchListRowsForOwnership(contactId, groupId, ownership)
 
     if (
       currentChat.value &&
@@ -463,11 +512,72 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   function enrichListWithOwnership(items: ChatListItem[]): ChatListItem[] {
-    return items.map((chat) => {
+    const map = ownershipByKey.value
+    if (!Object.keys(map).length) return items
+    let changed = false
+    const out = items.map((chat) => {
       if (chat.assigned_group_id == null) return chat
       const key = ownershipKey(chat.contact_id, chat.assigned_group_id)
-      return applyOwnershipToChat(chat, ownershipByKey.value[key])
+      const ownership = map[key]
+      if (!ownership) return chat
+      const next = applyOwnershipToChat(chat, ownership)
+      if (next !== chat) changed = true
+      return next
     })
+    return changed ? out : items
+  }
+
+  function chatListRowVisuallyEqual(a: ChatListItem, b: ChatListItem): boolean {
+    return (
+      a.last_message_at === b.last_message_at &&
+      a.last_message_preview === b.last_message_preview &&
+      a.unread_for_me === b.unread_for_me &&
+      a.status === b.status &&
+      a.status_id === b.status_id &&
+      a.card_owner_user_id === b.card_owner_user_id &&
+      a.card_owner_full_name === b.card_owner_full_name &&
+      a.pending_inbound_at === b.pending_inbound_at &&
+      a.escalated_at === b.escalated_at &&
+      a.needs_response === b.needs_response &&
+      a.needs_reply === b.needs_reply &&
+      a.assigned_group_name === b.assigned_group_name &&
+      a.current_lead?.id === b.current_lead?.id &&
+      a.current_lead?.status_id === b.current_lead?.status_id &&
+      a.chat_label?.status_id === b.chat_label?.status_id &&
+      a.contact_name === b.contact_name
+    )
+  }
+
+  /** Preserve Vue row identity when silent refresh returns the same data. */
+  function mergeListPreserveIdentity(
+    prev: ChatListItem[],
+    next: ChatListItem[],
+  ): ChatListItem[] {
+    if (!prev.length) return next
+    if (prev === next) return prev
+    const prevById = new Map(prev.map((row) => [row.id, row]))
+    let changed = prev.length !== next.length
+    const out = new Array<ChatListItem>(next.length)
+    for (let i = 0; i < next.length; i += 1) {
+      const row = next[i]
+      const old = prevById.get(row.id)
+      if (old && chatListRowVisuallyEqual(old, row)) {
+        out[i] = old
+        if (prev[i] !== old) changed = true
+      } else {
+        out[i] = row
+        changed = true
+      }
+    }
+    if (!changed) {
+      for (let i = 0; i < out.length; i += 1) {
+        if (out[i] !== prev[i]) {
+          changed = true
+          break
+        }
+      }
+    }
+    return changed ? out : prev
   }
 
   function bumpChatInList(
@@ -475,11 +585,16 @@ export const useChatsStore = defineStore('chats', () => {
     patch: Partial<ChatListItem>,
     highlight = true,
   ): void {
-    const idx = listItems.value.findIndex((c) => c.id === chatId)
+    const idx = listIndexOf(chatId)
     if (idx >= 0) {
-      listItems.value[idx] = { ...listItems.value[idx], ...patch }
-      const [item] = listItems.value.splice(idx, 1)
-      listItems.value.unshift(item)
+      const updated = { ...listItems.value[idx], ...patch }
+      if (idx > 0) {
+        listItems.value.splice(idx, 1)
+        listItems.value.unshift(updated)
+      } else {
+        listItems.value[0] = updated
+      }
+      invalidateListIndex()
     }
     if (highlight) {
       const next = new Set(highlightedChatIds.value)
@@ -503,9 +618,11 @@ export const useChatsStore = defineStore('chats', () => {
     } satisfies Partial<ChatListItem>
 
     const shouldHideFromCurrentTab = listTab.value === 'needs_response'
-    listItems.value = listItems.value
-      .map((chat) => (chat.id === chatId ? { ...chat, ...patch } : chat))
-      .filter((chat) => !(shouldHideFromCurrentTab && chat.id === chatId))
+    if (shouldHideFromCurrentTab) {
+      removeListRow(chatId)
+    } else {
+      patchListRow(chatId, patch)
+    }
 
     if (currentChatId.value === chatId && currentChat.value) {
       currentChat.value = { ...currentChat.value, ...patch }
@@ -550,6 +667,7 @@ export const useChatsStore = defineStore('chats', () => {
     if (listItems.value.length > 0) return
     const cached = peekPersistedChatList()
     if (!cached?.items.length) return
+    invalidateListIndex()
     listItems.value = enrichWithGroupNames(cached.items).map((chat) => ({
       ...chat,
       needs_response: chatListItemNeedsResponse(chat),
@@ -560,7 +678,7 @@ export const useChatsStore = defineStore('chats', () => {
       listItems.value.filter((chat) => chatListItemNeedsResponse(chat)).map((chat) => chat.id),
     )
     // Warm deals/snapshots from list while network list refreshes.
-    scheduleDealsPrefetchFromList(listItems.value.slice(0, 8))
+    scheduleDealsPrefetchFromList(listItems.value.slice(0, 4))
     scheduleChatSnapshotsPrefetch(
       listItems.value.slice(0, 2).map((c) => c.id),
       { priority: true },
@@ -583,16 +701,23 @@ export const useChatsStore = defineStore('chats', () => {
       } catch {
         // Fail-soft: list still works without group name enrichment.
       }
-      const data = await chatsApi.listChats(buildListQuery(append))
+      const data = await chatsApi.listChats(buildListQuery(append), {
+        mode: append ? 'append' : 'replace',
+      })
       // A newer non-append fetch won — drop this response (including stale append).
       if (seq !== listFetchSeq) return
       const items = enrichWithGroupNames(data?.items ?? [])
-      listItems.value = enrichListWithOwnership(append ? [...listItems.value, ...items] : items).map(
-        (chat) => ({
-          ...chat,
-          needs_response: chatListItemNeedsResponse(chat),
-        }),
-      )
+      const enriched = enrichListWithOwnership(
+        append ? [...listItems.value, ...items] : items,
+      ).map((chat) => {
+        const needs = chatListItemNeedsResponse(chat)
+        if (chat.needs_response === needs) return chat
+        return { ...chat, needs_response: needs }
+      })
+      listItems.value = append
+        ? enriched
+        : mergeListPreserveIdentity(listItems.value, enriched)
+      invalidateListIndex()
       if (!append) {
         needsResponseChatIds.value = new Set(
           listItems.value.filter((chat) => chatListItemNeedsResponse(chat)).map((chat) => chat.id),
@@ -608,10 +733,16 @@ export const useChatsStore = defineStore('chats', () => {
       listNextCursor.value = data?.next_cursor ?? null
     } catch (err) {
       if (seq !== listFetchSeq) return
+      const canceled =
+        (err as { code?: string; name?: string } | null)?.code === 'ERR_CANCELED' ||
+        (err as { name?: string } | null)?.name === 'CanceledError' ||
+        (err as { name?: string } | null)?.name === 'AbortError'
+      if (canceled) return
       if (!append) {
         // Keep disk-hydrated list on network failure instead of wiping UI.
         if (listItems.value.length === 0) {
           listItems.value = []
+          invalidateListIndex()
         }
         listError.value = err instanceof Error ? err.message : 'Не удалось загрузить чаты'
       }
@@ -621,15 +752,15 @@ export const useChatsStore = defineStore('chats', () => {
         listLoading.value = false
         listLoaded.value = true
       }
-      if (!append && seq === listFetchSeq && listItems.value.length > 0) {
-        // Keep background warm-up small — full-list prefetch saturates the browser.
+      // Explicit WS silent refresh must not re-stampede snapshot/deals prefetch.
+      const skipPrefetch = opts?.silent === true
+      if (!append && !skipPrefetch && seq === listFetchSeq && listItems.value.length > 0) {
         const topIds = listItems.value.slice(0, 8).map((chat) => chat.id)
         scheduleChatSnapshotsPrefetch(topIds.slice(0, 2), { priority: true })
         if (topIds.length > 2) {
           scheduleChatSnapshotsPrefetch(topIds.slice(2))
         }
-        // Deals/заявки — сразу с list item, не ждать полного snapshot сообщений.
-        scheduleDealsPrefetchFromList(listItems.value.slice(0, 6))
+        scheduleDealsPrefetchFromList(listItems.value.slice(0, 4))
       }
     }
   }
@@ -718,9 +849,20 @@ export const useChatsStore = defineStore('chats', () => {
         ? { ...detail, assigned_group_name: groupName }
         : detail
 
-    const merged = mergeNetworkMessages(toChronological(msgs.items))
+    const networkPage = toChronological(msgs.items)
+    const minNetId = networkPage.reduce(
+      (min, m) => (m.id > 0 && m.id < min ? m.id : min),
+      Number.POSITIVE_INFINITY,
+    )
+    const keptOlder =
+      Number.isFinite(minNetId) &&
+      messages.value.some((m) => m.id > 0 && m.id < minNetId)
+    const merged = mergeNetworkMessages(networkPage)
     messages.value = merged
-    messagesNextCursor.value = msgs.next_cursor
+    // Tip sync must not clobber cursor after loadOlder.
+    if (!keptOlder) {
+      messagesNextCursor.value = msgs.next_cursor
+    }
     finishMessagesLoad(seq)
 
     setChatSnapshot(
@@ -728,7 +870,7 @@ export const useChatsStore = defineStore('chats', () => {
       {
         detail: currentChat.value,
         messages: merged,
-        nextCursor: msgs.next_cursor,
+        nextCursor: messagesNextCursor.value,
       },
       { prefetchAttachments: false },
     )
@@ -743,19 +885,14 @@ export const useChatsStore = defineStore('chats', () => {
     })
 
     void chatsApi.markChatRead(chatId).catch(() => undefined)
-    const idx = listItems.value.findIndex((c) => c.id === chatId)
-    if (idx >= 0) {
-      listItems.value[idx] = {
-        ...listItems.value[idx],
-        unread_for_me: false,
-      }
-    }
+    patchListRow(chatId, { unread_for_me: false })
   }
 
   async function openChat(chatId: number): Promise<void> {
     const prevChatId = currentChatId.value
     if (prevChatId != null && prevChatId !== chatId) {
       persistOpenChatSnapshot(prevChatId)
+      clearRefreshDebounceForChat(prevChatId)
     }
 
     const seq = ++openChatSeq
@@ -816,6 +953,9 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   function closeChat(): void {
+    for (const chatId of refreshDebounceTimers.keys()) {
+      clearRefreshDebounceForChat(chatId)
+    }
     openChatSeq += 1
     messagesLoading.value = false
     loadingOlderMessages.value = false
@@ -922,14 +1062,7 @@ export const useChatsStore = defineStore('chats', () => {
       void chatsApi.markChatRead(chatId, { last_read_message_id: saved.id }).catch(() => undefined)
       clearNeedsResponseForChat(chatId)
       const answeredPatch = chatWorkflowLabelPatch('answered')
-      const listIdx = listItems.value.findIndex((c) => c.id === chatId)
-      if (listIdx >= 0) {
-        listItems.value[listIdx] = {
-          ...listItems.value[listIdx],
-          unread_for_me: false,
-          ...answeredPatch,
-        }
-      }
+      patchListRow(chatId, { unread_for_me: false, ...answeredPatch })
       if (currentChatId.value === chatId && currentChat.value) {
         currentChat.value = { ...currentChat.value, ...answeredPatch }
       }
@@ -995,6 +1128,54 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
+  function wsMessagePreview(payload: Record<string, unknown>): string | undefined {
+    if (typeof payload.text_preview === 'string') {
+      return payload.text_preview.slice(0, 200)
+    }
+    if (typeof payload.text === 'string') {
+      return payload.text.slice(0, 200)
+    }
+    return undefined
+  }
+
+  function wsPayloadEnoughForBubble(payload: Record<string, unknown>): boolean {
+    const chatId = Number(payload.chat_id)
+    const messageId = Number(payload.message_id)
+    return Number.isFinite(chatId) && Number.isFinite(messageId) && messageId > 0
+  }
+
+  function clearRefreshDebounceForChat(chatId: number): void {
+    const timer = refreshDebounceTimers.get(chatId)
+    if (timer != null) clearTimeout(timer)
+    refreshDebounceTimers.delete(chatId)
+    refreshDebouncePendingId.delete(chatId)
+  }
+
+  /** Coalesce WS-driven refreshes; optimistic stub may already be visible. */
+  function scheduleDebouncedRefreshOpenChatMessages(
+    chatId: number,
+    messageId: number,
+    delayMs = REFRESH_OPEN_CHAT_DEBOUNCE_MS,
+  ): void {
+    if (currentChatId.value !== chatId) return
+
+    const prev = refreshDebouncePendingId.get(chatId) ?? 0
+    refreshDebouncePendingId.set(chatId, Math.max(prev, messageId))
+
+    const existing = refreshDebounceTimers.get(chatId)
+    if (existing != null) clearTimeout(existing)
+
+    refreshDebounceTimers.set(
+      chatId,
+      setTimeout(() => {
+        refreshDebounceTimers.delete(chatId)
+        const targetId = refreshDebouncePendingId.get(chatId) ?? messageId
+        refreshDebouncePendingId.delete(chatId)
+        void refreshOpenChatMessages(chatId, targetId)
+      }, delayMs),
+    )
+  }
+
   function appendOptimisticBubble(
     chatId: number,
     messageId: number,
@@ -1032,14 +1213,51 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
-  /** Keep WS stubs that API page has not caught up with yet. */
+  /**
+   * Union local + network by id. Network wins on collision.
+   * Preserves loadOlder history and optimistic (id < 0) rows.
+   */
   function mergeNetworkMessages(incoming: ChatMessage[]): ChatMessage[] {
     if (!incoming.length) return messages.value
-    const byId = new Map(incoming.map((m) => [m.id, m]))
-    const maxNetId = incoming.reduce((max, m) => (m.id > max ? m.id : max), 0)
-    for (const local of messages.value) {
-      if (local.id > 0 && local.id > maxNetId && !byId.has(local.id)) {
-        byId.set(local.id, local)
+    const local = messages.value
+    if (!local.length) return toChronological(incoming)
+
+    // Fast path: contiguous tip append (all new ids after local max).
+    const localMax = maxKnownPositiveMessageId(local)
+    let minIncoming = Number.POSITIVE_INFINITY
+    let tipOnly = localMax > 0
+    for (const m of incoming) {
+      if (m.id <= 0) {
+        tipOnly = false
+        break
+      }
+      if (m.id <= localMax) {
+        tipOnly = false
+        break
+      }
+      if (m.id < minIncoming) minIncoming = m.id
+    }
+    if (tipOnly && Number.isFinite(minIncoming) && minIncoming > localMax) {
+      const tip = toChronological(incoming)
+      return local.concat(tip)
+    }
+
+    const byId = new Map<number, ChatMessage>()
+    for (const row of local) {
+      byId.set(row.id, row)
+    }
+    for (const remote of incoming) {
+      byId.set(remote.id, remote)
+    }
+    // Drop optimistic rows replaced by a real message with the same client key.
+    const clientKeys = new Set(
+      incoming.map((m) => m._clientKey).filter((k): k is string => Boolean(k)),
+    )
+    if (clientKeys.size > 0) {
+      for (const [id, row] of byId) {
+        if (id < 0 && row._clientKey && clientKeys.has(row._clientKey)) {
+          byId.delete(id)
+        }
       }
     }
     return [...byId.values()].sort((a, b) => {
@@ -1050,20 +1268,22 @@ export const useChatsStore = defineStore('chats', () => {
     })
   }
 
-  async function handleInboundMessage(payload: Record<string, unknown>): Promise<void> {
+  function handleInboundMessage(payload: Record<string, unknown>): void {
     const chatId = Number(payload.chat_id)
     if (!Number.isFinite(chatId)) return
 
-    const now = new Date().toISOString()
-    const preview =
-      typeof payload.text_preview === 'string' ? payload.text_preview.slice(0, 200) : undefined
+    const createdAt =
+      typeof payload.created_at === 'string' && payload.created_at
+        ? payload.created_at
+        : new Date().toISOString()
+    const preview = wsMessagePreview(payload)
 
     patchChatResponseState(chatId, {
       unread_for_me: currentChatId.value !== chatId,
-      last_message_at: now,
+      last_message_at: createdAt,
       ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
       ...chatWorkflowLabelPatch('waiting'),
-      pending_inbound_at: now,
+      pending_inbound_at: createdAt,
       needs_response: true,
       needs_reply: true,
     })
@@ -1072,12 +1292,18 @@ export const useChatsStore = defineStore('chats', () => {
     nextNeedsResponse.add(chatId)
     needsResponseChatIds.value = nextNeedsResponse
 
-    const messageId = Number(payload.message_id)
     if (currentChatId.value === chatId) {
-      if (Number.isFinite(messageId) && messageId > 0) {
-        // Optimistic stub so the bubble appears even if listMessages is slow/fails.
-        appendOptimisticBubble(chatId, messageId, 'inbound', preview, now)
-        await refreshOpenChatMessages(chatId, messageId)
+      const messageId = Number(payload.message_id)
+      if (wsPayloadEnoughForBubble(payload)) {
+        appendOptimisticBubble(chatId, messageId, 'inbound', preview, createdAt)
+        scheduleDebouncedRefreshOpenChatMessages(chatId, messageId)
+        void chatsApi
+          .markChatRead(chatId, { last_read_message_id: messageId })
+          .catch(() => undefined)
+      } else {
+        // No stub — need API page; still debounce bursts without message_id.
+        void refreshOpenChatMessages(chatId, 0)
+        void chatsApi.markChatRead(chatId).catch(() => undefined)
       }
     } else {
       // List row already patched above. Full GET /chats + snapshot prefetch on every
@@ -1089,14 +1315,13 @@ export const useChatsStore = defineStore('chats', () => {
     }
   }
 
-  async function handleOutboundMessage(payload: Record<string, unknown>): Promise<void> {
+  function handleOutboundMessage(payload: Record<string, unknown>): void {
     const chatId = Number(payload.chat_id)
     const messageId = Number(payload.message_id)
     if (!Number.isFinite(chatId)) return
 
     const now = new Date().toISOString()
-    const preview =
-      typeof payload.text_preview === 'string' ? payload.text_preview.slice(0, 200) : undefined
+    const preview = wsMessagePreview(payload)
 
     bumpChatInList(
       chatId,
@@ -1118,13 +1343,15 @@ export const useChatsStore = defineStore('chats', () => {
         ...(preview ? { last_message_preview: formatChatMessagePreview(preview) } : {}),
       }
       if (Number.isFinite(messageId) && messageId > 0) {
-        // Own send already replaced optimistic via POST — skip expensive listMessages.
+        // Own send already replaced optimistic via POST — skip listMessages entirely.
         const existing = messages.value.find((m) => m.id === messageId)
         if (existing && !existing._optimistic) {
           return
         }
         appendOptimisticBubble(chatId, messageId, 'outbound', preview, now)
-        await refreshOpenChatMessages(chatId, messageId)
+        scheduleDebouncedRefreshOpenChatMessages(chatId, messageId)
+      } else {
+        void refreshOpenChatMessages(chatId, 0)
       }
     }
   }
@@ -1133,6 +1360,7 @@ export const useChatsStore = defineStore('chats', () => {
     const chatId = Number(payload.chat_id)
     const messageId = Number(payload.message_id)
     if (!Number.isFinite(chatId) || currentChatId.value !== chatId) return
+    clearRefreshDebounceForChat(chatId)
     await refreshOpenChatMessages(chatId, messageId)
   }
 
@@ -1161,47 +1389,177 @@ export const useChatsStore = defineStore('chats', () => {
     await run
   }
 
+  function maxKnownPositiveMessageId(items: ChatMessage[]): number {
+    let max = 0
+    for (const message of items) {
+      if (message.id > 0 && message.id > max) max = message.id
+    }
+    return max
+  }
+
   async function refreshOpenChatMessagesOnce(chatId: number, messageId: number): Promise<void> {
     const seq = openChatSeq
     if (!isActiveChat(chatId, seq) || !currentChat.value) return
     try {
-      const msgs = await chatsApi.listMessages(chatId, {
-        limit: 50,
-      })
-      if (!isActiveChat(chatId, seq) || !currentChat.value) return
+      const localMax = maxKnownPositiveMessageId(messages.value)
+      const targetLocal =
+        messageId > 0 && messages.value.some((m) => m.id === messageId)
 
-      const page = toChronological(msgs.items)
-      // Show API rows immediately; audit enrich is best-effort and must not delay the bubble.
-      const existingIds = new Set(messages.value.map((m) => m.id))
-      const fresh = page.filter((m) => !existingIds.has(m.id))
-      if (fresh.length > 0) {
-        messages.value = mergeNetworkMessages([...messages.value, ...fresh])
-      } else {
-        const updated = page.find((m) => m.id === messageId)
+      // Attachment/stub upgrade mid-history: fetch only that row, never walk from old id.
+      if (targetLocal && messageId < localMax) {
+        const msgs = await chatsApi.listMessages(chatId, {
+          after_id: Math.max(1, messageId - 1),
+          limit: 1,
+        })
+        if (!isActiveChat(chatId, seq) || !currentChat.value) return
+        const updated = toChronological(msgs.items).find((m) => m.id === messageId)
         if (updated) {
           const idx = messages.value.findIndex((m) => m.id === messageId)
           if (idx >= 0) {
             messages.value[idx] = updated
             messages.value = [...messages.value]
-          } else if (messageId > 0) {
+          }
+        }
+        persistOpenChatSnapshot(chatId)
+        return
+      }
+
+      // Tip delta. If the target is already a stub at the tip, rewind one id
+      // so the full server row is included (after_id is exclusive).
+      let afterId = localMax
+      if (targetLocal && messageId > 0 && afterId >= messageId) {
+        afterId = messageId - 1
+      }
+
+      const collected: ChatMessage[] = []
+      // Rare burst >50: walk after_id forward; fall back to tip page if still short.
+      for (let pageNo = 0; pageNo < 6; pageNo += 1) {
+        const msgs = await chatsApi.listMessages(
+          chatId,
+          afterId > 0 ? { after_id: afterId, limit: 50 } : { limit: 50 },
+        )
+        if (!isActiveChat(chatId, seq) || !currentChat.value) return
+        const page = toChronological(msgs.items)
+        if (!page.length) break
+        collected.push(...page)
+        if (afterId <= 0 || page.length < 50) break
+        afterId = maxKnownPositiveMessageId(page)
+        if (afterId <= 0) break
+      }
+      if (
+        messageId > 0 &&
+        !collected.some((m) => m.id === messageId) &&
+        messageId > localMax
+      ) {
+        const tip = await chatsApi.listMessages(chatId, { limit: 50 })
+        if (!isActiveChat(chatId, seq) || !currentChat.value) return
+        collected.push(...toChronological(tip.items))
+      }
+
+      const existingIds = new Set(messages.value.map((m) => m.id))
+      // Only append contiguous tip; mid-gap inserts create holes.
+      const fresh = collected.filter((m) => !existingIds.has(m.id) && m.id > localMax)
+      if (fresh.length > 0) {
+        messages.value = mergeNetworkMessages([...messages.value, ...fresh])
+      }
+      if (messageId > 0) {
+        const updated = collected.find((m) => m.id === messageId)
+        if (updated) {
+          const idx = messages.value.findIndex((m) => m.id === messageId)
+          if (idx >= 0) {
+            messages.value[idx] = updated
+            messages.value = [...messages.value]
+          } else if (updated.id > localMax) {
             messages.value = mergeNetworkMessages([...messages.value, updated])
           }
         }
-        // Never invent a row from "last page item" — API is newest-first and that
-        // fallback was a major source of wrong-message / wrong-chat UI glitches.
       }
 
       const contactId = currentChat.value.contact_id
       const groupId = currentChat.value.assigned_group_id
-      void enrichMessagesWithReplyAudit(contactId, groupId, messages.value).then((enriched) => {
-        if (!isActiveChat(chatId, seq)) return
-        messages.value = mergeNetworkMessages(enriched)
-        persistOpenChatSnapshot(chatId)
-      })
+      // Skip reply-audit when API tip already has sender/owner fields (common WS path).
+      const enrichCandidates =
+        fresh.length > 0
+          ? fresh
+          : messageId > 0
+            ? messages.value.filter((m) => m.id === messageId)
+            : []
+      const needsReplyAudit = enrichCandidates.some(
+        (m) =>
+          m.id > 0 &&
+          m.is_on_behalf === undefined &&
+          m.card_owner_user_id == null &&
+          !m.sender_username,
+      )
+      if (needsReplyAudit) {
+        void enrichMessagesWithReplyAudit(contactId, groupId, messages.value).then((enriched) => {
+          if (!isActiveChat(chatId, seq)) return
+          if (enriched === messages.value) return
+          messages.value = enriched
+          persistOpenChatSnapshot(chatId)
+        })
+      }
 
       persistOpenChatSnapshot(chatId)
     } catch {
       /* list refresh is best-effort; optimistic stub may already be visible */
+    }
+  }
+
+  /** After WS queue drop: tip page merge by id (not only after_id append). */
+  async function resyncOpenChatAfterGap(chatId: number): Promise<void> {
+    const seq = openChatSeq
+    if (!isActiveChat(chatId, seq) || !currentChat.value) return
+    try {
+      const tip = await chatsApi.listMessages(chatId, { limit: 50 })
+      if (!isActiveChat(chatId, seq) || !currentChat.value) return
+      const page = toChronological(tip.items)
+      // Union keeps loadOlder history; network overwrites tip rows (attachments etc.).
+      messages.value = mergeNetworkMessages(page)
+      const contactId = currentChat.value.contact_id
+      const groupId = currentChat.value.assigned_group_id
+      void enrichMessagesWithReplyAudit(contactId, groupId, messages.value).then((enriched) => {
+        if (!isActiveChat(chatId, seq)) return
+        if (enriched !== messages.value) messages.value = enriched
+        persistOpenChatSnapshot(chatId)
+      })
+      persistOpenChatSnapshot(chatId)
+    } catch {
+      /* gap resync is best-effort */
+    }
+  }
+
+  function handleStatusChanged(payload: Record<string, unknown>): void {
+    const chatId = Number(payload.chat_id)
+    const toStatus = payload.to_status
+    if (!Number.isFinite(chatId) || typeof toStatus !== 'string') {
+      scheduleSilentListRefresh()
+      return
+    }
+    const status = toStatus as ChatListItem['status']
+    const idx = patchListRow(chatId, { status })
+    if (idx < 0) {
+      // New/unknown chat for this filter — need a full page.
+      scheduleSilentListRefresh()
+      return
+    }
+    // Default list excludes archived — drop the row instead of a full reload.
+    if (status === 'archived') {
+      removeListRow(chatId)
+      if (currentChatId.value === chatId) {
+        closeChat()
+      }
+    }
+    if (currentChat.value?.id === chatId) {
+      currentChat.value = { ...currentChat.value, status }
+    }
+  }
+
+  function handleRealtimeGap(): void {
+    scheduleSilentListRefresh()
+    const chatId = currentChatId.value
+    if (chatId != null) {
+      void resyncOpenChatAfterGap(chatId)
     }
   }
 
@@ -1240,7 +1598,7 @@ export const useChatsStore = defineStore('chats', () => {
     if (!Number.isFinite(chatId)) return
     bumpChatInList(chatId, { needs_response: true }, true)
     if (currentChatId.value === chatId) {
-      void refreshOpenChatMessages(chatId, 0)
+      scheduleDebouncedRefreshOpenChatMessages(chatId, 0)
     }
   }
 
@@ -1277,11 +1635,13 @@ export const useChatsStore = defineStore('chats', () => {
 
   function setContactOwnership(contactId: number, items: GroupOwnershipItem[]): void {
     const next = { ...ownershipByKey.value }
+    const groupIds = new Set<number>()
     for (const item of items) {
       next[ownershipKey(contactId, item.group_id)] = item
+      groupIds.add(item.group_id)
     }
     ownershipByKey.value = next
-    listItems.value = enrichListWithOwnership(listItems.value)
+    patchListRowsForContactOwnership(contactId, groupIds)
   }
 
   return {
@@ -1327,6 +1687,9 @@ export const useChatsStore = defineStore('chats', () => {
     handleInboundMessage,
     handleOutboundMessage,
     handleAttachmentReady,
+    handleStatusChanged,
+    handleRealtimeGap,
+    refreshOpenChatMessages,
     handleTakeoverStarted,
     handleTakeoverReleased,
     setTyping,

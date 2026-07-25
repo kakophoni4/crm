@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.modules.contacts.repository import ContactRepository
 from app.modules.contacts.schemas_transfer import ReplyAuditItem, ReplyAuditListResponse
@@ -41,8 +42,23 @@ class ContactReplyAuditService:
             raise NotFound(message="Contact not found")
         self._ensure_group_visible(ctx, group_id)
 
+        author_user = aliased(User)
+        card_owner_user = aliased(User)
         result = await self._session.execute(
-            select(MessageReplyAudit)
+            select(
+                MessageReplyAudit.message_id,
+                MessageReplyAudit.chat_id,
+                MessageReplyAudit.author_user_id,
+                author_user.username.label("author_username"),
+                author_user.full_name.label("author_full_name"),
+                MessageReplyAudit.card_owner_user_id,
+                card_owner_user.full_name.label("card_owner_full_name"),
+                MessageReplyAudit.is_on_behalf,
+                MessageReplyAudit.created_at,
+            )
+            .select_from(MessageReplyAudit)
+            .join(author_user, author_user.id == MessageReplyAudit.author_user_id)
+            .join(card_owner_user, card_owner_user.id == MessageReplyAudit.card_owner_user_id)
             .where(
                 MessageReplyAudit.contact_id == contact_id,
                 MessageReplyAudit.group_id == group_id,
@@ -55,13 +71,13 @@ class ContactReplyAuditService:
                 message_id=row.message_id,
                 chat_id=row.chat_id,
                 author_user_id=row.author_user_id,
-                author_username=row.author.username,
-                author_full_name=row.author.full_name,
+                author_username=row.author_username,
+                author_full_name=row.author_full_name,
                 card_owner_user_id=row.card_owner_user_id,
-                card_owner_full_name=row.card_owner.full_name,
+                card_owner_full_name=row.card_owner_full_name,
                 is_on_behalf=row.is_on_behalf,
                 created_at=row.created_at,
             )
-            for row in result.scalars().all()
+            for row in result.all()
         ]
         return ReplyAuditListResponse(items=items)

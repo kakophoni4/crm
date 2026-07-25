@@ -109,7 +109,7 @@ export function trackSnapshotForDisk(
   snapshotIndex.delete(chatId)
   snapshotIndex.set(chatId, {
     detail: snapshot.detail,
-    messages: snapshot.messages.slice(0, 50),
+    messages: snapshot.messages.slice(-50),
     nextCursor: snapshot.nextCursor,
     fetchedAt: snapshot.fetchedAt,
   })

@@ -35,7 +35,39 @@ const itemsRef = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
 const loadingOlderGuard = ref(false)
 const anchorHeight = ref<number | null>(null)
+const scrollTopRef = ref(0)
+const viewportHeightRef = ref(480)
+/** Mutated in-place; heightsVersion invalidates virtual-range computeds. */
+const measuredHeights = new Map<string, number>()
+const heightsVersion = ref(0)
+/** prefixOffsetsBuf[i] = sum of heights of items [0..i). Length = n+1. */
+let prefixOffsetsBuf = new Float64Array(1)
+/** Keys last synced into prefixOffsetsBuf (tip-append / skip detection). */
+let prefixItemKeys: Array<string | number> = []
+
+const OVERSCAN_ITEMS = 6
+const DEFAULT_MESSAGE_HEIGHT = 68
+const DEFAULT_DATE_HEIGHT = 32
+/** Must match CSS margin-bottom on virtual rows (flex gap breaks spacer math). */
+const ITEM_GAP_PX = 10
+
 let contentResizeObserver: ResizeObserver | null = null
+let viewportResizeObserver: ResizeObserver | null = null
+let itemResizeObserver: ResizeObserver | null = null
+const observedItemElements = new Map<number, HTMLElement>()
+
+/** Coalesce ResizeObserver measures into one heights update per frame. */
+const pendingMeasures = new Map<string, { key: string; index: number; height: number }>()
+let measureRafId = 0
+let pendingStickToBottom = false
+
+interface VirtualListItem {
+  kind: 'date' | 'message'
+  key: string | number
+  msg?: ChatMessage
+  msgIndex?: number
+  dateLabel?: string
+}
 
 function messageKey(msg: ChatMessage | undefined): string | number | null {
   if (!msg) return null
@@ -73,6 +105,28 @@ const messagesById = computed(() => {
     if (msg.id > 0) map.set(msg.id, msg)
   }
   return map
+})
+
+const listItems = computed((): VirtualListItem[] => {
+  const items: VirtualListItem[] = []
+  const msgs = sorted.value
+  for (let i = 0; i < msgs.length; i += 1) {
+    const msg = msgs[i]
+    if (shouldShowDateSeparator(i)) {
+      items.push({
+        kind: 'date',
+        key: `d:${messageKey(msg)}`,
+        dateLabel: formatDateSeparator(msg.created_at),
+      })
+    }
+    items.push({
+      kind: 'message',
+      key: messageKey(msg)!,
+      msg,
+      msgIndex: i,
+    })
+  }
+  return items
 })
 
 function formatTime(iso: string): string {
@@ -149,11 +203,288 @@ function shouldShowMessageText(msg: ChatMessage): boolean {
   return !fn || text !== fn
 }
 
+function heightCacheKey(item: VirtualListItem): string {
+  return String(item.key)
+}
+
+function estimateItemHeight(item: VirtualListItem): number {
+  if (item.kind === 'date') return DEFAULT_DATE_HEIGHT
+  const msg = item.msg!
+  let h = 44
+  const text = msg.text?.trim()
+  if (text && shouldShowMessageText(msg)) {
+    h += Math.min(320, Math.ceil(text.length / 36) * 20)
+  }
+  if (quotedMessage(msg)) h += 34
+  if (msg.attachments?.length) h += 72 * msg.attachments.length
+  return Math.max(h, msg.direction === 'inbound' ? 36 : 28)
+}
+
+function resolvedItemHeight(item: VirtualListItem): number {
+  const base = measuredHeights.get(heightCacheKey(item)) ?? estimateItemHeight(item)
+  // Trailing gap after every row keeps prefix offsets aligned with laid-out margins.
+  return base + ITEM_GAP_PX
+}
+
+function rememberPrefixItemKeys(items: VirtualListItem[]): void {
+  const n = items.length
+  const keys = new Array<string | number>(n)
+  for (let i = 0; i < n; i += 1) keys[i] = items[i].key
+  prefixItemKeys = keys
+}
+
+function rebuildPrefixOffsets(items: VirtualListItem[]): void {
+  const n = items.length
+  if (prefixOffsetsBuf.length !== n + 1) {
+    prefixOffsetsBuf = new Float64Array(n + 1)
+  }
+  prefixOffsetsBuf[0] = 0
+  for (let i = 0; i < n; i += 1) {
+    prefixOffsetsBuf[i + 1] = prefixOffsetsBuf[i] + resolvedItemHeight(items[i])
+  }
+  rememberPrefixItemKeys(items)
+  heightsVersion.value += 1
+}
+
+/** Tip-append: keep existing prefix sums, extend buffer for new tail only. */
+function extendPrefixOffsetsForAppend(items: VirtualListItem[], fromIndex: number): void {
+  const n = items.length
+  if (prefixOffsetsBuf.length !== n + 1) {
+    const next = new Float64Array(n + 1)
+    next.set(prefixOffsetsBuf)
+    prefixOffsetsBuf = next
+  }
+  for (let i = fromIndex; i < n; i += 1) {
+    prefixOffsetsBuf[i + 1] = prefixOffsetsBuf[i] + resolvedItemHeight(items[i])
+  }
+  const keys = prefixItemKeys
+  keys.length = n
+  for (let i = fromIndex; i < n; i += 1) {
+    keys[i] = items[i].key
+  }
+  heightsVersion.value += 1
+}
+
+function applyHeightDeltaAt(index: number, delta: number): void {
+  if (delta === 0) return
+  const buf = prefixOffsetsBuf
+  for (let j = index + 1; j < buf.length; j += 1) {
+    buf[j] += delta
+  }
+}
+
+function prefixKeysMatchPrefix(items: VirtualListItem[], count: number): boolean {
+  const keys = prefixItemKeys
+  if (keys.length < count) return false
+  for (let i = 0; i < count; i += 1) {
+    if (items[i].key !== keys[i]) return false
+  }
+  return true
+}
+
+/**
+ * Incremental prefix sync when possible:
+ * - same keys → no-op (height deltas come from measures)
+ * - tip append → extend Float64Array + append tail sums
+ * - prepend / shrink / reorder / chat reset → full rebuild
+ */
+function syncPrefixOffsets(items: VirtualListItem[]): void {
+  const n = items.length
+  const prevN = prefixItemKeys.length
+
+  if (n === prevN && prevN > 0 && prefixOffsetsBuf.length === prevN + 1) {
+    if (prefixKeysMatchPrefix(items, prevN)) return
+  }
+
+  if (
+    n > prevN &&
+    prevN > 0 &&
+    prefixOffsetsBuf.length === prevN + 1 &&
+    prefixKeysMatchPrefix(items, prevN)
+  ) {
+    extendPrefixOffsetsForAppend(items, prevN)
+    return
+  }
+
+  rebuildPrefixOffsets(items)
+}
+
+/** Virtual-range computeds depend on heightsVersion; buffer is mutated in place. */
+const prefixOffsets = computed(() => {
+  void heightsVersion.value
+  return prefixOffsetsBuf
+})
+
+watch(listItems, (items) => syncPrefixOffsets(items), { immediate: true })
+
+const totalListHeight = computed(() => {
+  const offsets = prefixOffsets.value
+  return offsets[offsets.length - 1] ?? 0
+})
+
+function findIndexAtOffset(offset: number): number {
+  const offsets = prefixOffsets.value
+  const len = listItems.value.length
+  if (!len) return 0
+  let lo = 0
+  let hi = len
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (offsets[mid + 1] <= offset) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+const visibleRange = computed(() => {
+  const items = listItems.value
+  const len = items.length
+  if (!len) return { start: 0, end: 0 }
+
+  const scrollTop = scrollTopRef.value
+  const viewH = viewportHeightRef.value
+  const overscanPx = OVERSCAN_ITEMS * DEFAULT_MESSAGE_HEIGHT
+
+  const rawStart = findIndexAtOffset(Math.max(0, scrollTop - overscanPx))
+  const rawEnd = findIndexAtOffset(scrollTop + viewH + overscanPx)
+  const start = Math.max(0, rawStart - OVERSCAN_ITEMS)
+  const end = Math.min(len, rawEnd + OVERSCAN_ITEMS + 1)
+  return { start, end }
+})
+
+const visibleItems = computed(() => {
+  const { start, end } = visibleRange.value
+  return listItems.value.slice(start, end).map((item, i) => ({
+    item,
+    index: start + i,
+  }))
+})
+
+const topSpacerHeight = computed(() => prefixOffsets.value[visibleRange.value.start] ?? 0)
+
+const bottomSpacerHeight = computed(() => {
+  const { end } = visibleRange.value
+  const total = totalListHeight.value
+  return Math.max(0, total - (prefixOffsets.value[end] ?? total))
+})
+
+const virtualPaddingStyle = computed(() => ({
+  paddingTop: `${topSpacerHeight.value}px`,
+  paddingBottom: `${bottomSpacerHeight.value}px`,
+}))
+
+function scheduleMeasureFlush(): void {
+  if (measureRafId) return
+  measureRafId = requestAnimationFrame(flushMeasuredHeights)
+}
+
+function queueMeasuredHeight(index: number, item: VirtualListItem, height: number): void {
+  const key = heightCacheKey(item)
+  const rounded = Math.ceil(height)
+  if (measuredHeights.get(key) === rounded) {
+    const pending = pendingMeasures.get(key)
+    if (!pending || pending.height === rounded) return
+  }
+  pendingMeasures.set(key, { key, index, height: rounded })
+  scheduleMeasureFlush()
+}
+
+function flushMeasuredHeights(): void {
+  measureRafId = 0
+  const items = listItems.value
+  let deltaApplied = false
+  let needRebuild = false
+
+  for (const { key, index, height } of pendingMeasures.values()) {
+    if (measuredHeights.get(key) === height) continue
+    const item = items[index]
+    if (!item || heightCacheKey(item) !== key) {
+      measuredHeights.set(key, height)
+      needRebuild = true
+      continue
+    }
+    const prevMeasured = measuredHeights.get(key)
+    const oldBase = prevMeasured ?? estimateItemHeight(item)
+    measuredHeights.set(key, height)
+    const delta = height - oldBase
+    if (delta !== 0) {
+      applyHeightDeltaAt(index, delta)
+      deltaApplied = true
+    }
+  }
+  pendingMeasures.clear()
+
+  if (needRebuild) {
+    rebuildPrefixOffsets(items)
+  } else if (deltaApplied) {
+    heightsVersion.value += 1
+  }
+
+  const stick = pendingStickToBottom
+  pendingStickToBottom = false
+  if (stick && stickToBottom.value && !loadingOlderGuard.value && anchorHeight.value == null) {
+    scrollToBottom()
+  }
+}
+
+function cancelPendingMeasures(): void {
+  if (measureRafId) {
+    cancelAnimationFrame(measureRafId)
+    measureRafId = 0
+  }
+  pendingMeasures.clear()
+  pendingStickToBottom = false
+}
+
+function onItemResize(entry: ResizeObserverEntry): void {
+  const el = entry.target as HTMLElement
+  const index = Number(el.dataset.vindex)
+  if (!Number.isFinite(index)) return
+  const item = listItems.value[index]
+  if (!item) return
+  const height = el.offsetHeight
+  if (height <= 0) return
+  queueMeasuredHeight(index, item, height)
+  if (stickToBottom.value && !loadingOlderGuard.value && anchorHeight.value == null) {
+    pendingStickToBottom = true
+    scheduleMeasureFlush()
+  }
+}
+
+function bindItemResizeObserver(): void {
+  itemResizeObserver?.disconnect()
+  itemResizeObserver = null
+  observedItemElements.clear()
+  if (typeof ResizeObserver === 'undefined') return
+  itemResizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) onItemResize(entry)
+  })
+}
+
+function bindVirtualItemRef(el: Element | { $el?: Element } | null, index: number): void {
+  const prev = observedItemElements.get(index)
+  if (prev && itemResizeObserver) itemResizeObserver.unobserve(prev)
+  observedItemElements.delete(index)
+
+  const node =
+    el instanceof HTMLElement
+      ? el
+      : el && '$el' in el && el.$el instanceof HTMLElement
+        ? el.$el
+        : null
+  if (!node || !itemResizeObserver) return
+
+  node.dataset.vindex = String(index)
+  observedItemElements.set(index, node)
+  itemResizeObserver.observe(node)
+}
+
 function scrollToBottom(): void {
   const el = viewportRef.value
   if (!el) return
   // Instant jump — smooth scroll often undershoots when height is still growing.
   el.scrollTop = el.scrollHeight
+  scrollTopRef.value = el.scrollTop
 }
 
 async function scrollToBottomAfterLayout(): Promise<void> {
@@ -178,23 +509,44 @@ function bindContentResizeObserver(): void {
   contentResizeObserver.observe(target)
 }
 
+function bindViewportResizeObserver(): void {
+  viewportResizeObserver?.disconnect()
+  viewportResizeObserver = null
+  const el = viewportRef.value
+  if (!el || typeof ResizeObserver === 'undefined') return
+  viewportHeightRef.value = el.clientHeight
+  viewportResizeObserver = new ResizeObserver(() => {
+    viewportHeightRef.value = el.clientHeight
+  })
+  viewportResizeObserver.observe(el)
+}
+
 watch(itemsRef, () => bindContentResizeObserver())
 
 onMounted(() => {
   // Remounted per chat (`:key="chatId"`) with messages already filled — watches may not fire.
   stickToBottom.value = true
+  bindItemResizeObserver()
+  bindViewportResizeObserver()
   bindContentResizeObserver()
   void scrollToBottomAfterLayout()
 })
 
 onBeforeUnmount(() => {
+  cancelPendingMeasures()
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
+  viewportResizeObserver?.disconnect()
+  viewportResizeObserver = null
+  itemResizeObserver?.disconnect()
+  itemResizeObserver = null
+  observedItemElements.clear()
 })
 
 function onViewportScroll(): void {
   const el = viewportRef.value
   if (!el) return
+  scrollTopRef.value = el.scrollTop
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
   stickToBottom.value = distance < 72
 
@@ -222,6 +574,7 @@ watch(
       const el = viewportRef.value
       if (el) {
         el.scrollTop += el.scrollHeight - anchorHeight.value
+        scrollTopRef.value = el.scrollTop
       }
       anchorHeight.value = null
     }
@@ -234,6 +587,10 @@ watch(
     stickToBottom.value = true
     loadingOlderGuard.value = false
     anchorHeight.value = null
+    cancelPendingMeasures()
+    measuredHeights.clear()
+    rebuildPrefixOffsets(listItems.value)
+    scrollTopRef.value = 0
     void scrollToBottomAfterLayout()
   },
 )
@@ -287,20 +644,26 @@ watch(
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />
         </div>
-        <div ref="itemsRef" class="message-list__items">
-          <template v-for="(msg, index) in sorted" :key="msg._clientKey ?? msg.id">
-            <div v-if="shouldShowDateSeparator(index)" class="message-list__date-separator">
-              {{ formatDateSeparator(msg.created_at) }}
+        <div ref="itemsRef" class="message-list__items" :style="virtualPaddingStyle">
+          <template v-for="{ item, index } in visibleItems" :key="item.key">
+            <div
+              v-if="item.kind === 'date'"
+              :ref="(el) => bindVirtualItemRef(el, index)"
+              class="message-list__date-separator"
+            >
+              {{ item.dateLabel }}
             </div>
             <div
+              v-else
+              :ref="(el) => bindVirtualItemRef(el, index)"
               class="message-list__row"
               :class="{
-                'message-list__row--out': msg.direction === 'outbound',
-                'message-list__row--failed': msg._failed,
+                'message-list__row--out': item.msg!.direction === 'outbound',
+                'message-list__row--failed': item.msg!._failed,
               }"
             >
               <ContactAvatar
-                v-if="msg.direction === 'inbound' && contactId != null && contactName"
+                v-if="item.msg!.direction === 'inbound' && contactId != null && contactName"
                 class="message-list__avatar"
                 :contact-id="contactId"
                 :full-name="contactName"
@@ -309,37 +672,41 @@ watch(
               <div
                 class="message-list__bubble"
                 :class="
-                  msg.direction === 'outbound'
+                  item.msg!.direction === 'outbound'
                     ? 'message-list__bubble--out'
                     : 'message-list__bubble--in'
                 "
               >
-                <div v-if="quotedMessage(msg)" class="message-list__quote">
-                  {{ replyPreview(quotedMessage(msg)!) }}
+                <div v-if="quotedMessage(item.msg!)" class="message-list__quote">
+                  {{ replyPreview(quotedMessage(item.msg!)!) }}
                 </div>
-                <p v-if="shouldShowMessageText(msg)" class="message-list__text">{{ msg.text }}</p>
-                <div v-if="msg.attachments?.length" class="message-list__attachments">
-                  <template v-for="(att, i) in msg.attachments" :key="i">
+                <p v-if="shouldShowMessageText(item.msg!)" class="message-list__text">
+                  {{ item.msg!.text }}
+                </p>
+                <div v-if="item.msg!.attachments?.length" class="message-list__attachments">
+                  <template v-for="(att, i) in item.msg!.attachments" :key="i">
                     <MessageAttachment
                       :att="att"
-                      :eager="index >= sorted.length - 8"
+                      :eager="(item.msgIndex ?? 0) >= sorted.length - 8"
                     />
                     <OptAttachmentBar
-                      v-if="msg.direction === 'inbound'"
+                      v-if="item.msg!.direction === 'inbound'"
                       :chat-id="chatId"
-                      :message-id="msg.id"
+                      :message-id="item.msg!.id"
                       :attachment-index="i"
                       :attachment="att"
                     />
                   </template>
                 </div>
                 <footer class="message-list__meta">
-                  <span :title="formatFullDateTime(msg.created_at)">
-                    {{ formatTime(msg.created_at) }}
+                  <span :title="formatFullDateTime(item.msg!.created_at)">
+                    {{ formatTime(item.msg!.created_at) }}
                   </span>
-                  <span v-if="senderNick(msg)" class="message-list__sender">{{ senderNick(msg) }}</span>
-                  <NTag v-if="msg._optimistic" size="tiny" :bordered="false">отправка...</NTag>
-                  <NTag v-if="msg._failed" size="tiny" type="error" :bordered="false">ошибка</NTag>
+                  <span v-if="senderNick(item.msg!)" class="message-list__sender">
+                    {{ senderNick(item.msg!) }}
+                  </span>
+                  <NTag v-if="item.msg!._optimistic" size="tiny" :bordered="false">отправка...</NTag>
+                  <NTag v-if="item.msg!._failed" size="tiny" type="error" :bordered="false">ошибка</NTag>
                 </footer>
               </div>
               <button
@@ -347,7 +714,7 @@ watch(
                 class="message-list__reply"
                 title="Ответить"
                 aria-label="Ответить"
-                @click="emit('reply', msg)"
+                @click="emit('reply', item.msg!)"
               >
                 <Reply :size="14" />
               </button>
@@ -388,10 +755,6 @@ watch(
   width: 100%;
 }
 
-.message-list__items > .message-list__row:not(:last-child) {
-  margin-bottom: 10px;
-}
-
 .message-list__older-hint {
   align-self: center;
   margin-bottom: 8px;
@@ -401,7 +764,7 @@ watch(
 
 .message-list__date-separator {
   align-self: center;
-  margin: 10px 0;
+  margin-bottom: 10px;
   padding: 3px 9px;
   border-radius: 999px;
   background: var(--app-surface-elevated, #f4f4f5);
@@ -416,6 +779,7 @@ watch(
   justify-content: flex-start;
   gap: 8px;
   width: 100%;
+  margin-bottom: 10px;
 }
 
 .message-list__row--out {

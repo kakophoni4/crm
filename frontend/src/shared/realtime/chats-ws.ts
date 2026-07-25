@@ -4,7 +4,6 @@ import {
   useChatNotificationsStore,
 } from '@/features/chats/notifications-store'
 import { notifyInboundChatMessage } from '@/shared/lib/browser-notifications'
-import { invalidateChatsQueries } from '@/shared/lib/query-invalidation'
 import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
 
 const CHAT_TOPICS = [
@@ -14,6 +13,7 @@ const CHAT_TOPICS = [
   'chat.status_changed',
   'chat.takeover.started',
   'chat.takeover.released',
+  'realtime.gap',
 ] as const
 
 let unsubscribers: (() => void)[] = []
@@ -63,8 +63,10 @@ function routeChatTopic(
       store.handleTakeoverReleased(payload)
       break
     case 'chat.status_changed':
-      invalidateChatsQueries()
-      store.scheduleSilentListRefresh()
+      store.handleStatusChanged(payload)
+      break
+    case 'realtime.gap':
+      store.handleRealtimeGap()
       break
     default:
       break

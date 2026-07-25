@@ -11,7 +11,6 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.scope_loader import ScopeLoader
-from app.modules.db.models.enums import UserRole
 from app.realtime.auth import consume_ws_ticket
 from app.realtime.hub import WsClient, get_hub
 from app.realtime.scope import WsScope
@@ -60,39 +59,26 @@ async def websocket_endpoint(
         return
 
     user_id = int(claims["user_id"])
-    role = UserRole(str(claims["role"]))
-    department_id = claims.get("department_id")
-    if department_id is not None:
-        department_id = int(department_id)
+    role = str(claims["role"])
 
-    provisional_scope = WsScope(
-        user_id=user_id,
-        role=role,
-        department_id=department_id,
-        group_id=None,
-        actor_group_ids=frozenset(),
-        department_group_ids=frozenset(),
-        visible_user_ids=frozenset({user_id}),
-    )
+    # Load full scope BEFORE subscribe so group-scoped events are not dropped
+    # during the provisional empty-groups window.
+    try:
+        ws_scope = await _load_ws_scope(user_id, role)
+    except AuthenticationRequired:
+        await websocket.close(code=_WS_CLOSE_POLICY, reason="authentication_required")
+        return
 
     await websocket.accept()
     await websocket.send_json(hub.connected_message(user_id))
 
-    client = WsClient(websocket=websocket, ws_scope=provisional_scope)
+    client = WsClient(websocket=websocket, ws_scope=ws_scope)
     await hub.subscribe(client)
 
     idle_seconds = float(settings.ws_idle_timeout_seconds)
     heartbeat_seconds = float(settings.ws_heartbeat_interval_seconds)
     last_client_activity = time.monotonic()
     stop = asyncio.Event()
-
-    async def _enrich_scope() -> None:
-        try:
-            client.ws_scope = await _load_ws_scope(user_id, role.value)
-        except AuthenticationRequired:
-            stop.set()
-
-    enrich_task = asyncio.create_task(_enrich_scope())
 
     async def _idle_watchdog() -> None:
         nonlocal last_client_activity
@@ -107,12 +93,7 @@ async def websocket_endpoint(
             await asyncio.sleep(heartbeat_seconds)
             if stop.is_set():
                 break
-            try:
-                async with client.send_lock:
-                    await websocket.send_json({"type": "ping"})
-            except (WebSocketDisconnect, RuntimeError):
-                stop.set()
-                break
+            client.enqueue_json({"type": "ping"})
 
     async def _reader() -> None:
         nonlocal last_client_activity
@@ -139,8 +120,7 @@ async def websocket_endpoint(
             except json.JSONDecodeError:
                 continue
             if msg.get("type") == "ping":
-                async with client.send_lock:
-                    await websocket.send_json({"type": "pong"})
+                client.enqueue_json({"type": "pong"})
 
     watchdog_task = asyncio.create_task(_idle_watchdog())
     heartbeat_task = asyncio.create_task(_heartbeat_sender())
@@ -150,8 +130,7 @@ async def websocket_endpoint(
         await stop.wait()
     finally:
         stop.set()
-        enrich_task.cancel()
-        for task in (watchdog_task, heartbeat_task, reader_task, enrich_task):
+        for task in (watchdog_task, heartbeat_task, reader_task):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

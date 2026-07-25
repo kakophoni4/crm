@@ -6,8 +6,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AppLayout from '@/widgets/app-layout/AppLayout.vue'
 
-import { listTelephonyAccounts } from '@/features/telephony/api'
-
 import { requiresAdminMeta } from '@/shared/lib/admin-routes'
 
 import { useAuthStore } from '@/shared/store/auth'
@@ -91,14 +89,6 @@ const routes: RouteRecordRaw[] = [
     component: AppLayout,
 
     meta: { requiresAuth: true },
-
-    beforeEnter: async () => {
-
-      const ok = await useAuthStore().ensureSession()
-
-      return ok || { name: 'login', query: { redirect: '/chats' } }
-
-    },
 
     children: [
 
@@ -423,7 +413,6 @@ export const router = createRouter({
 
 
 router.beforeEach(async (to) => {
-
   if (to.meta.public) {
     if (to.name === 'login') {
       const auth = useAuthStore()
@@ -437,112 +426,48 @@ router.beforeEach(async (to) => {
     return true
   }
 
+  const auth = useAuthStore()
+  await auth.ensureSession()
 
+  const needsAuth =
+    to.matched.some((r) => r.meta.requiresAuth) ||
+    to.matched.some((r) => r.meta.requiresSeniorOrAdmin) ||
+    to.matched.some((r) => r.meta.requiresAccounting) ||
+    to.matched.some((r) => r.meta.requiresTelephonyCall) ||
+    requiresAdminMeta(to.meta) ||
+    to.matched.some((record) => requiresAdminMeta(record.meta))
+
+  if (needsAuth && !auth.isAuthenticated) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
 
   const needsSeniorOrAdmin = to.matched.some((r) => r.meta.requiresSeniorOrAdmin)
-
   if (needsSeniorOrAdmin) {
-
-    const auth = useAuthStore()
-
-    await auth.ensureSession()
-
-    if (!auth.isAuthenticated) return { name: 'login' }
-
     const role = auth.user?.role
-
     if (role !== 'admin' && role !== 'senior') return { name: 'contacts' }
-
   }
-
-
 
   const needsAccounting = to.matched.some((r) => r.meta.requiresAccounting)
-
-  if (needsAccounting) {
-
-    const auth = useAuthStore()
-
-    await auth.ensureSession()
-
-    if (!auth.isAuthenticated) return { name: 'login' }
-
-    if (!auth.canAccounting) return { name: 'contacts' }
-
+  if (needsAccounting && !auth.canAccounting) {
+    return { name: 'contacts' }
   }
 
-
-
-  const authForRole = useAuthStore()
-
-  await authForRole.ensureSession()
-
-  if (
-    authForRole.isAccountant &&
-    !to.meta.public &&
-    !needsAccounting
-  ) {
+  if (auth.isAccountant && !needsAccounting) {
     return { name: 'accounting' }
   }
 
-
-
   const needsTelephonyCall = to.matched.some((r) => r.meta.requiresTelephonyCall)
-
-  if (needsTelephonyCall) {
-
-    const auth = useAuthStore()
-
-    await auth.ensureSession()
-
-    if (!auth.isAuthenticated) return { name: 'login' }
-
-    if (!auth.user?.permissions.includes('telephony.call')) return { name: 'contacts' }
-
-    try {
-
-      const accounts = await listTelephonyAccounts()
-
-      if (!accounts.some((account) => account.is_active)) return { name: 'contacts' }
-
-    } catch {
-
-      return { name: 'contacts' }
-
-    }
-
+  if (needsTelephonyCall && !auth.user?.permissions.includes('telephony.call')) {
+    return { name: 'contacts' }
   }
-
-
 
   const needsAdmin =
-
     requiresAdminMeta(to.meta) || to.matched.some((record) => requiresAdminMeta(record.meta))
-
-  if (needsAdmin) {
-
-    const auth = useAuthStore()
-
-    await auth.ensureSession()
-
-    if (!auth.isAuthenticated) {
-
-      return { name: 'login', query: { redirect: to.fullPath } }
-
-    }
-
-    if (!auth.isAdmin) {
-
-      return { name: 'contacts' }
-
-    }
-
+  if (needsAdmin && !auth.isAdmin) {
+    return { name: 'contacts' }
   }
 
-
-
   return true
-
 })
 
 

@@ -369,6 +369,7 @@ async def list_messages(
     service: Annotated[ChatMessagesService, Depends(_messages_service)],
     lead_id: int | None = None,
     cursor: str | None = None,
+    after_id: int | None = Query(default=None, ge=1),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> MessageListResponse:
     payload = await service.list_messages(
@@ -376,6 +377,7 @@ async def list_messages(
         chat_id,
         lead_id=lead_id,
         cursor=cursor,
+        after_id=after_id,
         limit=limit,
     )
     return MessageListResponse(**payload)

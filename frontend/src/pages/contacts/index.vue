@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { UserPlus } from 'lucide-vue-next'
-import type { DataTableColumns } from 'naive-ui'
+import type { DataTableColumns, SelectOption } from 'naive-ui'
 import {
   NButton,
   NDataTable,
@@ -19,7 +19,12 @@ import { CONTACT_STATUS_FILTER_OPTIONS, contactStatusLabel } from '@/entities/co
 import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
 import { listContacts } from '@/features/contacts/api'
 import { AppError } from '@/shared/api/http'
-import { invalidateChatsQueries, invalidateContactsQueries, onContactsInvalidate } from '@/shared/lib/query-invalidation'
+import {
+  invalidateChatsQueries,
+  invalidateContactsQueries,
+  onContactsInvalidate,
+  type ContactsInvalidateEvent,
+} from '@/shared/lib/query-invalidation'
 import AppCard from '@/shared/ui/AppCard.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -30,12 +35,22 @@ const auth = useAuthStore()
 const loading = ref(false)
 const createDialogVisible = ref(false)
 const rows = ref<Contact[]>([])
-const total = ref(0)
-const pageIndex = ref(1)
+const total = ref<number | null>(null)
+const hasMore = ref(false)
+/** Cursor used to fetch the current page; null = first page. */
+const pageCursor = ref<string | null>(null)
+/** Cursor for the next page (forward). */
+const nextCursor = ref<string | null>(null)
 const pageSize = ref(20)
 
 const searchQ = ref('')
 const statusFilter = ref<ContactStatus | null>(null)
+
+const pageSizeOptions: SelectOption[] = [
+  { label: '10', value: 10 },
+  { label: '20', value: 20 },
+  { label: '50', value: 50 },
+]
 
 const showContactPrivateFields = computed(
   () =>
@@ -50,9 +65,23 @@ const canCreateContact = computed(
   () => auth.user?.permissions.includes('contacts.create') === true,
 )
 
+const isFirstPage = computed(() => pageCursor.value == null)
+
+const rangeText = computed(() => {
+  if (!rows.value.length) return 'Нет записей'
+  if (total.value != null) return `Показано ${rows.value.length} из ${total.value}`
+  if (isFirstPage.value) {
+    const to = rows.value.length
+    return hasMore.value ? `Показано 1–${to}+` : `Показано 1–${to}`
+  }
+  return hasMore.value
+    ? `Показано ${rows.value.length}+`
+    : `Показано ${rows.value.length}`
+})
+
 function onContactCreated(contact: Contact): void {
-  invalidateContactsQueries()
-  invalidateChatsQueries()
+  invalidateContactsQueries({ immediate: true })
+  invalidateChatsQueries({ immediate: true })
   const chatId = contact.workspace?.chat_id
   if (chatId != null) {
     void router.push({ name: 'chats', query: { chatId: String(chatId) } })
@@ -133,79 +162,99 @@ function rowProps(row: Contact): Record<string, unknown> {
   }
 }
 
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
+/** Bumps on each fetchPage(); stale list responses are ignored. */
+let listFetchSeq = 0
 
-const pagination = computed(() => ({
-  page: pageIndex.value,
-  pageSize: pageSize.value,
-  itemCount: total.value,
-  pageCount: pageCount.value,
-  /** Sliding window around current page; first & last stay visible via Naive ellipsis. */
-  pageSlot: 7,
-  showSizePicker: true,
-  pageSizes: [10, 20, 50],
-  showQuickJumper: pageCount.value > 7,
-  prefix: ({ itemCount }: { itemCount: number | undefined }) =>
-    `Всего ${itemCount ?? total.value}`,
-}))
+function isRequestCanceled(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const code = (err as { code?: string }).code
+  return code === 'ERR_CANCELED' || code === 'ECONNABORTED'
+}
 
-async function fetchPage(): Promise<void> {
-  loading.value = true
+function applyContactPatch(event: ContactsInvalidateEvent): void {
+  const patchEvent = event.patch
+  if (!patchEvent) return
+  const idx = rows.value.findIndex((row) => row.id === patchEvent.contactId)
+  if (idx < 0) return
+  const next = rows.value.slice()
+  next[idx] = { ...next[idx], ...patchEvent.patch }
+  rows.value = next
+}
+
+function resetCursorState(): void {
+  pageCursor.value = null
+  nextCursor.value = null
+  hasMore.value = false
+  total.value = null
+}
+
+async function fetchPage(opts?: {
+  silent?: boolean
+  /** Override cursor for this fetch; omit to reload current page. */
+  cursor?: string | null
+}): Promise<void> {
+  const silent = opts?.silent === true && rows.value.length > 0
+  const seq = ++listFetchSeq
+  const cursor = opts?.cursor !== undefined ? opts.cursor : pageCursor.value
+  if (!silent) loading.value = true
   try {
-    let page = pageIndex.value
     const data = await listContacts({
       q: searchQ.value.trim() || undefined,
       status: statusFilter.value ?? undefined,
-      offset: (page - 1) * pageSize.value,
       limit: pageSize.value,
+      ...(cursor ? { cursor } : {}),
     })
-    total.value = data.total ?? 0
-    const maxPage = Math.max(1, Math.ceil(total.value / pageSize.value) || 1)
-    if (page > maxPage) {
-      page = maxPage
-      pageIndex.value = maxPage
-      const again = await listContacts({
-        q: searchQ.value.trim() || undefined,
-        status: statusFilter.value ?? undefined,
-        offset: (page - 1) * pageSize.value,
-        limit: pageSize.value,
-      })
-      rows.value = again.items
-      total.value = again.total ?? 0
-    } else {
-      rows.value = data.items
+    if (seq !== listFetchSeq) return
+
+    if (data.items.length === 0 && cursor) {
+      resetCursorState()
+      void fetchPage(opts)
+      return
     }
+
+    pageCursor.value = cursor
+    nextCursor.value = data.next_cursor
+    hasMore.value = data.has_more
+    if (data.total != null) total.value = data.total
+    rows.value = data.items
   } catch (err) {
+    if (seq !== listFetchSeq || isRequestCanceled(err)) return
     const text = err instanceof AppError ? err.message : 'Не удалось загрузить контакты'
     message.error(text)
   } finally {
-    loading.value = false
+    if (seq === listFetchSeq) loading.value = false
   }
 }
 
 function applyFilters(): void {
-  pageIndex.value = 1
-  void fetchPage()
+  resetCursorState()
+  void fetchPage({ cursor: null })
 }
 
-function onPageChange(page: number): void {
-  if (page < 1 || page > pageCount.value || page === pageIndex.value) return
-  pageIndex.value = page
-  void fetchPage()
+function loadNext(): void {
+  if (!nextCursor.value || loading.value) return
+  void fetchPage({ cursor: nextCursor.value })
+}
+
+function loadFirst(): void {
+  if (isFirstPage.value || loading.value) return
+  resetCursorState()
+  void fetchPage({ cursor: null })
 }
 
 function onPageSizeChange(size: number): void {
   pageSize.value = size
-  pageIndex.value = 1
-  void fetchPage()
+  resetCursorState()
+  void fetchPage({ cursor: null })
 }
 
 let stopInvalidate: (() => void) | undefined
 
 onMounted(() => {
-  void fetchPage()
-  stopInvalidate = onContactsInvalidate(() => {
-    void fetchPage()
+  void fetchPage({ cursor: null })
+  stopInvalidate = onContactsInvalidate((event) => {
+    if (event.patch) applyContactPatch(event)
+    if (event.reload) void fetchPage({ silent: true })
   })
 })
 
@@ -263,16 +312,41 @@ watch(
             :columns="columns"
             :data="rows"
             :remote="true"
-            :pagination="pagination"
             :row-key="(row: Contact) => row.id"
             :row-props="rowProps"
             :bordered="false"
             :single-line="false"
             striped
             size="small"
-            @update:page="onPageChange"
-            @update:page-size="onPageSizeChange"
           />
+        </div>
+        <div class="contacts-page__pager">
+          <span class="contacts-page__range">{{ rangeText }}</span>
+          <NSpace :size="8" align="center" wrap>
+            <NSelect
+              :value="pageSize"
+              :options="pageSizeOptions"
+              size="small"
+              class="contacts-page__page-size"
+              :disabled="loading"
+              @update:value="onPageSizeChange"
+            />
+            <NButton
+              size="small"
+              :disabled="isFirstPage || loading"
+              @click="loadFirst"
+            >
+              В начало
+            </NButton>
+            <NButton
+              size="small"
+              type="primary"
+              :disabled="!hasMore || !nextCursor || loading"
+              @click="loadNext"
+            >
+              Далее
+            </NButton>
+          </NSpace>
         </div>
       </NSpin>
     </AppCard>
@@ -360,10 +434,22 @@ watch(
   box-sizing: border-box;
 }
 
-.contacts-page__table-wrap :deep(.n-data-table-pagination) {
+.contacts-page__pager {
+  display: flex;
+  align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.contacts-page__range {
+  color: var(--n-text-color-3, var(--app-muted, #888));
+  font-size: 13px;
+}
+
+.contacts-page__page-size {
+  width: 72px;
 }
 
 .contacts-page__table :deep(.n-data-table-tr:hover) {

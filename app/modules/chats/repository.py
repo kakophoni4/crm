@@ -4,16 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, func, nulls_last, or_, select, tuple_
+from sqlalchemy import Select, and_, false, func, nulls_last, or_, select, true, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, noload, selectinload
 
 from app.modules.chats.cursor import CursorError, decode_chat_cursor, decode_message_cursor
 from app.modules.chats.filters import ChatListSort, chat_list_order_by
 from app.modules.chats.scope import chat_visibility_clause
 from app.modules.chats.search_scope import ChatSearchScope, search_scope_clause
 from app.modules.chats.unread import (
-    latest_message_subquery,
+    latest_message_lateral,
     unread_for_actor_expression,
     unread_for_me_map,
 )
@@ -107,18 +107,23 @@ class ChatRepository:
                 datetime | None,
                 datetime | None,
                 MessageDirection | None,
+                bool,
             ]
         ],
         str | None,
     ]:
         from app.modules.chats.cursor import encode_chat_cursor
 
-        latest_msg = latest_message_subquery()
+        latest_msg = latest_message_lateral()
         read_state = aliased(ChatReadState)
         use_actor_unread = actor_user_id is not None
+        unread_expr = (
+            unread_for_actor_expression(latest_msg, read_state)
+            if use_actor_unread
+            else false()
+        )
         order_by: list[Any]
         if sort == ChatListSort.UNREAD_FIRST and use_actor_unread:
-            unread_expr = unread_for_actor_expression(latest_msg, read_state)
             order_by = [
                 unread_expr.desc(),
                 nulls_last(Chat.last_message_at.desc()),
@@ -131,15 +136,17 @@ class ChatRepository:
         card_owner_cga = aliased(ContactGroupAssignment)
         card_owner_user = aliased(User)
         inbox_group = aliased(Group)
-        latest_message = aliased(ChatMessage)
+        # Id-first page: filter/order/LIMIT without joinedload so Postgres can
+        # apply LIMIT before hydrating contact/group/status/lead graphs.
         stmt = (
             select(
-                Chat,
+                Chat.id,
                 card_owner_cga.owner_user_id,
                 card_owner_user.full_name,
                 card_owner_cga.pending_inbound_at,
                 card_owner_cga.escalated_to_group_at,
-                latest_message.direction,
+                latest_msg.c.direction,
+                unread_expr.label("unread_for_me"),
             )
             .outerjoin(
                 inbox_group,
@@ -159,20 +166,12 @@ class ChatRepository:
                 ),
             )
             .outerjoin(card_owner_user, card_owner_user.id == card_owner_cga.owner_user_id)
-            .outerjoin(latest_msg, latest_msg.c.chat_id == Chat.id)
-            .outerjoin(
-                latest_message,
-                latest_message.id == latest_msg.c.max_message_id,
-            )
+            .outerjoin(latest_msg, true())
             .order_by(*order_by)
             .limit(limit + 1)
         )
-        stmt = self._scoped(stmt, ctx, read_perm)
-        if status is None:
-            stmt = stmt.where(Chat.status != ChatStatus.ARCHIVED)
-        if use_actor_unread and (
-            unread_only or sort == ChatListSort.UNREAD_FIRST
-        ):
+        if use_actor_unread:
+            # Always join so unread_for_me comes from the same SELECT as LATERAL tip.
             stmt = stmt.outerjoin(
                 read_state,
                 and_(
@@ -180,6 +179,9 @@ class ChatRepository:
                     read_state.user_id == actor_user_id,
                 ),
             )
+        stmt = self._scoped(stmt, ctx, read_perm)
+        if status is None:
+            stmt = stmt.where(Chat.status != ChatStatus.ARCHIVED)
 
         if status is not None:
             stmt = stmt.where(Chat.status == status)
@@ -191,32 +193,17 @@ class ChatRepository:
             stmt = stmt.where(Chat.contact_id == contact_id)
         if bot_id is not None:
             stmt = stmt.where(Chat.bot_id == bot_id)
-        if unread_only and actor_user_id is not None:
-            stmt = stmt.where(unread_for_actor_expression(latest_msg, read_state))
+        if unread_only and use_actor_unread:
+            stmt = stmt.where(unread_expr)
         elif unread_only:
             stmt = stmt.where(latest_msg.c.max_message_id.isnot(None))
         if needs_reply:
-            needs_owner = aliased(ContactGroupAssignment)
-            needs_inbox = aliased(Group)
-            stmt = stmt.outerjoin(
-                needs_inbox,
-                and_(
-                    Chat.assigned_group_id.is_(None),
-                    Chat.assigned_department_id.isnot(None),
-                    needs_inbox.department_id == Chat.assigned_department_id,
-                    needs_inbox.name == DEPT_INBOX_GROUP_NAME,
-                ),
-            ).join(
-                needs_owner,
-                and_(
-                    needs_owner.contact_id == Chat.contact_id,
-                    needs_owner.group_id
-                    == func.coalesce(Chat.assigned_group_id, needs_inbox.id),
-                ),
-            ).where(
+            # Reuse card_owner_cga / inbox_group already joined (no second CGA join).
+            stmt = stmt.where(
+                card_owner_cga.contact_id.isnot(None),
                 or_(
-                    needs_owner.escalated_to_group_at.isnot(None),
-                    latest_message.direction == MessageDirection.INBOUND,
+                    card_owner_cga.escalated_to_group_at.isnot(None),
+                    latest_msg.c.direction == MessageDirection.INBOUND,
                 ),
             )
         if assigned_group_id is not None:
@@ -247,9 +234,16 @@ class ChatRepository:
                 select(Contact.id)
                 .where(
                     Contact.id == Chat.contact_id,
-                    Contact.full_name.ilike(pattern),
+                    trgm_or_ilike(
+                        Contact.full_name,
+                        Contact.phone,
+                        Contact.email,
+                        Contact.telegram_username,
+                        pattern=pattern,
+                    ),
                 )
                 .exists(),
+                Chat.last_message_preview.ilike(pattern),
             ]
             if normalized_lead_id.isdigit():
                 search_clauses.append(
@@ -260,9 +254,8 @@ class ChatRepository:
                     )
                     .exists(),
                 )
-            stmt = stmt.where(
-                or_(*search_clauses),
-            )
+            stmt = stmt.where(or_(*search_clauses))
+        # Keyset cursor only for sorts with a stable (timestamp, id) order.
         if cursor is not None and sort == ChatListSort.LAST_MESSAGE_AT_DESC:
             try:
                 cursor_at, cursor_id = decode_chat_cursor(cursor)
@@ -293,8 +286,37 @@ class ChatRepository:
                 ),
             )
 
-        result = await self._session.execute(stmt)
-        rows = [(row[0], row[1], row[2], row[3], row[4], row[5]) for row in result.all()]
+        page_result = await self._session.execute(stmt)
+        page_rows = list(page_result.all())
+        chat_ids = [int(row[0]) for row in page_rows]
+        chats_by_id: dict[int, Chat] = {}
+        if chat_ids:
+            chats_result = await self._session.execute(
+                select(Chat)
+                .where(Chat.id.in_(chat_ids))
+                .options(
+                    selectinload(Chat.contact),
+                    selectinload(Chat.assigned_group),
+                    selectinload(Chat.business_status),
+                    selectinload(Chat.current_lead).selectinload(Lead.pipeline_status),
+                ),
+            )
+            chats_by_id = {
+                chat.id: chat for chat in chats_result.unique().scalars().all()
+            }
+        rows = [
+            (
+                chats_by_id[int(row[0])],
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[5],
+                bool(row[6]),
+            )
+            for row in page_rows
+            if int(row[0]) in chats_by_id
+        ]
         next_cursor: str | None = None
         if len(rows) > limit:
             rows = rows[:limit]
@@ -306,6 +328,7 @@ class ChatRepository:
                 and last_chat.last_message_at is not None
             ):
                 next_cursor = encode_chat_cursor(last_chat.last_message_at, last_chat.id)
+            # UNREAD_FIRST / other sorts: no keyset cursor (would be incorrect).
 
         return rows, next_cursor
 
@@ -328,7 +351,11 @@ class ChatRepository:
         from app.modules.chats.cursor import encode_chat_cursor
 
         pattern = f"%{q}%"
-        use_trgm = len(q) >= 2 and await trgm_search_indexes_available(self._session)
+        # Ranking needs the full trgm set; ILIKE still benefits from any GIN present.
+        use_trgm = len(q) >= 2 and await trgm_search_indexes_available(
+            self._session,
+            require_all=True,
+        )
         stmt = (
             select(Chat)
             .join(Contact, Contact.id == Chat.contact_id)
@@ -336,6 +363,9 @@ class ChatRepository:
                 trgm_or_ilike(
                     Chat.last_message_preview,
                     Contact.full_name,
+                    Contact.phone,
+                    Contact.email,
+                    Contact.telegram_username,
                     pattern=pattern,
                 ),
             )
@@ -414,6 +444,7 @@ class ChatRepository:
         *,
         lead_id: int | None = None,
         cursor: str | None,
+        after_id: int | None = None,
         limit: int,
     ) -> tuple[list[tuple[ChatMessage, int | None, str | None, int | None, str | None]], str | None]:
         from app.modules.chats.cursor import encode_message_cursor
@@ -450,26 +481,35 @@ class ChatRepository:
             .outerjoin(owner_user, owner_user.id == MessageReplyAudit.card_owner_user_id)
             .outerjoin(sender_user, sender_user.id == ChatMessage.sender_user_id)
             .outerjoin(author_user, author_user.id == MessageReplyAudit.author_user_id)
+            .options(noload(ChatMessage.chat), noload(ChatMessage.sender))
             .where(ChatMessage.chat_id == chat_id)
-            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(limit + 1)
         )
         if lead_id is not None:
             stmt = stmt.where(ChatMessage.lead_id == lead_id)
-        if cursor is not None:
-            try:
-                cursor_at, cursor_id = decode_message_cursor(cursor)
-            except CursorError:
-                cursor_at, cursor_id = datetime.min.replace(tzinfo=None), -1
-            stmt = stmt.where(
-                or_(
-                    ChatMessage.created_at < cursor_at,
-                    and_(
-                        ChatMessage.created_at == cursor_at,
-                        ChatMessage.id < cursor_id,
-                    ),
-                ),
+        if after_id is not None:
+            # Delta fetch (after_id exclusive): ascending chunk from id > after_id.
+            # Default listing below stays newest-first; frontend uses toChronological().
+            stmt = stmt.where(ChatMessage.id > after_id).order_by(
+                ChatMessage.created_at.asc(),
+                ChatMessage.id.asc(),
             )
+        else:
+            stmt = stmt.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            if cursor is not None:
+                try:
+                    cursor_at, cursor_id = decode_message_cursor(cursor)
+                except CursorError:
+                    cursor_at, cursor_id = datetime.min.replace(tzinfo=None), -1
+                stmt = stmt.where(
+                    or_(
+                        ChatMessage.created_at < cursor_at,
+                        and_(
+                            ChatMessage.created_at == cursor_at,
+                            ChatMessage.id < cursor_id,
+                        ),
+                    ),
+                )
 
         result = await self._session.execute(stmt)
         rows = [
@@ -477,10 +517,12 @@ class ChatRepository:
             for row in result.all()
         ]
         next_cursor: str | None = None
-        if len(rows) > limit:
+        if after_id is None and len(rows) > limit:
             rows = rows[:limit]
             last = rows[-1][0]
             next_cursor = encode_message_cursor(last.created_at, last.id)
+        elif after_id is not None and len(rows) > limit:
+            rows = rows[:limit]
         return rows, next_cursor
 
     async def get_message_by_idempotency(self, key: str) -> ChatMessage | None:
@@ -579,16 +621,7 @@ class ChatRepository:
         else:
             snippet_expr = func.left(func.coalesce(ChatMessage.text, ""), 200)
 
-        owner_subq = (
-            select(ContactGroupAssignment.owner_user_id)
-            .where(
-                ContactGroupAssignment.contact_id == Chat.contact_id,
-                ContactGroupAssignment.group_id == Chat.assigned_group_id,
-            )
-            .correlate(Chat)
-            .scalar_subquery()
-        )
-
+        # card_owner_user_id filled in ChatSearchService via get_card_owner_map.
         stmt = (
             select(
                 Chat.id,
@@ -598,7 +631,6 @@ class ChatRepository:
                 ChatMessage.created_at,
                 ChatMessage.lead_id,
                 Chat.assigned_group_id,
-                owner_subq,
             )
             .select_from(ChatMessage)
             .join(Chat, Chat.id == ChatMessage.chat_id)
@@ -643,7 +675,7 @@ class ChatRepository:
                 matched_at=row[4],
                 lead_id=int(row[5]) if row[5] is not None else None,
                 assigned_group_id=row[6],
-                card_owner_user_id=row[7],
+                card_owner_user_id=None,
             )
             for row in result.all()
         ]

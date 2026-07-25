@@ -55,15 +55,15 @@ class MessageReplyAudit(Base):
     is_on_behalf: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
-    message: Mapped[ChatMessage] = relationship(lazy="selectin")
-    chat: Mapped[Chat] = relationship(lazy="selectin")
-    contact: Mapped[Contact] = relationship(lazy="selectin")
-    group: Mapped[Group] = relationship(lazy="selectin")
+    message: Mapped[ChatMessage] = relationship(lazy="select")
+    chat: Mapped[Chat] = relationship(lazy="select")
+    contact: Mapped[Contact] = relationship(lazy="select")
+    group: Mapped[Group] = relationship(lazy="select")
     card_owner: Mapped[User] = relationship(
         foreign_keys=[card_owner_user_id],
-        lazy="selectin",
+        lazy="select",
     )
     author: Mapped[User] = relationship(
         foreign_keys=[author_user_id],
-        lazy="selectin",
+        lazy="select",
     )

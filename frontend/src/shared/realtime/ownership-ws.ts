@@ -1,6 +1,7 @@
 import { useChatsStore } from '@/features/chats/store'
 
-import { invalidateChatsQueries, invalidateContactsQueries } from '@/shared/lib/query-invalidation'
+import { invalidateContactsQueries } from '@/shared/lib/query-invalidation'
+import { extractContactListPatch } from '@/shared/realtime/contact-list-patch'
 
 import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
 
@@ -102,11 +103,25 @@ function routeOwnershipTopic(
 
       store.handleOwnershipChanged(payload)
 
-      invalidateContactsQueries()
+      {
+        const patch = extractContactListPatch(payload)
+        // Pass patch object only when present — `{ patch: undefined }` forces full reload.
+        if (patch) {
+          invalidateContactsQueries({ patch })
+        } else {
+          invalidateContactsQueries({ reload: true })
+        }
+      }
 
-      invalidateChatsQueries()
-
-      store.scheduleSilentListRefresh()
+      // Row already patched in Pinia; full GET /chats only if chat is missing from list.
+      {
+        const chatId = Number(payload.chat_id)
+        const known =
+          Number.isFinite(chatId) && store.listItems.some((c) => c.id === chatId)
+        if (!known) {
+          store.scheduleSilentListRefresh()
+        }
+      }
 
       break
 
@@ -139,7 +154,11 @@ function routeOwnershipTopic(
     case 'transfer.recipient_accepted':
     case 'transfer.recipient_declined':
     case 'transfer.cancelled':
-      invalidateContactsQueries()
+      {
+        const patch = extractContactListPatch(payload)
+        if (patch) invalidateContactsQueries({ patch })
+        else invalidateContactsQueries({ reload: true })
+      }
       break
 
     default:

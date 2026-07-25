@@ -72,6 +72,7 @@ async def list_contacts(
     cursor: str | None = None,
     offset: int | None = Query(default=None, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
+    include_total: bool = Query(default=False),
 ) -> ContactListResponse:
     return await service.list_contacts(
         actor,
@@ -83,6 +84,7 @@ async def list_contacts(
         cursor=cursor,
         offset=offset,
         limit=limit,
+        include_total=include_total,
     )
 
 

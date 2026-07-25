@@ -91,7 +91,11 @@ function mountContactsPage(role: 'admin' | 'user' = 'admin') {
 describe('contacts list page', () => {
   beforeEach(() => {
     listContactsMock.mockReset()
-    listContactsMock.mockResolvedValue({ items: sampleContacts, next_cursor: null })
+    listContactsMock.mockResolvedValue({
+      items: sampleContacts,
+      next_cursor: null,
+      has_more: false,
+    })
   })
 
   it('renders table rows from API', async () => {

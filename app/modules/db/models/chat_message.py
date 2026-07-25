@@ -24,6 +24,13 @@ class ChatMessage(Base):
     __tablename__ = "messages"
     __table_args__ = (
         Index("ix_messages_chat_id_id", "chat_id", "id"),
+        Index(
+            "ix_messages_chat_id_created_at_id",
+            "chat_id",
+            "created_at",
+            "id",
+            postgresql_ops={"created_at": "DESC", "id": "DESC"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -67,8 +74,8 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
 
-    chat: Mapped[Chat] = relationship(back_populates="messages", lazy="selectin")
+    chat: Mapped[Chat] = relationship(back_populates="messages", lazy="select")
     sender: Mapped[User | None] = relationship(
         foreign_keys=[sender_user_id],
-        lazy="selectin",
+        lazy="select",
     )

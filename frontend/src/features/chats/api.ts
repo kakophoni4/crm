@@ -77,12 +77,25 @@ export async function patchChatStatusId(chatId: number, statusId: number): Promi
   return data
 }
 
-let listChatsAbort: AbortController | null = null
+let listChatsReplaceAbort: AbortController | null = null
+let listChatsAppendAbort: AbortController | null = null
 
-export async function listChats(params: ChatListParams = {}): Promise<ChatListResponse> {
-  listChatsAbort?.abort()
-  listChatsAbort = new AbortController()
-  const signal = listChatsAbort.signal
+export async function listChats(
+  params: ChatListParams = {},
+  opts: { mode?: 'replace' | 'append' } = {},
+): Promise<ChatListResponse> {
+  // Separate abort lanes so silent replace doesn't cancel load-more (and vice versa).
+  const mode = opts.mode ?? 'replace'
+  let signal: AbortSignal
+  if (mode === 'append') {
+    listChatsAppendAbort?.abort()
+    listChatsAppendAbort = new AbortController()
+    signal = listChatsAppendAbort.signal
+  } else {
+    listChatsReplaceAbort?.abort()
+    listChatsReplaceAbort = new AbortController()
+    signal = listChatsReplaceAbort.signal
+  }
   const { data } = await http.get<ChatListResponse>('/chats', {
     params: buildListParams(params),
     signal,
@@ -104,12 +117,13 @@ export async function getChat(id: number): Promise<ChatDetail> {
 
 export async function listMessages(
   chatId: number,
-  params: { cursor?: string; limit?: number; lead_id?: number } = {},
+  params: { cursor?: string; limit?: number; lead_id?: number; after_id?: number } = {},
 ): Promise<MessageListResponse> {
   const query: Record<string, string | number> = {}
   if (params.cursor) query.cursor = params.cursor
   if (params.limit) query.limit = params.limit
   if (params.lead_id != null) query.lead_id = params.lead_id
+  if (params.after_id != null) query.after_id = params.after_id
   const { data } = await http.get<MessageListResponse>(`/chats/${chatId}/messages`, {
     params: query,
   })

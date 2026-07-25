@@ -63,12 +63,12 @@ class Lead(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
-    contact: Mapped[Contact] = relationship(lazy="selectin")
-    group: Mapped[Group] = relationship(lazy="selectin")
+    contact: Mapped[Contact] = relationship(lazy="select")
+    group: Mapped[Group] = relationship(lazy="select")
     bot: Mapped[Bot | None] = relationship(foreign_keys=[bot_id], lazy="selectin")
     chat: Mapped[Chat | None] = relationship(
         foreign_keys=[chat_id],
-        lazy="selectin",
+        lazy="select",
     )
     pipeline_status: Mapped[Status] = relationship(
         foreign_keys=[status_id],
@@ -76,6 +76,6 @@ class Lead(Base):
     )
     comments: Mapped[list[LeadComment]] = relationship(
         back_populates="lead",
-        lazy="selectin",
+        lazy="select",
         order_by="LeadComment.created_at",
     )

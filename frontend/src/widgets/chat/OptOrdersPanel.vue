@@ -21,7 +21,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { UploadFileInfo } from 'naive-ui'
-import { computed, h, onUnmounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
   addOptOrderPayment,
@@ -36,7 +36,8 @@ import {
   uploadOptApplication,
 } from '@/features/leads/opt-api'
 import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
-import { peekOptOrders, prefetchOptOrders } from '@/features/chats/payments-cache'
+import { setOptOrdersCache } from '@/features/chats/chats-disk-cache'
+import { peekOptOrders } from '@/features/chats/payments-cache'
 import { useChatsStore } from '@/features/chats/store'
 import { uploadFile } from '@/features/chats/api'
 import { validateOptPaymentDocuments } from '@/features/leads/opt-payment-validation'
@@ -108,6 +109,19 @@ const vatRateOptions = [
   { label: 'НДС 20%', value: 20 as OptVatRatePercent },
 ]
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let tabVisible = typeof document !== 'undefined' ? !document.hidden : true
+let loadAbort: AbortController | null = null
+let loadSeq = 0
+
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'AbortError') return true
+  return (
+    typeof err === 'object'
+    && err != null
+    && 'code' in err
+    && (err as { code: string }).code === 'ERR_CANCELED'
+  )
+}
 
 const hasLead = computed(() => props.leadId != null && !props.disabled)
 
@@ -425,11 +439,27 @@ function stopPolling(): void {
   }
 }
 
+function syncPolling(): void {
+  if (needsPolling.value && tabVisible && hasLead.value) startPolling()
+  else stopPolling()
+}
+
 function startPolling(): void {
-  if (pollTimer != null || !hasLead.value) return
+  if (pollTimer != null || !hasLead.value || !tabVisible) return
   pollTimer = setInterval(() => {
     void loadOrders({ silent: true })
   }, 4000)
+}
+
+function onVisibilityChange(): void {
+  tabVisible = !document.hidden
+  if (tabVisible) {
+    syncPolling()
+    if (needsPolling.value && hasLead.value) void loadOrders({ silent: true })
+  } else {
+    stopPolling()
+    loadAbort?.abort()
+  }
 }
 
 async function loadOrders(options?: { silent?: boolean }): Promise<void> {
@@ -439,7 +469,12 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
     stopPolling()
     return
   }
+  if (options?.silent && !tabVisible) return
   const leadId = props.leadId
+  loadAbort?.abort()
+  loadAbort = new AbortController()
+  const signal = loadAbort.signal
+  const seq = ++loadSeq
   const cached = peekOptOrders(leadId)
   if (cached?.length && !options?.silent) {
     orders.value = [...cached].sort((a, b) => a.order_no - b.order_no)
@@ -450,22 +485,23 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
   }
   if (!options?.silent && !cached?.length && orders.value.length === 0) loading.value = true
   try {
-    await prefetchOptOrders(leadId, true)
-    const fresh = peekOptOrders(leadId)
-    const items = fresh ?? (await listOptOrders(leadId))
+    const items = await listOptOrders(leadId, { signal })
+    if (signal.aborted || seq !== loadSeq || props.leadId !== leadId) return
+    setOptOrdersCache(leadId, items)
     orders.value = [...items].sort((a, b) => a.order_no - b.order_no)
     selectedOrderId.value = pickSelectedOrder(
       orders.value,
       selectedOrderId.value ?? props.initialOrderId ?? null,
     )
   } catch (err) {
+    if (signal.aborted || isAbortError(err)) return
     if (!options?.silent && !cached?.length && orders.value.length === 0) {
       message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
       orders.value = []
       selectedOrderId.value = null
     }
   } finally {
-    if (!options?.silent) loading.value = false
+    if (!options?.silent && seq === loadSeq) loading.value = false
   }
 }
 
@@ -483,7 +519,7 @@ async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
       (a, b) => a.order_no - b.order_no,
     )
     selectedOrderId.value = created.id
-    startPolling()
+    syncPolling()
     message.success(
       `Заявка ${created.order_no} загружена (НДС ${vatRatePercent.value}%) — реестр формируется`,
     )
@@ -607,9 +643,8 @@ async function onSendToClient(order: OptOrder): Promise<void> {
   }
 }
 
-watch(needsPolling, (active) => {
-  if (active) startPolling()
-  else stopPolling()
+watch(needsPolling, () => {
+  syncPolling()
 })
 
 // Only reset selection when switching deals — refresh/WS must keep the open tab.
@@ -639,8 +674,14 @@ watch(
   },
 )
 
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   stopPolling()
+  loadAbort?.abort()
 })
 </script>
 

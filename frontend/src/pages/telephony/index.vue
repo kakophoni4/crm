@@ -228,6 +228,11 @@ async function load(): Promise<void> {
     ])
     accounts.value = accountItems
     callHistory.value = callItems
+    if (activeAccounts.value.length === 0) {
+      message.warning('Нет активных SIP-линий')
+      void router.replace({ name: 'contacts' })
+      return
+    }
     selectedAccountId.value = activeAccounts.value[0]?.id ?? null
     if (selectedAccountId.value != null && !autoConnectAttempted.value) {
       autoConnectAttempted.value = true
@@ -235,6 +240,7 @@ async function load(): Promise<void> {
     }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить телефонию')
+    void router.replace({ name: 'contacts' })
   } finally {
     loading.value = false
   }

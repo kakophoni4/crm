@@ -50,8 +50,8 @@ class ChatSearchService:
 
         items: list[ChatMessageSearchItem] = []
         for row in rows[:limit]:
-            card_owner_user_id = row.card_owner_user_id
-            if card_owner_user_id is None and row.assigned_group_id is not None:
+            card_owner_user_id: int | None = None
+            if row.assigned_group_id is not None:
                 card_owner_user_id, _ = owner_map.get(
                     (row.contact_id, row.assigned_group_id),
                     (None, None),

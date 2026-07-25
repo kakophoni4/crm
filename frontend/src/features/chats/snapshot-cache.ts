@@ -67,7 +67,8 @@ export function setChatSnapshot(
     attachmentPriority?: 'high' | 'normal'
   } = {},
 ): void {
-  const messages = snapshot.messages.slice(0, CHAT_SNAPSHOT_MESSAGE_LIMIT)
+  // Chronological oldest→newest: keep the tip (newest), not the head.
+  const messages = snapshot.messages.slice(-CHAT_SNAPSHOT_MESSAGE_LIMIT)
   const full: ChatSnapshot = {
     ...snapshot,
     messages,

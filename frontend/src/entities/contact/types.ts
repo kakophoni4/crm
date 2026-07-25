@@ -114,7 +114,8 @@ export interface ContactCrmSummary {
 export interface ContactListResponse {
   items: Contact[]
   next_cursor: string | null
-  total: number
+  has_more: boolean
+  total?: number | null
 }
 
 export interface ContactListParams {
@@ -123,6 +124,7 @@ export interface ContactListParams {
   cursor?: string
   offset?: number
   limit?: number
+  include_total?: boolean
   custom_field_filters?: Record<string, string>
 }
 

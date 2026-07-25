@@ -77,10 +77,11 @@ class ContactService:
         cursor: str | None,
         offset: int | None,
         limit: int,
+        include_total: bool = False,
     ) -> ContactListResponse:
         ctx = await self._ctx(actor)
         self._ensure_filter_in_scope(ctx, assigned_user_id)
-        rows, next_cursor, total = await self._repo.list_contacts(
+        rows, next_cursor, has_more, total = await self._repo.list_contacts(
             ctx=ctx,
             q=q,
             status=status,
@@ -90,9 +91,15 @@ class ContactService:
             cursor=cursor,
             offset=offset,
             limit=limit,
+            include_total=include_total,
         )
         items = [to_contact_response(row, actor=actor) for row in rows]
-        return ContactListResponse(items=items, next_cursor=next_cursor, total=total)
+        return ContactListResponse(
+            items=items,
+            next_cursor=next_cursor,
+            has_more=has_more,
+            total=total,
+        )
 
     async def get_contact(
         self,

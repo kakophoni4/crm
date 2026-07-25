@@ -61,10 +61,14 @@ import {
   formatAccountingMoney,
   formatAccountingPayment,
 } from '@/features/accounting/types'
-import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import AppCard from '@/shared/ui/AppCard.vue'
+import {
+  VIRTUAL_DATA_TABLE_MAX_HEIGHT,
+  VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
+} from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
@@ -85,6 +89,7 @@ const orderSearch = ref('')
 const expandedLavki = ref<string[]>([])
 const periodFilterOptions = OPT_PERIOD_OPTIONS
 const savingPeriodOrderId = ref<number | null>(null)
+const editingPeriodOrderId = ref<number | null>(null)
 
 async function onOrderPeriodChange(
   row: AccountingUnitOrder,
@@ -103,7 +108,45 @@ async function onOrderPeriodChange(
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить период')
   } finally {
     savingPeriodOrderId.value = null
+    editingPeriodOrderId.value = null
   }
+}
+
+function renderOrderPeriodCell(row: AccountingUnitOrder) {
+  const isEditing =
+    editingPeriodOrderId.value === row.order_id || savingPeriodOrderId.value === row.order_id
+  if (isEditing) {
+    return h('div', { onClick: (e: MouseEvent) => e.stopPropagation() }, [
+      h(NSelect, {
+        value: row.period_code || null,
+        options: periodFilterOptions,
+        size: 'small',
+        clearable: false,
+        filterable: true,
+        placeholder: 'Указать период',
+        loading: savingPeriodOrderId.value === row.order_id,
+        style: 'min-width: 160px',
+        onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
+        onBlur: () => {
+          if (savingPeriodOrderId.value !== row.order_id) {
+            editingPeriodOrderId.value = null
+          }
+        },
+      }),
+    ])
+  }
+  const label = formatOptPeriodLabel(row.period_code)
+  return h(
+    'span',
+    {
+      class: 'accounting-page__period-label',
+      onClick: (e: MouseEvent) => {
+        e.stopPropagation()
+        editingPeriodOrderId.value = row.order_id
+      },
+    },
+    label === '—' ? 'Указать период' : label,
+  )
 }
 
 const requirements = ref<AccountingRequirement[]>([])
@@ -661,18 +704,7 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
       title: 'Период',
       key: 'period_code',
       width: 180,
-      render: (row) =>
-        h(NSelect, {
-          value: row.period_code || null,
-          options: periodFilterOptions,
-          size: 'small',
-          clearable: false,
-          filterable: true,
-          placeholder: 'Указать период',
-          loading: savingPeriodOrderId.value === row.order_id,
-          style: 'min-width: 160px',
-          onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
-        }),
+      render: (row) => renderOrderPeriodCell(row),
     },
     {
       title: 'Заявка',
@@ -1031,6 +1063,9 @@ onUnmounted(() => {
                   :bordered="false"
                   :scroll-x="980"
                   size="small"
+                  virtual-scroll
+                  :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
+                  :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
                 />
               </div>
               <div class="accounting-page__pagination">
@@ -1368,6 +1403,12 @@ onUnmounted(() => {
 
 .accounting-page__requirements .accounting-page__pagination {
   justify-content: center;
+}
+
+.accounting-page__period-label {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
 
 .accounting-page__pagination {

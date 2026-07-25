@@ -17,6 +17,37 @@ from app.modules.storage.repository import StorageRepository
 logger = structlog.get_logger(__name__)
 
 
+async def _index_message_attachments_in_new_session(message_id: int) -> None:
+    from app.shared.db import get_session_factory
+
+    session = get_session_factory()()
+    try:
+        await index_message_attachments(session, message_id=message_id)
+        await session.commit()
+    except Exception:
+        logger.exception(
+            "index_message_attachments_deferred_failed",
+            message_id=message_id,
+        )
+        await session.rollback()
+    finally:
+        await session.close()
+
+
+def schedule_index_message_attachments_after_commit(
+    session: AsyncSession,
+    *,
+    message_id: int,
+) -> None:
+    """Index group_chat_files after the message row is committed."""
+    from app.shared.db import schedule_after_commit
+
+    schedule_after_commit(
+        session,
+        lambda mid=message_id: _index_message_attachments_in_new_session(mid),
+    )
+
+
 async def index_message_attachments(session: AsyncSession, *, message_id: int) -> None:
     message = await session.get(ChatMessage, message_id)
     if message is None:

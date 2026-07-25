@@ -34,5 +34,5 @@ class ContactFieldChange(Base):
     )
     changed_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
-    contact: Mapped[Contact] = relationship(back_populates="field_changes", lazy="selectin")
-    changer: Mapped[User] = relationship(lazy="selectin")
+    contact: Mapped[Contact] = relationship(back_populates="field_changes", lazy="select")
+    changer: Mapped[User] = relationship(lazy="select")

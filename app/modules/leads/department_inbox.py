@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.db.models.group import Group
 
 # One synthetic group per department for department-bot leads (v1.2, LEADS.md §7).
 DEPT_INBOX_GROUP_NAME = "__department_inbox__"
@@ -55,15 +57,21 @@ async def get_department_inbox_group_id(
     department_id: int,
 ) -> int | None:
     """Return existing inbox group id for a department (read-only)."""
+    mapping = await get_department_inbox_group_ids_map(session, {department_id})
+    return mapping.get(department_id)
+
+
+async def get_department_inbox_group_ids_map(
+    session: AsyncSession,
+    department_ids: set[int],
+) -> dict[int, int]:
+    """Batch lookup of department inbox group ids."""
+    if not department_ids:
+        return {}
     result = await session.execute(
-        text(
-            """
-            SELECT id FROM groups
-            WHERE department_id = :dept_id AND name = :name
-            LIMIT 1
-            """
+        select(Group.department_id, Group.id).where(
+            Group.department_id.in_(department_ids),
+            Group.name == DEPT_INBOX_GROUP_NAME,
         ),
-        {"dept_id": department_id, "name": DEPT_INBOX_GROUP_NAME},
     )
-    row_id = result.scalar_one_or_none()
-    return int(row_id) if row_id is not None else None
+    return {int(dept_id): int(group_id) for dept_id, group_id in result.all()}

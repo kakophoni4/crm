@@ -24,6 +24,7 @@ function buildListParams(params: ContactListParams): Record<string, string | num
   if (params.cursor) query.cursor = params.cursor
   if (params.offset != null) query.offset = params.offset
   if (params.limit) query.limit = params.limit
+  if (params.include_total) query.include_total = 'true'
   if (params.custom_field_filters) {
     for (const [key, value] of Object.entries(params.custom_field_filters)) {
       if (value) query[`custom_field[${key}]`] = value
@@ -32,9 +33,15 @@ function buildListParams(params: ContactListParams): Record<string, string | num
   return query
 }
 
+let listContactsAbort: AbortController | null = null
+
 export async function listContacts(params: ContactListParams): Promise<ContactListResponse> {
+  listContactsAbort?.abort()
+  listContactsAbort = new AbortController()
+  const signal = listContactsAbort.signal
   const { data } = await http.get<ContactListResponse>('/contacts', {
     params: buildListParams(params),
+    signal,
   })
   return data
 }

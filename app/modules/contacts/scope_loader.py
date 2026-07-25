@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+from dataclasses import replace
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +13,15 @@ from app.modules.db.models.user import User
 from app.modules.db.models.user_group_membership import UserGroupMembership
 from app.modules.rbac.scope import ScopeContext
 from app.modules.users.memberships import list_user_group_ids
+
+# In-process cache; membership changes may be stale for up to TTL seconds.
+_SCOPE_CACHE_TTL_SECONDS = 10.0
+_scope_cache: dict[int, tuple[ScopeContext, float]] = {}
+
+
+def clear_scope_loader_cache() -> None:
+    """Drop all cached scope contexts (tests)."""
+    _scope_cache.clear()
 
 
 class ScopeLoader:
@@ -36,6 +48,19 @@ class ScopeLoader:
         return frozenset(result.scalars().all())
 
     async def load(self, actor: User) -> ScopeContext:
+        now = time.monotonic()
+        cached = _scope_cache.get(actor.id)
+        if cached is not None:
+            ctx, expires_at = cached
+            if now < expires_at:
+                return replace(ctx, actor=actor)
+            del _scope_cache[actor.id]
+
+        ctx = await self._load_uncached(actor)
+        _scope_cache[actor.id] = (ctx, now + _SCOPE_CACHE_TTL_SECONDS)
+        return replace(ctx, actor=actor)
+
+    async def _load_uncached(self, actor: User) -> ScopeContext:
         role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
         if role == UserRole.ADMIN:
             return ScopeContext(actor=actor)

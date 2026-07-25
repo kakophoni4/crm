@@ -27,8 +27,11 @@ from app.modules.db.models.bot import Bot
 from app.modules.db.models.chat import Chat
 from app.modules.db.models.enums import BotChannel, BotOwnerType, ChatStatus, StatusKind
 from app.modules.db.models.user import User
-from app.modules.leads.access import actor_can_access_lead
-from app.modules.leads.department_inbox import get_department_inbox_group_id
+from app.modules.leads.access import actor_can_access_lead, actor_can_access_leads_map
+from app.modules.leads.department_inbox import (
+    get_department_inbox_group_id,
+    get_department_inbox_group_ids_map,
+)
 from app.modules.rbac.scope import (
     SCOPE_ALL,
     visible_department_ids,
@@ -117,10 +120,6 @@ class ChatService:
             cursor=cursor,
             limit=limit,
         )
-        unread_map = await self._repo.get_unread_for_me_map(
-            [chat.id for chat, *_ in rows],
-            actor.id,
-        )
         bot_ids = {chat.bot_id for chat, *_ in rows if chat.bot_id is not None}
         bot_names: dict[int, str] = {}
         if bot_ids:
@@ -128,6 +127,16 @@ class ChatService:
                 select(Bot.id, Bot.name).where(Bot.id.in_(bot_ids)),
             )
             bot_names = {int(bid): str(name) for bid, name in bot_rows.all()}
+        dept_inbox_map = await get_department_inbox_group_ids_map(
+            self._session,
+            {
+                chat.assigned_department_id
+                for chat, *_ in rows
+                if chat.assigned_group_id is None and chat.assigned_department_id is not None
+            },
+        )
+        leads = [chat.current_lead for chat, *_ in rows if chat.current_lead is not None]
+        lead_access_map = await actor_can_access_leads_map(self._session, ctx, leads)
         items = []
         for (
             chat,
@@ -136,15 +145,15 @@ class ChatService:
             pending_inbound_at,
             escalated_at,
             last_direction,
+            unread_for_me,
         ) in rows:
-            lead_in_scope = chat.current_lead is None or await actor_can_access_lead(
-                self._session,
-                ctx,
-                chat.current_lead,
+            lead_in_scope = chat.current_lead is None or lead_access_map.get(
+                chat.current_lead.id,
+                False,
             )
             item = to_chat_list_item(
                 chat,
-                unread_for_me=unread_map.get(chat.id, False),
+                unread_for_me=unread_for_me,
                 lead_in_scope=lead_in_scope,
                 bot_name=bot_names.get(chat.bot_id) if chat.bot_id is not None else None,
             )
@@ -156,10 +165,7 @@ class ChatService:
             )
             owner_group_id = chat.assigned_group_id
             if owner_group_id is None and chat.assigned_department_id is not None:
-                owner_group_id = await get_department_inbox_group_id(
-                    self._session,
-                    chat.assigned_department_id,
-                )
+                owner_group_id = dept_inbox_map.get(chat.assigned_department_id)
             if owner_group_id is None and chat.current_lead is not None:
                 owner_group_id = chat.current_lead.group_id
             if owner_group_id is not None:

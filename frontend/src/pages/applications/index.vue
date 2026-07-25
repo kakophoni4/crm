@@ -14,7 +14,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { ClipboardList, MessageSquare } from 'lucide-vue-next'
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { listGroups, type Group } from '@/features/admin/api'
@@ -38,11 +38,19 @@ import {
   optPaymentStatusLabel,
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
-import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import {
+  VIRTUAL_DATA_TABLE_MAX_HEIGHT,
+  VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
+} from '@/shared/ui/virtual-data-table'
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
-import OptOrdersPanel from '@/widgets/chat/OptOrdersPanel.vue'
+
+/** Heavy order detail panel — load on first open, not with /applications TTI. */
+const OptOrdersPanel = defineAsyncComponent(
+  () => import('@/widgets/chat/OptOrdersPanel.vue'),
+)
 
 type TabName = 'orders' | 'payments'
 
@@ -75,6 +83,7 @@ const groups = ref<Group[]>([])
 const managers = ref<OptRegistryManagerItem[]>([])
 const periodOptions = OPT_PERIOD_OPTIONS
 const savingPeriodOrderId = ref<number | null>(null)
+const editingPeriodOrderId = ref<number | null>(null)
 const syncing1c = ref(false)
 const syncReportOpen = ref(false)
 const syncReport = ref<OptSync1cResponse | null>(null)
@@ -133,7 +142,45 @@ async function onOrderPeriodChange(
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить период')
   } finally {
     savingPeriodOrderId.value = null
+    editingPeriodOrderId.value = null
   }
+}
+
+function renderPeriodCell(row: OptOrderRegistryItem) {
+  const isEditing =
+    editingPeriodOrderId.value === row.id || savingPeriodOrderId.value === row.id
+  if (isEditing) {
+    return h('div', { onClick: (e: MouseEvent) => e.stopPropagation() }, [
+      h(NSelect, {
+        value: row.period_code || null,
+        options: periodOptions,
+        size: 'small',
+        clearable: false,
+        filterable: true,
+        placeholder: 'Указать период',
+        loading: savingPeriodOrderId.value === row.id,
+        style: 'width: 160px',
+        onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
+        onBlur: () => {
+          if (savingPeriodOrderId.value !== row.id) {
+            editingPeriodOrderId.value = null
+          }
+        },
+      }),
+    ])
+  }
+  const label = formatOptPeriodLabel(row.period_code)
+  return h(
+    'span',
+    {
+      class: 'applications-page__period-label',
+      onClick: (e: MouseEvent) => {
+        e.stopPropagation()
+        editingPeriodOrderId.value = row.id
+      },
+    },
+    label === '—' ? 'Указать период' : label,
+  )
 }
 
 function formatMoney(value: number): string {
@@ -188,20 +235,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       title: 'Период',
       key: 'period_code',
       width: 180,
-      render: (row) =>
-        h('div', { onClick: (e: MouseEvent) => e.stopPropagation() }, [
-          h(NSelect, {
-            value: row.period_code || null,
-            options: periodOptions,
-            size: 'small',
-            clearable: false,
-            filterable: true,
-            placeholder: 'Указать период',
-            loading: savingPeriodOrderId.value === row.id,
-            style: 'width: 160px',
-            onUpdateValue: (value: string | null) => onOrderPeriodChange(row, value),
-          }),
-        ]),
+      render: (row) => renderPeriodCell(row),
     },
     {
       title: 'Клиент',
@@ -672,6 +706,9 @@ onMounted(() => {
             :bordered="false"
             :pagination="false"
             :scroll-x="1300"
+            virtual-scroll
+            :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
+            :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
         </AppCard>
       </template>
@@ -691,6 +728,9 @@ onMounted(() => {
             :bordered="false"
             :pagination="false"
             :scroll-x="1280"
+            virtual-scroll
+            :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
+            :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
         </AppCard>
       </template>
@@ -1119,6 +1159,12 @@ onMounted(() => {
   .applications-page__facts--payment {
     grid-template-columns: 1fr;
   }
+}
+
+.applications-page__period-label {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
 
 :deep(.n-data-table-tr) {

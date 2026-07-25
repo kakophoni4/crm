@@ -55,13 +55,13 @@ class Contact(Base):
 
     assigned_department: Mapped[Department | None] = relationship(
         foreign_keys=[assigned_department_id],
-        lazy="selectin",
+        lazy="select",
     )
     creator: Mapped[User] = relationship(
         foreign_keys=[created_by],
-        lazy="selectin",
+        lazy="select",
     )
     field_changes: Mapped[list[ContactFieldChange]] = relationship(
         back_populates="contact",
-        lazy="selectin",
+        lazy="select",
     )
