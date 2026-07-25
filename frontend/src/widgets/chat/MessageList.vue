@@ -386,7 +386,25 @@ const visibleItems = computed(() => {
   }))
 })
 
-const topSpacerHeight = computed(() => prefixOffsets.value[visibleRange.value.start] ?? 0)
+/** Viewport CSS padding (top+bottom); pin math uses the content box. */
+const VIEWPORT_PAD_Y = 24
+
+const topSpacerHeight = computed(() => {
+  const { start } = visibleRange.value
+  const virtualTop = prefixOffsets.value[start] ?? 0
+  // Mid/long thread: only the virtual window offset.
+  if (start > 0) return virtualTop
+
+  const total = totalListHeight.value
+  const viewH = viewportHeightRef.value
+  const avail = Math.max(0, viewH - VIEWPORT_PAD_Y)
+  // Short thread: pad above so the last messages sit on the composer (Telegram-style).
+  // CSS flex-end/min-height under NSpin is unreliable and left a blank hole instead.
+  if (total > 0 && avail > 0 && total < avail) {
+    return avail - total
+  }
+  return virtualTop
+})
 
 const bottomSpacerHeight = computed(() => {
   const { end } = visibleRange.value
@@ -762,21 +780,15 @@ watch(
   padding: 12px 16px;
 }
 
-/* Fill viewport so short threads sit at the bottom (Telegram-style), not under a blank hole. */
 .message-list__viewport :deep(.n-spin-container),
 .message-list__viewport :deep(.n-spin-content) {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-  box-sizing: border-box;
+  display: block;
+  min-height: 0;
 }
 
 .message-list__items {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  flex: 1 1 auto;
-  min-height: 100%;
   width: 100%;
   box-sizing: border-box;
 }
