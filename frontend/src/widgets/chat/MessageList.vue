@@ -50,8 +50,9 @@ const DEFAULT_MESSAGE_HEIGHT = 68
 const DEFAULT_DATE_HEIGHT = 32
 /** Must match CSS margin-bottom on virtual rows (flex gap breaks spacer math). */
 const ITEM_GAP_PX = 10
+/** While reading history, block auto stick-to-bottom (resize/measure yank). */
+const STICK_SUPPRESS_MS = 1500
 
-let contentResizeObserver: ResizeObserver | null = null
 let viewportResizeObserver: ResizeObserver | null = null
 let itemResizeObserver: ResizeObserver | null = null
 const observedItemElements = new Map<number, HTMLElement>()
@@ -60,6 +61,23 @@ const observedItemElements = new Map<number, HTMLElement>()
 const pendingMeasures = new Map<string, { key: string; index: number; height: number }>()
 let measureRafId = 0
 let pendingStickToBottom = false
+/** Timestamp until which scrollToBottom is ignored after user scrolls up. */
+let stickSuppressedUntil = 0
+
+function suppressStickToBottom(ms = STICK_SUPPRESS_MS): void {
+  stickSuppressedUntil = Date.now() + ms
+  stickToBottom.value = false
+  pendingStickToBottom = false
+}
+
+function isStickAllowed(): boolean {
+  return (
+    stickToBottom.value &&
+    Date.now() >= stickSuppressedUntil &&
+    !loadingOlderGuard.value &&
+    anchorHeight.value == null
+  )
+}
 
 interface VirtualListItem {
   kind: 'date' | 'message'
@@ -268,8 +286,16 @@ function extendPrefixOffsetsForAppend(items: VirtualListItem[], fromIndex: numbe
 function applyHeightDeltaAt(index: number, delta: number): void {
   if (delta === 0) return
   const buf = prefixOffsetsBuf
+  // Item top is unchanged; growth shifts everything below. Keep visual anchor stable
+  // when the changed row is above (or at) the current scroll position.
+  const itemTop = buf[index] ?? 0
   for (let j = index + 1; j < buf.length; j += 1) {
     buf[j] += delta
+  }
+  const el = viewportRef.value
+  if (el && scrollTopRef.value > itemTop) {
+    el.scrollTop += delta
+    scrollTopRef.value = el.scrollTop
   }
 }
 
@@ -422,7 +448,7 @@ function flushMeasuredHeights(): void {
 
   const stick = pendingStickToBottom
   pendingStickToBottom = false
-  if (stick && stickToBottom.value && !loadingOlderGuard.value && anchorHeight.value == null) {
+  if (stick && isStickAllowed()) {
     scrollToBottom()
   }
 }
@@ -445,7 +471,7 @@ function onItemResize(entry: ResizeObserverEntry): void {
   const height = el.offsetHeight
   if (height <= 0) return
   queueMeasuredHeight(index, item, height)
-  if (stickToBottom.value && !loadingOlderGuard.value && anchorHeight.value == null) {
+  if (isStickAllowed()) {
     pendingStickToBottom = true
     scheduleMeasureFlush()
   }
@@ -480,6 +506,7 @@ function bindVirtualItemRef(el: Element | { $el?: Element } | null, index: numbe
 }
 
 function scrollToBottom(): void {
+  if (!isStickAllowed()) return
   const el = viewportRef.value
   if (!el) return
   // Instant jump — smooth scroll often undershoots when height is still growing.
@@ -490,23 +517,11 @@ function scrollToBottom(): void {
 async function scrollToBottomAfterLayout(): Promise<void> {
   await nextTick()
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  if (!stickToBottom.value) return
+  if (!isStickAllowed()) return
   scrollToBottom()
   // Attachments/images often bump height after the first paint.
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  if (stickToBottom.value) scrollToBottom()
-}
-
-function bindContentResizeObserver(): void {
-  contentResizeObserver?.disconnect()
-  contentResizeObserver = null
-  const target = itemsRef.value
-  if (!target || typeof ResizeObserver === 'undefined') return
-  contentResizeObserver = new ResizeObserver(() => {
-    if (!stickToBottom.value || loadingOlderGuard.value || anchorHeight.value != null) return
-    scrollToBottom()
-  })
-  contentResizeObserver.observe(target)
+  if (isStickAllowed()) scrollToBottom()
 }
 
 function bindViewportResizeObserver(): void {
@@ -521,21 +536,17 @@ function bindViewportResizeObserver(): void {
   viewportResizeObserver.observe(el)
 }
 
-watch(itemsRef, () => bindContentResizeObserver())
-
 onMounted(() => {
   // Remounted per chat (`:key="chatId"`) with messages already filled — watches may not fire.
+  stickSuppressedUntil = 0
   stickToBottom.value = true
   bindItemResizeObserver()
   bindViewportResizeObserver()
-  bindContentResizeObserver()
   void scrollToBottomAfterLayout()
 })
 
 onBeforeUnmount(() => {
   cancelPendingMeasures()
-  contentResizeObserver?.disconnect()
-  contentResizeObserver = null
   viewportResizeObserver?.disconnect()
   viewportResizeObserver = null
   itemResizeObserver?.disconnect()
@@ -546,9 +557,16 @@ onBeforeUnmount(() => {
 function onViewportScroll(): void {
   const el = viewportRef.value
   if (!el) return
+  const prevTop = scrollTopRef.value
   scrollTopRef.value = el.scrollTop
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-  stickToBottom.value = distance < 72
+
+  // Upward scroll: lock stick so virtualization measure/resize cannot yank back down.
+  if (el.scrollTop + 1 < prevTop) {
+    suppressStickToBottom()
+  } else if (Date.now() >= stickSuppressedUntil) {
+    stickToBottom.value = distance < 72
+  }
 
   if (
     el.scrollTop < 96 &&
@@ -557,7 +575,7 @@ function onViewportScroll(): void {
     !loadingOlderGuard.value
   ) {
     loadingOlderGuard.value = true
-    stickToBottom.value = false
+    suppressStickToBottom()
     anchorHeight.value = el.scrollHeight
     emit('loadOlder')
   }
@@ -584,6 +602,7 @@ watch(
 watch(
   () => props.chatId,
   () => {
+    stickSuppressedUntil = 0
     stickToBottom.value = true
     loadingOlderGuard.value = false
     anchorHeight.value = null
@@ -598,7 +617,7 @@ watch(
 watch(
   () => props.loading,
   (loading, wasLoading) => {
-    if (wasLoading && !loading && stickToBottom.value) {
+    if (wasLoading && !loading && isStickAllowed()) {
       void scrollToBottomAfterLayout()
     }
   },
@@ -613,7 +632,7 @@ watch(
     return [msgs.length, messageKey(last), messageKey(first)] as const
   },
   (next, prev) => {
-    if (!stickToBottom.value) return
+    if (!isStickAllowed()) return
     if (!next[0]) return
 
     const [nextLen, nextLastKey, nextFirstKey] = next
@@ -743,16 +762,23 @@ watch(
   padding: 12px 16px;
 }
 
-.message-list__viewport :deep(.n-spin-container) {
+/* Fill viewport so short threads sit at the bottom (Telegram-style), not under a blank hole. */
+.message-list__viewport :deep(.n-spin-container),
+.message-list__viewport :deep(.n-spin-content) {
   display: flex;
   flex-direction: column;
-  min-height: min-content;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .message-list__items {
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  min-height: 100%;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .message-list__older-hint {

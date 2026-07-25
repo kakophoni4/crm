@@ -103,8 +103,8 @@ const NewWhatsappChatDialog = defineAsyncComponent(
 
 
 const CHATS_NARROW_BREAKPOINT = 1024
-/** Fixed row height for NVirtualList (padding + avatar + preview + meta + gap). */
-const CHAT_LIST_ITEM_SIZE = 110
+/** Fixed row height for NVirtualList (padding + avatar + owner + preview + meta + gap). */
+const CHAT_LIST_ITEM_SIZE = 132
 const CHAT_LIST_LOAD_MORE_PX = 240
 const CHAT_LIST_LOAD_MORE_THROTTLE_MS = 500
 
@@ -825,7 +825,11 @@ onUnmounted(() => {
           :key="`pay-${store.currentChatId}`"
           :chat="store.currentChat"
         />
-        <ChatsNotificationsPane v-else :embedded="!!store.currentChat" />
+        <ChatsNotificationsPane
+          v-else
+          embedded
+          :hide-title="!!store.currentChat"
+        />
       </aside>
 
     </div>
@@ -848,7 +852,7 @@ onUnmounted(() => {
         >
           <X :size="18" />
         </NButton>
-        <ChatsNotificationsPane />
+        <ChatsNotificationsPane embedded />
       </aside>
     </div>
 
@@ -1078,7 +1082,8 @@ onUnmounted(() => {
 
   box-sizing: border-box;
 
-  height: 106px;
+  /* Keep in sync with CHAT_LIST_ITEM_SIZE (height + margin-bottom). */
+  height: 128px;
 
   padding: 10px 12px;
 
@@ -1091,6 +1096,12 @@ onUnmounted(() => {
   overflow: hidden;
 
   transition: background 0.15s;
+
+  display: flex;
+
+  flex-direction: column;
+
+  justify-content: flex-start;
 
 }
 
@@ -1190,9 +1201,19 @@ onUnmounted(() => {
 
 .chats-page__meta {
 
+  margin-top: 2px;
+
   font-size: 0.75rem;
 
+  line-height: 1.25;
+
   opacity: 0.65;
+
+  white-space: nowrap;
+
+  overflow: hidden;
+
+  text-overflow: ellipsis;
 
 }
 
@@ -1514,15 +1535,18 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   right: 0;
+  display: flex;
+  flex-direction: column;
   width: min(360px, 92vw);
   height: 100%;
   background: var(--app-surface);
   padding: 12px;
-  overflow-y: auto;
+  overflow: hidden;
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
 }
 
 .chats-page__inbox-close {
+  flex-shrink: 0;
   margin: 0 0 8px auto;
   display: flex;
 }

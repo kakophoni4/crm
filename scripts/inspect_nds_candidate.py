@@ -32,6 +32,7 @@ async def _resolve_key(name: str | None, key: str | None) -> tuple[str, str]:
         return key, key
     if not name:
         raise SystemExit("Need --name or --key")
+    pat = name if ("%" in name or "_" in name) else f"%{name}%"
     session_factory = get_session_factory()
     async with session_factory() as session:
         row = (
@@ -46,7 +47,7 @@ async def _resolve_key(name: str | None, key: str | None) -> tuple[str, str]:
                     LIMIT 5
                     """
                 ),
-                {"n": name},
+                {"n": pat},
             )
         ).mappings().all()
     if not row:
@@ -86,10 +87,10 @@ async def _amain(name: str | None, key: str | None) -> int:
         print(f"\nopenpyxl failed: {exc}")
         return 1
 
-    print("\nFirst 3 rows of each sheet (for manual check):")
+    print("\nFirst 15 rows of each sheet (for manual check):")
     for ws in wb.worksheets:
         print(f"--- sheet {ws.title!r} max_row={ws.max_row} max_col={ws.max_column}")
-        for r in range(1, min(4, (ws.max_row or 0) + 1)):
+        for r in range(1, min(16, (ws.max_row or 0) + 1)):
             vals = []
             for c in range(1, min(15, (ws.max_column or 0) + 1)):
                 v = ws.cell(r, c).value
@@ -102,7 +103,10 @@ async def _amain(name: str | None, key: str | None) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--name", help="Exact/ILIKE original_name")
+    p.add_argument(
+        "--name",
+        help="Substring or ILIKE pattern for original_name (auto %%wrap%%)",
+    )
     p.add_argument("--key", help="storage_key")
     args = p.parse_args()
     raise SystemExit(asyncio.run(_amain(args.name, args.key)))

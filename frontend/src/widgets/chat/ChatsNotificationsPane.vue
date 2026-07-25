@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { NButton, NEmpty, NSpace } from 'naive-ui'
+import { NButton, NEmpty } from 'naive-ui'
 import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 
-withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+withDefaults(defineProps<{ embedded?: boolean; hideTitle?: boolean }>(), {
+  embedded: false,
+  hideTitle: false,
+})
 
 const router = useRouter()
 const notifications = useChatNotificationsStore()
@@ -38,7 +41,7 @@ onUnmounted(() => {
     :class="{ 'chats-notifications-pane--embedded': embedded }"
   >
     <div class="chats-notifications-pane__head">
-      <strong v-if="!embedded" class="chats-notifications-pane__title">Уведомления</strong>
+      <strong v-if="!hideTitle" class="chats-notifications-pane__title">Уведомления</strong>
       <div class="chats-notifications-pane__actions">
         <span v-if="notifications.unreadCount" class="chats-notifications-pane__unread-count">
           непрочитано: {{ notifications.unreadCount }}
@@ -58,7 +61,7 @@ onUnmounted(() => {
       v-if="!notifications.items.length"
       description="Пока тихо — события появятся здесь."
     />
-    <NSpace v-else vertical :size="8" class="chats-notifications-pane__feed">
+    <div v-else class="chats-notifications-pane__feed">
       <button
         v-for="row in notifications.items"
         :key="row.id"
@@ -77,7 +80,7 @@ onUnmounted(() => {
           {{ row.read ? 'прочитано' : 'новое' }}
         </span>
       </button>
-    </NSpace>
+    </div>
   </div>
 </template>
 
@@ -88,6 +91,7 @@ onUnmounted(() => {
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   margin-bottom: 8px;
 }
 
@@ -103,11 +107,15 @@ onUnmounted(() => {
 }
 
 .chats-notifications-pane--embedded {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  max-height: 100%;
   padding: 8px 12px 12px;
   border: none;
   border-radius: 0;
   background: transparent;
+  overflow: hidden;
 }
 
 .chats-notifications-pane__title {
@@ -127,10 +135,23 @@ onUnmounted(() => {
 }
 
 .chats-notifications-pane__feed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
+  min-height: 0;
   max-height: min(52vh, 420px);
+  overflow-x: hidden;
   overflow-y: auto;
   padding-right: 2px;
+  padding-bottom: 4px;
+  box-sizing: border-box;
+}
+
+/* Fill the right pane / drawer; never leave a capped hole under the list. */
+.chats-notifications-pane--embedded .chats-notifications-pane__feed {
+  flex: 1 1 0;
+  max-height: none;
 }
 
 .chats-notifications-pane__row {
