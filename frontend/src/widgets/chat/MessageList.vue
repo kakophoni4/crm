@@ -399,25 +399,7 @@ const visibleItems = computed(() => {
   }))
 })
 
-/** Viewport CSS padding (top+bottom); pin math uses the content box. */
-const VIEWPORT_PAD_Y = 24
-
-const topSpacerHeight = computed(() => {
-  const { start } = visibleRange.value
-  const virtualTop = prefixOffsets.value[start] ?? 0
-  // Mid/long thread: only the virtual window offset.
-  if (start > 0) return virtualTop
-
-  const total = totalListHeight.value
-  const viewH = viewportHeightRef.value
-  const avail = Math.max(0, viewH - VIEWPORT_PAD_Y)
-  // Short thread: pad above so the last messages sit on the composer (Telegram-style).
-  // CSS flex-end/min-height under NSpin is unreliable and left a blank hole instead.
-  if (total > 0 && avail > 0 && total < avail) {
-    return avail - total
-  }
-  return virtualTop
-})
+const topSpacerHeight = computed(() => prefixOffsets.value[visibleRange.value.start] ?? 0)
 
 const bottomSpacerHeight = computed(() => {
   const { end } = visibleRange.value
@@ -714,11 +696,6 @@ watch(
   },
 )
 
-// Pin / measure changes grow scrollHeight — keep tip glued while sticking.
-watch(topSpacerHeight, () => {
-  if (isStickAllowed()) scrollToBottom()
-})
-
 // Tip/length only — deep watch on every attachment status tick was a major lag source.
 watch(
   () => {
@@ -856,17 +833,26 @@ watch(
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 16px;
+  /* Flex column so short threads can pin to the composer via margin-top: auto. */
+  display: flex;
+  flex-direction: column;
 }
 
 .message-list__viewport :deep(.n-spin-container),
 .message-list__viewport :deep(.n-spin-content) {
-  display: block;
-  min-height: 0;
+  display: flex !important;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-height: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .message-list__items {
   display: flex;
   flex-direction: column;
+  /* Free space goes ABOVE messages — kills the blank hole under short threads. */
+  margin-top: auto;
   width: 100%;
   box-sizing: border-box;
 }
