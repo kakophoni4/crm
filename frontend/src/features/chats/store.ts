@@ -32,7 +32,6 @@ import {
 } from '@/features/chats/chats-disk-cache'
 import { scheduleDealsPrefetchFromList } from '@/features/chats/deals-cache'
 import {
-  CHAT_SNAPSHOT_CACHE_SIZE,
   getChatSnapshot,
   isChatSnapshotFresh,
   priorityPrefetchChat,
