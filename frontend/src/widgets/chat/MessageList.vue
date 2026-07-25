@@ -52,6 +52,8 @@ const DEFAULT_DATE_HEIGHT = 32
 const ITEM_GAP_PX = 10
 /** While reading history, block auto stick-to-bottom (resize/measure yank). */
 const STICK_SUPPRESS_MS = 1500
+/** Short threads: render fully — virtual bottom spacers were the blank "hole". */
+const VIRTUALIZE_AFTER_ITEMS = 48
 
 let viewportResizeObserver: ResizeObserver | null = null
 let itemResizeObserver: ResizeObserver | null = null
@@ -391,26 +393,42 @@ const visibleRange = computed(() => {
   return { start, end }
 })
 
+/** Virtual windows + paddingBottom invented empty scroll space on short chats. */
+const useVirtualization = computed(
+  () => listItems.value.length > VIRTUALIZE_AFTER_ITEMS,
+)
+
 const visibleItems = computed(() => {
+  const items = listItems.value
+  if (!useVirtualization.value) {
+    return items.map((item, index) => ({ item, index }))
+  }
   const { start, end } = visibleRange.value
-  return listItems.value.slice(start, end).map((item, i) => ({
+  return items.slice(start, end).map((item, i) => ({
     item,
     index: start + i,
   }))
 })
 
-const topSpacerHeight = computed(() => prefixOffsets.value[visibleRange.value.start] ?? 0)
+const topSpacerHeight = computed(() => {
+  if (!useVirtualization.value) return 0
+  return prefixOffsets.value[visibleRange.value.start] ?? 0
+})
 
 const bottomSpacerHeight = computed(() => {
+  if (!useVirtualization.value) return 0
   const { end } = visibleRange.value
   const total = totalListHeight.value
   return Math.max(0, total - (prefixOffsets.value[end] ?? total))
 })
 
-const virtualPaddingStyle = computed(() => ({
-  paddingTop: `${topSpacerHeight.value}px`,
-  paddingBottom: `${bottomSpacerHeight.value}px`,
-}))
+const virtualPaddingStyle = computed(() => {
+  if (!useVirtualization.value) return undefined
+  return {
+    paddingTop: `${topSpacerHeight.value}px`,
+    paddingBottom: `${bottomSpacerHeight.value}px`,
+  }
+})
 
 function scheduleMeasureFlush(): void {
   if (measureRafId) return
@@ -731,7 +749,8 @@ watch(
 <template>
   <div class="message-list">
     <div ref="viewportRef" class="message-list__viewport" @scroll="onViewportScroll">
-      <NSpin :show="loading && !sorted.length">
+      <!-- Own frame (no NSpin wrapper): justify-end pins short threads without fake spacers. -->
+      <div class="message-list__frame">
         <div v-if="loadingOlder" class="message-list__older-hint">Загрузка...</div>
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />
@@ -813,7 +832,10 @@ watch(
             </div>
           </template>
         </div>
-      </NSpin>
+      </div>
+      <div v-if="loading && !sorted.length" class="message-list__boot-spin">
+        <NSpin show />
+      </div>
     </div>
   </div>
 </template>
@@ -828,21 +850,19 @@ watch(
 }
 
 .message-list__viewport {
+  position: relative;
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 16px;
-  /* Flex column so short threads can pin to the composer via margin-top: auto. */
-  display: flex;
-  flex-direction: column;
 }
 
-.message-list__viewport :deep(.n-spin-container),
-.message-list__viewport :deep(.n-spin-content) {
-  display: flex !important;
+/* min-height 100% + flex-end = short thread sits on the composer; long thread scrolls normally. */
+.message-list__frame {
+  display: flex;
   flex-direction: column;
-  flex: 1 0 auto;
+  justify-content: flex-end;
   min-height: 100%;
   width: 100%;
   box-sizing: border-box;
@@ -851,10 +871,17 @@ watch(
 .message-list__items {
   display: flex;
   flex-direction: column;
-  /* Free space goes ABOVE messages — kills the blank hole under short threads. */
-  margin-top: auto;
   width: 100%;
   box-sizing: border-box;
+}
+
+.message-list__boot-spin {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .message-list__older-hint {
