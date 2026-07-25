@@ -119,6 +119,7 @@ const narrowPane = ref<'list' | 'chat'>('list')
 
 const message = useMessage()
 const chatListSearchRef = ref<InstanceType<typeof NInput> | null>(null)
+const messageListRef = ref<{ scrollToBottomForced?: () => void } | null>(null)
 const replyToMessage = ref<ChatMessage | null>(null)
 
 const transferCardVisible = ref(false)
@@ -393,8 +394,18 @@ function prefetchChatOnHover(chatId: number): void {
 }
 
 function openChatMobile(chatId: number): void {
-  void store.openChat(chatId)
+  void store.openChat(chatId).then(() => {
+    nextTick(() => messageListRef.value?.scrollToBottomForced?.())
+  })
   if (isNarrow.value) narrowPane.value = 'chat'
+}
+
+/** Double-click list row: open (or refocus) and always jump to latest messages. */
+function onChatListDblClick(chatId: number): void {
+  void store.openChat(chatId).then(() => {
+    if (isNarrow.value) narrowPane.value = 'chat'
+    nextTick(() => messageListRef.value?.scrollToBottomForced?.())
+  })
 }
 
 function onWhatsappChatStarted(chatId: number): void {
@@ -603,6 +614,7 @@ onUnmounted(() => {
                 tabindex="0"
                 @mouseenter="prefetchChatOnHover(chat.id)"
                 @click="openChatMobile(chat.id)"
+                @dblclick.prevent="onChatListDblClick(chat.id)"
               >
                 <div class="chats-page__list-row">
                   <ContactAvatar
@@ -753,6 +765,7 @@ onUnmounted(() => {
           />
 
           <MessageList
+            ref="messageListRef"
             :key="store.currentChatId ?? 0"
             :messages="store.messages"
             :loading="store.messagesLoading"

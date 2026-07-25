@@ -63,6 +63,11 @@ let measureRafId = 0
 let pendingStickToBottom = false
 /** Timestamp until which scrollToBottom is ignored after user scrolls up. */
 let stickSuppressedUntil = 0
+/** >0 while we set scrollTop in code — ignore upward/loadOlder side-effects. */
+let programmaticScrollDepth = 0
+/** After open/remount, block loadOlder so scrollTop=0 cannot suppress stick. */
+let ignoreLoadOlderUntil = 0
+let stickRetryRaf = 0
 
 function suppressStickToBottom(ms = STICK_SUPPRESS_MS): void {
   stickSuppressedUntil = Date.now() + ms
@@ -77,6 +82,14 @@ function isStickAllowed(): boolean {
     !loadingOlderGuard.value &&
     anchorHeight.value == null
   )
+}
+
+function beginProgrammaticScroll(): void {
+  programmaticScrollDepth += 1
+}
+
+function endProgrammaticScroll(): void {
+  programmaticScrollDepth = Math.max(0, programmaticScrollDepth - 1)
 }
 
 interface VirtualListItem {
@@ -527,9 +540,58 @@ function scrollToBottom(): void {
   if (!isStickAllowed()) return
   const el = viewportRef.value
   if (!el) return
-  // Instant jump — smooth scroll often undershoots when height is still growing.
-  el.scrollTop = el.scrollHeight
-  scrollTopRef.value = el.scrollTop
+  beginProgrammaticScroll()
+  try {
+    // Instant jump — smooth scroll often undershoots when height is still growing.
+    el.scrollTop = el.scrollHeight
+    scrollTopRef.value = el.scrollTop
+  } finally {
+    endProgrammaticScroll()
+  }
+}
+
+/** Open chat / double-click: always jump to tip, even if stick was suppressed. */
+function scrollToBottomForced(): void {
+  stickSuppressedUntil = 0
+  stickToBottom.value = true
+  loadingOlderGuard.value = false
+  ignoreLoadOlderUntil = Date.now() + 1200
+  if (stickRetryRaf) {
+    cancelAnimationFrame(stickRetryRaf)
+    stickRetryRaf = 0
+  }
+
+  const run = (): void => {
+    const el = viewportRef.value
+    if (!el) return
+    beginProgrammaticScroll()
+    try {
+      el.scrollTop = el.scrollHeight
+      scrollTopRef.value = el.scrollTop
+    } finally {
+      endProgrammaticScroll()
+    }
+  }
+
+  run()
+  void nextTick(() => {
+    run()
+    let frames = 0
+    let lastHeight = -1
+    const tick = (): void => {
+      stickRetryRaf = 0
+      const el = viewportRef.value
+      const height = el?.scrollHeight ?? 0
+      run()
+      frames += 1
+      // Keep following layout until height settles or we hit a short budget.
+      if (frames < 20 && (height !== lastHeight || frames < 8)) {
+        lastHeight = height
+        stickRetryRaf = requestAnimationFrame(tick)
+      }
+    }
+    stickRetryRaf = requestAnimationFrame(tick)
+  })
 }
 
 async function scrollToBottomAfterLayout(): Promise<void> {
@@ -541,6 +603,8 @@ async function scrollToBottomAfterLayout(): Promise<void> {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   if (isStickAllowed()) scrollToBottom()
 }
+
+defineExpose({ scrollToBottomForced })
 
 function bindViewportResizeObserver(): void {
   viewportResizeObserver?.disconnect()
@@ -556,15 +620,17 @@ function bindViewportResizeObserver(): void {
 
 onMounted(() => {
   // Remounted per chat (`:key="chatId"`) with messages already filled — watches may not fire.
-  stickSuppressedUntil = 0
-  stickToBottom.value = true
   bindItemResizeObserver()
   bindViewportResizeObserver()
-  void scrollToBottomAfterLayout()
+  scrollToBottomForced()
 })
 
 onBeforeUnmount(() => {
   cancelPendingMeasures()
+  if (stickRetryRaf) {
+    cancelAnimationFrame(stickRetryRaf)
+    stickRetryRaf = 0
+  }
   viewportResizeObserver?.disconnect()
   viewportResizeObserver = null
   itemResizeObserver?.disconnect()
@@ -579,6 +645,14 @@ function onViewportScroll(): void {
   scrollTopRef.value = el.scrollTop
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
 
+  // Programmatic jumps must not look like "user scrolled up" or trigger history load.
+  if (programmaticScrollDepth > 0) {
+    if (Date.now() >= stickSuppressedUntil) {
+      stickToBottom.value = distance < 72
+    }
+    return
+  }
+
   // Upward scroll: lock stick so virtualization measure/resize cannot yank back down.
   if (el.scrollTop + 1 < prevTop) {
     suppressStickToBottom()
@@ -587,6 +661,7 @@ function onViewportScroll(): void {
   }
 
   if (
+    Date.now() >= ignoreLoadOlderUntil &&
     el.scrollTop < 96 &&
     props.hasMore &&
     !props.loadingOlder &&
@@ -620,26 +695,29 @@ watch(
 watch(
   () => props.chatId,
   () => {
-    stickSuppressedUntil = 0
-    stickToBottom.value = true
     loadingOlderGuard.value = false
     anchorHeight.value = null
     cancelPendingMeasures()
     measuredHeights.clear()
     rebuildPrefixOffsets(listItems.value)
     scrollTopRef.value = 0
-    void scrollToBottomAfterLayout()
+    scrollToBottomForced()
   },
 )
 
 watch(
   () => props.loading,
   (loading, wasLoading) => {
-    if (wasLoading && !loading && isStickAllowed()) {
-      void scrollToBottomAfterLayout()
+    if (wasLoading && !loading) {
+      scrollToBottomForced()
     }
   },
 )
+
+// Pin / measure changes grow scrollHeight — keep tip glued while sticking.
+watch(topSpacerHeight, () => {
+  if (isStickAllowed()) scrollToBottom()
+})
 
 // Tip/length only — deep watch on every attachment status tick was a major lag source.
 watch(
