@@ -11,8 +11,13 @@ import type {
 } from '@/features/leads/opt-types'
 import { http } from '@/shared/api/http'
 
-export async function listOptOrders(leadId: number): Promise<OptOrder[]> {
-  const { data } = await http.get<OptOrderListResponse>(`/leads/${leadId}/opt-orders`)
+export async function listOptOrders(
+  leadId: number,
+  options: { signal?: AbortSignal } = {},
+): Promise<OptOrder[]> {
+  const { data } = await http.get<OptOrderListResponse>(`/leads/${leadId}/opt-orders`, {
+    signal: options.signal,
+  })
   return data.items
 }
 

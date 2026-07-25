@@ -279,14 +279,13 @@ function unbindChatListScroll(): void {
 }
 
 function resolveChatListScrollEl(): HTMLElement | null {
-  const raw = chatVirtualListRef.value?.listElRef as
-    | HTMLElement
-    | { value?: HTMLElement | null }
-    | null
-    | undefined
-  if (raw == null) return null
-  if (typeof raw === 'object' && 'value' in raw) return raw.value ?? null
-  return raw
+  const raw = chatVirtualListRef.value?.listElRef as unknown
+  if (raw instanceof HTMLElement) return raw
+  if (raw != null && typeof raw === 'object' && 'value' in raw) {
+    const nested = (raw as { value?: unknown }).value
+    return nested instanceof HTMLElement ? nested : null
+  }
+  return null
 }
 
 async function bindChatListScroll(): Promise<void> {
