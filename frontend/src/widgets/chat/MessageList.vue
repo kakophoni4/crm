@@ -71,6 +71,13 @@ let programmaticScrollDepth = 0
 let ignoreLoadOlderUntil = 0
 let stickRetryRaf = 0
 
+/** One-shot enter anim for tip appends only (not history / virtualization remounts). */
+const enterAnimKeys = ref<Record<string, true>>({})
+const seenMessageKeys = new Set<string>()
+let enterSeedChatId: number | null | undefined = undefined
+const highlightMessageId = ref<number | null>(null)
+let highlightClearTimer = 0
+
 function suppressStickToBottom(ms = STICK_SUPPRESS_MS): void {
   stickSuppressedUntil = Date.now() + ms
   stickToBottom.value = false
@@ -224,6 +231,92 @@ function replyPreview(msg: ChatMessage): string {
 function quotedMessage(msg: ChatMessage): ChatMessage | null {
   if (msg.reply_to_message_id == null) return null
   return messagesById.value.get(msg.reply_to_message_id) ?? null
+}
+
+function seedEnterAnimKeys(): void {
+  seenMessageKeys.clear()
+  for (const msg of props.messages) {
+    const key = messageKey(msg)
+    if (key != null) seenMessageKeys.add(String(key))
+  }
+  enterAnimKeys.value = {}
+  enterSeedChatId = props.chatId
+}
+
+function markEnterAnim(key: string | number): void {
+  const k = String(key)
+  if (seenMessageKeys.has(k) || enterAnimKeys.value[k]) return
+  seenMessageKeys.add(k)
+  enterAnimKeys.value = { ...enterAnimKeys.value, [k]: true }
+}
+
+function onEnterAnimEnd(key: string | number, ev: AnimationEvent): void {
+  // Ignore bubbled flash/child animations — only the row enter keyframes.
+  if (ev.target !== ev.currentTarget) return
+  if (ev.animationName !== 'message-list-enter') return
+  const k = String(key)
+  if (!enterAnimKeys.value[k]) return
+  const next = { ...enterAnimKeys.value }
+  delete next[k]
+  enterAnimKeys.value = next
+}
+
+function clearHighlightTimer(): void {
+  if (highlightClearTimer) {
+    window.clearTimeout(highlightClearTimer)
+    highlightClearTimer = 0
+  }
+}
+
+function flashMessage(messageId: number): void {
+  highlightMessageId.value = messageId
+  clearHighlightTimer()
+  highlightClearTimer = window.setTimeout(() => {
+    highlightMessageId.value = null
+    highlightClearTimer = 0
+  }, 1200)
+}
+
+async function scrollToQuotedMessage(targetId: number): Promise<void> {
+  if (!Number.isFinite(targetId) || targetId <= 0) return
+  const items = listItems.value
+  let index = -1
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i]
+    if (item.kind === 'message' && item.msg?.id === targetId) {
+      index = i
+      break
+    }
+  }
+  if (index < 0) return
+
+  suppressStickToBottom(3000)
+  const el = viewportRef.value
+  if (!el) return
+
+  beginProgrammaticScroll()
+  try {
+    const offset = prefixOffsets.value[index] ?? 0
+    el.scrollTop = Math.max(0, offset - Math.max(32, viewportHeightRef.value * 0.28))
+    scrollTopRef.value = el.scrollTop
+  } finally {
+    endProgrammaticScroll()
+  }
+
+  await nextTick()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+  const row = el.querySelector(`[data-msg-id="${targetId}"]`) as HTMLElement | null
+  if (row) {
+    beginProgrammaticScroll()
+    try {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      scrollTopRef.value = el.scrollTop
+    } finally {
+      endProgrammaticScroll()
+    }
+  }
+  flashMessage(targetId)
 }
 
 function shouldShowMessageText(msg: ChatMessage): boolean {
@@ -382,10 +475,18 @@ const visibleRange = computed(() => {
   const len = items.length
   if (!len) return { start: 0, end: 0 }
 
-  const scrollTop = scrollTopRef.value
   const viewH = viewportHeightRef.value
   const overscanPx = OVERSCAN_ITEMS * DEFAULT_MESSAGE_HEIGHT
 
+  // Tip-stick: always render through the last row and keep paddingBottom at 0.
+  // Otherwise overestimated heights leave a phantom hole under the last bubble.
+  if (stickToBottom.value) {
+    const fromOffset = Math.max(0, totalListHeight.value - viewH - overscanPx)
+    const rawStart = findIndexAtOffset(fromOffset)
+    return { start: Math.max(0, rawStart - OVERSCAN_ITEMS), end: len }
+  }
+
+  const scrollTop = scrollTopRef.value
   const rawStart = findIndexAtOffset(Math.max(0, scrollTop - overscanPx))
   const rawEnd = findIndexAtOffset(scrollTop + viewH + overscanPx)
   const start = Math.max(0, rawStart - OVERSCAN_ITEMS)
@@ -417,7 +518,11 @@ const topSpacerHeight = computed(() => {
 
 const bottomSpacerHeight = computed(() => {
   if (!useVirtualization.value) return 0
+  // Never keep a phantom paddingBottom under the tip — that was the blank hole.
+  if (stickToBottom.value) return 0
   const { end } = visibleRange.value
+  const len = listItems.value.length
+  if (end >= len) return 0
   const total = totalListHeight.value
   return Math.max(0, total - (prefixOffsets.value[end] ?? total))
 })
@@ -434,8 +539,8 @@ const virtualPaddingStyle = computed(() => {
 const VIEWPORT_PAD_Y = 24
 
 /**
- * Pixel min-height for the pin frame. CSS `min-height: 100%` under overflow:auto
- * often resolves short, leaving a residual hole under the last bubble.
+ * Pixel min-height so short threads can pin to the composer via margin-top:auto.
+ * (justify-content:flex-end inside overflow:auto is unreliable and left a hole.)
  */
 const frameStyle = computed(() => {
   const h = Math.max(0, viewportHeightRef.value - VIEWPORT_PAD_Y)
@@ -634,11 +739,13 @@ onMounted(() => {
   // Remounted per chat (`:key="chatId"`) with messages already filled — watches may not fire.
   bindItemResizeObserver()
   bindViewportResizeObserver()
+  seedEnterAnimKeys()
   scrollToBottomForced()
 })
 
 onBeforeUnmount(() => {
   cancelPendingMeasures()
+  clearHighlightTimer()
   if (stickRetryRaf) {
     cancelAnimationFrame(stickRetryRaf)
     stickRetryRaf = 0
@@ -711,6 +818,10 @@ watch(
     anchorHeight.value = null
     cancelPendingMeasures()
     measuredHeights.clear()
+    clearHighlightTimer()
+    highlightMessageId.value = null
+    enterSeedChatId = undefined
+    seedEnterAnimKeys()
     rebuildPrefixOffsets(listItems.value)
     scrollTopRef.value = 0
     scrollToBottomForced()
@@ -735,8 +846,10 @@ watch(
     return [msgs.length, messageKey(last), messageKey(first)] as const
   },
   (next, prev) => {
-    if (!isStickAllowed()) return
-    if (!next[0]) return
+    if (!next[0]) {
+      if (enterSeedChatId !== props.chatId) seedEnterAnimKeys()
+      return
+    }
 
     const [nextLen, nextLastKey, nextFirstKey] = next
     const prevLen = prev?.[0] ?? 0
@@ -747,6 +860,22 @@ watch(
       nextLen > prevLen &&
       prevFirstKey !== nextFirstKey &&
       prevLastKey === nextLastKey
+
+    if (enterSeedChatId !== props.chatId) {
+      seedEnterAnimKeys()
+    } else if (isPrepend) {
+      // History pages: mark as seen, never animate.
+      for (const msg of props.messages) {
+        const key = messageKey(msg)
+        if (key != null) seenMessageKeys.add(String(key))
+      }
+    } else if (prev != null && nextLastKey != null && nextLastKey !== prevLastKey) {
+      markEnterAnim(nextLastKey)
+    } else if (prev != null && nextLen > prevLen && nextLastKey != null) {
+      markEnterAnim(nextLastKey)
+    }
+
+    if (!isStickAllowed()) return
     if (isPrepend) return
 
     const lengthChanged = prevLen !== nextLen
@@ -761,7 +890,7 @@ watch(
 <template>
   <div class="message-list">
     <div ref="viewportRef" class="message-list__viewport" @scroll="onViewportScroll">
-      <!-- Own frame (no NSpin wrapper): justify-end + px min-height pins short threads. -->
+      <!-- Own frame (no NSpin): min-height + items margin-top:auto pins short threads. -->
       <div class="message-list__frame" :style="frameStyle">
         <div v-if="loadingOlder" class="message-list__older-hint">Загрузка...</div>
         <div v-if="!sorted.length && !loading" class="message-list__empty">
@@ -780,10 +909,14 @@ watch(
               v-else
               :ref="(el) => bindVirtualItemRef(el, index)"
               class="message-list__row"
+              :data-msg-id="item.msg!.id > 0 ? item.msg!.id : undefined"
               :class="{
                 'message-list__row--out': item.msg!.direction === 'outbound',
                 'message-list__row--failed': item.msg!._failed,
+                'message-list__row--enter': !!enterAnimKeys[String(item.key)],
+                'message-list__row--flash': highlightMessageId === item.msg!.id,
               }"
+              @animationend="onEnterAnimEnd(item.key, $event)"
             >
               <ContactAvatar
                 v-if="item.msg!.direction === 'inbound' && contactId != null && contactName"
@@ -800,9 +933,15 @@ watch(
                     : 'message-list__bubble--in'
                 "
               >
-                <div v-if="quotedMessage(item.msg!)" class="message-list__quote">
+                <button
+                  v-if="quotedMessage(item.msg!)"
+                  type="button"
+                  class="message-list__quote"
+                  title="Перейти к сообщению"
+                  @click.stop="scrollToQuotedMessage(item.msg!.reply_to_message_id!)"
+                >
                   {{ replyPreview(quotedMessage(item.msg!)!) }}
-                </div>
+                </button>
                 <p v-if="shouldShowMessageText(item.msg!)" class="message-list__text">
                   {{ item.msg!.text }}
                 </p>
@@ -870,11 +1009,10 @@ watch(
   padding: 12px 16px;
 }
 
-/* flex-end + JS minHeight(px) = short thread on the composer; tall thread grows and scrolls. */
+/* JS minHeight(px) + margin-top:auto on items pins short threads to the composer. */
 .message-list__frame {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   width: 100%;
   box-sizing: border-box;
 }
@@ -884,8 +1022,9 @@ watch(
   flex-direction: column;
   width: 100%;
   box-sizing: border-box;
+  /* More reliable than justify-content:flex-end under overflow:auto. */
+  margin-top: auto;
 }
-
 .message-list__boot-spin {
   position: absolute;
   inset: 0;
@@ -967,19 +1106,72 @@ watch(
   opacity: 0.85;
 }
 
+.message-list__row--enter {
+  animation: message-list-enter 0.2s ease-out;
+}
+
+.message-list__row--flash .message-list__bubble {
+  animation: message-list-flash 1.15s ease-out;
+}
+
+@keyframes message-list-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes message-list-flash {
+  0%,
+  35% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 50%, transparent);
+  }
+  100% {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-list__row--enter,
+  .message-list__row--flash .message-list__bubble {
+    animation: none;
+  }
+}
+
 .message-list__quote {
-  margin-bottom: 6px;
+  display: block;
+  box-sizing: border-box;
+  width: auto;
+  max-width: 360px;
+  margin: 0 0 6px;
   padding: 5px 8px;
+  border: none;
   border-left: 3px solid var(--app-accent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--app-accent) 10%, transparent);
   color: var(--app-text-muted);
+  font: inherit;
   font-size: 0.8rem;
   line-height: 1.3;
-  max-width: 360px;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.message-list__quote:hover {
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  color: var(--app-text);
+}
+
+.message-list__quote:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-accent) 55%, transparent);
+  outline-offset: 1px;
 }
 
 .message-list__text {
