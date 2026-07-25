@@ -430,6 +430,18 @@ const virtualPaddingStyle = computed(() => {
   }
 })
 
+/** Must match `.message-list__viewport` padding-top + padding-bottom. */
+const VIEWPORT_PAD_Y = 24
+
+/**
+ * Pixel min-height for the pin frame. CSS `min-height: 100%` under overflow:auto
+ * often resolves short, leaving a residual hole under the last bubble.
+ */
+const frameStyle = computed(() => {
+  const h = Math.max(0, viewportHeightRef.value - VIEWPORT_PAD_Y)
+  return h > 0 ? { minHeight: `${h}px` } : undefined
+})
+
 function scheduleMeasureFlush(): void {
   if (measureRafId) return
   measureRafId = requestAnimationFrame(flushMeasuredHeights)
@@ -749,8 +761,8 @@ watch(
 <template>
   <div class="message-list">
     <div ref="viewportRef" class="message-list__viewport" @scroll="onViewportScroll">
-      <!-- Own frame (no NSpin wrapper): justify-end pins short threads without fake spacers. -->
-      <div class="message-list__frame">
+      <!-- Own frame (no NSpin wrapper): justify-end + px min-height pins short threads. -->
+      <div class="message-list__frame" :style="frameStyle">
         <div v-if="loadingOlder" class="message-list__older-hint">Загрузка...</div>
         <div v-if="!sorted.length && !loading" class="message-list__empty">
           <NEmpty description="Сообщений пока нет" />
@@ -858,12 +870,11 @@ watch(
   padding: 12px 16px;
 }
 
-/* min-height 100% + flex-end = short thread sits on the composer; long thread scrolls normally. */
+/* flex-end + JS minHeight(px) = short thread on the composer; tall thread grows and scrolls. */
 .message-list__frame {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  min-height: 100%;
   width: 100%;
   box-sizing: border-box;
 }
