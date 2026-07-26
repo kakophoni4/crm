@@ -25,6 +25,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger("tg_crm_bridge")
+# httpx INFO logs full getUpdates URL including the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -604,16 +606,38 @@ class Bridge:
             return web.Response(status=401, text="invalid signature")
         return web.Response(text="ok")
 
+    async def _log_bot_identity(self) -> None:
+        url = f"https://api.telegram.org/bot{self.tg_token}/getMe"
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url)
+        data = resp.json()
+        if not data.get("ok"):
+            log.error("getMe failed: %s", data)
+            return
+        result = data.get("result") or {}
+        log.info(
+            "Telegram bot identity: @%s id=%s bot_code=%s",
+            result.get("username"),
+            result.get("id"),
+            self.bot_code,
+        )
+
     async def poll_telegram(self) -> None:
         offset = 0
         url = f"https://api.telegram.org/bot{self.tg_token}/getUpdates"
+        # Telegram expects a JSON-serialized array, not a bare query list.
+        allowed = json.dumps(["message"])
         log.info("Telegram long polling started")
         async with httpx.AsyncClient(timeout=60.0) as client:
             while True:
                 try:
                     resp = await client.get(
                         url,
-                        params={"offset": offset, "timeout": 30, "allowed_updates": ["message"]},
+                        params={
+                            "offset": offset,
+                            "timeout": 30,
+                            "allowed_updates": allowed,
+                        },
                     )
                     data = resp.json()
                     if not data.get("ok"):
@@ -640,6 +664,8 @@ class Bridge:
                     await asyncio.sleep(5)
 
     async def run(self) -> None:
+        await self._log_bot_identity()
+
         app = web.Application()
         app.router.add_post("/crm/cmd", self.handle_outbound)
         app.router.add_get("/crm/health", self.handle_health)
