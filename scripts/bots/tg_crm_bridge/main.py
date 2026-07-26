@@ -309,22 +309,21 @@ class Bridge:
         user = tg_message.get("from") or {}
         tg_user_id = user.get("id")
         if tg_user_id is None:
-            return
-        # Bot's own messages (CRM→TG send echo) must not be re-ingested into CRM.
-        if user.get("is_bot"):
-            log.debug("Skip bot echo tg_message_id=%s", tg_message.get("message_id"))
+            log.warning(
+                "Skip TG update without from.id message_id=%s",
+                tg_message.get("message_id"),
+            )
             return
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             attachments = await _build_attachments(client, self.tg_token, tg_message)
         text = _message_text(tg_message, attachments)
         if not text and not attachments:
-            log.debug("Skip empty TG message %s", tg_message.get("message_id"))
+            log.info("Skip empty TG message %s", tg_message.get("message_id"))
             return
 
-        # Stable event_id — timestamp suffix caused retry storms / inbound ×N.
-        tg_mid = tg_message.get("message_id")
-        event_id = f"tg-{self.bot_code}-{tg_mid}"
+        # Keep pre-dedupe event_id shape (timestamp). Backend now dedupes outbound echo.
+        event_id = f"tg-{tg_message.get('message_id')}-{int(time.time())}"
         occurred_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         contact_payload = {
             "telegram_user_id": int(tg_user_id),
@@ -340,7 +339,7 @@ class Bridge:
             "payload": {
                 "contact": contact_payload,
                 "message": {
-                    "external_id": str(tg_mid),
+                    "external_id": str(tg_message.get("message_id")),
                     "text": text,
                     "attachments": attachments,
                 },
@@ -621,11 +620,19 @@ class Bridge:
                         log.error("getUpdates error: %s", data)
                         await asyncio.sleep(5)
                         continue
-                    for update in data.get("result", []):
+                    updates = data.get("result") or []
+                    if updates:
+                        log.info("getUpdates: %s update(s), offset_in=%s", len(updates), offset)
+                    for update in updates:
                         offset = int(update["update_id"]) + 1
                         message = update.get("message")
                         if message:
                             await self.send_to_crm(message)
+                        else:
+                            log.info(
+                                "Skip non-message update keys=%s",
+                                list(update.keys()),
+                            )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
