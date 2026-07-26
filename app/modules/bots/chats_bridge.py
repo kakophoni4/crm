@@ -400,6 +400,7 @@ async def _claim_pending_crm_outbound(
     )
     mid = log_row.scalar_one_or_none()
     if mid is None:
+        # Cast :txt — asyncpg cannot infer type for ":txt IS NULL" (AmbiguousParameterError).
         pending = await session.execute(
             text(
                 """
@@ -409,10 +410,7 @@ async def _claim_pending_crm_outbound(
                   AND direction = 'outbound'
                   AND external_message_id IS NULL
                   AND created_at > now() - interval '30 minutes'
-                  AND (
-                    :txt IS NULL
-                    OR coalesce(text, '') = coalesce(:txt, '')
-                  )
+                  AND coalesce(text, '') = coalesce(CAST(:txt AS text), '')
                 ORDER BY id DESC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
