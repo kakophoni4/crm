@@ -84,6 +84,37 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
             row.response_payload = response_payload
             row.last_error = None
             await outbound_repo.save(row)
+
+            # Link Telegram message_id back onto the CRM row so bot-echo ingest
+            # dedupes instead of inserting a second "TG Bot" outbound bubble.
+            internal_id = row.payload.get("internal_id") if isinstance(row.payload, dict) else None
+            external_id = None
+            if isinstance(response_payload, dict):
+                raw_ext = response_payload.get("external_id") or response_payload.get(
+                    "telegram_message_id"
+                )
+                if raw_ext is not None and str(raw_ext).strip():
+                    external_id = str(raw_ext).strip()
+            if internal_id is not None and external_id:
+                try:
+                    msg_id = int(internal_id)
+                except (TypeError, ValueError):
+                    msg_id = 0
+                if msg_id > 0:
+                    from sqlalchemy import text
+
+                    await session.execute(
+                        text(
+                            """
+                            UPDATE messages
+                            SET external_message_id = COALESCE(external_message_id, :ext)
+                            WHERE id = :mid
+                              AND external_message_id IS NULL
+                            """
+                        ),
+                        {"ext": external_id, "mid": msg_id},
+                    )
+
             await session.commit()
             inc_bot_outbound("sent")
         except Exception as exc:

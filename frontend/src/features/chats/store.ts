@@ -149,13 +149,12 @@ export const useChatsStore = defineStore('chats', () => {
   }
 
   function upsertMessageInList(list: ChatMessage[], saved: ChatMessage, clientKey: string): ChatMessage[] {
-    const idx = list.findIndex((m) => m._clientKey === clientKey || m.id === saved.id)
-    if (idx >= 0) {
-      const next = list.slice()
-      next[idx] = { ...saved, _clientKey: clientKey }
-      return next
-    }
-    return toChronological([...list, { ...saved, _clientKey: clientKey }])
+    // Drop optimistic row AND any WS stub with the same positive id.
+    // Race: outbound WS can append a null-sender "TG Bot" stub before POST returns;
+    // replacing only by _clientKey left that stub in the list → duplicate bubbles.
+    const merged = { ...saved, _clientKey: clientKey }
+    const without = list.filter((m) => m._clientKey !== clientKey && m.id !== saved.id)
+    return toChronological([...without, merged])
   }
 
   /** Coalesce background list reloads from WS / invalidation. */
@@ -1185,6 +1184,38 @@ export const useChatsStore = defineStore('chats', () => {
   ): void {
     if (!Number.isFinite(messageId) || messageId <= 0) return
     if (messages.value.some((m) => m.id === messageId)) return
+    // Upgrade in-flight optimistic outbound (same text) instead of a second null-sender bubble.
+    if (direction === 'outbound') {
+      const pendingIdx = messages.value.findIndex(
+        (m) =>
+          m._optimistic &&
+          m.direction === 'outbound' &&
+          (m.text ?? '') === (preview ?? ''),
+      )
+      if (pendingIdx >= 0) {
+        const pending = messages.value[pendingIdx]
+        const next = messages.value.slice()
+        next[pendingIdx] = {
+          ...pending,
+          id: messageId,
+          created_at: createdAt,
+          _optimistic: true,
+        }
+        messages.value = next
+        if (currentChat.value?.id === chatId) {
+          setChatSnapshot(
+            chatId,
+            {
+              detail: currentChat.value,
+              messages: messages.value,
+              nextCursor: messagesNextCursor.value,
+            },
+            { prefetchAttachments: false },
+          )
+        }
+        return
+      }
+    }
     messages.value = [
       ...messages.value,
       {
@@ -1194,8 +1225,11 @@ export const useChatsStore = defineStore('chats', () => {
         kind: 'text',
         text: preview ?? null,
         attachments: [],
-        sender_user_id: null,
-        sender_username: null,
+        sender_user_id: direction === 'outbound' ? (auth.user?.id ?? null) : null,
+        sender_username:
+          direction === 'outbound'
+            ? auth.user?.username?.trim() || auth.user?.full_name?.trim() || null
+            : null,
         reply_to_message_id: null,
         created_at: createdAt,
       },

@@ -369,6 +369,76 @@ async def _find_message_by_external_id(
     return int(found) if found is not None else None
 
 
+async def _claim_pending_crm_outbound(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    external_message_id: str,
+    external_event_id: str,
+    text_body: str | None,
+) -> int | None:
+    """Attach TG external_id to the operator-sent CRM row (no second INSERT).
+
+    Operator send creates messages.external_message_id=NULL; bot echo otherwise
+    inserts a duplicate outbound shown as «TG Bot».
+    """
+    # Prefer link via outbound log (exact internal_id ↔ external_id).
+    log_row = await session.execute(
+        text(
+            """
+            SELECT m.id AS mid
+            FROM bot_outbound_log l
+            JOIN messages m ON m.id = (l.payload->>'internal_id')::bigint
+            WHERE l.response_payload->>'external_id' = :ext
+              AND m.chat_id = :cid
+              AND l.payload ? 'internal_id'
+            ORDER BY l.id DESC
+            LIMIT 1
+            """
+        ),
+        {"ext": external_message_id, "cid": chat_id},
+    )
+    mid = log_row.scalar_one_or_none()
+    if mid is None:
+        pending = await session.execute(
+            text(
+                """
+                SELECT id
+                FROM messages
+                WHERE chat_id = :cid
+                  AND direction = 'outbound'
+                  AND external_message_id IS NULL
+                  AND created_at > now() - interval '30 minutes'
+                  AND (
+                    :txt IS NULL
+                    OR coalesce(text, '') = coalesce(:txt, '')
+                  )
+                ORDER BY id DESC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """
+            ),
+            {"cid": chat_id, "txt": text_body},
+        )
+        mid = pending.scalar_one_or_none()
+    if mid is None:
+        return None
+
+    message_id = int(mid)
+    await session.execute(
+        text(
+            """
+            UPDATE messages
+            SET external_message_id = COALESCE(external_message_id, :ext),
+                external_event_id = COALESCE(external_event_id, :evt)
+            WHERE id = :mid
+            """
+        ),
+        {"ext": external_message_id, "evt": external_event_id or None, "mid": message_id},
+    )
+    return message_id
+
+
 async def _ingest_result_for_message(
     session: AsyncSession,
     *,
@@ -419,6 +489,23 @@ async def insert_bot_message(
             attachment_indices=[],
             duplicate=True,
         )
+
+    if direction == MessageDirection.OUTBOUND:
+        claimed_id = await _claim_pending_crm_outbound(
+            session,
+            chat_id=chat_id,
+            external_message_id=external_message_id,
+            external_event_id=external_event_id,
+            text_body=text_body,
+        )
+        if claimed_id is not None:
+            return await _ingest_result_for_message(
+                session,
+                chat_id=chat_id,
+                message_id=claimed_id,
+                attachment_indices=[],
+                duplicate=True,
+            )
 
     reply_to_id: int | None = None
     if reply_to_external_id:

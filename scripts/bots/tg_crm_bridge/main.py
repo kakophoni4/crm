@@ -306,6 +306,10 @@ class Bridge:
         tg_user_id = user.get("id")
         if tg_user_id is None:
             return
+        # Bot's own messages (CRM→TG send echo) must not be re-ingested into CRM.
+        if user.get("is_bot"):
+            log.debug("Skip bot echo tg_message_id=%s", tg_message.get("message_id"))
+            return
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             attachments = await _build_attachments(client, self.tg_token, tg_message)
@@ -314,7 +318,9 @@ class Bridge:
             log.debug("Skip empty TG message %s", tg_message.get("message_id"))
             return
 
-        event_id = f"tg-{tg_message.get('message_id')}-{int(time.time())}"
+        # Stable event_id — timestamp suffix caused retry storms / inbound ×N.
+        tg_mid = tg_message.get("message_id")
+        event_id = f"tg-{self.bot_code}-{tg_mid}"
         occurred_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         contact_payload = {
             "telegram_user_id": int(tg_user_id),
@@ -330,7 +336,7 @@ class Bridge:
             "payload": {
                 "contact": contact_payload,
                 "message": {
-                    "external_id": str(tg_message.get("message_id")),
+                    "external_id": str(tg_mid),
                     "text": text,
                     "attachments": attachments,
                 },

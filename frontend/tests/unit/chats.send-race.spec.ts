@@ -118,4 +118,54 @@ describe('chats send race across chat switch', () => {
     const snap = getChatSnapshot(10)
     expect(snap?.messages.some((m) => m.id === 99)).toBe(true)
   })
+
+  it('does not leave a TG Bot stub when outbound WS wins the race before POST', async () => {
+    const store = useChatsStore()
+    store.$patch({
+      currentChatId: 10,
+      currentChat: { ...baseListItem(10) } as never,
+      listItems: [baseListItem(10)],
+      messages: [],
+    })
+
+    let resolveSend!: (value: ChatMessage) => void
+    sendMessageMock.mockImplementation(
+      () =>
+        new Promise<ChatMessage>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+
+    const sendPromise = store.sendMessage('Здравствуйте! Сейчас')
+    expect(store.messages.filter((m) => m._optimistic).length).toBe(1)
+
+    // WS arrives with the real id before POST resolves — used to append a null-sender stub.
+    store.handleOutboundMessage({
+      chat_id: 10,
+      message_id: 501,
+      text_preview: 'Здравствуйте! Сейчас',
+    })
+
+    const saved: ChatMessage = {
+      id: 501,
+      chat_id: 10,
+      direction: 'outbound',
+      kind: 'text',
+      text: 'Здравствуйте! Сейчас',
+      attachments: [],
+      sender_user_id: 5,
+      sender_username: 'henry',
+      reply_to_message_id: null,
+      created_at: '2026-07-26T10:17:00Z',
+      idempotency_key: 'key-ws-race',
+    }
+    resolveSend(saved)
+    await sendPromise
+
+    const sameText = store.messages.filter((m) => m.text === 'Здравствуйте! Сейчас')
+    expect(sameText).toHaveLength(1)
+    expect(sameText[0]?.id).toBe(501)
+    expect(sameText[0]?.sender_username).toBe('henry')
+    expect(sameText[0]?.sender_user_id).toBe(5)
+  })
 })
