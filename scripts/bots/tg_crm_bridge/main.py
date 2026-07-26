@@ -10,8 +10,12 @@ import json
 import logging
 import os
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
+
+# Python 3.10 on VPS has no datetime.UTC (added in 3.11).
+UTC = timezone.utc
+
 
 import httpx
 from aiohttp import web

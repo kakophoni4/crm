@@ -11,7 +11,10 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+# Python 3.10 on VPS has no datetime.UTC (added in 3.11).
+UTC = timezone.utc
 from typing import Any
 
 import httpx
