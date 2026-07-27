@@ -1602,10 +1602,6 @@ class OptOrderService:
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
-                    from app.modules.leads.opt.sync_diff import mole_crm_id
-
-                    from app.modules.leads.opt.sync_diff import mole_crm_id
-
                     cid = mole_crm_id(row)
                     if not cid:
                         continue
