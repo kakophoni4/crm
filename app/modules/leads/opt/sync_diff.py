@@ -83,6 +83,32 @@ def _line_snapshot(row: dict[str, Any]) -> tuple[str, str | None, str | None, fl
     return crm_id, inn, date_text, amount, vat, wo_vat
 
 
+def mole_period_date(row: dict[str, Any]) -> str | None:
+    """Normalize Mole/CRM Период to YYYY-MM-DD (empty / 0001-01-01 → None)."""
+    raw = row.get("Период") if "Период" in row else row.get("Period")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    date_part = text[:10]
+    if date_part == "0001-01-01":
+        return None
+    return date_part
+
+
+def periods_match(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    """True when Mole period equals CRM payload period (or CRM/Mole omitted period)."""
+    exp = mole_period_date(expected)
+    if exp is None:
+        return True
+    # Filter rows often omit Период entirely — don't force update from headers alone.
+    if "Период" not in actual and "Period" not in actual:
+        return True
+    act = mole_period_date(actual)
+    return act == exp
+
+
 def registries_match(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
     """Compare CRM-built payload vs Mole order on registry lines + buyer INN."""
     exp_buyer = _party_inn(expected.get("Покупатель") or expected.get("Buyer"))
@@ -122,6 +148,11 @@ def registries_match(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
     return True
 
 
+def content_matches(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    """Registry + period must both match before sync skips a PUT."""
+    return registries_match(expected, actual) and periods_match(expected, actual)
+
+
 def plan_sync_actions(
     *,
     local_crm_ids: set[str],
@@ -148,7 +179,7 @@ def plan_sync_actions(
         if not mole_has_registry(remote):
             actions.append(("check", crm_id))
             continue
-        if registries_match(payload, remote):
+        if registries_match(payload, remote) and periods_match(payload, remote):
             actions.append(("unchanged", crm_id))
         else:
             actions.append(("update", crm_id))

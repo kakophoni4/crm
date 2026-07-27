@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from app.modules.leads.opt.periods import mole_iso_to_period_code, period_code_to_mole_iso
-from app.modules.leads.opt.sync_diff import plan_sync_actions, registries_match
+from app.modules.leads.opt.sync_diff import (
+    content_matches,
+    periods_match,
+    plan_sync_actions,
+    registries_match,
+)
 
 
 def test_period_code_to_mole_iso_q2_2026() -> None:
@@ -21,8 +26,8 @@ def test_mole_iso_to_period_code_roundtrip() -> None:
         assert mole_iso_to_period_code(iso) == code
 
 
-def _payload(*, line_amount: float = 100.0) -> dict:
-    return {
+def _payload(*, line_amount: float = 100.0, period: str | None = "2026-04-01") -> dict:
+    body = {
         "CRMid": "crm-order-1",
         "Покупатель": {"ИНН": "564200586550", "КПП": "", "Наименование": "ИП"},
         "Реестр": [
@@ -36,6 +41,9 @@ def _payload(*, line_amount: float = 100.0) -> dict:
             },
         ],
     }
+    if period is not None:
+        body["Период"] = period
+    return body
 
 
 def test_registries_match_tolerates_float_noise() -> None:
@@ -48,6 +56,27 @@ def test_registries_match_detects_amount_change() -> None:
     expected = _payload(line_amount=100.0)
     actual = _payload(line_amount=200.0)
     assert not registries_match(expected, actual)
+
+
+def test_periods_match_rejects_empty_mole_period() -> None:
+    expected = _payload(period="2026-04-01")
+    actual = _payload(period="0001-01-01")
+    assert not periods_match(expected, actual)
+    assert not content_matches(expected, actual)
+
+
+def test_periods_match_accepts_same_quarter() -> None:
+    expected = _payload(period="2026-04-01")
+    actual = _payload(period="2026-04-01T00:00:00")
+    assert periods_match(expected, actual)
+    assert content_matches(expected, actual)
+
+
+def test_periods_match_ignores_filter_row_without_period_key() -> None:
+    expected = _payload(period="2026-04-01")
+    actual = _payload(period=None)
+    assert "Период" not in actual
+    assert periods_match(expected, actual)
 
 
 def test_plan_sync_update_restore_delete() -> None:

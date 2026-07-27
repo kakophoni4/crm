@@ -31,7 +31,12 @@ from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
-from app.modules.leads.opt.sync_diff import mole_crm_id, mole_is_deleted, plan_sync_actions, registries_match
+from app.modules.leads.opt.sync_diff import (
+    content_matches,
+    mole_crm_id,
+    mole_is_deleted,
+    plan_sync_actions,
+)
 from app.modules.leads.opt.schemas import (
     OptAttachmentProbeResponse,
     OptCommissionHistoryItem,
@@ -1658,7 +1663,7 @@ class OptOrderService:
                                 remote = None
 
                             if remote is not None and not mole_is_deleted(remote):
-                                if registries_match(payload, remote):
+                                if content_matches(payload, remote):
                                     return "unchanged", crm_id, None, None
                                 effective = "update"
                             else:
