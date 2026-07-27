@@ -31,7 +31,7 @@ from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
-from app.modules.leads.opt.sync_diff import mole_is_deleted, plan_sync_actions, registries_match
+from app.modules.leads.opt.sync_diff import mole_crm_id, mole_is_deleted, plan_sync_actions, registries_match
 from app.modules.leads.opt.schemas import (
     OptAttachmentProbeResponse,
     OptCommissionHistoryItem,
@@ -1532,18 +1532,39 @@ class OptOrderService:
         await self._session.commit()
         return self._registry_bytes(order)
 
-    async def sync_orders_with_1c(self, actor: User, period_code: str) -> OptSync1cResponse:
+    async def sync_orders_with_1c(
+        self,
+        actor: User,
+        period_code: str | None = None,
+    ) -> OptSync1cResponse:
         if not is_admin(actor.role):
             raise PermissionDenied(message="Сверка с 1С доступна только администраторам")
 
-        normalized = normalize_period_code(period_code)
-        if normalized is None:
-            raise ValidationError(message="Некорректный период (ожидается формат Q/YY, например 2/26)")
-        period_iso = period_code_to_mole_iso(normalized)
-        if period_iso is None:
-            raise ValidationError(message="Некорректный период")
+        from app.modules.leads.opt.periods import list_opt_period_codes
 
-        local_orders = await self._repo.list_submitted_by_period(normalized)
+        raw = (period_code or "").strip()
+        sync_all = not raw or raw.lower() == "all"
+        period_isos: list[str] = []
+        if sync_all:
+            normalized = "all"
+            report_iso = "all"
+            local_orders = await self._repo.list_all_submitted()
+            for code in list_opt_period_codes():
+                iso = period_code_to_mole_iso(code)
+                if iso:
+                    period_isos.append(iso)
+        else:
+            normalized = normalize_period_code(raw)
+            if normalized is None:
+                raise ValidationError(
+                    message="Некорректный период (ожидается формат Q/YY, например 2/26)",
+                )
+            report_iso = period_code_to_mole_iso(normalized)
+            if report_iso is None:
+                raise ValidationError(message="Некорректный период")
+            period_isos = [report_iso]
+            local_orders = await self._repo.list_submitted_by_period(normalized)
+
         local_payloads: dict[str, dict[str, Any]] = {}
         local_by_crm: dict[str, LeadOptOrder] = {}
         for order in local_orders:
@@ -1560,7 +1581,7 @@ class OptOrderService:
             local_payloads[order.crm_id] = payload
             local_by_crm[order.crm_id] = order
 
-        report = OptSync1cResponse(period_code=normalized, period_iso=period_iso)
+        report = OptSync1cResponse(period_code=normalized, period_iso=report_iso or "all")
 
         def _mole_missing(exc: MoleApiError) -> bool:
             status = (exc.details or {}).get("http_status")
@@ -1573,7 +1594,29 @@ class OptOrderService:
             )
 
         async with mole_session():
-            mole_orders = await mole_filter_orders(period_iso=period_iso)
+            mole_by_id: dict[str, dict[str, Any]] = {}
+            for iso in period_isos:
+                rows = await mole_filter_orders(period_iso=iso)
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    from app.modules.leads.opt.sync_diff import mole_crm_id
+
+                    from app.modules.leads.opt.sync_diff import mole_crm_id
+
+                    cid = mole_crm_id(row)
+                    if not cid:
+                        continue
+                    prev = mole_by_id.get(cid)
+                    # Prefer a non-deleted view when the same CRMid appears in several filters.
+                    if prev is None or (
+                        mole_is_deleted(prev) and not mole_is_deleted(row)
+                    ):
+                        mole_by_id[cid] = row
+
+            mole_orders = list(mole_by_id.values())
             planned = plan_sync_actions(
                 local_crm_ids=set(local_payloads),
                 local_payloads=local_payloads,

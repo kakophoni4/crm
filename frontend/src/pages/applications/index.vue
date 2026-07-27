@@ -524,13 +524,10 @@ async function load(): Promise<void> {
 }
 
 async function onSyncWith1c(): Promise<void> {
-  if (!periodFilter.value) {
-    message.warning('Выберите период для сверки с 1С')
-    return
-  }
   syncing1c.value = true
   try {
-    const report = await syncOptOrdersWith1c(periodFilter.value)
+    // Sync all submitted OPT orders — no period filter required.
+    const report = await syncOptOrdersWith1c(null)
     syncReport.value = report
     syncReportOpen.value = true
     const parts = [
@@ -920,7 +917,13 @@ onMounted(() => {
         <dl class="applications-page__facts applications-page__facts--payment">
           <div>
             <dt>Период</dt>
-            <dd>{{ syncReport.period_code }} ({{ syncReport.period_iso }})</dd>
+            <dd>
+              {{
+                syncReport.period_code === 'all'
+                  ? 'все периоды'
+                  : `${syncReport.period_code} (${syncReport.period_iso})`
+              }}
+            </dd>
           </div>
           <div>
             <dt>Без изменений</dt>

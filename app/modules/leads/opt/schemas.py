@@ -245,7 +245,9 @@ class OptOrderPeriodUpdateResponse(BaseModel):
 
 
 class OptSync1cRequest(BaseModel):
-    period_code: str = Field(min_length=1, max_length=16)
+    """Empty / null period_code = sync all submitted OPT orders across periods."""
+
+    period_code: str | None = Field(default=None, max_length=16)
 
 
 class OptSync1cActionItem(BaseModel):

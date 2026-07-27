@@ -400,6 +400,22 @@ class OptOrderRepository:
         )
         return list(result.scalars().all())
 
+    async def list_all_submitted(self) -> list[LeadOptOrder]:
+        result = await self._session.execute(
+            select(LeadOptOrder)
+            .where(
+                LeadOptOrder.status == "submitted",
+                LeadOptOrder.deleted_at.is_(None),
+                LeadOptOrder.crm_id.is_not(None),
+            )
+            .options(
+                selectinload(LeadOptOrder.lines),
+                selectinload(LeadOptOrder.payments),
+            )
+            .order_by(LeadOptOrder.id.asc()),
+        )
+        return list(result.scalars().all())
+
     async def get_order_by_source_attachment(
         self,
         message_id: int,
