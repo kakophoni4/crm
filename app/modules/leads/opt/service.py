@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.scope_loader import ScopeLoader
@@ -1083,21 +1084,36 @@ class OptOrderService:
                 ),
             )
 
-        order = await self._repo.create_order(
-            lead_id=lead.id,
-            crm_id=order_crm_id,
-            buyer_inn=buyer_inn,
-            buyer_kpp=buyer_kpp,
-            buyer_name=buyer_name,
-            source_filename=filename,
-            created_by=actor.id,
-            lines=line_payloads,
-            source_message_id=source_message_id,
-            source_attachment_index=source_attachment_index,
-            content_fingerprint=content_fingerprint,
-            vat_rate_percent=float(vat_rate),
-            period_code=period_code,
-        )
+        try:
+            order = await self._repo.create_order(
+                lead_id=lead.id,
+                crm_id=order_crm_id,
+                buyer_inn=buyer_inn,
+                buyer_kpp=buyer_kpp,
+                buyer_name=buyer_name,
+                source_filename=filename,
+                created_by=actor.id,
+                lines=line_payloads,
+                source_message_id=source_message_id,
+                source_attachment_index=source_attachment_index,
+                content_fingerprint=content_fingerprint,
+                vat_rate_percent=float(vat_rate),
+                period_code=period_code,
+            )
+        except IntegrityError:
+            await self._session.rollback()
+            existing_fp = await self._repo.get_order_by_content_fingerprint(
+                content_fingerprint,
+            )
+            if existing_fp is not None:
+                raise ValidationError(message=duplicate_order_message(existing_fp)) from None
+            raise ValidationError(
+                message=(
+                    "Такая заявка уже загружена (совпадает содержимое файла). "
+                    "Если старая была удалена — обновите страницу и повторите; "
+                    "иначе откройте существующую заявку по этому Excel."
+                ),
+            ) from None
         await self._ensure_lead_service_opt(lead, period_code=period_code)
         await self._session.commit()
         await enqueue_opt_submit(order.id)

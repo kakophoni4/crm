@@ -164,6 +164,9 @@ class OptOrderRepository:
         order.deleted_at = utc_now()
         order.deleted_by = actor_id
         order.delete_snapshot = snapshot
+        # Vacate content fingerprint so the same Excel can be re-uploaded
+        # (unique index still covers soft-deleted rows with active statuses).
+        order.content_fingerprint = None
         # Vacate order_no so renumber / next_order_no cannot collide with the
         # unique (lead_id, order_no) index while the row is soft-deleted.
         if order.id is not None:
