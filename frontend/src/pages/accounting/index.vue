@@ -235,15 +235,48 @@ function openCreateUnit(): void {
   createOpen.value = true
 }
 
+function openCreateUnitFromGroup(unit: {
+  inn: string
+  kpp?: string | null
+  name?: string | null
+  commission_rate_percent?: number | null
+}): void {
+  createForm.value = {
+    ...emptyCreateForm(),
+    inn: unit.inn,
+    kpp: unit.kpp?.trim() || '',
+    name: unit.name?.trim() || '',
+    commission_rate_percent:
+      unit.commission_rate_percent != null ? Number(unit.commission_rate_percent) : null,
+    period_codes: orderPeriodCode.value ? [orderPeriodCode.value] : [],
+  }
+  createOpen.value = true
+  message.info('Лавки ещё нет в справочнике — заполните тип и сохраните, чтобы править % и лимит')
+}
+
+function catalogUnitId(unit: { id?: number; unit_id?: number }): number | null {
+  const id = unit.id ?? unit.unit_id
+  return id != null && id > 0 ? id : null
+}
+
+function formatRateButtonLabel(rate: number | null | undefined): string {
+  if (rate == null) return '+ %'
+  return `${Number(rate)}%`
+}
+
 function openEditRate(unit: {
   id?: number
   unit_id?: number
   name?: string | null
   inn: string
+  kpp?: string | null
   commission_rate_percent?: number | null
 }): void {
-  const id = unit.id ?? unit.unit_id
-  if (id == null) return
+  const id = catalogUnitId(unit)
+  if (id == null) {
+    openCreateUnitFromGroup(unit)
+    return
+  }
   rateEditUnitId.value = id
   rateEditLabel.value = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
   rateEditValue.value =
@@ -278,10 +311,15 @@ function openEditLimit(unit: {
   unit_id?: number
   name?: string | null
   inn: string
+  kpp?: string | null
+  commission_rate_percent?: number | null
   volume_limit?: number | null
 }): void {
-  const id = unit.id ?? unit.unit_id
-  if (id == null) return
+  const id = catalogUnitId(unit)
+  if (id == null) {
+    openCreateUnitFromGroup(unit)
+    return
+  }
   limitEditUnitId.value = id
   limitEditLabel.value = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
   limitEditValue.value =
@@ -396,7 +434,7 @@ async function submitCreateUnit(): Promise<void> {
     })
     message.success('Лавка добавлена')
     createOpen.value = false
-    await loadUnits()
+    await Promise.all([loadUnits(), loadOrders()])
     if (isChief.value) await loadUnitOwners()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось добавить лавку')
@@ -498,11 +536,7 @@ async function openRequirementPreview(row: AccountingRequirement): Promise<void>
 }
 
 function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
-  const base = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
-  if (unit.commission_rate_percent != null && unit.commission_rate_percent !== undefined) {
-    return `${base} · ${Number(unit.commission_rate_percent)}%`
-  }
-  return base
+  return unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
 }
 
 function formatUnitRate(value: number | null | undefined): string {
@@ -528,9 +562,6 @@ async function loadOrders(): Promise<void> {
     })
     orderGroups.value = data.items
     ordersTotal.value = data.total
-    if (expandedLavki.value.length === 0 && data.items.length > 0) {
-      expandedLavki.value = [data.items[0].unit.inn]
-    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
   } finally {
@@ -1037,64 +1068,70 @@ onUnmounted(() => {
               >
                 <template #header>
                   <div class="accounting-page__lavka-header">
-                    <span class="accounting-page__lavka-title">{{ lavkaTitle(group.unit) }}</span>
-                    <NTag size="small" :bordered="false">
-                      {{ group.orders_count ?? group.orders.length }}
-                      {{
-                        (group.orders_count ?? group.orders.length) === 1
-                          ? 'заявка'
-                          : 'заявок'
-                      }}
-                    </NTag>
-                    <NTag size="small" type="info" :bordered="false">
-                      {{
-                        formatAccountingMoney(
-                          Number(group.orders_volume_sum ?? sumGroupVolume(group)),
-                        )
-                      }}
-                    </NTag>
-                    <NTag
-                      v-if="group.unit.volume_limit != null"
-                      size="small"
-                      :type="
-                        Number(group.orders_volume_sum ?? sumGroupVolume(group)) >
-                        Number(group.unit.volume_limit)
-                          ? 'error'
-                          : 'warning'
-                      "
-                      :bordered="false"
-                    >
-                      лимит {{ formatAccountingMoney(Number(group.unit.volume_limit)) }}
-                    </NTag>
-                    <NButton
-                      v-if="isChief && group.unit.id"
-                      size="tiny"
-                      quaternary
-                      @click.stop="openEditRate(group.unit)"
-                    >
-                      <template #icon>
-                        <Percent :size="14" />
-                      </template>
-                      %
-                    </NButton>
-                    <NButton
-                      v-if="isChief && group.unit.id"
-                      size="tiny"
-                      quaternary
-                      @click.stop="openEditLimit(group.unit)"
-                    >
-                      Лимит
-                    </NButton>
+                    <div class="accounting-page__lavka-main">
+                      <span class="accounting-page__lavka-title">{{ lavkaTitle(group.unit) }}</span>
+                      <div class="accounting-page__lavka-meta">
+                        <NTag size="small" :bordered="false">
+                          {{ group.orders_count ?? group.orders.length }}
+                          {{
+                            (group.orders_count ?? group.orders.length) === 1
+                              ? 'заявка'
+                              : 'заявок'
+                          }}
+                        </NTag>
+                        <NTag size="small" type="info" :bordered="false">
+                          {{
+                            formatAccountingMoney(
+                              Number(group.orders_volume_sum ?? sumGroupVolume(group)),
+                            )
+                          }}
+                        </NTag>
+                        <NTag
+                          v-if="group.unit.volume_limit != null"
+                          size="small"
+                          :type="
+                            Number(group.orders_volume_sum ?? sumGroupVolume(group)) >
+                            Number(group.unit.volume_limit)
+                              ? 'error'
+                              : 'warning'
+                          "
+                          :bordered="false"
+                        >
+                          лимит {{ formatAccountingMoney(Number(group.unit.volume_limit)) }}
+                        </NTag>
+                      </div>
+                    </div>
+                    <div v-if="isChief" class="accounting-page__lavka-actions">
+                      <NButton
+                        size="tiny"
+                        secondary
+                        type="primary"
+                        class="accounting-page__rate-btn"
+                        @click.stop="openEditRate(group.unit)"
+                      >
+                        {{ formatRateButtonLabel(group.unit.commission_rate_percent) }}
+                      </NButton>
+                      <NButton
+                        size="tiny"
+                        secondary
+                        @click.stop="openEditLimit(group.unit)"
+                      >
+                        Лимит
+                      </NButton>
+                    </div>
                   </div>
                 </template>
-                <NDataTable
-                  :columns="orderColumns()"
-                  :data="group.orders"
-                  :bordered="false"
-                  :row-key="(row: AccountingUnitOrder) => row.order_id"
-                  size="small"
-                  :scroll-x="1100"
-                />
+                <div class="accounting-page__orders-table">
+                  <NDataTable
+                    :columns="orderColumns()"
+                    :data="group.orders"
+                    :bordered="false"
+                    :single-line="false"
+                    :row-key="(row: AccountingUnitOrder) => row.order_id"
+                    size="small"
+                    :scroll-x="1180"
+                  />
+                </div>
               </NCollapseItem>
             </NCollapse>
             <div v-if="ordersTotal > ordersPageSize" class="accounting-page__pagination">
@@ -1536,12 +1573,54 @@ onUnmounted(() => {
 .accounting-page__lavka-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
   min-width: 0;
+  flex-wrap: wrap;
+  padding-right: 4px;
+}
+
+.accounting-page__lavka-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 240px;
 }
 
 .accounting-page__lavka-title {
   font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.accounting-page__lavka-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.accounting-page__lavka-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.accounting-page__rate-btn {
+  min-width: 3.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.accounting-page__orders-table {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.accounting-page__orders-table :deep(.n-data-table-td) {
+  vertical-align: top;
 }
 
 .accounting-page__rate-label {
