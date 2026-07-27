@@ -71,13 +71,8 @@ def _is_deleted(body: dict[str, Any]) -> bool:
 
 
 def _period_for_payload(period_code: str) -> str | None:
-    iso = period_code_to_mole_iso(period_code) if period_code else None
-    if not iso:
-        return None
-    # Mole stores datetime; plain date often becomes 0001-01-01 on dead docs.
-    if "T" not in iso:
-        return f"{iso}T00:00:00"
-    return iso
+    # Era: plain date "2026-04-01". Datetime "…T00:00:00" is ignored → 0001-01-01.
+    return period_code_to_mole_iso(period_code) if period_code else None
 
 
 def _dump_header(label: str, body: dict[str, Any]) -> None:
