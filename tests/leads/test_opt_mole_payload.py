@@ -15,6 +15,7 @@ class _Line:
     supplier_kpp = "770001001"
     supplier_name = 'ООО "Тестовая лавка 1"'
     document_date = date(2025, 1, 22)
+    document_number: str | None = None
     amount = 314752.0
     vat_amount = 52458.67
     amount_without_vat = 262293.33
@@ -52,6 +53,15 @@ def test_build_mole_payload_matches_1c_contract() -> None:
     assert row["Сумма"] == 314752.0
     assert row["СуммаНДС"] == 56758.56
     assert row["СуммаБезНДС"] == 257993.44
+
+
+def test_build_mole_payload_sends_document_number_when_known() -> None:
+    order = _Order()
+    order.lines[0].document_number = "МН-000408030"
+
+    payload = OptOrderService._build_mole_payload(order)  # type: ignore[arg-type]
+
+    assert payload["Реестр"][0]["НомерДокумента"] == "МН-000408030"
 
 
 def test_build_mole_payload_sends_empty_kpp_when_missing() -> None:

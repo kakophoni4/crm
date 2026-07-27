@@ -1131,20 +1131,23 @@ class OptOrderService:
                 date_text = doc_date.isoformat()
             else:
                 date_text = str(doc_date)
-            registry.append(
-                {
-                    "CRMid": line.crm_id,
-                    "Поставщик": OptOrderService._mole_party(
-                        inn=line.supplier_inn,
-                        kpp=line.supplier_kpp,
-                        name=line.supplier_name,
-                    ),
-                    "ДатаДокумента": date_text,
-                    "Сумма": float(line.amount),
-                    "СуммаНДС": float(line.vat_amount),
-                    "СуммаБезНДС": float(line.amount_without_vat),
-                },
-            )
+            row: dict[str, Any] = {
+                "CRMid": line.crm_id,
+                "Поставщик": OptOrderService._mole_party(
+                    inn=line.supplier_inn,
+                    kpp=line.supplier_kpp,
+                    name=line.supplier_name,
+                ),
+                "ДатаДокумента": date_text,
+                "Сумма": float(line.amount),
+                "СуммаНДС": float(line.vat_amount),
+                "СуммаБезНДС": float(line.amount_without_vat),
+            }
+            # Era contract: omit → 1C generates new SF number; send known number → keep it.
+            doc_no = str(getattr(line, "document_number", None) or "").strip()
+            if doc_no:
+                row["НомерДокумента"] = doc_no
+            registry.append(row)
 
         return {
             "CRMid": order.crm_id,
