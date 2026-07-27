@@ -200,8 +200,12 @@ def plan_sync_actions(
         scheduled_deletes.add(crm_id)
 
     # Soft-deleted in CRM: delete in Mole by CRMid even if not in period filter.
+    # Skip when filter already shows Удален — no need to DELETE again every sync.
     for crm_id in sorted(soft_deleted_crm_ids or ()):
         if not crm_id or crm_id in local_crm_ids or crm_id in scheduled_deletes:
+            continue
+        remote = mole_by_id.get(crm_id)
+        if remote is not None and mole_is_deleted(remote):
             continue
         actions.append(("delete_extra", crm_id))
         scheduled_deletes.add(crm_id)

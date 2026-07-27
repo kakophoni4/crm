@@ -1673,8 +1673,18 @@ class OptOrderService:
                 async with sem:
                     try:
                         if kind == "delete_extra":
+                            # Soft-deleted CRM ids are re-planned every sync; skip if
+                            # Mole already has no live order (avoid «удалено: 19» spam).
+                            try:
+                                remote = await mole_get_order(crm_id)
+                            except MoleApiError as exc:
+                                if _mole_missing(exc):
+                                    return "delete_extra", crm_id, {"skipped": True}, None
+                                raise
+                            if remote is not None and mole_is_deleted(remote):
+                                return "delete_extra", crm_id, {"skipped": True}, None
                             await mole_delete_order(crm_id)
-                            return kind, crm_id, None, None
+                            return "delete_extra", crm_id, {"skipped": False}, None
 
                         payload = local_payloads[crm_id]
                         effective = kind
@@ -1731,6 +1741,8 @@ class OptOrderService:
                 continue
             try:
                 if kind == "delete_extra":
+                    if isinstance(response, dict) and response.get("skipped"):
+                        continue
                     report.deleted_extra += 1
                     detail = (
                         "Удалена в 1С (soft-delete в CRM)"
