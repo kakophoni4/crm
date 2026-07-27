@@ -97,6 +97,24 @@ def test_plan_sync_update_restore_delete() -> None:
     assert actions["crm-order-extra"] == "delete_extra"
 
 
+def test_plan_sync_filter_without_registry_is_check() -> None:
+    """orders/filter often omits Реестр — must not force update/restore every sync."""
+    payload = _payload()
+    mole = {
+        "CRMid": "crm-order-1",
+        "Удален": False,
+        "Покупатель": {"ИНН": "564200586550"},
+        "СуммаИтого": 999999.0,
+        # no Реестр
+    }
+    actions = plan_sync_actions(
+        local_crm_ids={"crm-order-1"},
+        local_payloads={"crm-order-1": payload},
+        mole_orders=[mole],
+    )
+    assert actions == [("check", "crm-order-1")]
+
+
 def test_plan_sync_unchanged() -> None:
     payload = _payload()
     mole = {

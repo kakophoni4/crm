@@ -19,6 +19,7 @@ from app.modules.leads.opt.mole_client import (
     MoleApiError,
     delete_order as mole_delete_order,
     filter_orders as mole_filter_orders,
+    get_order as mole_get_order,
     mole_session,
     post_opt_order,
     put_order as mole_put_order,
@@ -29,7 +30,7 @@ from app.modules.leads.opt.parser import parse_application_workbook
 from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
-from app.modules.leads.opt.sync_diff import plan_sync_actions
+from app.modules.leads.opt.sync_diff import mole_is_deleted, plan_sync_actions, registries_match
 from app.modules.leads.opt.schemas import (
     OptAttachmentProbeResponse,
     OptCommissionHistoryItem,
@@ -1509,6 +1510,16 @@ class OptOrderService:
 
         report = OptSync1cResponse(period_code=normalized, period_iso=period_iso)
 
+        def _mole_missing(exc: MoleApiError) -> bool:
+            status = (exc.details or {}).get("http_status")
+            if status == 404:
+                return True
+            msg = (exc.message or "").lower()
+            return any(
+                token in msg
+                for token in ("не найден", "not found", "не существует", "отсутствует")
+            )
+
         async with mole_session():
             mole_orders = await mole_filter_orders(period_iso=period_iso)
             planned = plan_sync_actions(
@@ -1516,9 +1527,6 @@ class OptOrderService:
                 local_payloads=local_payloads,
                 mole_orders=mole_orders,
             )
-            report.unchanged = sum(1 for kind, _ in planned if kind == "unchanged")
-            mutators = [(kind, crm_id) for kind, crm_id in planned if kind != "unchanged"]
-
             # HTTP only in parallel (no DB). Then apply DB writes sequentially.
             sem = asyncio.Semaphore(5)
 
@@ -1531,15 +1539,41 @@ class OptOrderService:
                         if kind == "delete_extra":
                             await mole_delete_order(crm_id)
                             return kind, crm_id, None, None
+
                         payload = local_payloads[crm_id]
-                        if kind == "update":
+                        effective = kind
+
+                        if kind in {"check", "restore"}:
+                            remote: dict[str, Any] | None = None
+                            try:
+                                remote = await mole_get_order(crm_id)
+                            except MoleApiError as exc:
+                                if kind == "check" or not _mole_missing(exc):
+                                    # check: order listed in filter must be GET-able
+                                    # restore: non-404 errors must not fall through to POST
+                                    raise
+                                remote = None
+
+                            if remote is not None and not mole_is_deleted(remote):
+                                if registries_match(payload, remote):
+                                    return "unchanged", crm_id, None, None
+                                effective = "update"
+                            else:
+                                effective = "restore"
+
+                        if effective == "update":
                             response = await mole_put_order(crm_id, payload)
-                            return kind, crm_id, response, None
+                            return "update", crm_id, response, None
+
+                        # restore: prefer PUT (same CRMid). POST only if order truly missing.
                         try:
                             response = await mole_put_order(crm_id, payload)
-                        except MoleApiError:
+                            return "restore", crm_id, response, None
+                        except MoleApiError as exc:
+                            if not _mole_missing(exc):
+                                raise
                             response = await post_opt_order(payload)
-                        return kind, crm_id, response, None
+                            return "restore", crm_id, response, None
                     except MoleApiError as exc:
                         return kind, crm_id, None, exc.message
                     except Exception as exc:  # noqa: BLE001
@@ -1547,10 +1581,13 @@ class OptOrderService:
                         return kind, crm_id, None, str(exc)[:500]
 
             http_results = await asyncio.gather(
-                *[_http_one(kind, crm_id) for kind, crm_id in mutators],
+                *[_http_one(kind, crm_id) for kind, crm_id in planned if kind != "unchanged"],
             )
 
         for kind, crm_id, response, error in http_results:
+            if kind == "unchanged" and error is None:
+                report.unchanged += 1
+                continue
             if error:
                 report.errors.append(
                     OptSync1cActionItem(action=kind, crm_id=crm_id, detail=error),
@@ -1590,6 +1627,9 @@ class OptOrderService:
                 report.errors.append(
                     OptSync1cActionItem(action=kind, crm_id=crm_id, detail=str(exc)[:500]),
                 )
+
+        # Count filter-level unchanged from plan (not sent to HTTP).
+        report.unchanged += sum(1 for kind, _ in planned if kind == "unchanged")
 
         await self._session.flush()
         return report

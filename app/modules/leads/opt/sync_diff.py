@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-SyncActionKind = Literal["unchanged", "update", "restore", "delete_extra"]
+SyncActionKind = Literal["unchanged", "update", "restore", "check", "delete_extra"]
 
 _AMOUNT_TOLERANCE = 0.01
 
@@ -62,6 +62,11 @@ def _registry_rows(order: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(registry, list):
         return []
     return [row for row in registry if isinstance(row, dict)]
+
+
+def mole_has_registry(order: dict[str, Any]) -> bool:
+    """True when Mole payload includes registry lines (GET usually does; filter often does not)."""
+    return bool(_registry_rows(order))
 
 
 def _line_snapshot(row: dict[str, Any]) -> tuple[str, str | None, str | None, float | None, float | None, float | None]:
@@ -137,6 +142,11 @@ def plan_sync_actions(
         remote = mole_by_id.get(crm_id)
         if remote is None or mole_is_deleted(remote):
             actions.append(("restore", crm_id))
+            continue
+        # orders/filter often returns headers only (no Реестр). Comparing then always
+        # "mismatches" and sync re-POSTs/PUTs every run → new 1C docs. Defer to GET.
+        if not mole_has_registry(remote):
+            actions.append(("check", crm_id))
             continue
         if registries_match(payload, remote):
             actions.append(("unchanged", crm_id))
