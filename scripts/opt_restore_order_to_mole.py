@@ -95,8 +95,8 @@ def _build_payload(
     *,
     with_period: bool,
 ) -> dict[str, Any]:
-    # Normal CRM submit sends ONLY CRMid/Покупатель/Реестр — no Период.
-    # Sending Период made Mole store 0001-01-01 and exclude the order from filter.
+    # Era: Период = quarter start (2/26 → 2026-04-01). Filter returns what we send.
+    # _build_mole_payload always includes Период from order.period_code.
     payload = service._build_mole_payload(order)
     if with_period:
         period = _period_for_payload(period_code)

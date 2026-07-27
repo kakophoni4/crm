@@ -26,6 +26,7 @@ class _Order:
     buyer_inn = "7700000100"
     buyer_kpp = "770001001"
     buyer_name = 'ООО "Тестовый покупатель"'
+    period_code = "2/26"
     lines = [_Line()]
 
 
@@ -39,6 +40,7 @@ def test_build_mole_payload_matches_1c_contract() -> None:
     payload = OptOrderService._build_mole_payload(_Order())  # type: ignore[arg-type]
 
     assert payload["CRMid"] == "crm-order-xyz"
+    assert payload["Период"] == "2026-04-01"
     assert payload["Покупатель"] == {
         "ИНН": "7700000100",
         "КПП": "770001001",
@@ -53,6 +55,16 @@ def test_build_mole_payload_matches_1c_contract() -> None:
     assert row["Сумма"] == 314752.0
     assert row["СуммаНДС"] == 56758.56
     assert row["СуммаБезНДС"] == 257993.44
+
+
+def test_build_mole_payload_maps_period_codes() -> None:
+    order = _Order()
+    order.period_code = "3/26"
+    assert OptOrderService._build_mole_payload(order)["Период"] == "2026-07-01"  # type: ignore[arg-type]
+    order.period_code = "4/26"
+    assert OptOrderService._build_mole_payload(order)["Период"] == "2026-10-01"  # type: ignore[arg-type]
+    order.period_code = "1/27"
+    assert OptOrderService._build_mole_payload(order)["Период"] == "2027-01-01"  # type: ignore[arg-type]
 
 
 def test_build_mole_payload_sends_document_number_when_known() -> None:

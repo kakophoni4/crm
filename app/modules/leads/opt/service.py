@@ -1198,8 +1198,20 @@ class OptOrderService:
                 row["НомерДокумента"] = doc_no
             registry.append(row)
 
+        period_raw = getattr(order, "period_code", None)
+        period_iso = period_code_to_mole_iso(str(period_raw)) if period_raw else None
+        if not period_iso:
+            raise ValidationError(
+                message=(
+                    "Для отправки в 1С нужен период заявки "
+                    "(например 2/26 → Период 2026-04-01)"
+                ),
+            )
+
         return {
             "CRMid": order.crm_id,
+            # Era: explicit quarter start — filter returns what we send.
+            "Период": period_iso,
             "Покупатель": OptOrderService._mole_party(
                 inn=order.buyer_inn,
                 kpp=order.buyer_kpp,
