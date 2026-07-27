@@ -158,3 +158,44 @@ def test_plan_sync_unchanged() -> None:
         mole_orders=[mole],
     )
     assert actions == [("unchanged", "crm-order-1")]
+
+
+def test_plan_sync_soft_deleted_deletes_even_if_missing_from_filter() -> None:
+    """UI soft-delete does not call Mole; sync must DELETE by CRM soft-deleted CRMid.
+
+    Orphans with empty Mole period never appear in period filter — still delete.
+    """
+    payload = _payload()
+    actions = {
+        crm_id: kind
+        for kind, crm_id in plan_sync_actions(
+            local_crm_ids={"crm-order-active"},
+            local_payloads={"crm-order-active": payload},
+            mole_orders=[
+                {
+                    "CRMid": "crm-order-active",
+                    "Удален": False,
+                    "Покупатель": {"ИНН": "564200586550"},
+                    "Реестр": payload["Реестр"],
+                },
+                # soft-deleted orphan NOT in this list (empty period / filter miss)
+            ],
+            soft_deleted_crm_ids={"crm-order-soft-376", "crm-order-soft-402"},
+        )
+    }
+    assert actions["crm-order-active"] == "unchanged"
+    assert actions["crm-order-soft-376"] == "delete_extra"
+    assert actions["crm-order-soft-402"] == "delete_extra"
+
+
+def test_plan_sync_soft_deleted_dedupes_filter_extra() -> None:
+    payload = _payload()
+    planned = plan_sync_actions(
+        local_crm_ids=set(),
+        local_payloads={},
+        mole_orders=[
+            {"CRMid": "crm-order-soft", "Удален": False, "Реестр": []},
+        ],
+        soft_deleted_crm_ids={"crm-order-soft"},
+    )
+    assert planned == [("delete_extra", "crm-order-soft")]

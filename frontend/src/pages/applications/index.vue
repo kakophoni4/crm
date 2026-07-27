@@ -4,6 +4,7 @@ import {
   NButton,
   NDataTable,
   NEmpty,
+  NInput,
   NModal,
   NPagination,
   NSelect,
@@ -14,6 +15,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { ClipboardList, MessageSquare } from 'lucide-vue-next'
+import { watchDebounced } from '@vueuse/core'
 import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -79,6 +81,8 @@ const paymentStatusFilter = ref<string | null>(null)
 const periodFilter = ref<string | null>(null)
 const selectedGroupKey = ref<string>('all')
 const managerFilter = ref<number | null>(null)
+const buyerSearch = ref('')
+const buyerSearchApplied = ref('')
 const groups = ref<Group[]>([])
 const managers = ref<OptRegistryManagerItem[]>([])
 const periodOptions = OPT_PERIOD_OPTIONS
@@ -476,6 +480,7 @@ async function load(): Promise<void> {
       group_id: groupFilterId(),
       period_code: periodFilter.value || undefined,
       manager_user_id: canFilterManager.value ? managerFilter.value || undefined : undefined,
+      q: buyerSearchApplied.value.trim() || undefined,
       offset: (page.value - 1) * pageSize,
       limit: pageSize,
     }
@@ -571,6 +576,16 @@ function goToChatFromPayment(): void {
   void router.push({ name: 'chats', query: { chatId: String(chatId) } })
 }
 
+function applyBuyerSearch(): void {
+  const next = (buyerSearch.value ?? '').trim()
+  if (next === buyerSearchApplied.value && page.value === 1) {
+    void load()
+    return
+  }
+  buyerSearchApplied.value = next
+  page.value = 1
+}
+
 function onTabChange(name: string | number): void {
   activeTab.value = name === 'payments' ? 'payments' : 'orders'
   if (activeTab.value === 'payments' && paymentStatusFilter.value === 'unpaid') {
@@ -579,9 +594,23 @@ function onTabChange(name: string | number): void {
   page.value = 1
 }
 
-watch([page, paymentStatusFilter, periodFilter, selectedGroupKey, managerFilter, activeTab], () => {
-  void load()
-})
+watch(
+  [page, paymentStatusFilter, periodFilter, selectedGroupKey, managerFilter, activeTab, buyerSearchApplied],
+  () => {
+    void load()
+  },
+)
+
+watchDebounced(
+  buyerSearch,
+  (value) => {
+    const next = (value ?? '').trim()
+    if (next === buyerSearchApplied.value) return
+    buyerSearchApplied.value = next
+    page.value = 1
+  },
+  { debounce: 350 },
+)
 
 watch(selectedGroupKey, () => {
   void loadManagers()
@@ -614,6 +643,14 @@ onMounted(() => {
         </p>
       </div>
       <div class="applications-page__filters">
+        <NInput
+          v-model:value="buyerSearch"
+          clearable
+          size="small"
+          placeholder="Покупатель / ИНН"
+          style="width: 220px"
+          @keyup.enter="applyBuyerSearch"
+        />
         <NSelect
           v-if="canFilterGroup"
           v-model:value="selectedGroupKey"

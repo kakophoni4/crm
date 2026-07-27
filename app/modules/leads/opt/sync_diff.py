@@ -158,8 +158,14 @@ def plan_sync_actions(
     local_crm_ids: set[str],
     local_payloads: dict[str, dict[str, Any]],
     mole_orders: list[dict[str, Any]],
+    soft_deleted_crm_ids: set[str] | None = None,
 ) -> list[tuple[SyncActionKind, str]]:
-    """Decide per CRMid what to do. CRM is source of truth for membership + content."""
+    """Decide per CRMid what to do. CRM is source of truth for membership + content.
+
+    soft_deleted_crm_ids: CRMid of CRM soft-deleted submitted orders. Always scheduled
+    for Mole DELETE even when they are missing from the period filter (e.g. empty
+    Период=0001-01-01). UI soft-delete does not call Mole; sync is the cleanup pass.
+    """
     mole_by_id: dict[str, dict[str, Any]] = {}
     for row in mole_orders:
         crm_id = mole_crm_id(row)
@@ -167,6 +173,7 @@ def plan_sync_actions(
             mole_by_id[crm_id] = row
 
     actions: list[tuple[SyncActionKind, str]] = []
+    scheduled_deletes: set[str] = set()
 
     for crm_id in sorted(local_crm_ids):
         payload = local_payloads[crm_id]
@@ -190,5 +197,13 @@ def plan_sync_actions(
         if mole_is_deleted(remote):
             continue
         actions.append(("delete_extra", crm_id))
+        scheduled_deletes.add(crm_id)
+
+    # Soft-deleted in CRM: delete in Mole by CRMid even if not in period filter.
+    for crm_id in sorted(soft_deleted_crm_ids or ()):
+        if not crm_id or crm_id in local_crm_ids or crm_id in scheduled_deletes:
+            continue
+        actions.append(("delete_extra", crm_id))
+        scheduled_deletes.add(crm_id)
 
     return actions

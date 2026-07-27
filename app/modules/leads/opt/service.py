@@ -438,11 +438,12 @@ class OptOrderService:
         payment_status: str | None = None,
         period_code: str | None = None,
         manager_user_id: int | None = None,
+        q: str | None = None,
         open_only: bool = False,
         offset: int = 0,
         limit: int = 50,
     ) -> OptOrderRegistryListResponse:
-        from sqlalchemy import func, select
+        from sqlalchemy import func, or_, select
 
         from app.modules.db.models.contact import Contact
         from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
@@ -489,6 +490,15 @@ class OptOrderService:
                 filters.append(LeadOptOrder.payment_status.in_(statuses))
         if period_code:
             filters.append(LeadOptOrder.period_code == period_code.strip())
+        query = (q or "").strip()
+        if query:
+            like = f"%{query}%"
+            filters.append(
+                or_(
+                    LeadOptOrder.buyer_name.ilike(like),
+                    LeadOptOrder.buyer_inn.ilike(like),
+                ),
+            )
         # Operators see only their own cards; seniors/admins keep group/dept/all scope.
         if role == UserRole.USER:
             filters.append(ContactGroupAssignment.owner_user_id == actor.id)
@@ -685,10 +695,11 @@ class OptOrderService:
         payment_status: str | None = None,
         period_code: str | None = None,
         manager_user_id: int | None = None,
+        q: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> OptPaymentLedgerListResponse:
-        from sqlalchemy import func, select
+        from sqlalchemy import func, or_, select
 
         from app.modules.db.models.contact import Contact
         from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
@@ -725,6 +736,15 @@ class OptOrderService:
                 filters.append(LeadOptOrder.payment_status.in_(statuses))
         if period_code:
             filters.append(LeadOptOrder.period_code == period_code.strip())
+        query = (q or "").strip()
+        if query:
+            like = f"%{query}%"
+            filters.append(
+                or_(
+                    LeadOptOrder.buyer_name.ilike(like),
+                    LeadOptOrder.buyer_inn.ilike(like),
+                ),
+            )
         if manager_user_id is not None:
             filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
 
@@ -1598,6 +1618,13 @@ class OptOrderService:
             local_payloads[order.crm_id] = payload
             local_by_crm[order.crm_id] = order
 
+        # Soft-deleted in CRM stay in DB; Mole is cleaned on sync (not on UI delete).
+        soft_deleted_crm_ids = set(
+            await self._repo.list_soft_deleted_submitted_crm_ids(
+                period_code=None if sync_all else normalized,
+            ),
+        ) - set(local_payloads)
+
         report = OptSync1cResponse(period_code=normalized, period_iso=report_iso or "all")
 
         def _mole_missing(exc: MoleApiError) -> bool:
@@ -1634,6 +1661,7 @@ class OptOrderService:
                 local_crm_ids=set(local_payloads),
                 local_payloads=local_payloads,
                 mole_orders=mole_orders,
+                soft_deleted_crm_ids=soft_deleted_crm_ids,
             )
             # HTTP only in parallel (no DB). Then apply DB writes sequentially.
             sem = asyncio.Semaphore(5)
@@ -1704,11 +1732,16 @@ class OptOrderService:
             try:
                 if kind == "delete_extra":
                     report.deleted_extra += 1
+                    detail = (
+                        "Удалена в 1С (soft-delete в CRM)"
+                        if crm_id in soft_deleted_crm_ids
+                        else "Удалена лишняя заявка в 1С"
+                    )
                     report.actions.append(
                         OptSync1cActionItem(
                             action=kind,
                             crm_id=crm_id,
-                            detail="Удалена лишняя заявка в 1С",
+                            detail=detail,
                         ),
                     )
                     continue

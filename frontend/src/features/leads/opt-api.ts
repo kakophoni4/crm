@@ -29,6 +29,7 @@ export async function listOptOrdersRegistry(params?: {
   payment_status?: string
   period_code?: string
   manager_user_id?: number
+  q?: string
   open_only?: boolean
   offset?: number
   limit?: number
@@ -77,6 +78,7 @@ export async function listOptPaymentsLedger(params?: {
   payment_status?: string
   period_code?: string
   manager_user_id?: number
+  q?: string
   offset?: number
   limit?: number
 }): Promise<OptPaymentLedgerListResponse> {

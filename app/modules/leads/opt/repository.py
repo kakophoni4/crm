@@ -416,6 +416,22 @@ class OptOrderRepository:
         )
         return list(result.scalars().all())
 
+    async def list_soft_deleted_submitted_crm_ids(
+        self,
+        *,
+        period_code: str | None = None,
+    ) -> list[str]:
+        """CRMid of soft-deleted submitted orders (for Mole DELETE on sync)."""
+        stmt = select(LeadOptOrder.crm_id).where(
+            LeadOptOrder.status == "submitted",
+            LeadOptOrder.deleted_at.is_not(None),
+            LeadOptOrder.crm_id.is_not(None),
+        )
+        if period_code is not None:
+            stmt = stmt.where(LeadOptOrder.period_code == period_code)
+        result = await self._session.execute(stmt.order_by(LeadOptOrder.id.asc()))
+        return [cid for cid in result.scalars().all() if cid]
+
     async def get_order_by_source_attachment(
         self,
         message_id: int,

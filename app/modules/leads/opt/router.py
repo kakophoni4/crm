@@ -68,6 +68,7 @@ async def list_opt_orders_registry(
     payment_status: str | None = None,
     period_code: str | None = None,
     manager_user_id: int | None = None,
+    q: str | None = None,
     open_only: bool = False,
     offset: int = 0,
     limit: int = 50,
@@ -81,6 +82,7 @@ async def list_opt_orders_registry(
         payment_status=payment_status,
         period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id,
+        q=(q or "").strip() or None,
         open_only=open_only,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
@@ -147,6 +149,7 @@ async def list_opt_payments_ledger(
     payment_status: str | None = None,
     period_code: str | None = None,
     manager_user_id: int | None = None,
+    q: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> OptPaymentLedgerListResponse:
@@ -159,6 +162,7 @@ async def list_opt_payments_ledger(
         payment_status=payment_status,
         period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id,
+        q=(q or "").strip() or None,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
     )
