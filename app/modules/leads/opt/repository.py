@@ -39,6 +39,26 @@ class OptOrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def sum_supplier_volume_for_period(
+        self,
+        *,
+        supplier_inn: str,
+        period_code: str,
+    ) -> Decimal:
+        """Sum line amounts for lavka in period (active orders only)."""
+        result = await self._session.execute(
+            select(func.coalesce(func.sum(LeadOptOrderLine.amount), 0))
+            .select_from(LeadOptOrderLine)
+            .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderLine.order_id)
+            .where(
+                LeadOptOrderLine.supplier_inn == supplier_inn,
+                LeadOptOrder.period_code == period_code,
+                LeadOptOrder.deleted_at.is_(None),
+                LeadOptOrder.status.in_(("queued", "submitting", "submitted")),
+            ),
+        )
+        return Decimal(str(result.scalar_one() or 0)).quantize(Decimal("0.01"))
+
     async def get_unit_by_inn_for_period(self, inn: str, period_code: str) -> OptUnit | None:
         """Active lavka that is explicitly allowed for the OPT period."""
         from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability

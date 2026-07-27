@@ -1084,6 +1084,39 @@ class OptOrderService:
                 ),
             )
 
+        # Volume limits per lavka (accountant-configured).
+        incoming_by_inn: dict[str, Decimal] = {}
+        for row in line_payloads:
+            inn = str(row["supplier_inn"])
+            incoming_by_inn[inn] = incoming_by_inn.get(inn, Decimal("0")) + Decimal(
+                str(row["amount"]),
+            )
+        for inn, incoming in incoming_by_inn.items():
+            unit = await self._repo.get_unit_by_inn(inn)
+            if unit is None or unit.volume_limit is None:
+                continue
+            limit = Decimal(str(unit.volume_limit)).quantize(Decimal("0.01"))
+            used = await self._repo.sum_supplier_volume_for_period(
+                supplier_inn=inn,
+                period_code=period_code,
+            )
+            projected = (used + incoming).quantize(Decimal("0.01"))
+            if projected > limit:
+                raise ValidationError(
+                    message=(
+                        f"Превышен лимит объёма по лавке {unit.name or inn} "
+                        f"за период {period_code}: уже {used} ₽, в файле {incoming} ₽, "
+                        f"лимит {limit} ₽. Заявка не принята."
+                    ),
+                    details={
+                        "supplier_inn": inn,
+                        "period_code": period_code,
+                        "volume_used": str(used),
+                        "volume_incoming": str(incoming),
+                        "volume_limit": str(limit),
+                    },
+                )
+
         try:
             order = await self._repo.create_order(
                 lead_id=lead.id,

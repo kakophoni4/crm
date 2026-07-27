@@ -21,6 +21,7 @@ class AccountingUnitResponse(BaseModel):
     name: str | None = None
     category_code: str | None = None
     commission_rate_percent: Decimal | None = None
+    volume_limit: Decimal | None = None
     is_active: bool
     period_codes: list[str] = Field(default_factory=list)
 
@@ -46,6 +47,7 @@ class AccountingUnitCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=512)
     category_code: str = Field(min_length=1, max_length=16)
     commission_rate_percent: Decimal = Field(ge=0, le=100)
+    volume_limit: Decimal | None = Field(default=None, ge=0)
     period_codes: list[str] = Field(min_length=1)
 
     @field_validator("inn")
@@ -79,6 +81,8 @@ class AccountingUnitCreateRequest(BaseModel):
 
 class AccountingUnitPatchRequest(BaseModel):
     commission_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    volume_limit: Decimal | None = Field(default=None, ge=0)
+    clear_volume_limit: bool | None = None
     name: str | None = Field(default=None, min_length=1, max_length=512)
     category_code: str | None = Field(default=None, min_length=1, max_length=16)
     period_codes: list[str] | None = None
@@ -130,6 +134,8 @@ class AccountingUnitOrderItem(BaseModel):
 class AccountingUnitOrderGroup(BaseModel):
     unit: AccountingUnitResponse
     orders: list[AccountingUnitOrderItem] = Field(default_factory=list)
+    orders_count: int = 0
+    orders_volume_sum: Decimal = Decimal("0")
 
 
 class AccountingUnitOrdersResponse(BaseModel):
@@ -295,6 +301,7 @@ class AccountingUnitOwnerRow(BaseModel):
     name: str | None = None
     category_code: str | None = None
     commission_rate_percent: Decimal | None = None
+    volume_limit: Decimal | None = None
     is_active: bool = True
     period_codes: list[str] = Field(default_factory=list)
     accountant_user_id: int | None = None

@@ -36,6 +36,8 @@ export interface CreateAccountingUnitPayload {
 
 export interface PatchAccountingUnitPayload {
   commission_rate_percent?: number
+  volume_limit?: number | null
+  clear_volume_limit?: boolean
   name?: string
   category_code?: string
   period_codes?: string[]

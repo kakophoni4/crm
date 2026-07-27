@@ -19,6 +19,7 @@ class OptUnit(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     category_code: Mapped[str] = mapped_column(Text, nullable=False, server_default="TECH")
     commission_rate_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    volume_limit: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

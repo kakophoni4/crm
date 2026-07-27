@@ -107,6 +107,11 @@ class AccountingService:
             name=unit.name,
             category_code=unit.category_code,
             commission_rate_percent=unit.commission_rate_percent,
+            volume_limit=(
+                Decimal(str(unit.volume_limit))
+                if unit.volume_limit is not None
+                else None
+            ),
             is_active=unit.is_active,
             period_codes=list(period_codes or []),
         )
@@ -178,6 +183,7 @@ class AccountingService:
             name=body.name.strip(),
             category_code=category_code,
             commission_rate_percent=body.commission_rate_percent,
+            volume_limit=body.volume_limit,
             is_active=True,
         )
         created = await self._repo.add_unit(unit)
@@ -205,6 +211,8 @@ class AccountingService:
 
         if (
             body.commission_rate_percent is None
+            and body.volume_limit is None
+            and body.clear_volume_limit is None
             and body.name is None
             and body.category_code is None
             and body.period_codes is None
@@ -214,6 +222,10 @@ class AccountingService:
 
         if body.commission_rate_percent is not None:
             unit.commission_rate_percent = body.commission_rate_percent
+        if body.clear_volume_limit:
+            unit.volume_limit = None
+        elif body.volume_limit is not None:
+            unit.volume_limit = body.volume_limit
         if body.name is not None:
             unit.name = body.name
         if body.is_active is not None:
@@ -290,6 +302,11 @@ class AccountingService:
                     commission_rate_percent=(
                         unit_row.commission_rate_percent if unit_row else None
                     ),
+                    volume_limit=(
+                        Decimal(str(unit_row.volume_limit))
+                        if unit_row and unit_row.volume_limit is not None
+                        else None
+                    ),
                     is_active=unit_row.is_active if unit_row else True,
                 )
             order_map = groups.setdefault(inn, {})
@@ -335,8 +352,17 @@ class AccountingService:
         grouped: list[AccountingUnitOrderGroup] = []
         for inn, order_map in groups.items():
             orders = sorted(order_map.values(), key=lambda row: row.created_at, reverse=True)
+            volume_sum = sum(
+                (row.lavka_line_volume for row in orders),
+                Decimal("0"),
+            ).quantize(Decimal("0.01"))
             grouped.append(
-                AccountingUnitOrderGroup(unit=unit_meta[inn], orders=orders),
+                AccountingUnitOrderGroup(
+                    unit=unit_meta[inn],
+                    orders=orders,
+                    orders_count=len(orders),
+                    orders_volume_sum=volume_sum,
+                ),
             )
         grouped.sort(key=lambda row: (row.unit.name or row.unit.inn).casefold())
 
@@ -632,6 +658,11 @@ class AccountingService:
                 name=unit.name,
                 category_code=unit.category_code,
                 commission_rate_percent=unit.commission_rate_percent,
+                volume_limit=(
+                    Decimal(str(unit.volume_limit))
+                    if unit.volume_limit is not None
+                    else None
+                ),
                 is_active=bool(unit.is_active),
                 period_codes=periods_by_inn.get(unit.inn, []),
                 accountant_user_id=accountant_id,
@@ -681,6 +712,11 @@ class AccountingService:
             name=unit.name,
             category_code=unit.category_code,
             commission_rate_percent=unit.commission_rate_percent,
+            volume_limit=(
+                Decimal(str(unit.volume_limit))
+                if unit.volume_limit is not None
+                else None
+            ),
             is_active=bool(unit.is_active),
             period_codes=periods_by_inn.get(unit.inn, []),
             accountant_user_id=accountant_user_id,

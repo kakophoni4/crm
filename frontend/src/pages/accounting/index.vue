@@ -214,6 +214,16 @@ const rateEditUnitId = ref<number | null>(null)
 const rateEditLabel = ref('')
 const rateEditValue = ref<number | null>(null)
 
+const limitEditOpen = ref(false)
+const limitEditSaving = ref(false)
+const limitEditUnitId = ref<number | null>(null)
+const limitEditLabel = ref('')
+const limitEditValue = ref<number | null>(null)
+
+function sumGroupVolume(group: AccountingUnitOrderGroup): number {
+  return group.orders.reduce((acc, row) => acc + Number(row.lavka_line_volume || 0), 0)
+}
+
 const periodsEditOpen = ref(false)
 const periodsEditSaving = ref(false)
 const periodsEditUnitId = ref<number | null>(null)
@@ -260,6 +270,48 @@ async function submitEditRate(): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить процент')
   } finally {
     rateEditSaving.value = false
+  }
+}
+
+function openEditLimit(unit: {
+  id?: number
+  unit_id?: number
+  name?: string | null
+  inn: string
+  volume_limit?: number | null
+}): void {
+  const id = unit.id ?? unit.unit_id
+  if (id == null) return
+  limitEditUnitId.value = id
+  limitEditLabel.value = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
+  limitEditValue.value =
+    unit.volume_limit != null ? Number(unit.volume_limit) : null
+  limitEditOpen.value = true
+}
+
+async function submitEditLimit(): Promise<void> {
+  if (limitEditUnitId.value == null) return
+  if (limitEditValue.value != null && limitEditValue.value < 0) {
+    message.warning('Лимит не может быть отрицательным')
+    return
+  }
+  limitEditSaving.value = true
+  try {
+    if (limitEditValue.value == null) {
+      await patchAccountingUnit(limitEditUnitId.value, { clear_volume_limit: true })
+    } else {
+      await patchAccountingUnit(limitEditUnitId.value, {
+        volume_limit: limitEditValue.value,
+      })
+    }
+    message.success(limitEditValue.value == null ? 'Лимит снят' : 'Лимит обновлён')
+    limitEditOpen.value = false
+    await Promise.all([loadUnits(), loadOrders()])
+    if (isChief.value) await loadUnitOwners()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить лимит')
+  } finally {
+    limitEditSaving.value = false
   }
 }
 
@@ -987,8 +1039,32 @@ onUnmounted(() => {
                   <div class="accounting-page__lavka-header">
                     <span class="accounting-page__lavka-title">{{ lavkaTitle(group.unit) }}</span>
                     <NTag size="small" :bordered="false">
-                      {{ group.orders.length }}
-                      {{ group.orders.length === 1 ? 'заявка' : 'заявок' }}
+                      {{ group.orders_count ?? group.orders.length }}
+                      {{
+                        (group.orders_count ?? group.orders.length) === 1
+                          ? 'заявка'
+                          : 'заявок'
+                      }}
+                    </NTag>
+                    <NTag size="small" type="info" :bordered="false">
+                      {{
+                        formatAccountingMoney(
+                          Number(group.orders_volume_sum ?? sumGroupVolume(group)),
+                        )
+                      }}
+                    </NTag>
+                    <NTag
+                      v-if="group.unit.volume_limit != null"
+                      size="small"
+                      :type="
+                        Number(group.orders_volume_sum ?? sumGroupVolume(group)) >
+                        Number(group.unit.volume_limit)
+                          ? 'error'
+                          : 'warning'
+                      "
+                      :bordered="false"
+                    >
+                      лимит {{ formatAccountingMoney(Number(group.unit.volume_limit)) }}
                     </NTag>
                     <NButton
                       v-if="isChief && group.unit.id"
@@ -1000,6 +1076,14 @@ onUnmounted(() => {
                         <Percent :size="14" />
                       </template>
                       %
+                    </NButton>
+                    <NButton
+                      v-if="isChief && group.unit.id"
+                      size="tiny"
+                      quaternary
+                      @click.stop="openEditLimit(group.unit)"
+                    >
+                      Лимит
                     </NButton>
                   </div>
                 </template>
@@ -1299,6 +1383,38 @@ onUnmounted(() => {
         <div class="accounting-page__modal-actions">
           <NButton @click="rateEditOpen = false">Отмена</NButton>
           <NButton type="primary" :loading="rateEditSaving" @click="submitEditRate">
+            Сохранить
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="limitEditOpen"
+      preset="card"
+      title="Лимит объёма по лавке"
+      style="width: 420px; max-width: 92vw"
+    >
+      <p class="accounting-page__rate-label">{{ limitEditLabel }}</p>
+      <NFormItem label="Лимит объёма за период, ₽" :show-feedback="false">
+        <NInputNumber
+          v-model:value="limitEditValue"
+          :min="0"
+          :precision="2"
+          :step="1000"
+          clearable
+          placeholder="Без лимита"
+          style="width: 100%"
+        />
+      </NFormItem>
+      <p class="accounting-page__rate-hint">
+        Если сумма строк этой лавки в заявках периода (с учётом новой загрузки) превысит лимит —
+        заявка не будет принята. Очистите поле, чтобы снять лимит.
+      </p>
+      <template #footer>
+        <div class="accounting-page__modal-actions">
+          <NButton @click="limitEditOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="limitEditSaving" @click="submitEditLimit">
             Сохранить
           </NButton>
         </div>

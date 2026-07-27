@@ -12,6 +12,7 @@ export interface AccountingUnit {
   name?: string | null
   category_code?: string | null
   commission_rate_percent?: number | null
+  volume_limit?: number | null
   is_active: boolean
   period_codes?: string[]
 }
@@ -57,6 +58,8 @@ export interface AccountingUnitOrder {
 export interface AccountingUnitOrderGroup {
   unit: AccountingUnit
   orders: AccountingUnitOrder[]
+  orders_count?: number
+  orders_volume_sum?: number
 }
 
 export interface AccountingRequirement {
@@ -84,6 +87,7 @@ export interface AccountingUnitOwnerRow {
   name?: string | null
   category_code?: string | null
   commission_rate_percent?: number | null
+  volume_limit?: number | null
   is_active: boolean
   period_codes?: string[]
   accountant_user_id?: number | null
