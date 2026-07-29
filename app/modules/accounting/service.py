@@ -257,6 +257,28 @@ class AccountingService:
             period_codes = periods_by_inn.get(unit.inn, [])
         return self._to_unit_response(unit, period_codes)
 
+    async def delete_unit(self, actor: User, unit_id: int) -> None:
+        if not self._is_chief(actor):
+            raise PermissionDenied()
+
+        units = await self._repo.get_units_by_ids([unit_id], active_only=False)
+        unit = units.get(unit_id)
+        if unit is None:
+            raise NotFound(message="Лавка не найдена")
+
+        active_orders = await self._repo.count_active_orders_for_supplier_inn(unit.inn)
+        if active_orders > 0:
+            raise ValidationError(
+                message=(
+                    f"Нельзя удалить лавку: на ИНН {unit.inn} висит "
+                    f"{active_orders} активных заявок"
+                ),
+                details={"inn": unit.inn, "active_orders": active_orders},
+            )
+
+        await self._repo.delete_unit(unit)
+        await self._session.commit()
+
     async def list_orders_by_units(
         self,
         actor: User,

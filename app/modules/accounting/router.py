@@ -110,6 +110,15 @@ async def patch_accounting_unit(
     return await service.update_unit(actor, unit_id, body)
 
 
+@router.delete("/units/{unit_id}", status_code=204)
+async def delete_accounting_unit(
+    unit_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> None:
+    await service.delete_unit(actor, unit_id)
+
+
 @router.get("/orders", response_model=AccountingUnitOrdersResponse)
 async def list_accounting_orders(
     actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],

@@ -331,6 +331,26 @@ class AccountingRepository:
         await self._session.refresh(unit)
         return unit
 
+    async def count_active_orders_for_supplier_inn(self, inn: str) -> int:
+        """Non-deleted OPT orders that still have lines for this lavka INN."""
+        result = await self._session.execute(
+            select(func.count(func.distinct(LeadOptOrder.id)))
+            .select_from(LeadOptOrderLine)
+            .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderLine.order_id)
+            .where(
+                LeadOptOrderLine.supplier_inn == inn,
+                LeadOptOrder.deleted_at.is_(None),
+            ),
+        )
+        return int(result.scalar_one() or 0)
+
+    async def delete_unit(self, unit: OptUnit) -> None:
+        await self._session.execute(
+            delete(OptUnitPeriodAvailability).where(OptUnitPeriodAvailability.inn == unit.inn),
+        )
+        await self._session.delete(unit)
+        await self._session.flush()
+
     async def list_period_codes_by_inns(self, inns: list[str]) -> dict[str, list[str]]:
         if not inns:
             return {}

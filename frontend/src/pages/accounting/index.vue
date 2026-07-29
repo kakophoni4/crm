@@ -17,6 +17,7 @@ import {
   NTabPane,
   NTabs,
   NTag,
+  useDialog,
   useMessage,
 } from 'naive-ui'
 import {
@@ -35,6 +36,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   assignAccountingUnitOwner,
   createAccountingUnit,
+  deleteAccountingUnit,
   downloadAccountingRegistry,
   downloadRequirementPdf,
   listAccountingOrders,
@@ -72,6 +74,7 @@ import {
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const message = useMessage()
+const dialog = useDialog()
 
 const loading = ref(false)
 const syncingRequirements = ref(false)
@@ -163,6 +166,7 @@ const accountantOptions = ref<SelectOption[]>([])
 const savingUnitId = ref<number | null>(null)
 const assignmentsSubTab = ref<'selling' | 'requirements'>('selling')
 const togglingUnitId = ref<number | null>(null)
+const deletingUnitId = ref<number | null>(null)
 
 const sellingUnitOwners = computed(() =>
   unitOwners.value.filter((row) => row.is_active !== false),
@@ -746,6 +750,31 @@ async function onToggleUnitActive(row: AccountingUnitOwnerRow, nextActive: boole
   }
 }
 
+
+async function onDeleteUnit(row: AccountingUnitOwnerRow): Promise<void> {
+  dialog.warning({
+    title: 'Удалить лавку?',
+    content: `Удалить «${row.name || row.inn}» (ИНН ${row.inn}) из CRM? Если на лавке есть активные заявки — удаление будет запрещено.`,
+    positiveText: 'Удалить',
+    negativeText: 'Отмена',
+    onPositiveClick: async () => {
+      deletingUnitId.value = row.unit_id
+      try {
+        await deleteAccountingUnit(row.unit_id)
+        unitOwners.value = unitOwners.value.filter((item) => item.unit_id !== row.unit_id)
+        await loadUnits()
+        message.success('Лавка удалена')
+      } catch (err) {
+        message.error(err instanceof AppError ? err.message : 'Не удалось удалить лавку')
+        throw err
+      } finally {
+        deletingUnitId.value = null
+      }
+    },
+  })
+}
+
+
 function renderLinesTable(lines: AccountingOrderLineBrief[]) {
   return h('table', { class: 'accounting-page__lines-table' }, [
     h('thead', [
@@ -1251,6 +1280,15 @@ onUnmounted(() => {
                       >
                         В требования
                       </NButton>
+                      <NButton
+                        size="small"
+                        quaternary
+                        type="error"
+                        :loading="deletingUnitId === row.unit_id"
+                        @click="onDeleteUnit(row)"
+                      >
+                        Удалить
+                      </NButton>
                     </div>
                     <NSelect
                       :value="row.accountant_user_id"
@@ -1296,6 +1334,15 @@ onUnmounted(() => {
                         @click="onToggleUnitActive(row, true)"
                       >
                         В продающие
+                      </NButton>
+                      <NButton
+                        size="small"
+                        quaternary
+                        type="error"
+                        :loading="deletingUnitId === row.unit_id"
+                        @click="onDeleteUnit(row)"
+                      >
+                        Удалить
                       </NButton>
                     </div>
                     <NSelect

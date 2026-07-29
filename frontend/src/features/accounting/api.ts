@@ -59,6 +59,10 @@ export async function patchAccountingUnit(
   return data
 }
 
+export async function deleteAccountingUnit(unitId: number): Promise<void> {
+  await http.delete(`/accounting/units/${unitId}`)
+}
+
 export async function listAccountingOrders(params: {
   supplier_inn?: string
   q?: string
