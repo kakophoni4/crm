@@ -1,7 +1,7 @@
 -- DRY-RUN only: preview which opt_units would be deleted.
 -- Keep list from «КОМПАНИИ В СРМ» spreadsheet.
 
-CREATE TEMP TABLE keep_inn(inn text PRIMARY KEY) ON COMMIT DROP;
+CREATE TEMP TABLE keep_inn(inn text PRIMARY KEY);
 INSERT INTO keep_inn(inn) VALUES
   ('9731112323'),
   ('9718148521'),
