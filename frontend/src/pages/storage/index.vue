@@ -539,6 +539,7 @@ const groupColumns = computed<DataTableColumns<GroupChatFile>>(() => [
 onMounted(async () => {
   await loadVault()
   await loadGroupSummaries()
+  await loadReceipts()
 })
 </script>
 

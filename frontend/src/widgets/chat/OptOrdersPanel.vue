@@ -1419,9 +1419,6 @@ onUnmounted(() => {
         </div>
       </template>
     </NModal>
-  </section>
-</template>
-
 
     <NModal
       v-model:show="sendReceiptsOpen"
@@ -1444,6 +1441,8 @@ onUnmounted(() => {
         </NSpace>
       </template>
     </NModal>
+  </section>
+</template>
 
 <style scoped>
 .opt-orders {
