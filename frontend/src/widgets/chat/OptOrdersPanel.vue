@@ -852,7 +852,7 @@ onUnmounted(() => {
           </div>
 
           <p
-            v-if="statusHint(selectedOrder) && !(selectedOrder.status === 'submitted' && !selectedOrder.receipts_sent_at)"
+            v-if="statusHint(selectedOrder) && (selectedOrder.payment_status === 'paid' || selectedOrder.payment_status === 'partial' || selectedOrder.receipts_sent_at || selectedOrder.status !== 'submitted')"
             class="opt-orders__hint"
           >
             {{ statusHint(selectedOrder) }}
