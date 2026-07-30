@@ -96,6 +96,7 @@ class OptOrderResponse(BaseModel):
     source_filename: str | None = None
     submission_error: str | None = None
     submitted_at: datetime | None = None
+    receipts_sent_at: datetime | None = None
     created_at: datetime
     lines: list[OptOrderLineResponse] = Field(default_factory=list)
     payments: list[OptPaymentResponse] = Field(default_factory=list)

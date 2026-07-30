@@ -183,6 +183,7 @@ class OptOrderService:
             source_filename=order.source_filename,
             submission_error=order.submission_error,
             submitted_at=order.submitted_at,
+            receipts_sent_at=getattr(order, "receipts_sent_at", None),
             created_at=order.created_at,
             lines=[
                 OptOrderLineResponse(
@@ -1603,6 +1604,10 @@ class OptOrderService:
                 ],
             ),
         )
+        from datetime import UTC, datetime
+
+        if order.receipts_sent_at is None:
+            order.receipts_sent_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.commit()
         return {"message_id": message.id, "chat_id": lead.chat_id, "file_count": 1}
 

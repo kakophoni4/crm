@@ -80,6 +80,7 @@ class LeadOptOrder(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    receipts_sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_by: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="RESTRICT"),

@@ -90,6 +90,7 @@ export interface OptOrder {
   source_filename?: string | null
   submission_error?: string | null
   submitted_at?: string | null
+  receipts_sent_at?: string | null
   created_at: string
   lines: OptOrderLine[]
   payments: OptPayment[]

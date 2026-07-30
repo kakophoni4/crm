@@ -247,7 +247,11 @@ function paymentPillClass(status: string): string {
   return 'opt-orders__pill opt-orders__pill--danger'
 }
 
-function statusPillClass(status: string): string {
+function statusPillClass(order: OptOrder | string): string {
+  const status = typeof order === 'string' ? order : order.status
+  if (typeof order !== 'string' && order.receipts_sent_at && status === 'submitted') {
+    return 'opt-orders__pill opt-orders__pill--warn'
+  }
   if (status === 'submitted') return 'opt-orders__pill opt-orders__pill--ok'
   if (status === 'failed') return 'opt-orders__pill opt-orders__pill--danger'
   if (status === 'submitting') return 'opt-orders__pill opt-orders__pill--info'
@@ -400,7 +404,11 @@ async function onDownloadPaymentDocument(paymentId: number, fileId?: number | nu
   }
 }
 
-function statusLabel(status: string): string {
+function statusLabel(order: OptOrder | string): string {
+  const status = typeof order === 'string' ? order : order.status
+  if (typeof order !== 'string' && order.receipts_sent_at && status === 'submitted') {
+    return 'сбор оплат'
+  }
   if (status === 'submitted') return 'готов'
   if (status === 'failed') return 'ошибка'
   if (status === 'submitting') return 'в 1С'
@@ -408,7 +416,11 @@ function statusLabel(status: string): string {
   return 'черновик'
 }
 
-function statusHint(status: string): string {
+function statusHint(order: OptOrder | string): string {
+  const status = typeof order === 'string' ? order : order.status
+  if (typeof order !== 'string' && order.receipts_sent_at && status === 'submitted') {
+    return 'Квитанции отправлены клиенту — ожидаем сбор оплат'
+  }
   if (status === 'queued') return ''
   if (status === 'submitting') return 'Отправка в 1С…'
   if (status === 'submitted') return 'Реестр готов — можно скачать или отправить клиенту'
@@ -656,6 +668,11 @@ async function onSendReceiptsToClient(order: OptOrder): Promise<void> {
   try {
     await sendOptOrderReceiptsToClient(props.leadId, order.id)
     sendReceiptsOpen.value = false
+    orders.value = orders.value.map((row) =>
+      row.id === order.id
+        ? { ...row, receipts_sent_at: row.receipts_sent_at || new Date().toISOString() }
+        : row,
+    )
     message.success('Квитанции отправлены клиенту')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось отправить квитанции')
@@ -807,9 +824,9 @@ onUnmounted(() => {
             <NTag
               size="tiny"
               :bordered="false"
-              :class="statusPillClass(order.status)"
+              :class="statusPillClass(order)"
             >
-              {{ statusLabel(order.status) }}
+              {{ statusLabel(order) }}
             </NTag>
           </button>
         </div>
@@ -828,17 +845,17 @@ onUnmounted(() => {
             <NTag
               size="small"
               :bordered="false"
-              :class="statusPillClass(selectedOrder.status)"
+              :class="statusPillClass(selectedOrder)"
             >
-              {{ statusLabel(selectedOrder.status) }}
+              {{ statusLabel(selectedOrder) }}
             </NTag>
           </div>
 
           <p
-            v-if="statusHint(selectedOrder.status) && selectedOrder.status !== 'submitted'"
+            v-if="statusHint(selectedOrder) && !(selectedOrder.status === 'submitted' && !selectedOrder.receipts_sent_at)"
             class="opt-orders__hint"
           >
-            {{ statusHint(selectedOrder.status) }}
+            {{ statusHint(selectedOrder) }}
           </p>
 
           <dl class="opt-orders__facts">
