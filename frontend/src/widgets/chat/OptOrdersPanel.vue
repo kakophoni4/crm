@@ -248,10 +248,14 @@ function paymentPillClass(status: string): string {
 }
 
 function statusPillClass(order: OptOrder | string): string {
-  const status = typeof order === 'string' ? order : order.status
-  if (typeof order !== 'string' && order.receipts_sent_at && status === 'submitted') {
-    return 'opt-orders__pill opt-orders__pill--warn'
+  if (typeof order !== 'string') {
+    if (order.payment_status === 'paid') return 'opt-orders__pill opt-orders__pill--ok'
+    if (order.payment_status === 'partial') return 'opt-orders__pill opt-orders__pill--warn'
+    if (order.receipts_sent_at && order.status === 'submitted') {
+      return 'opt-orders__pill opt-orders__pill--warn'
+    }
   }
+  const status = typeof order === 'string' ? order : order.status
   if (status === 'submitted') return 'opt-orders__pill opt-orders__pill--ok'
   if (status === 'failed') return 'opt-orders__pill opt-orders__pill--danger'
   if (status === 'submitting') return 'opt-orders__pill opt-orders__pill--info'
@@ -405,10 +409,12 @@ async function onDownloadPaymentDocument(paymentId: number, fileId?: number | nu
 }
 
 function statusLabel(order: OptOrder | string): string {
-  const status = typeof order === 'string' ? order : order.status
-  if (typeof order !== 'string' && order.receipts_sent_at && status === 'submitted') {
-    return 'сбор оплат'
+  if (typeof order !== 'string') {
+    if (order.payment_status === 'paid') return 'оплачена'
+    if (order.payment_status === 'partial') return 'частично'
+    if (order.receipts_sent_at && order.status === 'submitted') return 'сбор оплат'
   }
+  const status = typeof order === 'string' ? order : order.status
   if (status === 'submitted') return 'готов'
   if (status === 'failed') return 'ошибка'
   if (status === 'submitting') return 'в 1С'
@@ -417,10 +423,14 @@ function statusLabel(order: OptOrder | string): string {
 }
 
 function statusHint(order: OptOrder | string): string {
-  const status = typeof order === 'string' ? order : order.status
-  if (typeof order !== 'string' && order.receipts_sent_at && status === 'submitted') {
-    return 'Квитанции отправлены клиенту — ожидаем сбор оплат'
+  if (typeof order !== 'string') {
+    if (order.payment_status === 'paid') return 'Комиссия по заявке полностью оплачена'
+    if (order.payment_status === 'partial') return 'Частичная оплата — остаток ещё не закрыт'
+    if (order.receipts_sent_at && order.status === 'submitted') {
+      return 'Квитанции отправлены клиенту — ожидаем сбор оплат'
+    }
   }
+  const status = typeof order === 'string' ? order : order.status
   if (status === 'queued') return ''
   if (status === 'submitting') return 'Отправка в 1С…'
   if (status === 'submitted') return 'Реестр готов — можно скачать или отправить клиенту'
