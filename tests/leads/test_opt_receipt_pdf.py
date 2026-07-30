@@ -17,3 +17,14 @@ def test_short_name_from_filename() -> None:
 def test_period_code_from_text() -> None:
     text = "Налоговая декларация по НДС за 2 квартал 2026 год"
     assert period_code_from_text(text) == "2/26"
+
+
+def test_period_code_ignores_vat_rate_22() -> None:
+    # Real receipt text often has «22» (VAT) near the period line — must not become 2/22.
+    text = (
+        "Налоговая декларация по налогу на добавленную стоимость\n"
+        "ставка 22 процент\n"
+        "за 2 квартал, 2026 год\n"
+        "КНД 1166002"
+    )
+    assert period_code_from_text(text) == "2/26"

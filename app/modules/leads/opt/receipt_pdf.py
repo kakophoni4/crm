@@ -8,8 +8,12 @@ from io import BytesIO
 
 _INN_RE = re.compile(r"\b(\d{10}|\d{12})\b")
 _KPP_RE = re.compile(r"\b(\d{9})\b")
-_PERIOD_RE = re.compile(
-    r"(?:за\s+)?([1-4])\s*квартал[,.]?\s*(?:20)?(\d{2})\s*(?:год)?",
+_PERIOD_RE_FULL = re.compile(
+    r"(?:за\s+)?([1-4])\s*квартал[,.\s]+20(\d{2})\s*(?:год|г\.?)?",
+    re.IGNORECASE,
+)
+_PERIOD_RE_SHORT = re.compile(
+    r"(?:за\s+)?([1-4])\s*квартал[,.\s]+(\d{2})\s*(?:год|г\.?)",
     re.IGNORECASE,
 )
 _NAME_PAREN_RE = re.compile(r"\(([^)]+)\)\s*\.pdf$", re.IGNORECASE)
@@ -52,11 +56,21 @@ def short_name_from_filename(filename: str) -> str | None:
 
 
 def period_code_from_text(text: str) -> str | None:
-    match = _PERIOD_RE.search(text)
-    if match is None:
-        return None
-    quarter, yy = match.groups()
-    return f"{int(quarter)}/{yy}"
+    """Extract OPT period like 2/26 from «2 квартал 2026 год».
+
+    Prefer explicit 20XX so we do not pick VAT rate «22» as the year.
+    """
+    for pattern in (_PERIOD_RE_FULL, _PERIOD_RE_SHORT):
+        match = pattern.search(text)
+        if match is None:
+            continue
+        quarter_s, yy_s = match.groups()
+        yy = int(yy_s)
+        # Business window: 2020–2035
+        if yy < 20 or yy > 35:
+            continue
+        return f"{int(quarter_s)}/{yy_s}"
+    return None
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
