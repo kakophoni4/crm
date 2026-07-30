@@ -14,6 +14,7 @@ from app.modules.storage.schemas import (
     GroupChatFileListResponse,
     ShareLinkCreateRequest,
     ShareLinkResponse,
+    StorageReceiptTreeResponse,
     VaultFileContentResponse,
     VaultFileContentUpdateRequest,
     VaultFileListResponse,
@@ -246,3 +247,27 @@ async def download_group_file(
         ),
     }
     return Response(content=data, media_type=content_type, headers=headers)
+
+
+@router.get("/receipts/tree", response_model=StorageReceiptTreeResponse)
+async def list_storage_receipts_tree(
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> StorageReceiptTreeResponse:
+    return await service.list_receipts_tree(actor)
+
+
+@router.get("/receipts/{receipt_id}/download")
+async def download_storage_receipt(
+    receipt_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> Response:
+    data, filename = await service.get_receipt_bytes(actor, receipt_id)
+    ascii_name = filename.encode("ascii", "ignore").decode() or "receipt.pdf"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+        ),
+    }
+    return Response(content=data, media_type="application/pdf", headers=headers)

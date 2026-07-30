@@ -14,6 +14,7 @@ _LOCK_KEY = "crm:sbis_norm:sync:lock"
 _LOCK_TTL_SECONDS = 1800
 _SCHEDULE_KEY = "crm:sbis_norm:sync:scheduled"
 PULL_REQUEST_KEY = "crm:sbis_norm:pull_requested"
+RECEIPTS_PULL_REQUEST_KEY = "crm:sbis_receipts:pull_requested"
 
 
 def _sync_mode() -> str:
@@ -38,6 +39,24 @@ async def claim_sbis_norm_pull() -> bool:
         val = await redis.get(PULL_REQUEST_KEY)
         if val is not None:
             await redis.delete(PULL_REQUEST_KEY)
+    return val is not None
+
+
+async def request_sbis_receipts_pull(*, reason: str = "manual") -> None:
+    redis = get_redis()
+    await redis.set(RECEIPTS_PULL_REQUEST_KEY, reason)
+    logger.info("sbis_receipts_pull_requested", reason=reason)
+
+
+async def claim_sbis_receipts_pull() -> bool:
+    redis = get_redis()
+    getdel = getattr(redis, "getdel", None)
+    if callable(getdel):
+        val = await getdel(RECEIPTS_PULL_REQUEST_KEY)
+    else:
+        val = await redis.get(RECEIPTS_PULL_REQUEST_KEY)
+        if val is not None:
+            await redis.delete(RECEIPTS_PULL_REQUEST_KEY)
     return val is not None
 
 

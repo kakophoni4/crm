@@ -175,6 +175,43 @@ export async function downloadOptRegistry(leadId: number, orderId: number): Prom
   return data
 }
 
+export interface OptReceiptItem {
+  id: number
+  supplier_inn: string
+  supplier_name?: string | null
+  period_code: string
+  doc_kind: string
+  source_filename: string
+  has_pdf: boolean
+}
+
+export async function listOptOrderReceipts(
+  leadId: number,
+  orderId: number,
+): Promise<{ items: OptReceiptItem[]; available: boolean }> {
+  const { data } = await http.get<{ items: OptReceiptItem[]; available: boolean }>(
+    `/leads/${leadId}/opt-orders/${orderId}/receipts`,
+  )
+  return data
+}
+
+export async function downloadOptOrderReceiptsArchive(
+  leadId: number,
+  orderId: number,
+): Promise<Blob> {
+  const { data } = await http.get<Blob>(`/leads/${leadId}/opt-orders/${orderId}/receipts/archive`, {
+    responseType: 'blob',
+  })
+  return data
+}
+
+export async function sendOptOrderReceiptsToClient(
+  leadId: number,
+  orderId: number,
+): Promise<void> {
+  await http.post(`/leads/${leadId}/opt-orders/${orderId}/send-receipts`)
+}
+
 export async function downloadOptPaymentDocument(
   leadId: number,
   orderId: number,

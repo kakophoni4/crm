@@ -1504,6 +1504,108 @@ class OptOrderService:
             ],
         }
 
+
+    async def list_order_receipts(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+    ):
+        from app.modules.accounting.receipts import OptReceiptRepository
+        from app.modules.leads.opt.schemas import OptOrderReceiptsResponse, OptReceiptItemResponse
+
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        inns = {str(line.supplier_inn) for line in order.lines if line.supplier_inn}
+        period = (order.period_code or "").strip() or None
+        rows = await OptReceiptRepository(self._session).list_for_inns_period(
+            inns=inns,
+            period_code=period,
+        )
+        items = [
+            OptReceiptItemResponse(
+                id=row.id,
+                supplier_inn=row.supplier_inn,
+                supplier_name=row.supplier_name,
+                period_code=row.period_code,
+                doc_kind=row.doc_kind,
+                source_filename=row.source_filename,
+                has_pdf=row.pdf_file_id is not None,
+            )
+            for row in rows
+        ]
+        return OptOrderReceiptsResponse(items=items, available=bool(items))
+
+    async def export_order_receipts_archive(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+    ) -> tuple[bytes, str]:
+        from app.modules.accounting.receipts import (
+            OptReceiptRepository,
+            build_receipts_zip,
+            load_receipt_pdf_bytes,
+        )
+
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        inns = {str(line.supplier_inn) for line in order.lines if line.supplier_inn}
+        period = (order.period_code or "").strip() or None
+        rows = await OptReceiptRepository(self._session).list_for_inns_period(
+            inns=inns,
+            period_code=period,
+        )
+        if not rows:
+            raise ValidationError(message="Нет квитанций по лавкам этой заявки")
+        packed: list[tuple] = []
+        for row in rows:
+            packed.append((row, await load_receipt_pdf_bytes(self._session, row)))
+        content = build_receipts_zip(packed)
+        period_slug = (period or "period").replace("/", "-")
+        filename = f"квитанции-заявка-{order.order_no}-{period_slug}.zip"
+        return content, filename
+
+    async def send_order_receipts_to_client(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+    ) -> dict[str, int]:
+        from app.modules.chats.messages import ChatMessagesService
+        from app.modules.chats.schemas import AttachmentInput, OutboundMessageRequest
+        from app.modules.files.service import FilesService
+
+        lead = await self._get_lead_for_actor(actor, lead_id)
+        if lead.chat_id is None:
+            raise ValidationError(message="У сделки нет чата — отправка клиенту недоступна")
+        content, filename = await self.export_order_receipts_archive(actor, lead_id, order_id)
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        files = FilesService(self._session)
+        uploaded = await files.create_upload(
+            uploaded_by=actor.id,
+            data=content,
+            original_name=filename,
+            mime_type="application/zip",
+        )
+        text = f"Квитанции по заявке №{order.order_no} сделки №{lead_id}."
+        messages = ChatMessagesService(self._session)
+        message, _, _ = await messages.send_outbound(
+            actor,
+            lead.chat_id,
+            OutboundMessageRequest(
+                text=text,
+                attachments=[
+                    AttachmentInput(
+                        file_id=uploaded.id,
+                        name=filename,
+                        mime="application/zip",
+                        size=len(content),
+                    ),
+                ],
+            ),
+        )
+        await self._session.commit()
+        return {"message_id": message.id, "chat_id": lead.chat_id, "file_count": 1}
+
     async def send_registry_to_client(
         self,
         actor: User,
@@ -1625,6 +1727,13 @@ class OptOrderService:
             ),
         ) - set(local_payloads)
 
+        # Protect non-submitted CRM orders (pending/failed/…) from delete_extra.
+        protect_crm_ids = set(
+            await self._repo.list_active_crm_ids(
+                period_code=None if sync_all else normalized,
+            ),
+        )
+
         report = OptSync1cResponse(period_code=normalized, period_iso=report_iso or "all")
 
         def _mole_missing(exc: MoleApiError) -> bool:
@@ -1662,6 +1771,7 @@ class OptOrderService:
                 local_payloads=local_payloads,
                 mole_orders=mole_orders,
                 soft_deleted_crm_ids=soft_deleted_crm_ids,
+                protect_crm_ids=protect_crm_ids,
             )
             # HTTP only in parallel (no DB). Then apply DB writes sequentially.
             sem = asyncio.Semaphore(5)

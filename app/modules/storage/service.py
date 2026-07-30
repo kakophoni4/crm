@@ -631,3 +631,55 @@ class StorageService:
         if uploaded is not None and uploaded.uploaded_by == actor.id:
             return
         raise PermissionDenied(message="Файл недоступен")
+
+    async def list_receipts_tree(self, actor: User):
+        from app.modules.accounting.receipts import (
+            OptReceiptRepository,
+            visible_receipt_supplier_inns,
+        )
+        from app.modules.contacts.scope_loader import ScopeLoader
+        from app.modules.storage.schemas import (
+            StorageReceiptItem,
+            StorageReceiptPeriodGroup,
+            StorageReceiptTreeResponse,
+        )
+
+        ctx = await ScopeLoader(self._session).load(actor)
+        inns = await visible_receipt_supplier_inns(self._session, actor, ctx)
+        rows = await OptReceiptRepository(self._session).list_all(supplier_inns=inns)
+        by_period: dict[str, list[StorageReceiptItem]] = {}
+        for row in rows:
+            by_period.setdefault(row.period_code, []).append(
+                StorageReceiptItem(
+                    id=row.id,
+                    supplier_inn=row.supplier_inn,
+                    supplier_name=row.supplier_name,
+                    period_code=row.period_code,
+                    doc_kind=row.doc_kind,
+                    source_filename=row.source_filename,
+                    has_pdf=row.pdf_file_id is not None,
+                ),
+            )
+        periods = [
+            StorageReceiptPeriodGroup(period_code=code, items=items)
+            for code, items in sorted(by_period.items(), key=lambda kv: kv[0], reverse=True)
+        ]
+        return StorageReceiptTreeResponse(periods=periods)
+
+    async def get_receipt_bytes(self, actor: User, receipt_id: int) -> tuple[bytes, str]:
+        from app.modules.accounting.receipts import (
+            OptReceiptRepository,
+            load_receipt_pdf_bytes,
+            visible_receipt_supplier_inns,
+        )
+        from app.modules.contacts.scope_loader import ScopeLoader
+
+        ctx = await ScopeLoader(self._session).load(actor)
+        inns = await visible_receipt_supplier_inns(self._session, actor, ctx)
+        row = await OptReceiptRepository(self._session).get_by_id(receipt_id)
+        if row is None:
+            raise NotFound(message="Квитанция не найдена")
+        if inns is not None and row.supplier_inn not in inns:
+            raise PermissionDenied(message="Нет доступа к квитанции")
+        content = await load_receipt_pdf_bytes(self._session, row)
+        return content, row.source_filename or f"receipt-{row.id}.pdf"

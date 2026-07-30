@@ -56,6 +56,7 @@ from app.modules.db.models.user_telegram_link import UserTelegramLink
 from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_requirement import OptRequirement
+from app.modules.db.models.opt_receipt import OptReceipt
 from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability
 from app.modules.db.models.quick_reply_template import QuickReplyTemplate
@@ -113,6 +114,7 @@ __all__ = [
     "OptAccountantUnitAssignment",
     "OptBuyer",
     "OptRequirement",
+    "OptReceipt",
     "OptUnit",
     "OptUnitPeriodAvailability",
     "QuickReplyTemplate",

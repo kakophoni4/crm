@@ -12,6 +12,9 @@ from app.modules.accounting.schemas import (
     AccountingAssignmentUpdateRequest,
     AccountingOrderPeriodUpdateRequest,
     AccountingOrderPeriodUpdateResponse,
+    AccountingReceiptIngestResponse,
+    AccountingReceiptPullClaimResponse,
+    AccountingReceiptSyncResponse,
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
@@ -371,6 +374,89 @@ async def ingest_accounting_requirement_multipart(
         metadata=metadata,
     )
     return await service.ingest_requirement(body, pdf_bytes=pdf_bytes, pdf_filename=pdf_filename)
+
+
+@router.post(
+    "/receipts/sync",
+    response_model=AccountingReceiptSyncResponse,
+)
+async def sync_accounting_receipts(
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+) -> AccountingReceiptSyncResponse:
+    del actor
+    from app.workers.jobs.sbis_norm_sync import request_sbis_receipts_pull
+
+    await request_sbis_receipts_pull(reason="manual")
+    return AccountingReceiptSyncResponse(queued=True, mode="agent")
+
+
+@router.post(
+    "/receipts/pull-claim",
+    response_model=AccountingReceiptPullClaimResponse,
+    dependencies=[Depends(_require_ingest_token)],
+)
+async def claim_accounting_receipts_pull() -> AccountingReceiptPullClaimResponse:
+    from app.workers.jobs.sbis_norm_sync import claim_sbis_receipts_pull
+
+    claimed = await claim_sbis_receipts_pull()
+    return AccountingReceiptPullClaimResponse(claimed=claimed)
+
+
+@router.post(
+    "/receipts/ingest/multipart",
+    response_model=AccountingReceiptIngestResponse,
+    dependencies=[Depends(_require_ingest_token)],
+)
+async def ingest_accounting_receipt_multipart(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    external_id: Annotated[str, Form()],
+    pdf: Annotated[UploadFile, File()],
+    supplier_inn: Annotated[str | None, Form()] = None,
+    supplier_kpp: Annotated[str | None, Form()] = None,
+    supplier_name: Annotated[str | None, Form()] = None,
+    period_code: Annotated[str | None, Form()] = None,
+    doc_kind: Annotated[str | None, Form()] = None,
+    source_filename: Annotated[str | None, Form()] = None,
+    metadata_json: Annotated[str | None, Form()] = None,
+) -> AccountingReceiptIngestResponse:
+    import json
+
+    from app.modules.accounting.receipts import ingest_receipt_pdf
+
+    metadata: dict[str, object] = {}
+    if metadata_json:
+        try:
+            parsed = json.loads(metadata_json)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except json.JSONDecodeError as exc:
+            from app.shared.exceptions import ValidationError
+
+            raise ValidationError(message="Некорректный metadata_json") from exc
+
+    pdf_bytes = await pdf.read()
+    filename = (source_filename or pdf.filename or "receipt.pdf").strip()
+    row, created = await ingest_receipt_pdf(
+        db,
+        external_id=external_id,
+        pdf_bytes=pdf_bytes,
+        source_filename=filename,
+        supplier_inn=supplier_inn,
+        supplier_kpp=supplier_kpp,
+        supplier_name=supplier_name,
+        period_code=period_code,
+        doc_kind=doc_kind,
+        metadata=metadata,
+    )
+    await db.commit()
+    return AccountingReceiptIngestResponse(
+        id=row.id,
+        external_id=row.external_id,
+        supplier_inn=row.supplier_inn,
+        period_code=row.period_code,
+        doc_kind=row.doc_kind,
+        created=created,
+    )
 
 
 @router.get("/assignments/units", response_model=AccountingUnitOwnerListResponse)

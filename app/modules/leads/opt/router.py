@@ -36,10 +36,12 @@ from app.modules.leads.opt.schemas import (
     OptOrderPaymentCreateRequest,
     OptOrderPeriodUpdateRequest,
     OptOrderPeriodUpdateResponse,
+    OptOrderReceiptsResponse,
     OptOrderRegistryListResponse,
     OptOrderResponse,
     OptPaymentLedgerListResponse,
     OptRegistryManagersResponse,
+    OptSendReceiptsResponse,
     OptSendRegistryResponse,
     OptSync1cRequest,
     OptSync1cResponse,
@@ -344,6 +346,54 @@ async def send_opt_registry_to_client(
 ) -> OptSendRegistryResponse:
     result = await service.send_registry_to_client(actor, lead_id, order_id)
     return OptSendRegistryResponse(**result)
+
+
+@router.get(
+    "/leads/{lead_id}/opt-orders/{order_id}/receipts",
+    response_model=OptOrderReceiptsResponse,
+)
+async def list_opt_order_receipts(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptOrderReceiptsResponse:
+    return await service.list_order_receipts(actor, lead_id, order_id)
+
+
+@router.get("/leads/{lead_id}/opt-orders/{order_id}/receipts/archive")
+async def download_opt_order_receipts_archive(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> Response:
+    content, filename = await service.export_order_receipts_archive(actor, lead_id, order_id)
+    ascii_name = filename.encode("ascii", "ignore").decode() or "receipts.zip"
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{ascii_name}\"; "
+                f"filename*=UTF-8''{quote(filename)}"
+            ),
+        },
+    )
+
+
+@router.post(
+    "/leads/{lead_id}/opt-orders/{order_id}/send-receipts",
+    response_model=OptSendReceiptsResponse,
+)
+async def send_opt_order_receipts_to_client(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptSendReceiptsResponse:
+    result = await service.send_order_receipts_to_client(actor, lead_id, order_id)
+    return OptSendReceiptsResponse(**result)
 
 
 @router.get("/leads/{lead_id}/opt-orders/{order_id}/registry")

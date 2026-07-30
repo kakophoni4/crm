@@ -137,3 +137,22 @@ class GroupChatFileGroupSummary(BaseModel):
 
 class GroupChatFileGroupsResponse(BaseModel):
     items: list[GroupChatFileGroupSummary]
+
+
+class StorageReceiptItem(BaseModel):
+    id: int
+    supplier_inn: str
+    supplier_name: str | None = None
+    period_code: str
+    doc_kind: str
+    source_filename: str
+    has_pdf: bool
+
+
+class StorageReceiptPeriodGroup(BaseModel):
+    period_code: str
+    items: list[StorageReceiptItem] = Field(default_factory=list)
+
+
+class StorageReceiptTreeResponse(BaseModel):
+    periods: list[StorageReceiptPeriodGroup] = Field(default_factory=list)

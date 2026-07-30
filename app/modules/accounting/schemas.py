@@ -315,3 +315,21 @@ class AccountingUnitOwnerListResponse(BaseModel):
 
 class AccountingUnitOwnerUpdateRequest(BaseModel):
     accountant_user_id: int | None = None
+
+
+class AccountingReceiptIngestResponse(BaseModel):
+    id: int
+    external_id: str
+    supplier_inn: str
+    period_code: str
+    doc_kind: str
+    created: bool
+
+
+class AccountingReceiptPullClaimResponse(BaseModel):
+    claimed: bool
+
+
+class AccountingReceiptSyncResponse(BaseModel):
+    queued: bool = True
+    mode: str = "agent"

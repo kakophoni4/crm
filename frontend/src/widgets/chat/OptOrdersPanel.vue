@@ -28,10 +28,13 @@ import {
   adjustOptOrderCommission,
   deleteOptOrder,
   deleteOptOrderLine,
+  downloadOptOrderReceiptsArchive,
   downloadOptPaymentDocument,
   downloadOptRegistry,
+  listOptOrderReceipts,
   listOptOrders,
   patchOptOrderPeriod,
+  sendOptOrderReceiptsToClient,
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
@@ -72,6 +75,10 @@ const loading = ref(false)
 const uploading = ref(false)
 const deletingId = ref<number | null>(null)
 const downloadingId = ref<number | null>(null)
+const downloadingReceiptsId = ref<number | null>(null)
+const sendingReceiptsId = ref<number | null>(null)
+const receiptsAvailable = ref(false)
+const sendReceiptsOpen = ref(false)
 const sendingId = ref<number | null>(null)
 const savingPeriodId = ref<number | null>(null)
 const periodOptions = OPT_PERIOD_OPTIONS
@@ -611,6 +618,52 @@ async function onDelete(): Promise<void> {
   }
 }
 
+
+async function refreshReceiptsAvailability(): Promise<void> {
+  receiptsAvailable.value = false
+  if (props.leadId == null || selectedOrderId.value == null) return
+  const order = orders.value.find((row) => row.id === selectedOrderId.value)
+  if (!order || order.status !== 'submitted') return
+  try {
+    const data = await listOptOrderReceipts(props.leadId, order.id)
+    receiptsAvailable.value = data.available
+  } catch {
+    receiptsAvailable.value = false
+  }
+}
+
+async function onDownloadReceipts(order: OptOrder): Promise<void> {
+  if (props.leadId == null) return
+  downloadingReceiptsId.value = order.id
+  try {
+    const blob = await downloadOptOrderReceiptsArchive(props.leadId, order.id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `квитанции-сделка-${order.lead_id}-заявка-${order.order_no}.zip`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать квитанции')
+  } finally {
+    downloadingReceiptsId.value = null
+  }
+}
+
+async function onSendReceiptsToClient(order: OptOrder): Promise<void> {
+  if (props.leadId == null) return
+  sendingReceiptsId.value = order.id
+  try {
+    await sendOptOrderReceiptsToClient(props.leadId, order.id)
+    sendReceiptsOpen.value = false
+    message.success('Квитанции отправлены клиенту')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось отправить квитанции')
+  } finally {
+    sendingReceiptsId.value = null
+  }
+}
+
 async function onDownload(order: OptOrder): Promise<void> {
   if (props.leadId == null) return
   downloadingId.value = order.id
@@ -673,6 +726,10 @@ watch(
     selectedOrderId.value = id
   },
 )
+
+watch(selectedOrderId, () => {
+  void refreshReceiptsAvailability()
+})
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
@@ -977,6 +1034,26 @@ onUnmounted(() => {
             >
               Отправить клиенту
             </NButton>
+            <NButton
+              v-if="selectedOrder.status === 'submitted' && receiptsAvailable"
+              size="small"
+              secondary
+              :loading="downloadingReceiptsId === selectedOrder.id"
+              @click="onDownloadReceipts(selectedOrder)"
+            >
+              Скачать квитанции
+            </NButton>
+
+            <NButton
+              v-if="selectedOrder.status === 'submitted' && receiptsAvailable"
+              size="small"
+              type="primary"
+              secondary
+              @click="sendReceiptsOpen = true"
+            >
+              Отправить квитанции
+            </NButton>
+
 
             <NButton
               v-if="canAdjustCommission(selectedOrder)"
@@ -1344,6 +1421,29 @@ onUnmounted(() => {
     </NModal>
   </section>
 </template>
+
+
+    <NModal
+      v-model:show="sendReceiptsOpen"
+      preset="card"
+      title="Отправить квитанции клиенту"
+      style="max-width: 420px"
+    >
+      <p>В чат будет отправлен ZIP с квитанциями и извещениями по лавкам этой заявки.</p>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="sendReceiptsOpen = false">Отмена</NButton>
+          <NButton
+            type="primary"
+            :loading="selectedOrder != null && sendingReceiptsId === selectedOrder.id"
+            :disabled="selectedOrder == null"
+            @click="selectedOrder && onSendReceiptsToClient(selectedOrder)"
+          >
+            Отправить
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
 
 <style scoped>
 .opt-orders {

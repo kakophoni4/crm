@@ -265,3 +265,24 @@ class OptSync1cResponse(BaseModel):
     deleted_extra: int = 0
     errors: list[OptSync1cActionItem] = Field(default_factory=list)
     actions: list[OptSync1cActionItem] = Field(default_factory=list)
+
+
+class OptReceiptItemResponse(BaseModel):
+    id: int
+    supplier_inn: str
+    supplier_name: str | None = None
+    period_code: str
+    doc_kind: str
+    source_filename: str
+    has_pdf: bool
+
+
+class OptOrderReceiptsResponse(BaseModel):
+    items: list[OptReceiptItemResponse] = Field(default_factory=list)
+    available: bool = False
+
+
+class OptSendReceiptsResponse(BaseModel):
+    message_id: int
+    chat_id: int
+    file_count: int

@@ -155,3 +155,34 @@ export async function downloadPublicShare(
   )
   return data
 }
+
+export interface StorageReceiptItem {
+  id: number
+  supplier_inn: string
+  supplier_name?: string | null
+  period_code: string
+  doc_kind: string
+  source_filename: string
+  has_pdf: boolean
+}
+
+export interface StorageReceiptPeriodGroup {
+  period_code: string
+  items: StorageReceiptItem[]
+}
+
+export async function listStorageReceiptsTree(): Promise<{
+  periods: StorageReceiptPeriodGroup[]
+}> {
+  const { data } = await http.get<{ periods: StorageReceiptPeriodGroup[] }>(
+    '/storage/receipts/tree',
+  )
+  return data
+}
+
+export async function downloadStorageReceipt(receiptId: number): Promise<Blob> {
+  const { data } = await http.get<Blob>(`/storage/receipts/${receiptId}/download`, {
+    responseType: 'blob',
+  })
+  return data
+}

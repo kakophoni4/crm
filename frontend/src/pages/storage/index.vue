@@ -20,16 +20,20 @@ import {
   createVaultShareLink,
   deleteVaultFile,
   downloadGroupFile,
+  downloadStorageReceipt,
   downloadVaultFile,
   getVaultFileContent,
   listGroupFileGroups,
   listGroupFiles,
+  listStorageReceiptsTree,
   listVaultFiles,
   renameVaultFile,
   revokeShareLink,
   updateVaultFileContent,
   uploadVaultFile,
   type GroupChatFile,
+  type StorageReceiptItem,
+  type StorageReceiptPeriodGroup,
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
@@ -50,6 +54,9 @@ const vaultFiles = ref<VaultFile[]>([])
 const groupSummaries = ref<{ group_id: number; group_name: string; file_count: number }[]>([])
 const groupFiles = ref<GroupChatFile[]>([])
 const selectedGroupId = ref<number | null>(null)
+const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
+const selectedReceiptPeriod = ref<string | null>(null)
+const downloadingReceiptId = ref<number | null>(null)
 
 const shareModalOpen = ref(false)
 const shareTarget = ref<VaultFile | null>(null)
@@ -108,6 +115,50 @@ async function loadGroupSummaries(): Promise<void> {
     }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить группы')
+  }
+}
+
+
+async function loadReceipts(): Promise<void> {
+  loading.value = true
+  try {
+    const data = await listStorageReceiptsTree()
+    receiptPeriods.value = data.periods
+    if (!selectedReceiptPeriod.value && data.periods.length > 0) {
+      selectedReceiptPeriod.value = data.periods[0].period_code
+    }
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить квитанции')
+  } finally {
+    loading.value = false
+  }
+}
+
+const selectedReceiptItems = computed(() => {
+  const period = selectedReceiptPeriod.value
+  if (!period) return [] as StorageReceiptItem[]
+  return receiptPeriods.value.find((row) => row.period_code === period)?.items ?? []
+})
+
+function receiptKindLabel(kind: string): string {
+  if (kind === 'notice') return 'Извещение о вводе'
+  return 'Квитанция о приеме'
+}
+
+async function onDownloadReceipt(row: StorageReceiptItem): Promise<void> {
+  downloadingReceiptId.value = row.id
+  try {
+    const blob = await downloadStorageReceipt(row.id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = row.source_filename || `receipt-${row.id}.pdf`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать квитанцию')
+  } finally {
+    downloadingReceiptId.value = null
   }
 }
 
@@ -531,6 +582,47 @@ onMounted(async () => {
               </template>
             </div>
           </NSpace>
+</NTabPane>
+
+        <NTabPane name="receipts" tab="Квитанции">
+          <NSpin :show="loading">
+            <NSpace style="margin-bottom: 12px">
+              <NButton
+                v-for="period in receiptPeriods"
+                :key="period.period_code"
+                size="small"
+                :type="selectedReceiptPeriod === period.period_code ? 'primary' : 'default'"
+                @click="selectedReceiptPeriod = period.period_code"
+              >
+                {{ period.period_code }} ({{ period.items.length }})
+              </NButton>
+            </NSpace>
+            <div v-if="selectedReceiptItems.length" class="receipts-list">
+              <div
+                v-for="row in selectedReceiptItems"
+                :key="row.id"
+                class="receipts-row"
+              >
+                <div class="receipts-main">
+                  <div class="receipts-title">{{ row.source_filename }}</div>
+                  <div class="receipts-meta">
+                    {{ receiptKindLabel(row.doc_kind) }} · ИНН {{ row.supplier_inn }}
+                    <template v-if="row.supplier_name"> · {{ row.supplier_name }}</template>
+                  </div>
+                </div>
+                <NButton
+                  size="small"
+                  secondary
+                  :loading="downloadingReceiptId === row.id"
+                  :disabled="!row.has_pdf"
+                  @click="onDownloadReceipt(row)"
+                >
+                  Скачать
+                </NButton>
+              </div>
+            </div>
+            <p v-else class="empty-hint">Нет квитанций за выбранный период</p>
+          </NSpin>
         </NTabPane>
 
         <NTabPane name="group" tab="Файлы из чатов">
@@ -705,5 +797,28 @@ onMounted(async () => {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.receipts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.receipts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+}
+.receipts-title {
+  font-weight: 600;
+}
+.receipts-meta {
+  margin-top: 2px;
+  font-size: 0.85rem;
+  opacity: 0.75;
 }
 </style>
