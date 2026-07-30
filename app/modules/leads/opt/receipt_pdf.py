@@ -8,14 +8,6 @@ from io import BytesIO
 
 _INN_RE = re.compile(r"\b(\d{10}|\d{12})\b")
 _KPP_RE = re.compile(r"\b(\d{9})\b")
-_PERIOD_RE_FULL = re.compile(
-    r"(?:за\s+)?([1-4])\s*квартал[,.\s]+20(\d{2})\s*(?:год|г\.?)?",
-    re.IGNORECASE,
-)
-_PERIOD_RE_SHORT = re.compile(
-    r"(?:за\s+)?([1-4])\s*квартал[,.\s]+(\d{2})\s*(?:год|г\.?)",
-    re.IGNORECASE,
-)
 _NAME_PAREN_RE = re.compile(r"\(([^)]+)\)\s*\.pdf$", re.IGNORECASE)
 _OOO_NAME_RE = re.compile(
     r'(?:Общество\s+с\s+ограниченной\s+ответственностью|ООО)\s*[«"“]?([^»"”\n]+)[»"”]?',
@@ -60,13 +52,32 @@ def period_code_from_text(text: str) -> str | None:
 
     Prefer explicit 20XX so we do not pick VAT rate «22» as the year.
     """
-    for pattern in (_PERIOD_RE_FULL, _PERIOD_RE_SHORT):
-        match = pattern.search(text)
+    normalized = (
+        text.replace("\u00a0", " ")
+        .replace("\u202f", " ")
+        .replace("\xa0", " ")
+    )
+    # Allow OCR/pdf gaps: "2 квартал" … "2026"
+    patterns = (
+        re.compile(
+            r"([1-4])\s*к\s*в\s*а\s*р\s*т\s*а\s*л[\s,.\-]{0,20}20\s*(\d{2})\s*(?:г(?:од|ода|\.)?)?",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"([1-4])\s*квартал[\s,.\-]{0,20}20\s*(\d{2})\s*(?:г(?:од|ода|\.)?)?",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"отчетн\w*\s+период[^\d]{0,40}([1-4])[^\d]{0,20}20(\d{2})",
+            re.IGNORECASE,
+        ),
+    )
+    for pattern in patterns:
+        match = pattern.search(normalized)
         if match is None:
             continue
         quarter_s, yy_s = match.groups()
         yy = int(yy_s)
-        # Business window: 2020–2035
         if yy < 20 or yy > 35:
             continue
         return f"{int(quarter_s)}/{yy_s}"

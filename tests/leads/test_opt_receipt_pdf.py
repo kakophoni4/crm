@@ -28,3 +28,8 @@ def test_period_code_ignores_vat_rate_22() -> None:
         "КНД 1166002"
     )
     assert period_code_from_text(text) == "2/26"
+
+
+def test_period_code_with_nbsp() -> None:
+    text = "за 2\u00a0квартал,\u00a02026\u00a0год"
+    assert period_code_from_text(text) == "2/26"
