@@ -432,6 +432,25 @@ class OptOrderRepository:
         result = await self._session.execute(stmt.order_by(LeadOptOrder.id.asc()))
         return [cid for cid in result.scalars().all() if cid]
 
+    async def list_active_crm_ids(
+        self,
+        *,
+        period_code: str | None = None,
+    ) -> list[str]:
+        """CRMid of non-deleted CRM orders (any status) — protect from sync delete_extra.
+
+        Sync content updates only submitted orders, but pending/failed/etc. with a
+        crm_id must not be wiped from Mole on every «Синхронизировать с 1С».
+        """
+        stmt = select(LeadOptOrder.crm_id).where(
+            LeadOptOrder.deleted_at.is_(None),
+            LeadOptOrder.crm_id.is_not(None),
+        )
+        if period_code is not None:
+            stmt = stmt.where(LeadOptOrder.period_code == period_code)
+        result = await self._session.execute(stmt.order_by(LeadOptOrder.id.asc()))
+        return [cid for cid in result.scalars().all() if cid]
+
     async def get_order_by_source_attachment(
         self,
         message_id: int,

@@ -159,12 +159,15 @@ def plan_sync_actions(
     local_payloads: dict[str, dict[str, Any]],
     mole_orders: list[dict[str, Any]],
     soft_deleted_crm_ids: set[str] | None = None,
+    protect_crm_ids: set[str] | None = None,
 ) -> list[tuple[SyncActionKind, str]]:
     """Decide per CRMid what to do. CRM is source of truth for membership + content.
 
-    soft_deleted_crm_ids: CRMid of CRM soft-deleted submitted orders. Always scheduled
-    for Mole DELETE even when they are missing from the period filter (e.g. empty
-    Период=0001-01-01). UI soft-delete does not call Mole; sync is the cleanup pass.
+    local_crm_ids / local_payloads: submitted orders to check/update/restore.
+    protect_crm_ids: any non-deleted CRM order with crm_id (pending/failed/…) —
+    never delete_extra even when not in the submitted sync set.
+    soft_deleted_crm_ids: CRM soft-deleted submitted — Mole DELETE (even if missing
+    from period filter). UI soft-delete does not call Mole; sync is the cleanup pass.
     """
     mole_by_id: dict[str, dict[str, Any]] = {}
     for row in mole_orders:
@@ -172,6 +175,7 @@ def plan_sync_actions(
         if crm_id:
             mole_by_id[crm_id] = row
 
+    protected = set(local_crm_ids) | set(protect_crm_ids or ())
     actions: list[tuple[SyncActionKind, str]] = []
     scheduled_deletes: set[str] = set()
 
@@ -192,7 +196,7 @@ def plan_sync_actions(
             actions.append(("update", crm_id))
 
     for crm_id, remote in sorted(mole_by_id.items()):
-        if crm_id in local_crm_ids:
+        if crm_id in protected:
             continue
         if mole_is_deleted(remote):
             continue
@@ -202,7 +206,7 @@ def plan_sync_actions(
     # Soft-deleted in CRM: delete in Mole by CRMid even if not in period filter.
     # Skip when filter already shows Удален — no need to DELETE again every sync.
     for crm_id in sorted(soft_deleted_crm_ids or ()):
-        if not crm_id or crm_id in local_crm_ids or crm_id in scheduled_deletes:
+        if not crm_id or crm_id in protected or crm_id in scheduled_deletes:
             continue
         remote = mole_by_id.get(crm_id)
         if remote is not None and mole_is_deleted(remote):

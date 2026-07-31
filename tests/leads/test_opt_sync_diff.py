@@ -188,6 +188,20 @@ def test_plan_sync_soft_deleted_deletes_even_if_missing_from_filter() -> None:
     assert actions["crm-order-soft-402"] == "delete_extra"
 
 
+def test_plan_sync_protects_pending_from_delete_extra() -> None:
+    """Pending/failed CRM orders with crm_id must not be wiped on sync."""
+    planned = plan_sync_actions(
+        local_crm_ids=set(),  # not in submitted sync set
+        local_payloads={},
+        mole_orders=[
+            {"CRMid": "crm-order-pending", "Удален": False, "Реестр": []},
+        ],
+        soft_deleted_crm_ids=set(),
+        protect_crm_ids={"crm-order-pending"},
+    )
+    assert planned == []
+
+
 def test_plan_sync_soft_deleted_skips_already_deleted_in_filter() -> None:
     planned = plan_sync_actions(
         local_crm_ids=set(),
