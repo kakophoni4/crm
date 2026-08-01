@@ -10,6 +10,10 @@ the production MOLE_API_BASE_URL.
     -e MOLE_API_USERNAME=... -e MOLE_API_PASSWORD=... \\
     crm-staging-api python scripts/opt_push_period_to_mole.py --period 2/26 --dry-run
 
+  # force POST (same CRMid / НомерДокумента / dates — no PUT)
+  docker exec -e PYTHONUNBUFFERED=1 \\
+    crm-staging-api python scripts/opt_push_period_to_mole.py --period 4/25 --method post
+
   # create/overwrite 4 times (no delete_extra)
   docker exec -e PYTHONUNBUFFERED=1 \\
     -e MOLE_API_BASE_URL=http://45.142.193.159/DEMO_BASE \\
@@ -58,9 +62,21 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-async def _push_one(service: OptOrderService, order: LeadOptOrder) -> str:
+async def _push_one(
+    service: OptOrderService,
+    order: LeadOptOrder,
+    *,
+    method: str,
+) -> str:
     await service._ensure_order_requisites(order)
     payload = service._build_mole_payload(order)
+    if method == "post":
+        await post_opt_order(payload)
+        return "post"
+    if method == "put":
+        await put_order(order.crm_id, payload)
+        return "put"
+    # auto: PUT, fallback POST
     try:
         await put_order(order.crm_id, payload)
         return "put"
@@ -75,6 +91,12 @@ async def main() -> int:
     p.add_argument("--times", type=int, default=1, help="How many full push passes")
     p.add_argument("--limit", type=int, default=0, help="Max orders (0=all)")
     p.add_argument("--order-ids", default="", help="Comma-separated lead_opt_orders.id")
+    p.add_argument(
+        "--method",
+        choices=("auto", "post", "put"),
+        default="auto",
+        help="auto=PUT then POST; post=only POST (keep CRM CRMid/doc numbers/dates)",
+    )
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
@@ -109,11 +131,19 @@ async def main() -> int:
         if args.limit and args.limit > 0:
             orders = orders[: args.limit]
 
-        _log(f"Period={period} orders={len(orders)} times={args.times} dry_run={args.dry_run}")
+        _log(
+            f"Period={period} orders={len(orders)} times={args.times} "
+            f"method={args.method} dry_run={args.dry_run}",
+        )
         for o in orders[:15]:
+            docs = ", ".join(
+                f"{(ln.document_number or '—')}:{ln.document_date}"
+                for ln in sorted(o.lines, key=lambda r: r.line_no)[:3]
+            )
             _log(
                 f"  id={o.id} lead={o.lead_id} no={o.order_no} "
-                f"vol={o.total_volume} crm={o.crm_id} lines={len(o.lines)}",
+                f"vol={o.total_volume} crm={o.crm_id} lines={len(o.lines)} "
+                f"docs[{docs}]",
             )
         if len(orders) > 15:
             _log(f"  … +{len(orders) - 15} more")
@@ -124,11 +154,11 @@ async def main() -> int:
 
         service = OptOrderService(session)
         for pass_no in range(1, args.times + 1):
-            _log(f"\n=== pass {pass_no}/{args.times} ===")
+            _log(f"\n=== pass {pass_no}/{args.times} method={args.method} ===")
             ok = fail = 0
             for order in orders:
                 try:
-                    kind = await _push_one(service, order)
+                    kind = await _push_one(service, order, method=args.method)
                     ok += 1
                     _log(f"  {kind} ok id={order.id} {order.crm_id}")
                 except Exception as exc:  # noqa: BLE001
