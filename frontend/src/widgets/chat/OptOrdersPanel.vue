@@ -274,7 +274,7 @@ function volumeRows(order: OptOrder): Array<{ key: string; label: string; volume
 
 function openPaymentModal(order: OptOrder): void {
   paymentForm.value = {
-    amount: order.amount_remaining > 0 ? order.amount_remaining : null,
+    amount: order.amount_remaining > 0 ? Math.round(order.amount_remaining) : null,
     paid_at: Date.now(),
     payment_type: 'wire',
     recipient: 'orange',
@@ -443,6 +443,14 @@ function formatMoney(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value)
+}
+
+/** Commission / payments — whole rubles, no kopecks. */
+function formatRubles(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Math.round(value))
 }
 
 function orderLabel(order: OptOrder): string {
@@ -896,23 +904,23 @@ onUnmounted(() => {
             <div>
               <dt>К оплате</dt>
               <dd>
-                {{ formatMoney(selectedOrder.commission_due) }} ₽
+                {{ formatRubles(selectedOrder.commission_due) }} ₽
                 <span
                   v-if="commissionAdjustment(selectedOrder) !== 0"
                   class="opt-orders__adjustment"
                 >
-                  (база {{ formatMoney(commissionBase(selectedOrder)) }} ₽,
-                  {{ commissionAdjustment(selectedOrder) > 0 ? '+' : '' }}{{ formatMoney(commissionAdjustment(selectedOrder)) }} ₽)
+                  (база {{ formatRubles(commissionBase(selectedOrder)) }} ₽,
+                  {{ commissionAdjustment(selectedOrder) > 0 ? '+' : '' }}{{ formatRubles(commissionAdjustment(selectedOrder)) }} ₽)
                 </span>
               </dd>
             </div>
             <div>
               <dt>Оплачено</dt>
-              <dd>{{ formatMoney(selectedOrder.amount_paid) }} ₽</dd>
+              <dd>{{ formatRubles(selectedOrder.amount_paid) }} ₽</dd>
             </div>
             <div>
               <dt>Остаток</dt>
-              <dd>{{ formatMoney(selectedOrder.amount_remaining) }} ₽</dd>
+              <dd>{{ formatRubles(selectedOrder.amount_remaining) }} ₽</dd>
             </div>
             <div>
               <dt>Оплата</dt>
@@ -955,7 +963,7 @@ onUnmounted(() => {
                   <td>{{ row.label }}</td>
                   <td>{{ formatMoney(row.volume) }} ₽</td>
                   <td>{{ row.rate }}%</td>
-                  <td>{{ formatMoney(row.commission) }} ₽</td>
+                  <td>{{ formatRubles(row.commission) }} ₽</td>
                 </tr>
               </tbody>
             </table>
@@ -984,7 +992,7 @@ onUnmounted(() => {
                 :key="payment.id"
               >
                 <div class="opt-orders__payment-main">
-                  <strong>{{ formatMoney(payment.amount) }} ₽</strong>
+                  <strong>{{ formatRubles(payment.amount) }} ₽</strong>
                   <span class="opt-orders__meta">
                     {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
                     {{ optPaymentTypeLabel(payment.payment_type) }} ·
@@ -1133,10 +1141,10 @@ onUnmounted(() => {
             >
               <li v-for="item in selectedOrder.commission_history" :key="item.id">
                 <span>
-                  {{ formatMoney(item.old_commission_due) }} →
-                  {{ formatMoney(item.new_commission_due) }} ₽
+                  {{ formatRubles(item.old_commission_due) }} →
+                  {{ formatRubles(item.new_commission_due) }} ₽
                   ({{ item.direction === 'decrease' ? 'скидка' : 'доначисление' }}
-                  {{ formatMoney(Math.abs(item.delta)) }} ₽)
+                  {{ formatRubles(Math.abs(item.delta)) }} ₽)
                 </span>
                 <span class="opt-orders__meta">
                   {{ item.changed_by_name || `user #${item.changed_by}` }} ·
@@ -1151,7 +1159,7 @@ onUnmounted(() => {
             <ul v-if="selectedPaymentsNewestFirst.length" class="opt-orders__payments-list">
               <li v-for="payment in selectedPaymentsNewestFirst" :key="payment.id">
                 <div class="opt-orders__payment-main">
-                  <strong>{{ formatMoney(payment.amount) }} ₽</strong>
+                  <strong>{{ formatRubles(payment.amount) }} ₽</strong>
                   <span class="opt-orders__meta">
                     {{ new Date(payment.paid_at).toLocaleString('ru-RU') }} ·
                     {{ optPaymentTypeLabel(payment.payment_type) }} ·
@@ -1351,11 +1359,11 @@ onUnmounted(() => {
     >
       <template v-if="selectedOrder">
         <p class="opt-orders__preview-text">
-          Базовая сумма: {{ formatMoney(commissionBase(selectedOrder)) }} ₽
+          Базовая сумма: {{ formatRubles(commissionBase(selectedOrder)) }} ₽
         </p>
         <p v-if="commissionAdjustment(selectedOrder) !== 0" class="opt-orders__meta">
           Текущая корректировка:
-          {{ commissionAdjustment(selectedOrder) > 0 ? '+' : '' }}{{ formatMoney(commissionAdjustment(selectedOrder)) }} ₽
+          {{ commissionAdjustment(selectedOrder) > 0 ? '+' : '' }}{{ formatRubles(commissionAdjustment(selectedOrder)) }} ₽
         </p>
         <NForm label-placement="top">
           <NFormItem label="Тип корректировки">
@@ -1369,14 +1377,15 @@ onUnmounted(() => {
           <NFormItem label="Сумма">
             <NInputNumber
               v-model:value="commissionForm.amount"
-              :min="0.01"
-              :precision="2"
+              :min="1"
+              :precision="0"
+              :step="1"
               class="opt-orders__number"
             />
           </NFormItem>
         </NForm>
         <p v-if="commissionPreviewDue != null" class="opt-orders__preview-text">
-          К оплате станет: <strong>{{ formatMoney(commissionPreviewDue) }} ₽</strong>
+          К оплате станет: <strong>{{ formatRubles(commissionPreviewDue) }} ₽</strong>
         </p>
       </template>
       <template #footer>
@@ -1391,11 +1400,12 @@ onUnmounted(() => {
 
     <NModal v-model:show="paymentOpen" preset="card" title="Записать оплату" style="max-width: 420px">
       <NForm label-placement="top">
-        <NFormItem label="Сумма оплаты">
+          <NFormItem label="Сумма оплаты">
           <NInputNumber
             v-model:value="paymentForm.amount"
-            :min="0.01"
-            :precision="2"
+            :min="1"
+            :precision="0"
+            :step="1"
             class="opt-orders__number"
           />
         </NFormItem>

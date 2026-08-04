@@ -6,6 +6,7 @@ from app.modules.leads.opt.pricing import (
     commission_base_from_breakdown,
     compute_order_pricing,
     payment_status,
+    round_rubles,
 )
 from app.modules.leads.opt.tariffs import OPT_CATEGORY_TECH
 
@@ -19,17 +20,30 @@ class _Unit:
     category_code = OPT_CATEGORY_TECH
 
 
+def test_round_rubles() -> None:
+    assert round_rubles("4091.78") == Decimal("4092")
+    assert round_rubles("4091.49") == Decimal("4091")
+
+
 def test_compute_order_pricing_technical_rate() -> None:
     total, commission, breakdown = compute_order_pricing([_Line()], {_Line.supplier_inn: _Unit()})
     assert total == Decimal("314752")
-    assert commission == Decimal("4091.78")
+    # 314752 * 1.3% = 4091.776 → whole rubles
+    assert commission == Decimal("4092")
     assert breakdown[OPT_CATEGORY_TECH]["rate_percent"] == 1.3
+    assert breakdown[OPT_CATEGORY_TECH]["commission"] == 4092.0
 
 
 def test_payment_status_partial_and_paid() -> None:
     assert payment_status(Decimal("0"), Decimal("100")) == "unpaid"
     assert payment_status(Decimal("40"), Decimal("100")) == "partial"
     assert payment_status(Decimal("100"), Decimal("100")) == "paid"
+
+
+def test_payment_status_kopeck_tail_is_paid() -> None:
+    assert payment_status(Decimal("117000"), Decimal("117000.47")) == "paid"
+    assert payment_status(Decimal("99.01"), Decimal("100")) == "paid"
+    assert payment_status(Decimal("99"), Decimal("100")) == "partial"
 
 
 def test_rate_percent_for_unit_prefers_custom_rate() -> None:
@@ -66,7 +80,7 @@ def test_mixed_custom_rates_same_category_not_collapsed() -> None:
     total, commission, breakdown = compute_order_pricing(lines, units)  # type: ignore[arg-type]
     assert total == Decimal("400000")
     # 100k*3.5% + 200k*2.8% + 100k*3.5% = 3500 + 5600 + 3500 = 12600
-    assert commission == Decimal("12600.00")
+    assert commission == Decimal("12600")
     assert any(abs(float(row["rate_percent"]) - 2.8) < 0.001 for row in breakdown.values())
     assert any(abs(float(row["rate_percent"]) - 3.5) < 0.001 for row in breakdown.values())
 
@@ -80,4 +94,4 @@ def test_commission_base_from_breakdown() -> None:
             "commission": 4091.78,
         }
     }
-    assert commission_base_from_breakdown(breakdown) == Decimal("4091.78")
+    assert commission_base_from_breakdown(breakdown) == Decimal("4092")

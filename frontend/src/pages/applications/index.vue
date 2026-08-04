@@ -194,6 +194,13 @@ function formatMoney(value: number): string {
   }).format(value)
 }
 
+function formatRubles(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Math.round(value))
+}
+
 function formatDateTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
@@ -278,14 +285,14 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       key: 'commission_due',
       width: 130,
       align: 'right',
-      render: (row) => `${formatMoney(row.commission_due)} ₽`,
+      render: (row) => `${formatRubles(row.commission_due)} ₽`,
     },
     {
       title: 'Оплачено',
       key: 'amount_paid',
       width: 120,
       align: 'right',
-      render: (row) => `${formatMoney(row.amount_paid)} ₽`,
+      render: (row) => `${formatRubles(row.amount_paid)} ₽`,
     },
     {
       title: 'Оплата',
@@ -719,11 +726,11 @@ onMounted(() => {
       </span>
       <span class="applications-page__totals-metric">
         <span class="applications-page__totals-key">К оплате</span>
-        <strong>{{ formatMoney(commissionDueSum) }} ₽</strong>
+        <strong>{{ formatRubles(commissionDueSum) }} ₽</strong>
       </span>
       <span class="applications-page__totals-metric">
         <span class="applications-page__totals-key">Оплачено</span>
-        <strong>{{ formatMoney(amountPaidSum) }} ₽</strong>
+        <strong>{{ formatRubles(amountPaidSum) }} ₽</strong>
       </span>
     </div>
 
@@ -832,7 +839,7 @@ onMounted(() => {
         <dl class="applications-page__facts applications-page__facts--payment">
           <div>
             <dt>Сумма</dt>
-            <dd>{{ formatMoney(selectedPayment.amount) }} ₽</dd>
+            <dd>{{ formatRubles(selectedPayment.amount) }} ₽</dd>
           </div>
           <div>
             <dt>Дата оплаты</dt>
@@ -891,8 +898,8 @@ onMounted(() => {
           <div>
             <dt>К оплате / оплачено</dt>
             <dd>
-              {{ formatMoney(selectedPayment.order_commission_due) }} ₽ /
-              {{ formatMoney(selectedPayment.order_amount_paid) }} ₽
+              {{ formatRubles(selectedPayment.order_commission_due) }} ₽ /
+              {{ formatRubles(selectedPayment.order_amount_paid) }} ₽
             </dd>
           </div>
         </dl>
@@ -912,7 +919,7 @@ onMounted(() => {
               }"
             >
               <div class="applications-page__history-top">
-                <strong>{{ formatMoney(payment.amount) }} ₽</strong>
+                <strong>{{ formatRubles(payment.amount) }} ₽</strong>
                 <span>{{ formatDateTime(payment.paid_at) }}</span>
               </div>
               <p>

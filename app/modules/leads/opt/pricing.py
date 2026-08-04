@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.modules.db.models.opt_unit import OptUnit
@@ -10,6 +10,13 @@ from app.modules.leads.opt.tariffs import (
     normalize_category_code,
     rate_percent_for_unit,
 )
+
+# Commission and payments are whole rubles (no kopecks).
+RUBLE = Decimal("1")
+
+
+def round_rubles(value: Decimal | int | float | str) -> Decimal:
+    return Decimal(str(value)).quantize(RUBLE, rounding=ROUND_HALF_UP)
 
 
 def compute_order_pricing(
@@ -41,7 +48,7 @@ def compute_order_pricing(
         volume_by_cat_rate.items(),
         key=lambda item: (item[0][0], item[0][1]),
     ):
-        commission = (volume * rate / Decimal("100")).quantize(Decimal("0.01"))
+        commission = round_rubles(volume * rate / Decimal("100"))
         total_volume += volume
         total_commission += commission
         base_label = CATEGORY_LABELS.get(category, category)
@@ -59,15 +66,18 @@ def compute_order_pricing(
             "commission": float(commission),
         }
 
-    return total_volume, total_commission, breakdown
+    return total_volume, round_rubles(total_commission), breakdown
 
 
 def payment_status(amount_paid: Decimal, commission_due: Decimal) -> str:
-    if commission_due <= 0:
+    """Paid when remainder is under 1 ₽ (kopeck tails count as paid)."""
+    due = Decimal(str(commission_due or 0))
+    paid = Decimal(str(amount_paid or 0))
+    if due <= 0:
         return "paid"
-    if amount_paid <= 0:
+    if paid <= 0:
         return "unpaid"
-    if amount_paid + Decimal("0.01") >= commission_due:
+    if paid + Decimal("0.999") >= due:
         return "paid"
     return "partial"
 
@@ -79,4 +89,4 @@ def commission_base_from_breakdown(breakdown: dict[str, object] | None) -> Decim
     for row in breakdown.values():
         if isinstance(row, dict):
             total += Decimal(str(row.get("commission", 0)))
-    return total.quantize(Decimal("0.01"))
+    return round_rubles(total)

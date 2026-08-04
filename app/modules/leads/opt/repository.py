@@ -22,6 +22,7 @@ from app.modules.leads.opt.pricing import (
     commission_base_from_breakdown,
     compute_order_pricing,
     payment_status,
+    round_rubles,
 )
 
 
@@ -234,9 +235,10 @@ class OptOrderRepository:
         inns = [line.supplier_inn for line in order.lines]
         units = await self.get_units_by_inns(inns)
         total_volume, base_commission, breakdown = compute_order_pricing(order.lines, units)
-        adjustment = Decimal(str(order.commission_adjustment or 0))
-        commission_due = (base_commission + adjustment).quantize(Decimal("0.01"))
+        adjustment = round_rubles(order.commission_adjustment or 0)
+        commission_due = round_rubles(base_commission + adjustment)
         order.total_volume = float(total_volume)
+        order.commission_adjustment = float(adjustment)
         order.commission_due = float(commission_due)
         order.volume_by_category = breakdown
         order.amount_paid = float(order.amount_paid or 0)
@@ -255,14 +257,14 @@ class OptOrderRepository:
         if delta == 0:
             raise ValueError("delta must be non-zero")
         current_adjustment = Decimal(str(order.commission_adjustment or 0))
-        new_adjustment = (current_adjustment + delta).quantize(Decimal("0.01"))
+        new_adjustment = round_rubles(current_adjustment + delta)
         base_commission = commission_base_from_breakdown(order.volume_by_category)
         if base_commission == 0:
-            base_commission = (
-                Decimal(str(order.commission_due or 0)) - current_adjustment
-            ).quantize(Decimal("0.01"))
-        old_due = Decimal(str(order.commission_due or 0)).quantize(Decimal("0.01"))
-        new_due = (base_commission + new_adjustment).quantize(Decimal("0.01"))
+            base_commission = round_rubles(
+                Decimal(str(order.commission_due or 0)) - current_adjustment,
+            )
+        old_due = round_rubles(order.commission_due or 0)
+        new_due = round_rubles(base_commission + new_adjustment)
         amount_paid = Decimal(str(order.amount_paid or 0))
         order.commission_adjustment = float(new_adjustment)
         order.commission_due = float(new_due)
@@ -270,7 +272,7 @@ class OptOrderRepository:
         history = LeadOptOrderCommissionHistory(
             old_commission_due=float(old_due),
             new_commission_due=float(new_due),
-            delta=float(delta),
+            delta=float(round_rubles(delta)),
             direction="increase" if delta > 0 else "decrease",
             changed_by=changed_by,
         )
@@ -295,6 +297,7 @@ class OptOrderRepository:
         ids = list(document_file_ids or [])
         if document_file_id is not None and document_file_id not in ids:
             ids.insert(0, document_file_id)
+        amount = round_rubles(amount)
         payment = LeadOptOrderPayment(
             order_id=order.id,
             amount=float(amount),
@@ -307,7 +310,7 @@ class OptOrderRepository:
         )
         self._session.add(payment)
         await self._session.flush()
-        paid_total = Decimal(str(order.amount_paid or 0)) + amount
+        paid_total = round_rubles(Decimal(str(order.amount_paid or 0)) + amount)
         order.amount_paid = float(paid_total)
         order.payment_status = payment_status(paid_total, Decimal(str(order.commission_due)))
         return payment

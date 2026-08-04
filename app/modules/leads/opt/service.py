@@ -59,7 +59,11 @@ from app.modules.leads.opt.schemas import (
     OptSync1cResponse,
     OptVolumeCategoryBreakdown,
 )
-from app.modules.leads.opt.pricing import commission_base_from_breakdown
+from app.modules.leads.opt.pricing import (
+    commission_base_from_breakdown,
+    payment_status as calc_payment_status,
+    round_rubles,
+)
 from app.modules.leads.opt.periods import (
     normalize_period_code,
     period_code_to_mole_iso,
@@ -139,13 +143,18 @@ class OptOrderService:
         *,
         document_names: dict[int, str] | None = None,
     ) -> OptOrderResponse:
-        commission_due = Decimal(str(order.commission_due or 0))
-        commission_adjustment = Decimal(str(order.commission_adjustment or 0))
+        commission_due = round_rubles(order.commission_due or 0)
+        commission_adjustment = round_rubles(order.commission_adjustment or 0)
         commission_base = commission_base_from_breakdown(order.volume_by_category)
-        if commission_base == 0:
-            commission_base = (commission_due - commission_adjustment).quantize(Decimal("0.01"))
+        if commission_base == 0 and commission_due:
+            commission_base = round_rubles(commission_due - commission_adjustment)
         amount_paid = Decimal(str(order.amount_paid or 0))
-        remaining = max(Decimal("0"), commission_due - amount_paid).quantize(Decimal("0.01"))
+        status = calc_payment_status(amount_paid, commission_due)
+        remaining = (
+            Decimal("0")
+            if status == "paid"
+            else max(Decimal("0"), round_rubles(commission_due - amount_paid))
+        )
         breakdown: dict[str, OptVolumeCategoryBreakdown] = {}
         raw_breakdown = order.volume_by_category or {}
         if isinstance(raw_breakdown, dict):
@@ -155,7 +164,7 @@ class OptOrderService:
                         label=str(row.get("label") or code),
                         volume=Decimal(str(row.get("volume", 0))),
                         rate_percent=Decimal(str(row.get("rate_percent", 0))),
-                        commission=Decimal(str(row.get("commission", 0))),
+                        commission=round_rubles(row.get("commission", 0)),
                     )
         names = document_names or {}
         history_rows = getattr(order, "commission_history", None) or []
@@ -165,7 +174,7 @@ class OptOrderService:
             order_no=order.order_no,
             crm_id=order.crm_id,
             status=order.status,
-            payment_status=order.payment_status or "unpaid",
+            payment_status=status,
             vat_rate_percent=Decimal(str(getattr(order, "vat_rate_percent", None) or 22)),
             period_code=getattr(order, "period_code", None),
             total_volume=Decimal(str(order.total_volume or 0)),
@@ -302,10 +311,13 @@ class OptOrderService:
         body: OptOrderPaymentCreateRequest,
     ) -> OptOrderResponse:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
-        remaining = Decimal(str(order.commission_due or 0)) - Decimal(str(order.amount_paid or 0))
-        if body.amount > remaining + Decimal("0.01"):
+        remaining = round_rubles(order.commission_due or 0) - Decimal(str(order.amount_paid or 0))
+        if remaining < Decimal("1"):
+            remaining = Decimal("0")
+        amount = round_rubles(body.amount)
+        if amount > remaining + Decimal("0.999"):
             raise ValidationError(
-                message=f"Сумма оплаты превышает остаток ({remaining.quantize(Decimal('0.01'))} ₽)",
+                message=f"Сумма оплаты превышает остаток ({round_rubles(max(remaining, 0))} ₽)",
             )
         doc_ids: list[int] = []
         for file_id in [*body.document_file_ids, body.document_file_id]:
@@ -327,7 +339,7 @@ class OptOrderService:
                 raise ValidationError(message=f"Файл платёжного документа #{file_id} не найден")
         await self._repo.add_payment(
             order,
-            amount=body.amount,
+            amount=amount,
             paid_at=body.paid_at,
             payment_type=body.payment_type,
             recipient=body.recipient,
@@ -354,18 +366,19 @@ class OptOrderService:
         current_adjustment = Decimal(str(order.commission_adjustment or 0))
         base_commission = commission_base_from_breakdown(order.volume_by_category)
         if base_commission == 0:
-            base_commission = (
-                Decimal(str(order.commission_due or 0)) - current_adjustment
-            ).quantize(Decimal("0.01"))
+            base_commission = round_rubles(
+                Decimal(str(order.commission_due or 0)) - current_adjustment,
+            )
 
-        delta = body.amount if body.direction == "increase" else -body.amount
-        new_adjustment = (current_adjustment + delta).quantize(Decimal("0.01"))
-        new_due = (base_commission + new_adjustment).quantize(Decimal("0.01"))
+        amount = round_rubles(body.amount)
+        delta = amount if body.direction == "increase" else -amount
+        new_adjustment = round_rubles(current_adjustment + delta)
+        new_due = round_rubles(base_commission + new_adjustment)
         amount_paid = Decimal(str(order.amount_paid or 0))
 
         if new_due < 0:
             raise ValidationError(message="Сумма к оплате не может быть отрицательной")
-        if new_due + Decimal("0.01") < amount_paid:
+        if new_due + Decimal("0.999") < amount_paid:
             raise ValidationError(
                 message="Сумма к оплате не может быть меньше уже оплаченной суммы",
             )
@@ -535,8 +548,8 @@ class OptOrderService:
         ).one()
         total = int(total_raw or 0)
         total_volume_sum = Decimal(str(volume_raw or 0)).quantize(Decimal("0.01"))
-        commission_due_sum = Decimal(str(due_raw or 0)).quantize(Decimal("0.01"))
-        amount_paid_sum = Decimal(str(paid_raw or 0)).quantize(Decimal("0.01"))
+        commission_due_sum = round_rubles(due_raw or 0)
+        amount_paid_sum = round_rubles(paid_raw or 0)
 
         stmt = (
             select(
@@ -585,9 +598,14 @@ class OptOrderService:
             manager_id,
             manager_name,
         ) in result.all():
-            commission_due = Decimal(str(order.commission_due or 0))
+            commission_due = round_rubles(order.commission_due or 0)
             amount_paid = Decimal(str(order.amount_paid or 0))
-            remaining = max(Decimal("0"), commission_due - amount_paid).quantize(Decimal("0.01"))
+            pay_status = calc_payment_status(amount_paid, commission_due)
+            remaining = (
+                Decimal("0")
+                if pay_status == "paid"
+                else max(Decimal("0"), round_rubles(commission_due - amount_paid))
+            )
             items.append(
                 OptOrderRegistryItem(
                     id=order.id,
@@ -603,7 +621,7 @@ class OptOrderService:
                     manager_user_id=manager_id,
                     manager_name=manager_name,
                     status=order.status,
-                    payment_status=order.payment_status or "unpaid",
+                    payment_status=pay_status,
                     period_code=getattr(order, "period_code", None),
                     total_volume=Decimal(str(order.total_volume or 0)),
                     commission_due=commission_due,
