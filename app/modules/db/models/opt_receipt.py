@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,11 @@ class OptReceipt(Base):
     supplier_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     period_code: Mapped[str] = mapped_column(Text, nullable=False)
     doc_kind: Mapped[str] = mapped_column(Text, nullable=False)  # receipt | notice
+    is_correction: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
     source_filename: Mapped[str] = mapped_column(Text, nullable=False)
     parsed_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_file_id: Mapped[int | None] = mapped_column(

@@ -140,9 +140,9 @@ const selectedReceiptItems = computed(() => {
   return receiptPeriods.value.find((row) => row.period_code === period)?.items ?? []
 })
 
-function receiptKindLabel(kind: string): string {
-  if (kind === 'notice') return 'Извещение о вводе'
-  return 'Квитанция о приеме'
+function receiptKindLabel(kind: string, isCorrection = false): string {
+  const base = kind === 'notice' ? 'Извещение о вводе' : 'Квитанция о приеме'
+  return isCorrection ? `${base} · корректировка` : base
 }
 
 async function onDownloadReceipt(row: StorageReceiptItem): Promise<void> {
@@ -607,7 +607,7 @@ onMounted(async () => {
                 <div class="receipts-main">
                   <div class="receipts-title">{{ row.source_filename }}</div>
                   <div class="receipts-meta">
-                    {{ receiptKindLabel(row.doc_kind) }} · ИНН {{ row.supplier_inn }}
+                    {{ receiptKindLabel(row.doc_kind, !!row.is_correction) }} · ИНН {{ row.supplier_inn }}
                     <template v-if="row.supplier_name"> · {{ row.supplier_name }}</template>
                   </div>
                 </div>

@@ -656,6 +656,7 @@ class StorageService:
                     supplier_name=row.supplier_name,
                     period_code=row.period_code,
                     doc_kind=row.doc_kind,
+                    is_correction=bool(getattr(row, "is_correction", False)),
                     source_filename=row.source_filename,
                     has_pdf=row.pdf_file_id is not None,
                 ),

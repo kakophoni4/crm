@@ -68,13 +68,21 @@ class OptReceiptRepository:
         *,
         inns: set[str],
         period_code: str | None,
+        include_corrections: bool = False,
     ) -> list[OptReceipt]:
         if not inns:
             return []
         stmt = select(OptReceipt).where(OptReceipt.supplier_inn.in_(sorted(inns)))
         if period_code:
             stmt = stmt.where(OptReceipt.period_code == period_code)
-        stmt = stmt.order_by(OptReceipt.supplier_inn, OptReceipt.doc_kind, OptReceipt.id)
+        if not include_corrections:
+            stmt = stmt.where(OptReceipt.is_correction.is_(False))
+        stmt = stmt.order_by(
+            OptReceipt.supplier_inn,
+            OptReceipt.is_correction,
+            OptReceipt.doc_kind,
+            OptReceipt.id,
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
@@ -94,6 +102,7 @@ class OptReceiptRepository:
         stmt = stmt.order_by(
             OptReceipt.period_code.desc(),
             OptReceipt.supplier_inn,
+            OptReceipt.is_correction,
             OptReceipt.doc_kind,
             OptReceipt.id,
         )
@@ -159,6 +168,9 @@ async def ingest_receipt_pdf(
     kind = (doc_kind or parsed.doc_kind or "receipt").strip().lower()
     if kind not in {"receipt", "notice"}:
         kind = "receipt"
+    is_correction = bool(parsed.is_correction)
+    if isinstance(metadata, dict) and "is_correction" in metadata:
+        is_correction = bool(metadata.get("is_correction"))
 
     unit = await session.execute(select(OptUnit).where(OptUnit.inn == inn))
     unit_row = unit.scalar_one_or_none()
@@ -186,6 +198,7 @@ async def ingest_receipt_pdf(
         "period_code": parsed.period_code,
         "doc_kind": parsed.doc_kind,
         "short_name": parsed.parsed_name,
+        "is_correction": is_correction,
     })
 
     if existing is not None:
@@ -196,6 +209,7 @@ async def ingest_receipt_pdf(
         existing.supplier_name = name
         existing.period_code = period
         existing.doc_kind = kind
+        existing.is_correction = is_correction
         existing.source_filename = source_filename
         existing.parsed_name = parsed.parsed_name
         existing.pdf_file_id = uploaded.id
@@ -212,6 +226,7 @@ async def ingest_receipt_pdf(
         supplier_name=name,
         period_code=period,
         doc_kind=kind,
+        is_correction=is_correction,
         source_filename=source_filename,
         parsed_name=parsed.parsed_name,
         pdf_file_id=uploaded.id,

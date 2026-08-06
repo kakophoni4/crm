@@ -455,6 +455,7 @@ async def ingest_accounting_receipt_multipart(
         supplier_inn=row.supplier_inn,
         period_code=row.period_code,
         doc_kind=row.doc_kind,
+        is_correction=bool(getattr(row, "is_correction", False)),
         created=created,
     )
 

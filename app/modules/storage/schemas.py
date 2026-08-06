@@ -145,6 +145,7 @@ class StorageReceiptItem(BaseModel):
     supplier_name: str | None = None
     period_code: str
     doc_kind: str
+    is_correction: bool = False
     source_filename: str
     has_pdf: bool
 

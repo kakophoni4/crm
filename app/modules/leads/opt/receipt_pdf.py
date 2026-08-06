@@ -24,6 +24,15 @@ class ParsedReceiptPdf:
     doc_kind: str  # receipt | notice
     parsed_name: str | None
     raw_text: str
+    is_correction: bool = False
+
+
+_CORRECTION_MARKERS = (
+    "корректир",
+    "уточненн",
+    "уточнённ",
+    "корректирующ",
+)
 
 
 def detect_doc_kind(filename: str) -> str:
@@ -37,6 +46,12 @@ def detect_doc_kind(filename: str) -> str:
     if "прием" in lower or "приём" in lower:
         return "receipt"
     return "receipt"
+
+
+def detect_is_correction(filename: str, text: str = "") -> bool:
+    """True for correction/clarification KV/IV (not the primary filing pack)."""
+    blob = f"{filename}\n{text}".casefold()
+    return any(marker in blob for marker in _CORRECTION_MARKERS)
 
 
 def short_name_from_filename(filename: str) -> str | None:
@@ -138,6 +153,7 @@ def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
         supplier_name = short
 
     period_code = period_code_from_text(text)
+    is_correction = detect_is_correction(filename, text)
 
     return ParsedReceiptPdf(
         supplier_inn=supplier_inn,
@@ -147,4 +163,5 @@ def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
         doc_kind=doc_kind,
         parsed_name=short,
         raw_text=text[:4000],
+        is_correction=is_correction,
     )

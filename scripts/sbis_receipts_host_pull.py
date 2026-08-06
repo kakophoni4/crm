@@ -166,9 +166,10 @@ def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> i
         if 200 <= code < 300:
             created = payload.get("created")
             period = str(payload.get("period_code") or period_hint or "")
+            corr = " correction" if payload.get("is_correction") else ""
             print(
                 f"  OK {path.name} created={created} inn={payload.get('supplier_inn')} "
-                f"period={period}"
+                f"period={period}{corr}"
             )
             if short and period:
                 period_by_short.setdefault(short, period)

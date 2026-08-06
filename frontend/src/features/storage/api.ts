@@ -162,6 +162,7 @@ export interface StorageReceiptItem {
   supplier_name?: string | null
   period_code: string
   doc_kind: string
+  is_correction?: boolean
   source_filename: string
   has_pdf: boolean
 }

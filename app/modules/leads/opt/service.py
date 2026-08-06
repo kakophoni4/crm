@@ -1536,9 +1536,11 @@ class OptOrderService:
         order = await self._get_order_for_actor(actor, lead_id, order_id)
         inns = {str(line.supplier_inn) for line in order.lines if line.supplier_inn}
         period = (order.period_code or "").strip() or None
+        # Corrections stay in storage; client pack = primary filing only.
         rows = await OptReceiptRepository(self._session).list_for_inns_period(
             inns=inns,
             period_code=period,
+            include_corrections=False,
         )
         items = [
             OptReceiptItemResponse(
@@ -1547,6 +1549,7 @@ class OptOrderService:
                 supplier_name=row.supplier_name,
                 period_code=row.period_code,
                 doc_kind=row.doc_kind,
+                is_correction=bool(row.is_correction),
                 source_filename=row.source_filename,
                 has_pdf=row.pdf_file_id is not None,
             )
@@ -1572,6 +1575,7 @@ class OptOrderService:
         rows = await OptReceiptRepository(self._session).list_for_inns_period(
             inns=inns,
             period_code=period,
+            include_corrections=False,
         )
         if not rows:
             raise ValidationError(message="Нет квитанций по лавкам этой заявки")

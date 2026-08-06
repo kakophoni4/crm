@@ -323,6 +323,7 @@ class AccountingReceiptIngestResponse(BaseModel):
     supplier_inn: str
     period_code: str
     doc_kind: str
+    is_correction: bool = False
     created: bool
 
 

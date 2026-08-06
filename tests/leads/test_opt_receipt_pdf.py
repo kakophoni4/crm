@@ -1,5 +1,6 @@
 from app.modules.leads.opt.receipt_pdf import (
     detect_doc_kind,
+    detect_is_correction,
     period_code_from_text,
     short_name_from_filename,
 )
@@ -8,6 +9,12 @@ from app.modules.leads.opt.receipt_pdf import (
 def test_detect_doc_kind() -> None:
     assert detect_doc_kind("квитанция о приеме (К-ПЛАСТ).pdf") == "receipt"
     assert detect_doc_kind("извещение о вводе (РИКО).pdf") == "notice"
+
+
+def test_detect_is_correction() -> None:
+    assert detect_is_correction("квитанция о приеме (РИКО).pdf") is False
+    assert detect_is_correction("квитанция о приеме корректировка (РИКО).pdf") is True
+    assert detect_is_correction("извещение о вводе (РИКО).pdf", "уточненная декларация") is True
 
 
 def test_short_name_from_filename() -> None:
