@@ -24,9 +24,12 @@ git pull
 
 export CRM_INGEST_BASE_URL=https://api.bttsrvvrs.org
 export ACCOUNTING_INGEST_TOKEN='…из deploy/.env.staging на CRM…'
-export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_complete
+# основная папка или свежий выгруз sbis-norm:
+# export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_complete
+export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_pdf_nds
 
 python3 scripts/sbis_receipts_host_pull.py
+# в CRM имена без даты/хеша: «извещение о вводе (Афина).pdf»
 # фоном:
 # python3 scripts/sbis_receipts_host_pull.py --daemon
 ```

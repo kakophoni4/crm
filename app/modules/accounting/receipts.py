@@ -21,7 +21,11 @@ from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
 from app.modules.leads.opt.periods import normalize_period_code
-from app.modules.leads.opt.receipt_pdf import parse_receipt_pdf, short_name_from_filename
+from app.modules.leads.opt.receipt_pdf import (
+    normalize_receipt_filename,
+    parse_receipt_pdf,
+    short_name_from_filename,
+)
 from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_group_ids
 from app.shared.exceptions import NotFound, ValidationError
 
@@ -142,6 +146,7 @@ async def ingest_receipt_pdf(
 ) -> tuple[OptReceipt, bool]:
     repo = OptReceiptRepository(session)
     existing = await repo.get_by_external_id(external_id.strip())
+    source_filename = normalize_receipt_filename(source_filename)
 
     parsed = parse_receipt_pdf(pdf_bytes, filename=source_filename)
     inn = (supplier_inn or parsed.supplier_inn or "").strip()

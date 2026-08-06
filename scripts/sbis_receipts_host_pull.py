@@ -24,16 +24,31 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Allow suffix after name: "(Афина) 28-07-2026 8d54e4b7.pdf"
-_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)(?:\s+[^.]*)?\.pdf$", re.IGNORECASE)
+_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)", re.IGNORECASE)
+_SUFFIX_DATE_HASH_RE = re.compile(
+    r"^(?P<head>.+?\))\s+"
+    r"\d{2}[-./]\d{2}[-./]\d{4}"
+    r"(?:\s+[0-9a-fA-F]{6,16})?"
+    r"(?P<ext>\.pdf)$",
+    re.IGNORECASE,
+)
 
 
 def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
+def _normalize_filename(filename: str) -> str:
+    name = filename.strip().replace("\\", "/").split("/")[-1]
+    match = _SUFFIX_DATE_HASH_RE.match(name)
+    if match is None:
+        return name
+    return f"{match.group('head')}{match.group('ext')}"
+
+
 def _short_name(filename: str) -> str | None:
-    match = _NAME_PAREN_RE.search(filename.strip())
+    cleaned = _normalize_filename(filename)
+    match = _NAME_PAREN_RE.search(cleaned)
     if match is None:
         return None
     name = match.group(1).strip()
@@ -156,11 +171,12 @@ def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> i
                 period_hint = period_by_short[short]
             elif default_period:
                 period_hint = default_period
+        display_name = _normalize_filename(path.name)
         code, payload = _multipart_ingest(
             crm,
             token,
             external_id=external_id,
-            filename=path.name,
+            filename=display_name,
             raw=raw,
             period_code=period_hint,
         )

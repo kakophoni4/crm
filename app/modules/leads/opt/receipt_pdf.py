@@ -8,8 +8,16 @@ from io import BytesIO
 
 _INN_RE = re.compile(r"\b(\d{10}|\d{12})\b")
 _KPP_RE = re.compile(r"\b(\d{9})\b")
-# Allow suffix after name: "(Афина) 28-07-2026 8d54e4b7.pdf"
-_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)(?:\s+[^.]*)?\.pdf$", re.IGNORECASE)
+# Classic: «квитанция о приеме (Афина).pdf»
+# New sbis-norm dumps: «извещение о вводе (Афина) 28-07-2026 8d54e4b7.pdf»
+_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)", re.IGNORECASE)
+_SUFFIX_DATE_HASH_RE = re.compile(
+    r"^(?P<head>.+?\))\s+"
+    r"\d{2}[-./]\d{2}[-./]\d{4}"
+    r"(?:\s+[0-9a-fA-F]{6,16})?"
+    r"(?P<ext>\.pdf)$",
+    re.IGNORECASE,
+)
 _OOO_NAME_RE = re.compile(
     r'(?:Общество\s+с\s+ограниченной\s+ответственностью|ООО)\s*[«"“]?([^»"”\n]+)[»"”]?',
     re.IGNORECASE,
@@ -55,8 +63,18 @@ def detect_is_correction(filename: str, text: str = "") -> bool:
     return any(marker in blob for marker in _CORRECTION_MARKERS)
 
 
+def normalize_receipt_filename(filename: str) -> str:
+    """Strip trailing «DD-MM-YYYY [hash]» so CRM shows clean names."""
+    name = filename.strip().replace("\\", "/").split("/")[-1]
+    match = _SUFFIX_DATE_HASH_RE.match(name)
+    if match is None:
+        return name
+    return f"{match.group('head')}{match.group('ext')}"
+
+
 def short_name_from_filename(filename: str) -> str | None:
-    match = _NAME_PAREN_RE.search(filename.strip())
+    cleaned = normalize_receipt_filename(filename)
+    match = _NAME_PAREN_RE.search(cleaned)
     if match is None:
         return None
     name = match.group(1).strip()
@@ -117,6 +135,7 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
 
 
 def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
+    filename = normalize_receipt_filename(filename)
     text = extract_pdf_text(pdf_bytes) if pdf_bytes.startswith(b"%PDF") else ""
     doc_kind = detect_doc_kind(filename)
     short = short_name_from_filename(filename)

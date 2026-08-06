@@ -1,6 +1,7 @@
 from app.modules.leads.opt.receipt_pdf import (
     detect_doc_kind,
     detect_is_correction,
+    normalize_receipt_filename,
     period_code_from_text,
     short_name_from_filename,
 )
@@ -22,6 +23,17 @@ def test_short_name_from_filename() -> None:
     assert (
         short_name_from_filename("извещение о вводе (Афина) 28-07-2026 8d54e4b7.pdf")
         == "Афина"
+    )
+
+
+def test_normalize_receipt_filename_strips_date_hash() -> None:
+    assert (
+        normalize_receipt_filename("извещение о вводе (Афина) 28-07-2026 8d54e4b7.pdf")
+        == "извещение о вводе (Афина).pdf"
+    )
+    assert (
+        normalize_receipt_filename("квитанция о приеме (РИКО).pdf")
+        == "квитанция о приеме (РИКО).pdf"
     )
 
 
