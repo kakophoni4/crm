@@ -8,7 +8,8 @@ from io import BytesIO
 
 _INN_RE = re.compile(r"\b(\d{10}|\d{12})\b")
 _KPP_RE = re.compile(r"\b(\d{9})\b")
-_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)\s*\.pdf$", re.IGNORECASE)
+# Allow suffix after name: "(Афина) 28-07-2026 8d54e4b7.pdf"
+_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)(?:\s+[^.]*)?\.pdf$", re.IGNORECASE)
 _OOO_NAME_RE = re.compile(
     r'(?:Общество\s+с\s+ограниченной\s+ответственностью|ООО)\s*[«"“]?([^»"”\n]+)[»"”]?',
     re.IGNORECASE,

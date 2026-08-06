@@ -19,6 +19,10 @@ def test_detect_is_correction() -> None:
 
 def test_short_name_from_filename() -> None:
     assert short_name_from_filename("квитанция о приеме (Миникей).pdf") == "Миникей"
+    assert (
+        short_name_from_filename("извещение о вводе (Афина) 28-07-2026 8d54e4b7.pdf")
+        == "Афина"
+    )
 
 
 def test_period_code_from_text() -> None:

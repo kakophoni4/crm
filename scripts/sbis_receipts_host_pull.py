@@ -24,7 +24,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)\s*\.pdf$", re.IGNORECASE)
+# Allow suffix after name: "(Афина) 28-07-2026 8d54e4b7.pdf"
+_NAME_PAREN_RE = re.compile(r"\(([^)]+)\)(?:\s+[^.]*)?\.pdf$", re.IGNORECASE)
 
 
 def _env(name: str, default: str = "") -> str:
