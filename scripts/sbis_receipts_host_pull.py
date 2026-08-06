@@ -207,6 +207,20 @@ def main() -> int:
     if not crm or not token:
         print("Need CRM_INGEST_BASE_URL and ACCOUNTING_INGEST_TOKEN", file=sys.stderr)
         return 2
+    # HTTP headers are latin-1 — placeholders like «…токен…» crash urlopen.
+    try:
+        token.encode("latin-1")
+    except UnicodeEncodeError:
+        print(
+            "ACCOUNTING_INGEST_TOKEN содержит не-ASCII (часто «…» из плейсхолдера). "
+            "Вставь реальный токен из CRM: "
+            "grep ^ACCOUNTING_INGEST_TOKEN= /root/crm/deploy/.env.staging",
+            file=sys.stderr,
+        )
+        return 2
+    if "…" in token or token in {"СЮДА_ТОКЕН", "...", "TOKEN"}:
+        print("ACCOUNTING_INGEST_TOKEN — плейсхолдер, нужен реальный токен", file=sys.stderr)
+        return 2
     if daemon:
         print(f"daemon watching claim + dir={directory}")
         while True:
