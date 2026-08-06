@@ -36,12 +36,13 @@ class ParsedReceiptPdf:
     is_correction: bool = False
 
 
-_CORRECTION_MARKERS = (
-    "корректир",
-    "уточненн",
-    "уточнённ",
-    "корректирующ",
+# In PDF: «…1151001, первичный, за 2 квартал…» vs «…корректирующий (1), за 1 квартал…»
+_CORRECTION_DOC_RE = re.compile(
+    r"корректирующ\w*\s*\(\s*\d+\s*\)",
+    re.IGNORECASE,
 )
+_PRIMARY_DOC_RE = re.compile(r"\bпервичн\w*\b", re.IGNORECASE)
+_FILENAME_CORRECTION_RE = re.compile(r"корректир", re.IGNORECASE)
 
 
 def detect_doc_kind(filename: str) -> str:
@@ -58,14 +59,20 @@ def detect_doc_kind(filename: str) -> str:
 
 
 def detect_is_correction(filename: str, text: str = "") -> bool:
-    """True for correction/clarification KV/IV (not the primary filing pack).
+    """True when document kind is корректирующий (N); false for первичный.
 
-    Filename only — SBIS notice PDF body often contains «уточненн…» boilerplate
-    and would falsely mark every извещение as a correction.
+    Number in parentheses may be 1, 2, … — any digit counts as correction.
+    Do not treat bare «уточненн…» boilerplate as correction.
     """
-    del text  # kept for call-site compatibility
-    blob = normalize_receipt_filename(filename).casefold()
-    return any(marker in blob for marker in _CORRECTION_MARKERS)
+    cleaned_name = normalize_receipt_filename(filename)
+    if _FILENAME_CORRECTION_RE.search(cleaned_name):
+        return True
+    blob = (text or "").replace("\u00a0", " ").replace("\u202f", " ")
+    if _CORRECTION_DOC_RE.search(blob):
+        return True
+    if _PRIMARY_DOC_RE.search(blob):
+        return False
+    return False
 
 
 def is_generic_supplier_name(name: str | None) -> bool:
@@ -197,7 +204,7 @@ def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
         supplier_name = short
 
     period_code = period_code_from_text(text)
-    is_correction = detect_is_correction(filename)
+    is_correction = detect_is_correction(filename, text)
 
     return ParsedReceiptPdf(
         supplier_inn=supplier_inn,

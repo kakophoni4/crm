@@ -15,8 +15,22 @@ def test_detect_doc_kind() -> None:
 def test_detect_is_correction() -> None:
     assert detect_is_correction("квитанция о приеме (РИКО).pdf") is False
     assert detect_is_correction("квитанция о приеме корректировка (РИКО).pdf") is True
-    # PDF body boilerplate must NOT mark ordinary notices as corrections.
+    # Boilerplate «уточненн…» alone is not a correction.
     assert detect_is_correction("извещение о вводе (РИКО).pdf", "уточненная декларация") is False
+    primary = (
+        "Налоговая декларация по налогу на добавленную стоимость 1151001, "
+        "первичный, за 2 квартал, 2026 год"
+    )
+    assert detect_is_correction("извещение о вводе (ТЭК).pdf", primary) is False
+    correction = (
+        "Налоговая декларация по налогу на добавленную стоимость, "
+        "корректирующий (1), за 1 квартал, 2026 год"
+    )
+    assert detect_is_correction("извещение о вводе (БРАВОС).pdf", correction) is True
+    assert detect_is_correction(
+        "квитанция о приеме (БРАВОС).pdf",
+        "… корректирующий (12), за 3 квартал, 2025 год",
+    ) is True
 
 
 def test_short_name_from_filename() -> None:
