@@ -22,6 +22,7 @@ from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
 from app.modules.leads.opt.periods import normalize_period_code
 from app.modules.leads.opt.receipt_pdf import (
+    is_generic_supplier_name,
     normalize_receipt_filename,
     parse_receipt_pdf,
     short_name_from_filename,
@@ -180,11 +181,13 @@ async def ingest_receipt_pdf(
     unit = await session.execute(select(OptUnit).where(OptUnit.inn == inn))
     unit_row = unit.scalar_one_or_none()
     kpp = supplier_kpp or parsed.supplier_kpp or (unit_row.kpp if unit_row else None)
+    parsed_name = None if is_generic_supplier_name(parsed.supplier_name) else parsed.supplier_name
+    # Prefer CRM lavka / filename short name over PDF boilerplate («ООО Компания»).
     name = (
         supplier_name
-        or parsed.supplier_name
         or (unit_row.name if unit_row else None)
         or parsed.parsed_name
+        or parsed_name
     )
 
     files = FilesService(session)

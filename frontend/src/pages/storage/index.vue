@@ -642,7 +642,17 @@ onMounted(async () => {
                 :key="row.id"
                 class="receipts-row"
               >
-                <div class="receipts-main">
+                <div
+                  class="receipts-main receipts-main--clickable"
+                  @click="
+                    row.has_pdf &&
+                      openPreview(
+                        row.source_filename || `receipt-${row.id}.pdf`,
+                        'application/pdf',
+                        () => downloadStorageReceipt(row.id),
+                      )
+                  "
+                >
                   <div class="receipts-title">{{ row.source_filename }}</div>
                   <div class="receipts-meta">
                     {{ receiptKindLabel(row.doc_kind, !!row.is_correction) }} · ИНН {{ row.supplier_inn }}
@@ -652,6 +662,7 @@ onMounted(async () => {
                 <NSpace :size="8">
                   <NButton
                     size="small"
+                    type="primary"
                     secondary
                     :loading="downloadingReceiptId === row.id"
                     :disabled="!row.has_pdf"
@@ -874,6 +885,16 @@ onMounted(async () => {
   padding: 10px 12px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
+}
+.receipts-main {
+  min-width: 0;
+  flex: 1;
+}
+.receipts-main--clickable {
+  cursor: pointer;
+}
+.receipts-main--clickable:hover .receipts-title {
+  text-decoration: underline;
 }
 .receipts-title {
   font-weight: 600;

@@ -58,9 +58,31 @@ def detect_doc_kind(filename: str) -> str:
 
 
 def detect_is_correction(filename: str, text: str = "") -> bool:
-    """True for correction/clarification KV/IV (not the primary filing pack)."""
-    blob = f"{filename}\n{text}".casefold()
+    """True for correction/clarification KV/IV (not the primary filing pack).
+
+    Filename only — SBIS notice PDF body often contains «уточненн…» boilerplate
+    and would falsely mark every извещение as a correction.
+    """
+    del text  # kept for call-site compatibility
+    blob = normalize_receipt_filename(filename).casefold()
     return any(marker in blob for marker in _CORRECTION_MARKERS)
+
+
+def is_generic_supplier_name(name: str | None) -> bool:
+    if not name:
+        return True
+    cleaned = (
+        name.strip()
+        .casefold()
+        .replace("«", "")
+        .replace("»", "")
+        .replace('"', "")
+        .replace("'", "")
+    )
+    for prefix in ("ооо ", "ао ", "зао ", "пао ", "ип "):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip()
+    return cleaned in {"компания", "организация", "фирма", "предприятие", ""}
 
 
 def normalize_receipt_filename(filename: str) -> str:
@@ -169,11 +191,13 @@ def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
     supplier_name = name_match.group(1).strip() if name_match else None
     if supplier_name:
         supplier_name = f'ООО "{supplier_name.strip()}"'
+        if is_generic_supplier_name(supplier_name):
+            supplier_name = short
     elif short:
         supplier_name = short
 
     period_code = period_code_from_text(text)
-    is_correction = detect_is_correction(filename, text)
+    is_correction = detect_is_correction(filename)
 
     return ParsedReceiptPdf(
         supplier_inn=supplier_inn,

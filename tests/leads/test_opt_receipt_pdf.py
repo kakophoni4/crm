@@ -15,7 +15,8 @@ def test_detect_doc_kind() -> None:
 def test_detect_is_correction() -> None:
     assert detect_is_correction("квитанция о приеме (РИКО).pdf") is False
     assert detect_is_correction("квитанция о приеме корректировка (РИКО).pdf") is True
-    assert detect_is_correction("извещение о вводе (РИКО).pdf", "уточненная декларация") is True
+    # PDF body boilerplate must NOT mark ordinary notices as corrections.
+    assert detect_is_correction("извещение о вводе (РИКО).pdf", "уточненная декларация") is False
 
 
 def test_short_name_from_filename() -> None:
