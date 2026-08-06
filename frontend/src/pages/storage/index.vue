@@ -45,6 +45,7 @@ import {
   VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
 } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
+import { compareOptPeriodsDesc } from '@/features/leads/order-fields'
 
 const message = useMessage()
 const activeTab = ref('vault')
@@ -125,9 +126,11 @@ async function loadReceipts(): Promise<void> {
   loading.value = true
   try {
     const data = await listStorageReceiptsTree()
-    receiptPeriods.value = data.periods
-    if (!selectedReceiptPeriod.value && data.periods.length > 0) {
-      selectedReceiptPeriod.value = data.periods[0].period_code
+    receiptPeriods.value = [...data.periods].sort((a, b) =>
+      compareOptPeriodsDesc(a.period_code, b.period_code),
+    )
+    if (!selectedReceiptPeriod.value && receiptPeriods.value.length > 0) {
+      selectedReceiptPeriod.value = receiptPeriods.value[0].period_code
     }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить квитанции')

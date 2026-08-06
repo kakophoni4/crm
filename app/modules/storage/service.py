@@ -661,10 +661,27 @@ class StorageService:
                     has_pdf=row.pdf_file_id is not None,
                 ),
             )
-        periods = [
-            StorageReceiptPeriodGroup(period_code=code, items=items)
-            for code, items in sorted(by_period.items(), key=lambda kv: kv[0], reverse=True)
-        ]
+        def _period_key(code: str) -> tuple[int, int]:
+            # "2/26" → (2026, 2) — newest year/quarter first
+            parts = str(code).strip().split("/")
+            if len(parts) != 2:
+                return (0, 0)
+            try:
+                quarter, yy = int(parts[0]), int(parts[1])
+            except ValueError:
+                return (0, 0)
+            return (2000 + yy, quarter)
+
+        def _item_key(item: StorageReceiptItem) -> tuple:
+            name = (item.supplier_name or item.supplier_inn or "").casefold()
+            # notice before receipt within the same lavka
+            kind = 0 if item.doc_kind == "notice" else 1
+            return (name, item.supplier_inn, kind, item.source_filename or "")
+
+        periods = []
+        for code, items in sorted(by_period.items(), key=lambda kv: _period_key(kv[0]), reverse=True):
+            items_sorted = sorted(items, key=_item_key)
+            periods.append(StorageReceiptPeriodGroup(period_code=code, items=items_sorted))
         return StorageReceiptTreeResponse(periods=periods)
 
     async def get_receipt_bytes(self, actor: User, receipt_id: int) -> tuple[bytes, str]:

@@ -26,6 +26,20 @@ export function formatOptPeriodLabel(code: string | null | undefined): string {
   return `${m[1]} кв. 20${m[2]}`
 }
 
+/** Sort key for `2/26` — year then quarter (for newest-first: compare descending). */
+export function optPeriodSortKey(code: string | null | undefined): [number, number] {
+  const m = /^([1-4])\/(\d{2})$/.exec((code || '').trim())
+  if (!m) return [0, 0]
+  return [2000 + Number(m[2]), Number(m[1])]
+}
+
+export function compareOptPeriodsDesc(a: string, b: string): number {
+  const [ay, aq] = optPeriodSortKey(a)
+  const [by, bq] = optPeriodSortKey(b)
+  if (ay !== by) return by - ay
+  return bq - aq
+}
+
 export interface LeadDealCustomFields {
   order?: LeadOrderFields | null
   service_suggestions?: string[]

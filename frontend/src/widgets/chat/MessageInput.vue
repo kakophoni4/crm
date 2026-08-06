@@ -82,12 +82,12 @@ function validateFileSize(file: File): boolean {
 }
 
 function onVaultFileSelect(file: { file_id: number; name: string; mime?: string }): void {
+  if (pendingFiles.value.some((row) => row.file_id === file.file_id)) return
   pendingFiles.value.push({
     file_id: file.file_id,
     name: file.name,
     mime: file.mime,
   })
-  message.success(`Файл «${file.name}» выбран из хранилища`)
 }
 
 function openVaultPicker(): void {
