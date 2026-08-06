@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { NButton, NEmpty, NModal, NSpin, NTabPane, NTabs, NTag, NTooltip, useMessage } from 'naive-ui'
-import { Download, Eye, FolderOpen, FolderPlus, Send } from 'lucide-vue-next'
+import { ArrowLeft, Download, Eye, FolderOpen, FolderPlus, Send } from 'lucide-vue-next'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
+import { uploadFile } from '@/features/chats/api'
 import {
   downloadGroupFile,
+  downloadStorageReceipt,
   listGroupFiles,
+  listStorageReceiptsTree,
   listVaultFiles,
   uploadVaultFile,
   type GroupChatFile,
+  type StorageReceiptItem,
+  type StorageReceiptPeriodGroup,
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
@@ -17,6 +22,7 @@ import {
   resolveAttachmentPreviewKind,
 } from '@/shared/lib/attachment-preview-kind'
 import { formatFileSize } from '@/shared/config/uploads'
+import { formatOptPeriodLabel } from '@/features/leads/order-fields'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const props = defineProps<{
@@ -30,10 +36,14 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
-const activeTab = ref<'vault' | 'dialog'>('vault')
+const activeTab = ref<'vault' | 'dialog' | 'receipts'>('vault')
 const loading = ref(false)
 const vaultFiles = ref<VaultFile[]>([])
 const dialogFiles = ref<GroupChatFile[]>([])
+const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
+const receiptPeriod = ref<string | null>(null)
+/** null = period root; 'corrections' = corrections folder */
+const receiptFolder = ref<'main' | 'corrections' | null>(null)
 const busyId = ref<number | null>(null)
 
 const previewOpen = ref(false)
@@ -51,6 +61,24 @@ const previewKind = computed(() =>
 )
 
 const hasChat = computed(() => props.chatId != null)
+
+const selectedPeriodGroup = computed(() =>
+  receiptPeriods.value.find((row) => row.period_code === receiptPeriod.value) ?? null,
+)
+
+const periodMainItems = computed(() =>
+  (selectedPeriodGroup.value?.items ?? []).filter((row) => !row.is_correction),
+)
+
+const periodCorrectionItems = computed(() =>
+  (selectedPeriodGroup.value?.items ?? []).filter((row) => !!row.is_correction),
+)
+
+const visibleReceiptItems = computed(() => {
+  if (receiptFolder.value === 'corrections') return periodCorrectionItems.value
+  if (receiptFolder.value === 'main') return periodMainItems.value
+  return []
+})
 
 async function loadVault(): Promise<void> {
   loading.value = true
@@ -80,8 +108,28 @@ async function loadDialog(): Promise<void> {
   }
 }
 
+async function loadReceipts(): Promise<void> {
+  loading.value = true
+  try {
+    const data = await listStorageReceiptsTree()
+    receiptPeriods.value = data.periods
+    if (
+      receiptPeriod.value &&
+      !data.periods.some((row) => row.period_code === receiptPeriod.value)
+    ) {
+      receiptPeriod.value = null
+      receiptFolder.value = null
+    }
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить квитанции')
+  } finally {
+    loading.value = false
+  }
+}
+
 async function loadActive(): Promise<void> {
   if (activeTab.value === 'dialog') await loadDialog()
+  else if (activeTab.value === 'receipts') await loadReceipts()
   else await loadVault()
 }
 
@@ -90,6 +138,8 @@ watch(
   (open) => {
     if (!open) return
     activeTab.value = 'vault'
+    receiptPeriod.value = null
+    receiptFolder.value = null
     void loadActive()
   },
 )
@@ -208,6 +258,74 @@ async function onAddToVault(file: GroupChatFile): Promise<void> {
   }
 }
 
+function receiptKindLabel(row: StorageReceiptItem): string {
+  const base = row.doc_kind === 'notice' ? 'Извещение' : 'Квитанция'
+  return row.is_correction ? `${base} · корректировка` : base
+}
+
+function openPeriod(code: string): void {
+  receiptPeriod.value = code
+  receiptFolder.value = 'main'
+}
+
+function openCorrectionsFolder(): void {
+  receiptFolder.value = 'corrections'
+}
+
+function receiptsBack(): void {
+  if (receiptFolder.value === 'corrections') {
+    receiptFolder.value = 'main'
+    return
+  }
+  receiptPeriod.value = null
+  receiptFolder.value = null
+}
+
+async function onPreviewReceipt(row: StorageReceiptItem): Promise<void> {
+  if (!row.has_pdf) {
+    message.warning('PDF недоступен')
+    return
+  }
+  busyId.value = row.id
+  const name = row.source_filename || `receipt-${row.id}.pdf`
+  await openPreview(name, 'application/pdf', () => downloadStorageReceipt(row.id))
+  busyId.value = null
+}
+
+async function onDownloadReceipt(row: StorageReceiptItem): Promise<void> {
+  if (!row.has_pdf) return
+  busyId.value = row.id
+  try {
+    const blob = await downloadStorageReceipt(row.id)
+    saveBlob(blob, row.source_filename || `receipt-${row.id}.pdf`)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать квитанцию')
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function onSendReceipt(row: StorageReceiptItem): Promise<void> {
+  if (!row.has_pdf) return
+  busyId.value = row.id
+  try {
+    const blob = await downloadStorageReceipt(row.id)
+    const name = row.source_filename || `receipt-${row.id}.pdf`
+    const file = new File([blob], name, { type: 'application/pdf' })
+    const uploaded = await uploadFile(file)
+    emit('select', {
+      file_id: uploaded.id,
+      name: uploaded.name || name,
+      mime: uploaded.mime || 'application/pdf',
+    })
+    emit('update:show', false)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось подготовить файл к отправке')
+  } finally {
+    busyId.value = null
+  }
+}
+
 onUnmounted(() => {
   resetPreview()
 })
@@ -224,6 +342,7 @@ onUnmounted(() => {
     <NTabs v-model:value="activeTab" type="line" size="small">
       <NTabPane name="vault" tab="Хранилище" />
       <NTabPane name="dialog" tab="Текущий диалог" :disabled="!hasChat" />
+      <NTabPane name="receipts" tab="Квитанции" />
     </NTabs>
 
     <NSpin :show="loading">
@@ -243,7 +362,7 @@ onUnmounted(() => {
         </ul>
       </template>
 
-      <template v-else>
+      <template v-else-if="activeTab === 'dialog'">
         <NEmpty
           v-if="!hasChat"
           description="Откройте чат, чтобы видеть файлы переписки"
@@ -318,6 +437,185 @@ onUnmounted(() => {
           </li>
         </ul>
       </template>
+
+      <template v-else>
+        <div v-if="receiptPeriod" class="receipts-nav">
+          <NButton size="tiny" quaternary @click="receiptsBack">
+            <template #icon><ArrowLeft :size="14" /></template>
+            Назад
+          </NButton>
+          <span class="receipts-nav-path">
+            {{ formatOptPeriodLabel(receiptPeriod) || receiptPeriod }}
+            <template v-if="receiptFolder === 'corrections'"> / Корректировки</template>
+          </span>
+        </div>
+
+        <NEmpty
+          v-if="!receiptPeriods.length && !loading"
+          description="Квитанций пока нет"
+        />
+
+        <!-- Period folders -->
+        <ul v-else-if="!receiptPeriod" class="file-list">
+          <li
+            v-for="period in receiptPeriods"
+            :key="period.period_code"
+            class="file-item file-item--folder"
+            @click="openPeriod(period.period_code)"
+          >
+            <div class="file-info">
+              <FolderOpen :size="16" class="file-icon" />
+              <div>
+                <div class="file-name">
+                  {{ formatOptPeriodLabel(period.period_code) || period.period_code }}
+                </div>
+                <div class="file-meta">
+                  {{ period.items.filter((i) => !i.is_correction).length }} основных ·
+                  {{ period.items.filter((i) => i.is_correction).length }} корректировок
+                </div>
+              </div>
+            </div>
+            <NButton size="small" secondary @click.stop="openPeriod(period.period_code)">
+              Открыть
+            </NButton>
+          </li>
+        </ul>
+
+        <!-- Inside period: main files + corrections folder -->
+        <template v-else-if="receiptFolder === 'main'">
+          <ul class="file-list">
+            <li
+              v-if="periodCorrectionItems.length"
+              class="file-item file-item--folder"
+              @click="openCorrectionsFolder"
+            >
+              <div class="file-info">
+                <FolderOpen :size="16" class="file-icon" />
+                <div>
+                  <div class="file-name">Корректировки</div>
+                  <div class="file-meta">{{ periodCorrectionItems.length }} файл(ов)</div>
+                </div>
+              </div>
+              <NButton size="small" secondary @click.stop="openCorrectionsFolder">Открыть</NButton>
+            </li>
+            <li v-for="row in periodMainItems" :key="row.id" class="file-item">
+              <div class="file-info">
+                <FolderOpen :size="16" class="file-icon" />
+                <div>
+                  <div class="file-name">{{ row.source_filename }}</div>
+                  <div class="file-meta">
+                    {{ receiptKindLabel(row) }} · ИНН {{ row.supplier_inn }}
+                    <template v-if="row.supplier_name"> · {{ row.supplier_name }}</template>
+                  </div>
+                </div>
+              </div>
+              <div class="file-actions">
+                <NTooltip>
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!row.has_pdf"
+                      :loading="busyId === row.id"
+                      @click="onPreviewReceipt(row)"
+                    >
+                      <template #icon><Eye :size="14" /></template>
+                    </NButton>
+                  </template>
+                  Открыть
+                </NTooltip>
+                <NTooltip>
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!row.has_pdf"
+                      :loading="busyId === row.id"
+                      @click="onDownloadReceipt(row)"
+                    >
+                      <template #icon><Download :size="14" /></template>
+                    </NButton>
+                  </template>
+                  Скачать
+                </NTooltip>
+                <NButton
+                  size="small"
+                  type="primary"
+                  :disabled="!row.has_pdf"
+                  :loading="busyId === row.id"
+                  @click="onSendReceipt(row)"
+                >
+                  <template #icon><Send :size="14" /></template>
+                  Отправить
+                </NButton>
+              </div>
+            </li>
+          </ul>
+          <NEmpty
+            v-if="!periodMainItems.length && !periodCorrectionItems.length && !loading"
+            description="В этом периоде пусто"
+          />
+        </template>
+
+        <!-- Corrections folder -->
+        <template v-else>
+          <ul v-if="visibleReceiptItems.length" class="file-list">
+            <li v-for="row in visibleReceiptItems" :key="row.id" class="file-item">
+              <div class="file-info">
+                <FolderOpen :size="16" class="file-icon" />
+                <div>
+                  <div class="file-name">{{ row.source_filename }}</div>
+                  <div class="file-meta">
+                    {{ receiptKindLabel(row) }} · ИНН {{ row.supplier_inn }}
+                    <template v-if="row.supplier_name"> · {{ row.supplier_name }}</template>
+                  </div>
+                </div>
+              </div>
+              <div class="file-actions">
+                <NTooltip>
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!row.has_pdf"
+                      :loading="busyId === row.id"
+                      @click="onPreviewReceipt(row)"
+                    >
+                      <template #icon><Eye :size="14" /></template>
+                    </NButton>
+                  </template>
+                  Открыть
+                </NTooltip>
+                <NTooltip>
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!row.has_pdf"
+                      :loading="busyId === row.id"
+                      @click="onDownloadReceipt(row)"
+                    >
+                      <template #icon><Download :size="14" /></template>
+                    </NButton>
+                  </template>
+                  Скачать
+                </NTooltip>
+                <NButton
+                  size="small"
+                  type="primary"
+                  :disabled="!row.has_pdf"
+                  :loading="busyId === row.id"
+                  @click="onSendReceipt(row)"
+                >
+                  <template #icon><Send :size="14" /></template>
+                  Отправить
+                </NButton>
+              </div>
+            </li>
+          </ul>
+          <NEmpty v-else-if="!loading" description="Корректировок нет" />
+        </template>
+      </template>
     </NSpin>
 
     <AttachmentPreviewModal
@@ -348,6 +646,14 @@ onUnmounted(() => {
   gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid var(--n-border-color);
+}
+
+.file-item--folder {
+  cursor: pointer;
+}
+
+.file-item--folder:hover {
+  background: color-mix(in srgb, var(--n-border-color) 35%, transparent);
 }
 
 .file-info {
@@ -383,5 +689,18 @@ onUnmounted(() => {
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.receipts-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.receipts-nav-path {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--app-text-muted);
 }
 </style>

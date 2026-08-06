@@ -56,6 +56,8 @@ const groupFiles = ref<GroupChatFile[]>([])
 const selectedGroupId = ref<number | null>(null)
 const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
 const selectedReceiptPeriod = ref<string | null>(null)
+/** 'main' | 'corrections' — folder inside selected period */
+const receiptFolder = ref<'main' | 'corrections'>('main')
 const downloadingReceiptId = ref<number | null>(null)
 
 const shareModalOpen = ref(false)
@@ -134,11 +136,25 @@ async function loadReceipts(): Promise<void> {
   }
 }
 
-const selectedReceiptItems = computed(() => {
+const selectedPeriodAllItems = computed(() => {
   const period = selectedReceiptPeriod.value
   if (!period) return [] as StorageReceiptItem[]
   return receiptPeriods.value.find((row) => row.period_code === period)?.items ?? []
 })
+
+const selectedReceiptMainItems = computed(() =>
+  selectedPeriodAllItems.value.filter((row) => !row.is_correction),
+)
+
+const selectedReceiptCorrectionItems = computed(() =>
+  selectedPeriodAllItems.value.filter((row) => !!row.is_correction),
+)
+
+const selectedReceiptItems = computed(() =>
+  receiptFolder.value === 'corrections'
+    ? selectedReceiptCorrectionItems.value
+    : selectedReceiptMainItems.value,
+)
 
 function receiptKindLabel(kind: string, isCorrection = false): string {
   const base = kind === 'notice' ? 'Извещение о вводе' : 'Квитанция о приеме'
@@ -593,9 +609,31 @@ onMounted(async () => {
                 :key="period.period_code"
                 size="small"
                 :type="selectedReceiptPeriod === period.period_code ? 'primary' : 'default'"
-                @click="selectedReceiptPeriod = period.period_code"
+                @click="
+                  () => {
+                    selectedReceiptPeriod = period.period_code
+                    receiptFolder = 'main'
+                  }
+                "
               >
                 {{ period.period_code }} ({{ period.items.length }})
+              </NButton>
+            </NSpace>
+            <NSpace v-if="selectedReceiptPeriod" style="margin-bottom: 12px">
+              <NButton
+                size="small"
+                :type="receiptFolder === 'main' ? 'primary' : 'default'"
+                @click="receiptFolder = 'main'"
+              >
+                Основные ({{ selectedReceiptMainItems.length }})
+              </NButton>
+              <NButton
+                size="small"
+                :type="receiptFolder === 'corrections' ? 'primary' : 'default'"
+                :disabled="!selectedReceiptCorrectionItems.length"
+                @click="receiptFolder = 'corrections'"
+              >
+                Корректировки ({{ selectedReceiptCorrectionItems.length }})
               </NButton>
             </NSpace>
             <div v-if="selectedReceiptItems.length" class="receipts-list">
@@ -611,18 +649,41 @@ onMounted(async () => {
                     <template v-if="row.supplier_name"> · {{ row.supplier_name }}</template>
                   </div>
                 </div>
-                <NButton
-                  size="small"
-                  secondary
-                  :loading="downloadingReceiptId === row.id"
-                  :disabled="!row.has_pdf"
-                  @click="onDownloadReceipt(row)"
-                >
-                  Скачать
-                </NButton>
+                <NSpace :size="8">
+                  <NButton
+                    size="small"
+                    secondary
+                    :loading="downloadingReceiptId === row.id"
+                    :disabled="!row.has_pdf"
+                    @click="
+                      openPreview(
+                        row.source_filename || `receipt-${row.id}.pdf`,
+                        'application/pdf',
+                        () => downloadStorageReceipt(row.id),
+                      )
+                    "
+                  >
+                    Открыть
+                  </NButton>
+                  <NButton
+                    size="small"
+                    secondary
+                    :loading="downloadingReceiptId === row.id"
+                    :disabled="!row.has_pdf"
+                    @click="onDownloadReceipt(row)"
+                  >
+                    Скачать
+                  </NButton>
+                </NSpace>
               </div>
             </div>
-            <p v-else class="empty-hint">Нет квитанций за выбранный период</p>
+            <p v-else class="empty-hint">
+              {{
+                receiptFolder === 'corrections'
+                  ? 'Нет корректировок за выбранный период'
+                  : 'Нет квитанций за выбранный период'
+              }}
+            </p>
           </NSpin>
         </NTabPane>
 
