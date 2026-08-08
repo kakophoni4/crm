@@ -177,8 +177,8 @@ async function prefetchChat(chatId: number, priority: boolean): Promise<void> {
       chatsApi.getChat(chatId),
       chatsApi.listMessages(chatId, { limit: CHAT_SNAPSHOT_MESSAGE_LIMIT }),
     ])
-    const attachmentPriority = priority ? 'high' : 'normal'
-    prefetchAttachmentsForMessages(msgs.items, { priority: attachmentPriority })
+    // Warm attachments only on priority (hover/open) — background prefetch otherwise
+    // saturates the network and makes tab switches feel stuck.
     setChatSnapshot(
       chatId,
       {
@@ -186,7 +186,10 @@ async function prefetchChat(chatId: number, priority: boolean): Promise<void> {
         messages: msgs.items,
         nextCursor: msgs.next_cursor,
       },
-      { prefetchAttachments: false },
+      {
+        prefetchAttachments: priority,
+        attachmentPriority: priority ? 'high' : 'normal',
+      },
     )
     void prefetchChatDeals(detail)
   } catch {

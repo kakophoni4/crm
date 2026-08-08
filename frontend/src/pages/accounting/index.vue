@@ -73,6 +73,7 @@ import {
 import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
+import { peekCached, setCached } from '@/shared/lib/stale-cache'
 import AppCard from '@/shared/ui/AppCard.vue'
 import { VIRTUAL_DATA_TABLE_MAX_HEIGHT } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
@@ -105,11 +106,19 @@ function lavkaLabel(name: string | null | undefined, inn: string): string {
   return short ? `${short} · ${inn}` : inn
 }
 
-const loading = ref(false)
+const ordersLoading = ref(false)
+const requirementsLoading = ref(false)
+const ownersLoading = ref(false)
 const syncingRequirements = ref(false)
 const activeTab = ref('orders')
 const isChief = ref(false)
 const units = ref<AccountingUnit[]>([])
+const anyLoading = computed(
+  () => ordersLoading.value || requirementsLoading.value || ownersLoading.value,
+)
+
+const ORDERS_CACHE_KEY = 'accounting:orders:default'
+const REQUIREMENTS_CACHE_PREFIX = 'accounting:requirements:'
 
 const orderGroups = ref<AccountingUnitOrderGroup[]>([])
 const ordersTotal = ref(0)
@@ -187,7 +196,7 @@ const requirementsPage = ref(1)
 const requirementsPageSize = 50
 const reqSupplierInn = ref<string | null>(null)
 const reqSearch = ref('')
-const requirementsStatusTab = ref<'new' | 'answered'>('new')
+const requirementsStatusTab = ref<'new' | 'answered' | 'replied'>('new')
 const answeringReqId = ref<number | null>(null)
 
 const unitOwners = ref<AccountingUnitOwnerRow[]>([])
@@ -583,8 +592,27 @@ async function loadUnits(): Promise<void> {
   isChief.value = data.is_chief
 }
 
+function ordersCacheKey(): string {
+  return [
+    'accounting:orders',
+    orderSupplierInn.value || '',
+    orderPeriodCode.value || '',
+    orderSearch.value.trim(),
+    String(ordersPage.value),
+  ].join(':')
+}
+
+function requirementsCacheKey(): string {
+  return [
+    REQUIREMENTS_CACHE_PREFIX + requirementsStatusTab.value,
+    reqSupplierInn.value || '',
+    reqSearch.value.trim(),
+    String(requirementsPage.value),
+  ].join(':')
+}
+
 async function loadOrders(): Promise<void> {
-  loading.value = true
+  if (!orderGroups.value.length) ordersLoading.value = true
   try {
     const data = await listAccountingOrders({
       supplier_inn: orderSupplierInn.value || undefined,
@@ -595,15 +623,24 @@ async function loadOrders(): Promise<void> {
     })
     orderGroups.value = data.items
     ordersTotal.value = data.total
+    setCached(ordersCacheKey(), { items: data.items, total: data.total })
+    if (
+      !orderSupplierInn.value &&
+      !orderPeriodCode.value &&
+      !orderSearch.value.trim() &&
+      ordersPage.value === 1
+    ) {
+      setCached(ORDERS_CACHE_KEY, { items: data.items, total: data.total })
+    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
   } finally {
-    loading.value = false
+    ordersLoading.value = false
   }
 }
 
 async function loadRequirements(): Promise<void> {
-  loading.value = true
+  if (!requirements.value.length) requirementsLoading.value = true
   try {
     const data = await listAccountingRequirements({
       supplier_inn: reqSupplierInn.value || undefined,
@@ -614,10 +651,11 @@ async function loadRequirements(): Promise<void> {
     })
     requirements.value = data.items
     requirementsTotal.value = data.total
+    setCached(requirementsCacheKey(), { items: data.items, total: data.total })
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить требования')
   } finally {
-    loading.value = false
+    requirementsLoading.value = false
   }
 }
 
@@ -841,6 +879,7 @@ async function submitTaskFromReq(): Promise<void> {
 
 async function loadUnitOwners(): Promise<void> {
   if (!isChief.value) return
+  if (!unitOwners.value.length) ownersLoading.value = true
   try {
     const data = await listAccountingUnitOwners()
     unitOwners.value = data.items
@@ -850,19 +889,16 @@ async function loadUnitOwners(): Promise<void> {
     }))
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить лавки')
+  } finally {
+    ownersLoading.value = false
   }
 }
 
 async function refreshAll(): Promise<void> {
-  loading.value = true
-  try {
-    await loadUnits()
-    if (activeTab.value === 'orders') await loadOrders()
-    else if (activeTab.value === 'requirements') await loadRequirements()
-    else await loadUnitOwners()
-  } finally {
-    loading.value = false
-  }
+  await loadUnits()
+  if (activeTab.value === 'orders') await loadOrders()
+  else if (activeTab.value === 'requirements') await loadRequirements()
+  else await loadUnitOwners()
 }
 
 async function onDownloadRegistry(order: AccountingUnitOrder): Promise<void> {
@@ -1196,17 +1232,22 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
           ),
         )
       }
+      const replyDone = ['sent', 'answered'].includes(row.reply_status || 'none')
+      if (!replyDone) {
+        actions.push(
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'primary',
+              secondary: true,
+              onClick: () => openReplyModal(row),
+            },
+            { default: () => 'Ответ' },
+          ),
+        )
+      }
       actions.push(
-        h(
-          NButton,
-          {
-            size: 'tiny',
-            type: 'primary',
-            secondary: true,
-            onClick: () => openReplyModal(row),
-          },
-          { default: () => 'Ответ' },
-        ),
         h(
           NButton,
           {
@@ -1266,6 +1307,16 @@ watch([requirementsPage, reqSupplierInn], () => {
 })
 
 watch(requirementsStatusTab, () => {
+  const cached = peekCached<{ items: AccountingRequirement[]; total: number }>(
+    requirementsCacheKey(),
+  )
+  if (cached) {
+    requirements.value = cached.items
+    requirementsTotal.value = cached.total
+  } else {
+    requirements.value = []
+    requirementsTotal.value = 0
+  }
   if (requirementsPage.value !== 1) {
     requirementsPage.value = 1
     return
@@ -1282,6 +1333,20 @@ async function loadCategories(): Promise<void> {
 }
 
 onMounted(async () => {
+  const cachedOrders = peekCached<{ items: AccountingUnitOrderGroup[]; total: number }>(
+    ORDERS_CACHE_KEY,
+  )
+  if (cachedOrders) {
+    orderGroups.value = cachedOrders.items
+    ordersTotal.value = cachedOrders.total
+  }
+  const cachedReqs = peekCached<{ items: AccountingRequirement[]; total: number }>(
+    requirementsCacheKey(),
+  )
+  if (cachedReqs) {
+    requirements.value = cachedReqs.items
+    requirementsTotal.value = cachedReqs.total
+  }
   await Promise.all([refreshAll(), loadCategories()])
 })
 
@@ -1304,7 +1369,7 @@ onUnmounted(() => {
           </template>
           Добавить лавку
         </NButton>
-        <NButton :loading="loading" @click="refreshAll">
+        <NButton :loading="anyLoading" @click="refreshAll">
           <template #icon>
             <RefreshCw :size="16" />
           </template>
@@ -1342,8 +1407,8 @@ onUnmounted(() => {
             />
             <NButton type="primary" @click="loadOrders">Найти</NButton>
           </div>
-          <NSpin :show="loading">
-            <NEmpty v-if="!loading && orderGroups.length === 0" description="Нет заявок" />
+          <NSpin :show="ordersLoading && orderGroups.length === 0">
+            <NEmpty v-if="!ordersLoading && orderGroups.length === 0" description="Нет заявок" />
             <NCollapse v-else v-model:expanded-names="expandedLavki">
               <NCollapseItem
                 v-for="group in orderGroups"
@@ -1433,6 +1498,7 @@ onUnmounted(() => {
             <NTabs v-model:value="requirementsStatusTab" type="segment" size="small" animated>
               <NTabPane name="new" tab="Непрочитанные" />
               <NTabPane name="answered" tab="Прочитанные" />
+              <NTabPane name="replied" tab="Отвеченные" />
             </NTabs>
             <div class="accounting-page__filters">
               <NInput
@@ -1452,13 +1518,15 @@ onUnmounted(() => {
                 Забрать из СБИС сейчас
               </NButton>
             </div>
-            <NSpin :show="loading">
+            <NSpin :show="requirementsLoading && requirements.length === 0">
               <NEmpty
-                v-if="!loading && requirements.length === 0"
+                v-if="!requirementsLoading && requirements.length === 0"
                 :description="
-                  requirementsStatusTab === 'answered'
-                    ? 'Нет прочитанных требований'
-                    : 'Нет непрочитанных требований'
+                  requirementsStatusTab === 'replied'
+                    ? 'Нет отвеченных требований'
+                    : requirementsStatusTab === 'answered'
+                      ? 'Нет прочитанных требований'
+                      : 'Нет непрочитанных требований'
                 "
               />
               <div v-else class="accounting-page__requirements-table">
@@ -1492,9 +1560,9 @@ onUnmounted(() => {
                 Доступны для сдачи заявок. Назначенный бухгалтер видит заявки и требования по этим
                 лавкам.
               </p>
-              <NSpin :show="loading">
+              <NSpin :show="ownersLoading && sellingUnitOwners.length === 0">
                 <NEmpty
-                  v-if="!loading && sellingUnitOwners.length === 0"
+                  v-if="!ownersLoading && sellingUnitOwners.length === 0"
                   description="Нет продающих лавок"
                 />
                 <div v-else class="accounting-page__owners">
@@ -1566,9 +1634,9 @@ onUnmounted(() => {
               <p class="accounting-page__owners-hint">
                 Не участвуют в сдаче. Назначенный бухгалтер видит только требования по этим лавкам.
               </p>
-              <NSpin :show="loading">
+              <NSpin :show="ownersLoading && requirementUnitOwners.length === 0">
                 <NEmpty
-                  v-if="!loading && requirementUnitOwners.length === 0"
+                  v-if="!ownersLoading && requirementUnitOwners.length === 0"
                   description="Нет лавок только для требований"
                 />
                 <div v-else class="accounting-page__owners">
@@ -1950,8 +2018,7 @@ onUnmounted(() => {
 
 .accounting-page__requirements {
   width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
+  max-width: none;
 }
 
 .accounting-page__requirements-table {

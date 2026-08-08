@@ -492,7 +492,7 @@ function startPolling(): void {
   if (pollTimer != null || !hasLead.value || !tabVisible) return
   pollTimer = setInterval(() => {
     void loadOrders({ silent: true })
-  }, 4000)
+  }, 20_000)
 }
 
 function onVisibilityChange(): void {

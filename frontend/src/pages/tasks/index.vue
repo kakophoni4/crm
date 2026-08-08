@@ -15,7 +15,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Check, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { listDepartments, listUsers, type AdminUser, type Department } from '@/features/admin/api'
 import {
@@ -56,7 +56,8 @@ const isManager = computed(
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
 
-const loading = ref(false)
+const mineLoading = ref(false)
+const boardLoading = ref(false)
 const activeTab = ref(isManager.value ? 'board' : 'mine')
 const myTasks = ref<DepartmentTask[]>([])
 const board = ref<TaskBoard | null>(null)
@@ -115,7 +116,7 @@ const boardCacheKey = computed(() => `tasks:board:${selectedDeptId.value ?? 'all
 
 async function loadMine(): Promise<void> {
   // Спиннер показываем только если совсем нет данных — иначе обновляем в фоне.
-  if (!myTasks.value.length) loading.value = true
+  if (!myTasks.value.length) mineLoading.value = true
   try {
     const data = await listMyTasks()
     myTasks.value = data.items
@@ -123,13 +124,13 @@ async function loadMine(): Promise<void> {
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить задачи')
   } finally {
-    loading.value = false
+    mineLoading.value = false
   }
 }
 
 async function loadBoard(): Promise<void> {
   if (!isManager.value) return
-  if (!board.value) loading.value = true
+  if (!board.value) boardLoading.value = true
   try {
     board.value = await getTaskBoard(
       isAdmin.value && selectedDeptId.value != null ? selectedDeptId.value : undefined,
@@ -138,7 +139,7 @@ async function loadBoard(): Promise<void> {
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить доску')
   } finally {
-    loading.value = false
+    boardLoading.value = false
   }
 }
 
@@ -180,7 +181,8 @@ async function onCreateDepartmentChange(): Promise<void> {
 }
 
 async function refresh(): Promise<void> {
-  await Promise.all([loadMine(), loadBoard()])
+  if (activeTab.value === 'mine') await loadMine()
+  else await loadBoard()
 }
 
 function openCreate(): void {
@@ -361,16 +363,18 @@ function scheduleWsRefresh(): void {
   }, 800)
 }
 
+watch(activeTab, (tab) => {
+  if (tab === 'mine') void loadMine()
+  else void loadBoard()
+})
+
 onMounted(async () => {
   const cachedMine = peekCached<DepartmentTask[]>(MINE_CACHE_KEY)
   if (cachedMine) myTasks.value = cachedMine
   const cachedBoard = peekCached<TaskBoard>(boardCacheKey.value)
   if (cachedBoard) board.value = cachedBoard
-  if (cachedMine || cachedBoard) loading.value = false
 
-  await loadDepartments()
-  await loadUsers()
-  await refresh()
+  await Promise.all([loadDepartments(), loadUsers(), refresh()])
   await connectTasksRealtime()
   unsubTasks = onTasksEvent((topic, payload) => {
     if (topic === 'task.created' || topic === 'task.due_soon') {
@@ -410,7 +414,7 @@ onUnmounted(() => {
             />
           </div>
           <p class="kanban-hint">Перетаскивайте карточки между колонками, чтобы менять статус.</p>
-          <NSpin :show="loading">
+          <NSpin :show="boardLoading && !board">
             <div v-if="board" class="kanban">
               <div
                 v-for="col in board.columns"
@@ -493,7 +497,7 @@ onUnmounted(() => {
         </NTabPane>
 
         <NTabPane name="mine" tab="Мои задачи">
-          <NSpin :show="loading">
+          <NSpin :show="mineLoading && myTasks.length === 0">
             <div v-if="myTasks.length" class="task-list">
               <div v-for="task in myTasks" :key="task.id" class="task-card">
                 <div class="task-card-head">

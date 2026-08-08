@@ -99,7 +99,8 @@ export async function patchAccountingOrderPeriod(
 
 export async function listAccountingRequirements(params: {
   supplier_inn?: string
-  status?: 'new' | 'answered' | string
+  /** new | answered | replied (ответ ушёл в СБИС) */
+  status?: 'new' | 'answered' | 'replied' | string
   q?: string
   limit?: number
   offset?: number

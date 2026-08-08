@@ -25,6 +25,7 @@ import {
   onContactsInvalidate,
   type ContactsInvalidateEvent,
 } from '@/shared/lib/query-invalidation'
+import { peekCached, setCached } from '@/shared/lib/stale-cache'
 import AppCard from '@/shared/ui/AppCard.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -188,6 +189,16 @@ function resetCursorState(): void {
   total.value = null
 }
 
+function contactsCacheKey(cursor: string | null): string {
+  return [
+    'contacts:list',
+    searchQ.value.trim(),
+    statusFilter.value ?? '',
+    String(pageSize.value),
+    cursor ?? '',
+  ].join(':')
+}
+
 async function fetchPage(opts?: {
   silent?: boolean
   /** Override cursor for this fetch; omit to reload current page. */
@@ -196,7 +207,8 @@ async function fetchPage(opts?: {
   const silent = opts?.silent === true && rows.value.length > 0
   const seq = ++listFetchSeq
   const cursor = opts?.cursor !== undefined ? opts.cursor : pageCursor.value
-  if (!silent) loading.value = true
+  // Не блокируем таблицу, если уже есть строки — обновляем в фоне.
+  if (!silent && !rows.value.length) loading.value = true
   try {
     const data = await listContacts({
       q: searchQ.value.trim() || undefined,
@@ -217,6 +229,12 @@ async function fetchPage(opts?: {
     hasMore.value = data.has_more
     if (data.total != null) total.value = data.total
     rows.value = data.items
+    setCached(contactsCacheKey(cursor), {
+      items: data.items,
+      next_cursor: data.next_cursor,
+      has_more: data.has_more,
+      total: data.total,
+    })
   } catch (err) {
     if (seq !== listFetchSeq || isRequestCanceled(err)) return
     const text = err instanceof AppError ? err.message : 'Не удалось загрузить контакты'
@@ -251,6 +269,18 @@ function onPageSizeChange(size: number): void {
 let stopInvalidate: (() => void) | undefined
 
 onMounted(() => {
+  const cached = peekCached<{
+    items: Contact[]
+    next_cursor: string | null
+    has_more: boolean
+    total: number | null
+  }>(contactsCacheKey(null))
+  if (cached) {
+    rows.value = cached.items
+    nextCursor.value = cached.next_cursor
+    hasMore.value = cached.has_more
+    if (cached.total != null) total.value = cached.total
+  }
   void fetchPage({ cursor: null })
   stopInvalidate = onContactsInvalidate((event) => {
     if (event.patch) applyContactPatch(event)
@@ -305,7 +335,7 @@ watch(
         <NButton type="primary" :loading="loading" @click="applyFilters">Применить</NButton>
       </NSpace>
 
-      <NSpin :show="loading" class="contacts-page__spin">
+      <NSpin :show="loading && rows.length === 0" class="contacts-page__spin">
         <div class="contacts-page__table-wrap">
           <NDataTable
             class="contacts-page__table"

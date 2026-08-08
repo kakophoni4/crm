@@ -676,8 +676,8 @@ export const useChatsStore = defineStore('chats', () => {
     needsResponseChatIds.value = new Set(
       listItems.value.filter((chat) => chatListItemNeedsResponse(chat)).map((chat) => chat.id),
     )
-    // Warm deals/snapshots from list while network list refreshes.
-    scheduleDealsPrefetchFromList(listItems.value.slice(0, 4))
+    // Warm deals/snapshots from list while network list refreshes (keep tiny).
+    scheduleDealsPrefetchFromList(listItems.value.slice(0, 2))
     scheduleChatSnapshotsPrefetch(
       listItems.value.slice(0, 2).map((c) => c.id),
       { priority: true },
@@ -752,14 +752,12 @@ export const useChatsStore = defineStore('chats', () => {
         listLoaded.value = true
       }
       // Explicit WS silent refresh must not re-stampede snapshot/deals prefetch.
+      // Prefetch only top 2 chats — more stamps the network and freezes tab switches.
       const skipPrefetch = opts?.silent === true
       if (!append && !skipPrefetch && seq === listFetchSeq && listItems.value.length > 0) {
-        const topIds = listItems.value.slice(0, 8).map((chat) => chat.id)
-        scheduleChatSnapshotsPrefetch(topIds.slice(0, 2), { priority: true })
-        if (topIds.length > 2) {
-          scheduleChatSnapshotsPrefetch(topIds.slice(2))
-        }
-        scheduleDealsPrefetchFromList(listItems.value.slice(0, 4))
+        const topIds = listItems.value.slice(0, 2).map((chat) => chat.id)
+        scheduleChatSnapshotsPrefetch(topIds, { priority: true })
+        scheduleDealsPrefetchFromList(listItems.value.slice(0, 2))
       }
     }
   }

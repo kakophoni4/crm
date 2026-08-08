@@ -9,7 +9,7 @@ from io import BytesIO
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.enums import UserRole
@@ -59,6 +59,64 @@ class OptSalesBookExtractRepository:
             select(OptSalesBookExtract).where(
                 OptSalesBookExtract.external_id == external_id,
             ),
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_seller_buyer_source(
+        self,
+        *,
+        seller_inn: str,
+        buyer_inn: str,
+        source_path: str | None,
+    ) -> OptSalesBookExtract | None:
+        """Stable business key for re-import after PDF regeneration.
+
+        Content hash in external_id changes when extracts are rebuilt from
+        _full.pdf — lookup by seller×buyer×source_path (then seller×buyer).
+        """
+        path = (source_path or "").strip().replace("\\", "/") or None
+        if path:
+            result = await self._session.execute(
+                select(OptSalesBookExtract)
+                .where(
+                    OptSalesBookExtract.seller_inn == seller_inn,
+                    OptSalesBookExtract.buyer_inn == buyer_inn,
+                    OptSalesBookExtract.source_path == path,
+                )
+                .order_by(OptSalesBookExtract.id.asc())
+                .limit(1),
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                return row
+            # Older rows may store only the filename, or an absolute path ending.
+            filename = path.rsplit("/", 1)[-1]
+            result = await self._session.execute(
+                select(OptSalesBookExtract)
+                .where(
+                    OptSalesBookExtract.seller_inn == seller_inn,
+                    OptSalesBookExtract.buyer_inn == buyer_inn,
+                    or_(
+                        OptSalesBookExtract.source_path == filename,
+                        OptSalesBookExtract.source_path.endswith(f"/{filename}"),
+                        OptSalesBookExtract.source_filename == filename,
+                    ),
+                )
+                .order_by(OptSalesBookExtract.id.asc())
+                .limit(1),
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                return row
+
+        result = await self._session.execute(
+            select(OptSalesBookExtract)
+            .where(
+                OptSalesBookExtract.seller_inn == seller_inn,
+                OptSalesBookExtract.buyer_inn == buyer_inn,
+            )
+            .order_by(OptSalesBookExtract.id.asc())
+            .limit(1),
         )
         return result.scalar_one_or_none()
 
@@ -137,7 +195,15 @@ async def ingest_sales_book_pdf(
         raise ValidationError(message="Файл не является PDF")
 
     repo = OptSalesBookExtractRepository(session)
-    existing = await repo.get_by_external_id(external_id.strip())
+    path_norm = (source_path or "").strip().replace("\\", "/") or None
+    existing = await repo.get_by_seller_buyer_source(
+        seller_inn=seller,
+        buyer_inn=buyer,
+        source_path=path_norm,
+    )
+    if existing is None:
+        existing = await repo.get_by_external_id(external_id.strip())
+
     files = FilesService(session)
     uploaded = await files.create_upload(
         uploaded_by=None,
@@ -148,15 +214,22 @@ async def ingest_sales_book_pdf(
     received_at = datetime.now(UTC).replace(tzinfo=None)
     meta = dict(metadata or {})
     meta.setdefault("content_sha256", hashlib.sha256(pdf_bytes).hexdigest())
+    new_external_id = external_id.strip()
 
     if existing is not None:
+        # Refresh content-hash id when free (regenerated PDF has a new SHA).
+        if existing.external_id != new_external_id:
+            conflict = await repo.get_by_external_id(new_external_id)
+            if conflict is None or conflict.id == existing.id:
+                existing.external_id = new_external_id
         existing.seller_inn = seller
         existing.buyer_inn = buyer
         if seller_name:
             existing.seller_name = seller_name.strip() or existing.seller_name
         if buyer_name:
             existing.buyer_name = buyer_name.strip() or existing.buyer_name
-        existing.source_path = source_path or existing.source_path
+        if path_norm:
+            existing.source_path = path_norm
         existing.source_filename = source_filename.strip() or existing.source_filename
         existing.pdf_file_id = uploaded.id
         existing.metadata_json = {**(existing.metadata_json or {}), **meta}
@@ -167,12 +240,12 @@ async def ingest_sales_book_pdf(
         return existing, False
 
     row = OptSalesBookExtract(
-        external_id=external_id.strip(),
+        external_id=new_external_id,
         seller_inn=seller,
         buyer_inn=buyer,
         seller_name=(seller_name or "").strip() or None,
         buyer_name=(buyer_name or "").strip() or None,
-        source_path=source_path,
+        source_path=path_norm,
         source_filename=source_filename.strip() or f"{buyer}.pdf",
         pdf_file_id=uploaded.id,
         metadata_json=meta,

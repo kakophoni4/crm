@@ -32,7 +32,11 @@ export SBIS_SALES_BOOKS_DIR=/opt/sbis-norm/data/sales_books
 python3 scripts/sbis_sales_books_host_pull.py
 ```
 
-`external_id = sbis-sb:{sha256[:40]}`.
+`external_id = sbis-sb:{sha256[:40]}` — меняется при перегенерации PDF из `_full.pdf`.
+
+**Повторный импорт** ищет строку по `seller_inn + buyer_inn + source_path` (запасной
+вариант — та же пара ИНН) и заменяет `pdf_file_id`. В логе должно быть `created=False`.
+Не запускай pull до деплоя этого upsert — иначе появятся дубли.
 
 ## После ingest
 

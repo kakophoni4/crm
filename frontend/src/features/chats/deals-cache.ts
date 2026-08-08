@@ -154,7 +154,7 @@ export function scheduleDealsPrefetchFromList(
   runDealsPrefetchIdle(() => {
     if (!isDealsPrefetchAllowed()) return
     // Keep warm-up tiny — each item is listContactLeads + getLead and steals bandwidth from chat open/send.
-    const list = [...chats].filter((c) => c.assigned_group_id != null).slice(0, 4)
+    const list = [...chats].filter((c) => c.assigned_group_id != null).slice(0, 2)
     let i = 0
     const concurrency = 1
     const workers = Array.from({ length: concurrency }, async () => {

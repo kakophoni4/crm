@@ -1032,6 +1032,8 @@ class AccountingService:
             row.reply_error = None
             row.replied_at = datetime.now(UTC).replace(tzinfo=None)
             row.sbis_requirement_id = sbis_id
+            # После ответа в СБИС уходит из «Непрочитанные» в «Отвеченные».
+            row.status = "answered"
             meta = dict(row.metadata_json or {})
             meta["last_reply"] = payload.get("send_meta") or {}
             row.metadata_json = meta

@@ -14,7 +14,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { ArrowLeft, Copy, Download, Eye, Folder, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 
 import {
   createVaultShareLink,
@@ -60,7 +60,12 @@ interface ReceiptUnitFolder {
 
 const message = useMessage()
 const activeTab = ref('vault')
-const loading = ref(false)
+const vaultLoading = ref(false)
+const receiptsLoading = ref(false)
+const groupLoading = ref(false)
+const vaultLoaded = ref(false)
+const receiptsLoaded = ref(false)
+const groupsLoaded = ref(false)
 
 const vaultFiles = ref<VaultFile[]>([])
 const groupSummaries = ref<{ group_id: number; group_name: string; file_count: number }[]>([])
@@ -111,33 +116,37 @@ function formatDate(iso: string): string {
 }
 
 async function loadVault(): Promise<void> {
-  loading.value = true
+  if (!vaultFiles.value.length) vaultLoading.value = true
   try {
     const data = await listVaultFiles({ limit: 100 })
     vaultFiles.value = data.items
+    vaultLoaded.value = true
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить файлы')
   } finally {
-    loading.value = false
+    vaultLoading.value = false
   }
 }
 
 async function loadGroupSummaries(): Promise<void> {
+  if (!groupSummaries.value.length) groupLoading.value = true
   try {
     const data = await listGroupFileGroups()
     groupSummaries.value = data.items
+    groupsLoaded.value = true
     if (!selectedGroupId.value && data.items.length > 0) {
       selectedGroupId.value = data.items[0].group_id
       await loadGroupFiles()
     }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить группы')
+  } finally {
+    groupLoading.value = false
   }
 }
 
-
 async function loadReceipts(): Promise<void> {
-  loading.value = true
+  if (!receiptPeriods.value.length) receiptsLoading.value = true
   try {
     const data = await listStorageReceiptsTree()
     receiptPeriods.value = [...data.periods].sort((a, b) =>
@@ -146,10 +155,11 @@ async function loadReceipts(): Promise<void> {
     if (!selectedReceiptPeriod.value && receiptPeriods.value.length > 0) {
       selectedReceiptPeriod.value = receiptPeriods.value[0].period_code
     }
+    receiptsLoaded.value = true
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить квитанции')
   } finally {
-    loading.value = false
+    receiptsLoading.value = false
   }
 }
 
@@ -330,15 +340,21 @@ async function loadGroupFiles(): Promise<void> {
     groupFiles.value = []
     return
   }
-  loading.value = true
+  if (!groupFiles.value.length) groupLoading.value = true
   try {
     const data = await listGroupFiles({ group_id: selectedGroupId.value, limit: 100 })
     groupFiles.value = data.items
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить файлы чатов')
   } finally {
-    loading.value = false
+    groupLoading.value = false
   }
+}
+
+async function ensureActiveTabLoaded(): Promise<void> {
+  if (activeTab.value === 'vault' && !vaultLoaded.value) await loadVault()
+  else if (activeTab.value === 'receipts' && !receiptsLoaded.value) await loadReceipts()
+  else if (activeTab.value === 'group' && !groupsLoaded.value) await loadGroupSummaries()
 }
 
 async function onVaultUpload(data: { file: UploadFileInfo }): Promise<boolean> {
@@ -699,10 +715,12 @@ const groupColumns = computed<DataTableColumns<GroupChatFile>>(() => [
   },
 ])
 
-onMounted(async () => {
-  await loadVault()
-  await loadGroupSummaries()
-  await loadReceipts()
+watch(activeTab, () => {
+  void ensureActiveTabLoaded()
+})
+
+onMounted(() => {
+  void ensureActiveTabLoaded()
 })
 </script>
 
@@ -722,7 +740,7 @@ onMounted(async () => {
                 Загрузить файл
               </NButton>
             </NUpload>
-            <NSpin :show="loading">
+            <NSpin :show="vaultLoading && vaultFiles.length === 0">
               <NDataTable
                 :columns="vaultColumns"
                 :data="vaultFiles"
@@ -749,7 +767,7 @@ onMounted(async () => {
 </NTabPane>
 
         <NTabPane name="receipts" tab="Квитанции">
-          <NSpin :show="loading">
+          <NSpin :show="receiptsLoading && receiptPeriods.length === 0">
             <div v-if="selectedReceiptPeriod" class="explorer-nav">
               <NButton size="tiny" quaternary @click="receiptsBack">
                 <template #icon><ArrowLeft :size="14" /></template>
@@ -797,7 +815,7 @@ onMounted(async () => {
                   {{ formatOptPeriodLabel(period.period_code) || period.period_code }}
                 </span>
               </li>
-              <li v-if="!receiptPeriods.length && !loading" class="empty-hint">Квитанций пока нет</li>
+              <li v-if="!receiptPeriods.length && !receiptsLoading" class="empty-hint">Квитанций пока нет</li>
             </ul>
 
             <!-- type folders -->
@@ -1005,7 +1023,7 @@ onMounted(async () => {
                 {{ g.group_name }} ({{ g.file_count }})
               </NButton>
             </NSpace>
-            <NSpin :show="loading">
+            <NSpin :show="groupLoading && !groupFilesByChat.length">
               <div v-for="chat in groupFilesByChat" :key="chat.chatLabel" class="chat-block">
                 <h3 class="chat-block-title">{{ chat.chatLabel }}</h3>
                 <NDataTable
@@ -1018,7 +1036,7 @@ onMounted(async () => {
                   :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
                 />
               </div>
-              <p v-if="!groupFilesByChat.length && !loading" class="empty-hint">
+              <p v-if="!groupFilesByChat.length && !groupLoading" class="empty-hint">
                 В выбранной группе пока нет файлов из чатов
               </p>
             </NSpin>

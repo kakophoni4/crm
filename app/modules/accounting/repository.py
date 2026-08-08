@@ -237,6 +237,8 @@ class AccountingRepository:
         )
         return int(result.scalar_one()) > 0
 
+    _REPLIED_STATUSES = ("sent", "answered")
+
     def _requirements_query(
         self,
         *,
@@ -253,7 +255,13 @@ class AccountingRepository:
                 stmt = stmt.where(OptRequirement.supplier_inn.in_(supplier_inns))
         if supplier_inn:
             stmt = stmt.where(OptRequirement.supplier_inn == supplier_inn)
-        if status:
+        # status=replied — ответ ушёл в СБИС; new/answered — без уже отвеченных.
+        if status == "replied":
+            stmt = stmt.where(OptRequirement.reply_status.in_(self._REPLIED_STATUSES))
+        elif status in {"new", "answered"}:
+            stmt = stmt.where(OptRequirement.status == status)
+            stmt = stmt.where(~OptRequirement.reply_status.in_(self._REPLIED_STATUSES))
+        elif status:
             stmt = stmt.where(OptRequirement.status == status)
         if q:
             pattern = f"%{q.strip()}%"

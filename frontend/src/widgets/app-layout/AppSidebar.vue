@@ -68,26 +68,29 @@ const accountingBlink = ref(false)
 let alertsTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshAlerts(): Promise<void> {
-  try {
-    if (auth.user?.permissions?.includes('tasks.read')) {
-      const alerts = await fetchTaskAlerts()
-      tasksBlink.value = alerts.blink
-    } else {
-      tasksBlink.value = false
-    }
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (auth.canAccounting) {
-      const due = await fetchRequirementsDueSummary()
-      accountingBlink.value = due.overdue > 0 || due.due_soon > 0
-    } else {
-      accountingBlink.value = false
-    }
-  } catch {
-    /* ignore */
-  }
+  const tasksP = auth.user?.permissions?.includes('tasks.read')
+    ? fetchTaskAlerts()
+        .then((alerts) => {
+          tasksBlink.value = alerts.blink
+        })
+        .catch(() => {
+          tasksBlink.value = false
+        })
+    : Promise.resolve().then(() => {
+        tasksBlink.value = false
+      })
+  const accountingP = auth.canAccounting
+    ? fetchRequirementsDueSummary()
+        .then((due) => {
+          accountingBlink.value = due.overdue > 0 || due.due_soon > 0
+        })
+        .catch(() => {
+          accountingBlink.value = false
+        })
+    : Promise.resolve().then(() => {
+        accountingBlink.value = false
+      })
+  await Promise.all([tasksP, accountingP])
 }
 
 function blinkIcon(icon: unknown, blink: boolean) {
