@@ -13,7 +13,7 @@ import {
   NUpload,
   useMessage,
 } from 'naive-ui'
-import { Copy, Download, Eye, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
+import { ArrowLeft, Copy, Download, Eye, Folder, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
 import { computed, h, onMounted, ref } from 'vue'
 
 import {
@@ -36,6 +36,7 @@ import {
   type StorageReceiptItem,
   type StorageReceiptPeriodGroup,
   type StorageSalesBookItem,
+  type StorageSalesBookUnitGroup,
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
@@ -47,7 +48,15 @@ import {
   VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
 } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
-import { compareOptPeriodsDesc } from '@/features/leads/order-fields'
+import { compareOptPeriodsDesc, formatOptPeriodLabel } from '@/features/leads/order-fields'
+
+type ReceiptFolderKind = 'main' | 'corrections' | 'sales_books'
+
+interface ReceiptUnitFolder {
+  inn: string
+  name: string
+  items: StorageReceiptItem[]
+}
 
 const message = useMessage()
 const activeTab = ref('vault')
@@ -59,8 +68,10 @@ const groupFiles = ref<GroupChatFile[]>([])
 const selectedGroupId = ref<number | null>(null)
 const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
 const selectedReceiptPeriod = ref<string | null>(null)
-/** folder inside selected period */
-const receiptFolder = ref<'main' | 'corrections' | 'sales_books'>('main')
+/** null = список типов папок внутри периода */
+const receiptFolder = ref<ReceiptFolderKind | null>(null)
+/** ООО внутри типа */
+const storageUnitInn = ref<string | null>(null)
 const downloadingReceiptId = ref<number | null>(null)
 const downloadingSalesBookId = ref<number | null>(null)
 
@@ -158,42 +169,121 @@ const selectedReceiptCorrectionItems = computed(() =>
   selectedPeriodAllItems.value.filter((row) => !!row.is_correction),
 )
 
-const selectedSalesBookUnits = computed(() => selectedPeriodGroup.value?.sales_book_units ?? [])
-
-const storageSalesUnitInn = ref<string | null>(null)
-const storageSalesOrderId = ref<number | null>(null)
-
-const selectedSalesBookItems = computed((): StorageSalesBookItem[] => {
-  const units = selectedSalesBookUnits.value
-  if (units.length) {
-    const unit = units.find((u) => u.seller_inn === storageSalesUnitInn.value)
-    if (!unit) return []
-    const order = unit.orders.find((o) => o.order_id === storageSalesOrderId.value)
-    return order?.items ?? []
+function shortLavkaName(name: string | null | undefined): string {
+  const raw = (name || '').trim()
+  if (!raw) return ''
+  const quoted = raw.match(/[«"“„]([^»"”]+)[»"”]/)
+  if (quoted?.[1]?.trim()) {
+    const inner = quoted[1].trim()
+    if (/общество\s+с\s+ограниченной\s+ответственностью|ооо/i.test(raw)) {
+      return `ООО «${inner}»`
+    }
+    return inner
   }
-  const items = selectedPeriodGroup.value?.sales_books ?? []
-  return [...items].sort((a, b) => {
-    const sa = (a.seller_name || a.seller_inn || '').localeCompare(
-      b.seller_name || b.seller_inn || '',
-      'ru',
-    )
-    if (sa !== 0) return sa
-    return a.buyer_inn.localeCompare(b.buyer_inn)
-  })
+  return raw
+    .replace(/Общество\s+с\s+ограниченной\s+ответственностью/gi, 'ООО')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const selectedSalesBookUnits = computed((): StorageSalesBookUnitGroup[] => {
+  const nested = selectedPeriodGroup.value?.sales_book_units ?? []
+  if (nested.length) return nested
+  // fallback: сгруппировать плоский список по продавцу
+  const flat = selectedPeriodGroup.value?.sales_books ?? []
+  const byInn = new Map<string, StorageSalesBookUnitGroup>()
+  for (const item of flat) {
+    let unit = byInn.get(item.seller_inn)
+    if (!unit) {
+      unit = {
+        seller_inn: item.seller_inn,
+        seller_name: shortLavkaName(item.seller_name) || item.seller_inn,
+        orders: [{ order_id: 0, order_no: 0, lead_id: 0, buyer_inn: '', items: [] }],
+      }
+      byInn.set(item.seller_inn, unit)
+    }
+    unit.orders[0].items.push(item)
+  }
+  return [...byInn.values()].sort((a, b) =>
+    a.seller_name.localeCompare(b.seller_name, 'ru'),
+  )
 })
 
-const selectedReceiptItems = computed(() =>
-  receiptFolder.value === 'corrections'
-    ? selectedReceiptCorrectionItems.value
-    : selectedReceiptMainItems.value,
-)
+const receiptUnitFolders = computed((): ReceiptUnitFolder[] => {
+  const items =
+    receiptFolder.value === 'corrections'
+      ? selectedReceiptCorrectionItems.value
+      : selectedReceiptMainItems.value
+  const byInn = new Map<string, ReceiptUnitFolder>()
+  for (const row of items) {
+    let folder = byInn.get(row.supplier_inn)
+    if (!folder) {
+      folder = {
+        inn: row.supplier_inn,
+        name: shortLavkaName(row.supplier_name) || row.supplier_inn,
+        items: [],
+      }
+      byInn.set(row.supplier_inn, folder)
+    }
+    folder.items.push(row)
+  }
+  return [...byInn.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+})
 
-function periodTotalCount(period: StorageReceiptPeriodGroup): number {
-  const units = period.sales_book_units ?? []
-  const sb = units.length
-    ? units.reduce((a, u) => a + u.orders.reduce((x, o) => x + o.items.length, 0), 0)
-    : period.sales_books?.length ?? 0
-  return period.items.length + sb
+const selectedSalesBookItems = computed((): StorageSalesBookItem[] => {
+  if (!storageUnitInn.value) return []
+  const unit = selectedSalesBookUnits.value.find((u) => u.seller_inn === storageUnitInn.value)
+  if (!unit) return []
+  return unit.orders.flatMap((o) => o.items)
+})
+
+const selectedReceiptUnitItems = computed((): StorageReceiptItem[] => {
+  if (!storageUnitInn.value) return []
+  return receiptUnitFolders.value.find((u) => u.inn === storageUnitInn.value)?.items ?? []
+})
+
+const receiptFolderLabel = computed(() => {
+  if (receiptFolder.value === 'main') return 'Основные'
+  if (receiptFolder.value === 'corrections') return 'Корректировки'
+  if (receiptFolder.value === 'sales_books') return 'Книги продаж'
+  return ''
+})
+
+const selectedUnitLabel = computed(() => {
+  if (!storageUnitInn.value) return ''
+  if (receiptFolder.value === 'sales_books') {
+    const unit = selectedSalesBookUnits.value.find((u) => u.seller_inn === storageUnitInn.value)
+    return shortLavkaName(unit?.seller_name) || unit?.seller_name || storageUnitInn.value
+  }
+  const unit = receiptUnitFolders.value.find((u) => u.inn === storageUnitInn.value)
+  return unit?.name || storageUnitInn.value
+})
+
+function openReceiptPeriod(periodCode: string): void {
+  selectedReceiptPeriod.value = periodCode
+  receiptFolder.value = null
+  storageUnitInn.value = null
+}
+
+function openReceiptFolder(kind: ReceiptFolderKind): void {
+  receiptFolder.value = kind
+  storageUnitInn.value = null
+}
+
+function openReceiptUnit(inn: string): void {
+  storageUnitInn.value = inn
+}
+
+function receiptsBack(): void {
+  if (storageUnitInn.value) {
+    storageUnitInn.value = null
+    return
+  }
+  if (receiptFolder.value) {
+    receiptFolder.value = null
+    return
+  }
+  selectedReceiptPeriod.value = null
 }
 
 function receiptKindLabel(kind: string, isCorrection = false): string {
@@ -660,101 +750,130 @@ onMounted(async () => {
 
         <NTabPane name="receipts" tab="Квитанции">
           <NSpin :show="loading">
-            <NSpace style="margin-bottom: 12px">
-              <NButton
+            <div v-if="selectedReceiptPeriod" class="explorer-nav">
+              <NButton size="tiny" quaternary @click="receiptsBack">
+                <template #icon><ArrowLeft :size="14" /></template>
+                Назад
+              </NButton>
+              <div class="explorer-path">
+                <button type="button" class="explorer-crumb" @click="selectedReceiptPeriod = null; receiptFolder = null; storageUnitInn = null">
+                  Квитанции
+                </button>
+                <span class="explorer-sep">/</span>
+                <button
+                  type="button"
+                  class="explorer-crumb"
+                  @click="receiptFolder = null; storageUnitInn = null"
+                >
+                  {{ formatOptPeriodLabel(selectedReceiptPeriod) || selectedReceiptPeriod }}
+                </button>
+                <template v-if="receiptFolder">
+                  <span class="explorer-sep">/</span>
+                  <button
+                    type="button"
+                    class="explorer-crumb"
+                    @click="storageUnitInn = null"
+                  >
+                    {{ receiptFolderLabel }}
+                  </button>
+                </template>
+                <template v-if="storageUnitInn">
+                  <span class="explorer-sep">/</span>
+                  <span class="explorer-crumb explorer-crumb--current">{{ selectedUnitLabel }}</span>
+                </template>
+              </div>
+            </div>
+
+            <!-- periods -->
+            <ul v-if="!selectedReceiptPeriod" class="explorer-list">
+              <li
                 v-for="period in receiptPeriods"
                 :key="period.period_code"
-                size="small"
-                :type="selectedReceiptPeriod === period.period_code ? 'primary' : 'default'"
-                @click="
-                  () => {
-                    selectedReceiptPeriod = period.period_code
-                    receiptFolder = 'main'
-                  }
+                class="explorer-item"
+                @click="openReceiptPeriod(period.period_code)"
+              >
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">
+                  {{ formatOptPeriodLabel(period.period_code) || period.period_code }}
+                </span>
+              </li>
+              <li v-if="!receiptPeriods.length && !loading" class="empty-hint">Квитанций пока нет</li>
+            </ul>
+
+            <!-- type folders -->
+            <ul v-else-if="!receiptFolder" class="explorer-list">
+              <li
+                v-if="selectedReceiptMainItems.length"
+                class="explorer-item"
+                @click="openReceiptFolder('main')"
+              >
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">Основные</span>
+              </li>
+              <li
+                v-if="selectedReceiptCorrectionItems.length"
+                class="explorer-item"
+                @click="openReceiptFolder('corrections')"
+              >
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">Корректировки</span>
+              </li>
+              <li
+                v-if="selectedSalesBookUnits.length"
+                class="explorer-item"
+                @click="openReceiptFolder('sales_books')"
+              >
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">Книги продаж</span>
+              </li>
+              <li
+                v-if="
+                  !selectedReceiptMainItems.length &&
+                  !selectedReceiptCorrectionItems.length &&
+                  !selectedSalesBookUnits.length
                 "
+                class="empty-hint"
               >
-                {{ period.period_code }} ({{ periodTotalCount(period) }})
-              </NButton>
-            </NSpace>
-            <NSpace v-if="selectedReceiptPeriod" style="margin-bottom: 12px">
-              <NButton
-                size="small"
-                :type="receiptFolder === 'main' ? 'primary' : 'default'"
-                @click="receiptFolder = 'main'"
-              >
-                Основные ({{ selectedReceiptMainItems.length }})
-              </NButton>
-              <NButton
-                size="small"
-                :type="receiptFolder === 'corrections' ? 'primary' : 'default'"
-                :disabled="!selectedReceiptCorrectionItems.length"
-                @click="receiptFolder = 'corrections'"
-              >
-                Корректировки ({{ selectedReceiptCorrectionItems.length }})
-              </NButton>
-              <NButton
-                size="small"
-                :type="receiptFolder === 'sales_books' ? 'primary' : 'default'"
-                :disabled="!selectedSalesBookUnits.length && !selectedPeriodGroup?.sales_books?.length"
-                @click="
-                  () => {
-                    receiptFolder = 'sales_books'
-                    storageSalesUnitInn = null
-                    storageSalesOrderId = null
-                  }
-                "
-              >
-                Книги продаж ({{
-                  selectedSalesBookUnits.length
-                    ? selectedSalesBookUnits.reduce(
-                        (a, u) => a + u.orders.reduce((x, o) => x + o.items.length, 0),
-                        0,
-                      )
-                    : selectedPeriodGroup?.sales_books?.length || 0
-                }})
-              </NButton>
-            </NSpace>
-            <NSpace
-              v-if="receiptFolder === 'sales_books' && selectedSalesBookUnits.length"
-              style="margin-bottom: 12px"
+                В этом периоде пусто
+              </li>
+            </ul>
+
+            <!-- ООО folders -->
+            <ul
+              v-else-if="!storageUnitInn && receiptFolder === 'sales_books'"
+              class="explorer-list"
             >
-              <NButton
+              <li
                 v-for="unit in selectedSalesBookUnits"
                 :key="unit.seller_inn"
-                size="small"
-                :type="storageSalesUnitInn === unit.seller_inn ? 'primary' : 'default'"
-                @click="
-                  () => {
-                    storageSalesUnitInn = unit.seller_inn
-                    storageSalesOrderId = null
-                  }
-                "
+                class="explorer-item"
+                @click="openReceiptUnit(unit.seller_inn)"
               >
-                {{ unit.seller_name }}
-              </NButton>
-            </NSpace>
-            <NSpace
-              v-if="
-                receiptFolder === 'sales_books' &&
-                storageSalesUnitInn &&
-                selectedSalesBookUnits.find((u) => u.seller_inn === storageSalesUnitInn)
-              "
-              style="margin-bottom: 12px"
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">
+                  {{ shortLavkaName(unit.seller_name) || unit.seller_name }}
+                </span>
+              </li>
+            </ul>
+            <ul
+              v-else-if="!storageUnitInn && (receiptFolder === 'main' || receiptFolder === 'corrections')"
+              class="explorer-list"
             >
-              <NButton
-                v-for="order in selectedSalesBookUnits.find(
-                  (u) => u.seller_inn === storageSalesUnitInn,
-                )?.orders || []"
-                :key="order.order_id"
-                size="small"
-                :type="storageSalesOrderId === order.order_id ? 'primary' : 'default'"
-                @click="storageSalesOrderId = order.order_id"
+              <li
+                v-for="unit in receiptUnitFolders"
+                :key="unit.inn"
+                class="explorer-item"
+                @click="openReceiptUnit(unit.inn)"
               >
-                Заявка №{{ order.order_no }}
-              </NButton>
-            </NSpace>
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">{{ unit.name }}</span>
+              </li>
+              <li v-if="!receiptUnitFolders.length" class="empty-hint">Папок нет</li>
+            </ul>
+
+            <!-- files: sales books -->
             <div
-              v-if="receiptFolder === 'sales_books' && selectedSalesBookItems.length"
+              v-else-if="receiptFolder === 'sales_books' && selectedSalesBookItems.length"
               class="receipts-list"
             >
               <div
@@ -775,9 +894,7 @@ onMounted(async () => {
                 >
                   <div class="receipts-title">{{ row.source_filename }}</div>
                   <div class="receipts-meta">
-                    Продавец {{ row.seller_inn }}
-                    <template v-if="row.seller_name"> · {{ row.seller_name }}</template>
-                    · Покупатель {{ row.buyer_inn }}
+                    Покупатель {{ row.buyer_inn }}
                     <template v-if="row.buyer_name"> · {{ row.buyer_name }}</template>
                   </div>
                 </div>
@@ -810,12 +927,14 @@ onMounted(async () => {
                 </NSpace>
               </div>
             </div>
+
+            <!-- files: receipts -->
             <div
-              v-else-if="receiptFolder !== 'sales_books' && selectedReceiptItems.length"
+              v-else-if="receiptFolder !== 'sales_books' && selectedReceiptUnitItems.length"
               class="receipts-list"
             >
               <div
-                v-for="row in selectedReceiptItems"
+                v-for="row in selectedReceiptUnitItems"
                 :key="row.id"
                 class="receipts-row"
               >
@@ -832,8 +951,7 @@ onMounted(async () => {
                 >
                   <div class="receipts-title">{{ row.source_filename }}</div>
                   <div class="receipts-meta">
-                    {{ receiptKindLabel(row.doc_kind, !!row.is_correction) }} · ИНН {{ row.supplier_inn }}
-                    <template v-if="row.supplier_name"> · {{ row.supplier_name }}</template>
+                    {{ receiptKindLabel(row.doc_kind, !!row.is_correction) }}
                   </div>
                 </div>
                 <NSpace :size="8">
@@ -865,15 +983,7 @@ onMounted(async () => {
                 </NSpace>
               </div>
             </div>
-            <p v-else class="empty-hint">
-              {{
-                receiptFolder === 'corrections'
-                  ? 'Нет корректировок за выбранный период'
-                  : receiptFolder === 'sales_books'
-                    ? 'Нет книг продаж за выбранный период'
-                    : 'Нет квитанций за выбранный период'
-              }}
-            </p>
+            <p v-else-if="storageUnitInn" class="empty-hint">В этой папке пусто</p>
           </NSpin>
         </NTabPane>
 
@@ -1049,6 +1159,85 @@ onMounted(async () => {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.explorer-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.explorer-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 0.88rem;
+  min-width: 0;
+}
+
+.explorer-crumb {
+  border: 0;
+  background: transparent;
+  color: var(--app-accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.explorer-crumb--current {
+  color: var(--app-text);
+  cursor: default;
+  font-weight: 600;
+}
+
+.explorer-sep {
+  color: var(--app-text-muted);
+}
+
+.explorer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--app-surface, #fff);
+}
+
+.explorer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+}
+
+.explorer-item:last-child {
+  border-bottom: 0;
+}
+
+.explorer-item:hover {
+  background: color-mix(in srgb, var(--app-accent) 8%, transparent);
+}
+
+.explorer-icon {
+  flex-shrink: 0;
+  color: #ca8a04;
+}
+
+.explorer-name {
+  font-weight: 560;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .receipts-list {
