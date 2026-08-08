@@ -79,6 +79,17 @@ def _guess_mime(filename: str | None, raw: bytes) -> str:
     return "application/octet-stream"
 
 
+def _parse_date(raw: object) -> date | None:
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return date.fromisoformat(raw.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
 def map_meta_to_ingest(
     meta: dict[str, Any],
     *,
@@ -88,6 +99,9 @@ def map_meta_to_ingest(
     inn = str(meta.get("inn") or "").strip()
     title = str(meta.get("doc_title") or "Требование ФНС").strip() or "Требование ФНС"
     filename = str(meta.get("storage_file_name") or f"requirement_{sbis_id}.pdf").strip()
+    reply_status = str(meta.get("reply_status") or "none").strip().lower() or "none"
+    if reply_status not in {"none", "sent", "answered", "error"}:
+        reply_status = "none"
     metadata: dict[str, Any] = {
         "source": "sbis-norm",
         "sbis_id": sbis_id,
@@ -98,6 +112,8 @@ def map_meta_to_ingest(
         "file_size": meta.get("file_size"),
         "storage_file_name": filename,
         "file_url": meta.get("file_url"),
+        "reply_url": meta.get("reply_url"),
+        "knd": meta.get("knd"),
         "mime_type": _guess_mime(filename, pdf_bytes),
     }
     return AccountingRequirementIngestRequest(
@@ -106,6 +122,12 @@ def map_meta_to_ingest(
         title=title,
         description=None,
         status="new",
+        response_due_date=_parse_date(meta.get("response_due_date")),
+        receipt_due_date=_parse_date(meta.get("receipt_due_date")),
+        reply_status=reply_status,
+        reply_error=str(meta["reply_error"]) if meta.get("reply_error") else None,
+        replied_at=_parse_received_at(meta.get("replied_at"), None),
+        sbis_requirement_id=sbis_id,
         received_at=_parse_received_at(meta.get("created_at"), meta.get("document_date")),
         metadata=metadata,
         pdf_base64=None,

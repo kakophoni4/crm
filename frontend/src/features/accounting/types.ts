@@ -69,11 +69,19 @@ export interface AccountingRequirement {
   title: string
   description?: string | null
   status: string
+  response_due_date?: string | null
+  receipt_due_date?: string | null
+  reply_status?: string
+  reply_error?: string | null
+  replied_at?: string | null
+  sbis_requirement_id?: number | null
   has_pdf: boolean
   pdf_filename?: string | null
   metadata: Record<string, unknown>
   received_at: string
   created_at: string
+  is_overdue?: boolean
+  due_soon?: boolean
 }
 
 export interface AccountingAccountantOption {

@@ -1,5 +1,5 @@
 export type TaskType = 'urgent' | 'high' | 'normal' | 'low'
-export type TaskStatus = 'open' | 'done_pending' | 'closed'
+export type TaskStatus = 'new' | 'open' | 'done_pending' | 'closed'
 
 export interface TaskUserBrief {
   id: number
@@ -14,6 +14,11 @@ export interface DepartmentTask {
   task_type: TaskType
   task_type_label: string
   status: TaskStatus
+  source?: string
+  opt_unit_id?: number | null
+  opt_requirement_id?: number | null
+  chat_id?: number | null
+  lead_id?: number | null
   created_by: number
   assignee_id: number
   due_at: string | null
@@ -25,8 +30,10 @@ export interface DepartmentTask {
   updated_at: string
   is_overdue: boolean
   due_soon: boolean
+  needs_ack?: boolean
   creator: TaskUserBrief | null
   assignee: TaskUserBrief | null
+  file_ids?: number[]
 }
 
 export interface TaskBoardColumn {

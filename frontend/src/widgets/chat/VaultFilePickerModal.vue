@@ -27,6 +27,8 @@ import {
   type StorageReceiptItem,
   type StorageReceiptPeriodGroup,
   type StorageSalesBookItem,
+  type StorageSalesBookOrderGroup,
+  type StorageSalesBookUnitGroup,
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
@@ -57,6 +59,8 @@ const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
 const receiptPeriod = ref<string | null>(null)
 /** null = period root; folder inside period */
 const receiptFolder = ref<'main' | 'corrections' | 'sales_books' | null>(null)
+const salesUnitInn = ref<string | null>(null)
+const salesOrderId = ref<number | null>(null)
 const busyId = ref<number | null>(null)
 const selectedReceiptIds = ref<number[]>([])
 const selectedSalesBookIds = ref<number[]>([])
@@ -105,16 +109,38 @@ const periodCorrectionItems = computed(() =>
   sortReceiptItems((selectedPeriodGroup.value?.items ?? []).filter((row) => !!row.is_correction)),
 )
 
+const periodSalesBookUnits = computed((): StorageSalesBookUnitGroup[] => {
+  return selectedPeriodGroup.value?.sales_book_units ?? []
+})
+
+const selectedSalesUnit = computed((): StorageSalesBookUnitGroup | null => {
+  if (!salesUnitInn.value) return null
+  return periodSalesBookUnits.value.find((u) => u.seller_inn === salesUnitInn.value) ?? null
+})
+
+const selectedSalesOrder = computed((): StorageSalesBookOrderGroup | null => {
+  if (salesOrderId.value == null || !selectedSalesUnit.value) return null
+  return selectedSalesUnit.value.orders.find((o) => o.order_id === salesOrderId.value) ?? null
+})
+
 const periodSalesBookItems = computed((): StorageSalesBookItem[] => {
-  const items = selectedPeriodGroup.value?.sales_books ?? []
-  return [...items].sort((a, b) => {
-    const sa = (a.seller_name || a.seller_inn || '').localeCompare(
-      b.seller_name || b.seller_inn || '',
-      'ru',
+  if (selectedSalesOrder.value) return selectedSalesOrder.value.items
+  // fallback flat list if nested tree empty
+  if (!periodSalesBookUnits.value.length) {
+    return selectedPeriodGroup.value?.sales_books ?? []
+  }
+  return []
+})
+
+const periodSalesBooksCount = computed(() => {
+  const units = periodSalesBookUnits.value
+  if (units.length) {
+    return units.reduce(
+      (acc, u) => acc + u.orders.reduce((a, o) => a + o.items.length, 0),
+      0,
     )
-    if (sa !== 0) return sa
-    return a.buyer_inn.localeCompare(b.buyer_inn)
-  })
+  }
+  return selectedPeriodGroup.value?.sales_books?.length ?? 0
 })
 
 const visibleReceiptItems = computed(() => {
@@ -204,13 +230,26 @@ function findReceiptById(id: number): StorageReceiptItem | null {
 
 function findSalesBookById(id: number): StorageSalesBookItem | null {
   for (const period of receiptPeriods.value) {
+    for (const unit of period.sales_book_units ?? []) {
+      for (const order of unit.orders) {
+        const hit = order.items.find((row) => row.id === id)
+        if (hit) return hit
+      }
+    }
     const hit = (period.sales_books ?? []).find((row) => row.id === id)
     if (hit) return hit
   }
   return null
 }
 
-function periodSalesBooksCount(period: StorageReceiptPeriodGroup): number {
+function periodSalesBooksCountFn(period: StorageReceiptPeriodGroup): number {
+  const units = period.sales_book_units ?? []
+  if (units.length) {
+    return units.reduce(
+      (acc, u) => acc + u.orders.reduce((a, o) => a + o.items.length, 0),
+      0,
+    )
+  }
   return period.sales_books?.length ?? 0
 }
 
@@ -278,6 +317,8 @@ watch(
     receiptFolder.value = null
     selectedReceiptIds.value = []
     selectedSalesBookIds.value = []
+    salesUnitInn.value = null
+    salesOrderId.value = null
     void loadActive()
   },
 )
@@ -412,10 +453,33 @@ function openCorrectionsFolder(): void {
 
 function openSalesBooksFolder(): void {
   receiptFolder.value = 'sales_books'
+  salesUnitInn.value = null
+  salesOrderId.value = null
+}
+
+function openSalesUnit(inn: string): void {
+  salesUnitInn.value = inn
+  salesOrderId.value = null
+}
+
+function openSalesOrder(orderId: number): void {
+  salesOrderId.value = orderId
 }
 
 function receiptsBack(): void {
-  if (receiptFolder.value === 'corrections' || receiptFolder.value === 'sales_books') {
+  if (receiptFolder.value === 'sales_books') {
+    if (salesOrderId.value != null) {
+      salesOrderId.value = null
+      return
+    }
+    if (salesUnitInn.value) {
+      salesUnitInn.value = null
+      return
+    }
+    receiptFolder.value = 'main'
+    return
+  }
+  if (receiptFolder.value === 'corrections') {
     receiptFolder.value = 'main'
     return
   }
@@ -662,7 +726,13 @@ onUnmounted(() => {
           <span class="receipts-nav-path">
             {{ formatOptPeriodLabel(receiptPeriod) || receiptPeriod }}
             <template v-if="receiptFolder === 'corrections'"> / Корректировки</template>
-            <template v-else-if="receiptFolder === 'sales_books'"> / Книги продаж</template>
+            <template v-else-if="receiptFolder === 'sales_books'">
+              / Книги продаж
+              <template v-if="selectedSalesUnit"> / {{ selectedSalesUnit.seller_name }}</template>
+              <template v-if="selectedSalesOrder">
+                / Заявка №{{ selectedSalesOrder.order_no }}
+              </template>
+            </template>
           </span>
         </div>
 
@@ -688,7 +758,7 @@ onUnmounted(() => {
                 <div class="file-meta">
                   {{ period.items.filter((i) => !i.is_correction).length }} основных ·
                   {{ period.items.filter((i) => i.is_correction).length }} корректировок ·
-                  {{ periodSalesBooksCount(period) }} книг продаж
+                  {{ periodSalesBooksCountFn(period) }} книг продаж
                 </div>
               </div>
             </div>
@@ -725,7 +795,7 @@ onUnmounted(() => {
               <NButton size="small" secondary @click.stop="openCorrectionsFolder">Открыть</NButton>
             </li>
             <li
-              v-if="receiptFolder === 'main' && periodSalesBookItems.length"
+              v-if="receiptFolder === 'main' && periodSalesBooksCount"
               class="file-item file-item--folder"
               @click="openSalesBooksFolder"
             >
@@ -733,7 +803,7 @@ onUnmounted(() => {
                 <FolderOpen :size="16" class="file-icon" />
                 <div>
                   <div class="file-name">Книги продаж</div>
-                  <div class="file-meta">{{ periodSalesBookItems.length }} файл(ов)</div>
+                  <div class="file-meta">{{ periodSalesBooksCount }} файл(ов)</div>
                 </div>
               </div>
               <NButton size="small" secondary @click.stop="openSalesBooksFolder">Открыть</NButton>
@@ -797,7 +867,7 @@ onUnmounted(() => {
               receiptFolder === 'main' &&
               !periodMainItems.length &&
               !periodCorrectionItems.length &&
-              !periodSalesBookItems.length &&
+              !periodSalesBooksCount &&
               !loading
             "
             description="В этом периоде пусто"
@@ -809,72 +879,124 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="receiptFolder === 'sales_books'">
-          <div v-if="periodSalesBookItems.length" class="receipts-toolbar">
-            <NCheckbox
-              :checked="allVisibleSelected"
-              :disabled="!periodSalesBookItems.some((r) => r.has_pdf)"
-              @update:checked="toggleSelectAllVisible"
-            >
-              Выбрать все на экране
-            </NCheckbox>
-          </div>
-          <ul v-if="periodSalesBookItems.length" class="file-list">
+          <!-- level: ООО units -->
+          <ul v-if="!salesUnitInn && periodSalesBookUnits.length" class="file-list">
             <li
-              v-for="row in periodSalesBookItems"
-              :key="`sb-${row.id}`"
-              class="file-item"
-              :class="{ 'file-item--selected': isSalesBookSelected(row.id) }"
-              @click="row.has_pdf && toggleSalesBookSelected(row.id)"
+              v-for="unit in periodSalesBookUnits"
+              :key="unit.seller_inn"
+              class="file-item file-item--folder"
+              @click="openSalesUnit(unit.seller_inn)"
             >
-              <div class="file-info" @click.stop>
-                <NCheckbox
-                  :checked="isSalesBookSelected(row.id)"
-                  :disabled="!row.has_pdf"
-                  @update:checked="(v) => toggleSalesBookSelected(row.id, v)"
-                />
-                <FileText :size="16" class="file-icon" />
+              <div class="file-info">
+                <FolderOpen :size="16" class="file-icon" />
                 <div>
-                  <div class="file-name">{{ row.source_filename }}</div>
+                  <div class="file-name">{{ unit.seller_name }}</div>
                   <div class="file-meta">
-                    Продавец {{ row.seller_inn }}
-                    <template v-if="row.seller_name"> · {{ row.seller_name }}</template>
-                    · Покупатель {{ row.buyer_inn }}
-                    <template v-if="row.buyer_name"> · {{ row.buyer_name }}</template>
+                    {{ unit.orders.length }} заявк(и) · {{ unit.seller_inn }}
                   </div>
                 </div>
               </div>
-              <div class="file-actions" @click.stop>
-                <NTooltip>
-                  <template #trigger>
-                    <NButton
-                      size="tiny"
-                      quaternary
-                      :disabled="!row.has_pdf"
-                      :loading="busyId === row.id"
-                      @click="onPreviewSalesBook(row)"
-                    >
-                      <template #icon><Eye :size="14" /></template>
-                    </NButton>
-                  </template>
-                  Открыть
-                </NTooltip>
-                <NTooltip>
-                  <template #trigger>
-                    <NButton
-                      size="tiny"
-                      quaternary
-                      :disabled="!row.has_pdf"
-                      :loading="busyId === row.id"
-                      @click="onDownloadSalesBook(row)"
-                    >
-                      <template #icon><Download :size="14" /></template>
-                    </NButton>
-                  </template>
-                  Скачать
-                </NTooltip>
-              </div>
+              <NButton size="small" secondary @click.stop="openSalesUnit(unit.seller_inn)">
+                Открыть
+              </NButton>
             </li>
           </ul>
+
+          <!-- level: orders under ООО -->
+          <ul
+            v-else-if="salesUnitInn && salesOrderId == null && selectedSalesUnit"
+            class="file-list"
+          >
+            <li
+              v-for="order in selectedSalesUnit.orders"
+              :key="order.order_id"
+              class="file-item file-item--folder"
+              @click="openSalesOrder(order.order_id)"
+            >
+              <div class="file-info">
+                <FolderOpen :size="16" class="file-icon" />
+                <div>
+                  <div class="file-name">
+                    Заявка №{{ order.order_no }} · сделка {{ order.lead_id }}
+                  </div>
+                  <div class="file-meta">
+                    Покупатель {{ order.buyer_inn }} · {{ order.items.length }} файл(ов)
+                  </div>
+                </div>
+              </div>
+              <NButton size="small" secondary @click.stop="openSalesOrder(order.order_id)">
+                Открыть
+              </NButton>
+            </li>
+          </ul>
+
+          <!-- level: PDF files -->
+          <template v-else-if="periodSalesBookItems.length">
+            <div class="receipts-toolbar">
+              <NCheckbox
+                :checked="allVisibleSelected"
+                :disabled="!periodSalesBookItems.some((r) => r.has_pdf)"
+                @update:checked="toggleSelectAllVisible"
+              >
+                Выбрать все на экране
+              </NCheckbox>
+            </div>
+            <ul class="file-list">
+              <li
+                v-for="row in periodSalesBookItems"
+                :key="`sb-${row.id}`"
+                class="file-item"
+                :class="{ 'file-item--selected': isSalesBookSelected(row.id) }"
+                @click="row.has_pdf && toggleSalesBookSelected(row.id)"
+              >
+                <div class="file-info" @click.stop>
+                  <NCheckbox
+                    :checked="isSalesBookSelected(row.id)"
+                    :disabled="!row.has_pdf"
+                    @update:checked="(v) => toggleSalesBookSelected(row.id, v)"
+                  />
+                  <FileText :size="16" class="file-icon" />
+                  <div>
+                    <div class="file-name">{{ row.source_filename }}</div>
+                    <div class="file-meta">
+                      Покупатель {{ row.buyer_inn }}
+                      <template v-if="row.buyer_name"> · {{ row.buyer_name }}</template>
+                    </div>
+                  </div>
+                </div>
+                <div class="file-actions" @click.stop>
+                  <NTooltip>
+                    <template #trigger>
+                      <NButton
+                        size="tiny"
+                        quaternary
+                        :disabled="!row.has_pdf"
+                        :loading="busyId === row.id"
+                        @click="onPreviewSalesBook(row)"
+                      >
+                        <template #icon><Eye :size="14" /></template>
+                      </NButton>
+                    </template>
+                    Открыть
+                  </NTooltip>
+                  <NTooltip>
+                    <template #trigger>
+                      <NButton
+                        size="tiny"
+                        quaternary
+                        :disabled="!row.has_pdf"
+                        :loading="busyId === row.id"
+                        @click="onDownloadSalesBook(row)"
+                      >
+                        <template #icon><Download :size="14" /></template>
+                      </NButton>
+                    </template>
+                    Скачать
+                  </NTooltip>
+                </div>
+              </li>
+            </ul>
+          </template>
           <NEmpty v-else-if="!loading" description="Книг продаж нет" />
         </template>
       </template>

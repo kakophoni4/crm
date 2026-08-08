@@ -177,10 +177,26 @@ export interface StorageSalesBookItem {
   has_pdf: boolean
 }
 
+export interface StorageSalesBookOrderGroup {
+  order_id: number
+  order_no: number
+  lead_id: number
+  buyer_inn: string
+  buyer_name?: string | null
+  items: StorageSalesBookItem[]
+}
+
+export interface StorageSalesBookUnitGroup {
+  seller_inn: string
+  seller_name: string
+  orders: StorageSalesBookOrderGroup[]
+}
+
 export interface StorageReceiptPeriodGroup {
   period_code: string
   items: StorageReceiptItem[]
   sales_books?: StorageSalesBookItem[]
+  sales_book_units?: StorageSalesBookUnitGroup[]
 }
 
 export async function listStorageReceiptsTree(): Promise<{

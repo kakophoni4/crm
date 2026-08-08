@@ -17,9 +17,11 @@ import {
   NTabPane,
   NTabs,
   NTag,
+  NUpload,
   useDialog,
   useMessage,
 } from 'naive-ui'
+import type { UploadFileInfo } from 'naive-ui'
 import {
   Calculator,
   CalendarRange,
@@ -45,11 +47,15 @@ import {
   listAccountingUnitCategories,
   listAccountingUnitOwners,
   listAccountingUnits,
+  createTaskFromRequirement,
+  listAccountingTaskAssignees,
   patchAccountingRequirementStatus,
   patchAccountingUnit,
+  replyAccountingRequirement,
   saveBlob,
   syncAccountingRequirements,
 } from '@/features/accounting/api'
+import { uploadFile } from '@/features/chats/api'
 import type {
   AccountingOrderLineBrief,
   AccountingRequirement,
@@ -643,6 +649,132 @@ async function onSetRequirementStatus(
   }
 }
 
+const replyModalOpen = ref(false)
+const replyTarget = ref<AccountingRequirement | null>(null)
+const replyFiles = ref<File[]>([])
+const replySending = ref(false)
+const taskModalOpen = ref(false)
+const taskTarget = ref<AccountingRequirement | null>(null)
+const taskAssigneeId = ref<number | null>(null)
+const taskUnitInn = ref<string | null>(null)
+const taskTitle = ref('')
+const taskDescription = ref('')
+const taskAssigneeOptions = ref<{ label: string; value: number }[]>([])
+const taskFiles = ref<File[]>([])
+const taskSaving = ref(false)
+
+const taskUnitOptions = computed(() =>
+  units.value.map((u) => ({
+    label: `${u.name} (${u.inn})`,
+    value: u.inn,
+  })),
+)
+
+function openReplyModal(row: AccountingRequirement): void {
+  replyTarget.value = row
+  replyFiles.value = []
+  replyModalOpen.value = true
+}
+
+function onReplyUploadChange(options: { fileList: UploadFileInfo[] }): void {
+  replyFiles.value = options.fileList
+    .map((f) => f.file)
+    .filter((f): f is File => f instanceof File)
+}
+
+async function submitReply(dryRun: boolean): Promise<void> {
+  if (!replyTarget.value) return
+  if (!replyFiles.value.length) {
+    message.warning('Прикрепите файлы ответа')
+    return
+  }
+  replySending.value = true
+  try {
+    const result = await replyAccountingRequirement(
+      replyTarget.value.id,
+      replyFiles.value,
+      dryRun,
+    )
+    if (dryRun) {
+      message.success(result.success ? 'Проверка OK — можно отправлять' : 'Проверка не прошла')
+    } else {
+      message.success(result.success ? 'Ответ отправлен в ФНС' : 'Ошибка отправки')
+      if (result.success) replyModalOpen.value = false
+      await loadRequirements()
+    }
+    if (result.reply_error) message.warning(result.reply_error)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось отправить ответ')
+  } finally {
+    replySending.value = false
+  }
+}
+
+function onTaskUploadChange(options: { fileList: UploadFileInfo[] }): void {
+  taskFiles.value = options.fileList
+    .map((f) => f.file)
+    .filter((f): f is File => f instanceof File)
+}
+
+async function openTaskFromReqModal(row: AccountingRequirement): Promise<void> {
+  taskTarget.value = row
+  taskTitle.value = `Требование: ${row.title}`
+  taskDescription.value = ''
+  taskAssigneeId.value = null
+  taskUnitInn.value = row.supplier.inn || null
+  taskFiles.value = []
+  taskModalOpen.value = true
+  if (!units.value.length) {
+    try {
+      const data = await listAccountingUnits()
+      units.value = data.items
+    } catch {
+      /* keep empty */
+    }
+  }
+  try {
+    const data = await listAccountingTaskAssignees()
+    taskAssigneeOptions.value = data.map((u) => ({
+      label: `${u.full_name} (${u.role})`,
+      value: u.id,
+    }))
+  } catch {
+    taskAssigneeOptions.value = []
+  }
+}
+
+async function submitTaskFromReq(): Promise<void> {
+  if (!taskTarget.value || taskAssigneeId.value == null) {
+    message.warning('Выберите исполнителя')
+    return
+  }
+  if (!taskUnitInn.value) {
+    message.warning('Выберите лавку')
+    return
+  }
+  taskSaving.value = true
+  try {
+    const fileIds: number[] = []
+    for (const file of taskFiles.value) {
+      const uploaded = await uploadFile(file)
+      fileIds.push(uploaded.id)
+    }
+    await createTaskFromRequirement(taskTarget.value.id, {
+      unit_inn: taskUnitInn.value,
+      assignee_id: taskAssigneeId.value,
+      title: taskTitle.value.trim(),
+      description: taskDescription.value.trim() || null,
+      file_ids: fileIds,
+    })
+    message.success('Задача создана')
+    taskModalOpen.value = false
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось создать задачу')
+  } finally {
+    taskSaving.value = false
+  }
+}
+
 async function loadUnitOwners(): Promise<void> {
   if (!isChief.value) return
   try {
@@ -901,26 +1033,60 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
   {
     title: 'Получено',
     key: 'received_at',
-    width: 150,
+    width: 140,
     render: (row) => formatDate(row.received_at),
+  },
+  {
+    title: 'Срок ответа',
+    key: 'response_due_date',
+    width: 130,
+    render: (row) => {
+      if (!row.response_due_date) return '—'
+      const label = row.response_due_date
+      const cls = row.is_overdue
+        ? 'accounting-page__due--overdue'
+        : row.due_soon
+          ? 'accounting-page__due--soon'
+          : ''
+      return h('span', { class: cls }, label)
+    },
+  },
+  {
+    title: 'Ответ ФНС',
+    key: 'reply_status',
+    width: 120,
+    render: (row) => {
+      const map: Record<string, string> = {
+        none: 'Нет',
+        sent: 'Отправлен',
+        answered: 'Есть в СБИС',
+        error: 'Ошибка',
+      }
+      const status = row.reply_status || 'none'
+      return h(
+        'span',
+        { title: row.reply_error || undefined },
+        map[status] || status,
+      )
+    },
   },
   {
     title: 'Лавка',
     key: 'supplier',
-    minWidth: 200,
+    minWidth: 180,
     render: (row) =>
       row.supplier.name ? `${row.supplier.name} · ${row.supplier.inn}` : row.supplier.inn,
   },
   {
     title: 'Требование',
     key: 'title',
-    minWidth: 220,
+    minWidth: 180,
     render: (row) => row.title,
   },
   {
     title: 'Файл',
     key: 'pdf',
-    width: 420,
+    width: 520,
     render: (row) => {
       const actions = []
       if (row.has_pdf) {
@@ -955,6 +1121,27 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
       } else {
         actions.push(h('span', '—'))
       }
+      actions.push(
+        h(
+          NButton,
+          {
+            size: 'small',
+            type: 'primary',
+            secondary: true,
+            onClick: () => openReplyModal(row),
+          },
+          { default: () => 'Ответ в ФНС' },
+        ),
+        h(
+          NButton,
+          {
+            size: 'small',
+            secondary: true,
+            onClick: () => openTaskFromReqModal(row),
+          },
+          { default: () => 'Поставить задачу' },
+        ),
+      )
       if (row.status !== 'answered') {
         actions.push(
           h(
@@ -1364,6 +1551,74 @@ onUnmounted(() => {
       </NTabs>
     </AppCard>
 
+    <NModal
+      v-model:show="replyModalOpen"
+      preset="card"
+      title="Ответ на требование в ФНС"
+      style="width: 480px; max-width: 94vw"
+    >
+      <p v-if="replyTarget" class="accounting-page__owners-hint">
+        {{ replyTarget.title }} · {{ replyTarget.supplier.name || replyTarget.supplier.inn }}
+        <template v-if="replyTarget.response_due_date">
+          · срок {{ replyTarget.response_due_date }}
+        </template>
+      </p>
+      <p class="accounting-page__owners-hint">
+        ЭЦП ставит sbis-norm. Загрузите комплект документов и отправьте.
+      </p>
+      <NUpload multiple :default-upload="false" @change="onReplyUploadChange">
+        <NButton secondary>Выбрать файлы</NButton>
+      </NUpload>
+      <template #footer>
+        <div style="display: flex; gap: 8px; justify-content: flex-end">
+          <NButton :loading="replySending" @click="submitReply(true)">Проверить</NButton>
+          <NButton type="primary" :loading="replySending" @click="submitReply(false)">
+            Отправить в ФНС
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="taskModalOpen"
+      preset="card"
+      title="Поставить задачу по требованию"
+      style="width: 480px; max-width: 94vw"
+    >
+      <NForm label-placement="top">
+        <NFormItem label="Лавка (ООО)" required>
+          <NSelect
+            v-model:value="taskUnitInn"
+            :options="taskUnitOptions"
+            filterable
+            placeholder="Выберите лавку"
+          />
+        </NFormItem>
+        <NFormItem label="Исполнитель" required>
+          <NSelect
+            v-model:value="taskAssigneeId"
+            :options="taskAssigneeOptions"
+            filterable
+            placeholder="Менеджер / документовед / себе"
+          />
+        </NFormItem>
+        <NFormItem label="Заголовок" required>
+          <NInput v-model:value="taskTitle" />
+        </NFormItem>
+        <NFormItem label="Текст">
+          <NInput v-model:value="taskDescription" type="textarea" :autosize="{ minRows: 3 }" />
+        </NFormItem>
+        <NFormItem label="Файлы">
+          <NUpload multiple :default-upload="false" @change="onTaskUploadChange">
+            <NButton secondary>Прикрепить</NButton>
+          </NUpload>
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NButton type="primary" :loading="taskSaving" @click="submitTaskFromReq">Создать</NButton>
+      </template>
+    </NModal>
+
     <AttachmentPreviewModal
       :open="previewOpen"
       :loading="previewLoading"
@@ -1603,6 +1858,16 @@ onUnmounted(() => {
 
 .accounting-page__requirements .accounting-page__pagination {
   justify-content: center;
+}
+
+.accounting-page__due--overdue {
+  color: #dc2626;
+  font-weight: 650;
+}
+
+.accounting-page__due--soon {
+  color: #d97706;
+  font-weight: 600;
 }
 
 .accounting-page__period-label {

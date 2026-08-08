@@ -66,3 +66,56 @@ export async function reopenTask(taskId: number): Promise<DepartmentTask> {
 export async function deleteTask(taskId: number): Promise<void> {
   await http.delete(`/tasks/${taskId}`)
 }
+
+export async function fetchTaskAlerts(): Promise<{
+  blink: boolean
+  due_soon: number
+  overdue: number
+  unacked_fns: number
+  client_due: number
+}> {
+  const { data } = await http.get<{
+    blink: boolean
+    due_soon: number
+    overdue: number
+    unacked_fns: number
+    client_due: number
+  }>('/tasks/alerts')
+  return data
+}
+
+export async function acknowledgeTask(taskId: number): Promise<DepartmentTask> {
+  const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/acknowledge`)
+  return data
+}
+
+export async function listClientRequirementUnits(): Promise<
+  { id: number; inn: string; name: string }[]
+> {
+  const { data } = await http.get<{ items: { id: number; inn: string; name: string }[] }>(
+    '/tasks/client-requirement-units',
+  )
+  return data.items
+}
+
+export async function createClientRequirement(body: {
+  unit_id: number
+  title: string
+  description?: string | null
+  due_at?: string | null
+  file_ids?: number[]
+  chat_id?: number | null
+  lead_id?: number | null
+}): Promise<DepartmentTask> {
+  const { data } = await http.post<DepartmentTask>('/tasks/client-requirements', body)
+  return data
+}
+
+export async function listClientRequirementsByChat(
+  chatId: number,
+): Promise<{ items: DepartmentTask[]; total: number }> {
+  const { data } = await http.get<{ items: DepartmentTask[]; total: number }>(
+    `/tasks/by-chat/${chatId}`,
+  )
+  return data
+}

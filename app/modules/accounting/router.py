@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Header, UploadFile
+from fastapi import Depends, File, Form, Header, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,14 +16,18 @@ from app.modules.accounting.schemas import (
     AccountingReceiptPullClaimResponse,
     AccountingReceiptSyncResponse,
     AccountingSalesBookIngestResponse,
+    AccountingRequirementDueSummary,
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
     AccountingRequirementPullClaimResponse,
+    AccountingRequirementReplyResponse,
     AccountingRequirementResponse,
     AccountingRequirementStatusUpdateRequest,
     AccountingRequirementSyncResponse,
+    AccountingRequirementTaskCreateRequest,
     AccountingRequirementWebhookPayload,
+    AccountingTaskAssigneeListResponse,
     AccountingUnitCategoriesResponse,
     AccountingUnitCreateRequest,
     AccountingUnitListResponse,
@@ -210,6 +214,59 @@ async def list_accounting_requirements(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/requirements/due-summary", response_model=AccountingRequirementDueSummary)
+async def accounting_requirements_due_summary(
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingRequirementDueSummary:
+    return await service.requirements_due_summary(actor)
+
+
+@router.get("/task-assignees", response_model=AccountingTaskAssigneeListResponse)
+async def list_accounting_task_assignees(
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+) -> AccountingTaskAssigneeListResponse:
+    return await service.list_task_assignees(actor)
+
+
+@router.post(
+    "/requirements/{requirement_id}/reply",
+    response_model=AccountingRequirementReplyResponse,
+)
+async def reply_accounting_requirement(
+    requirement_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+    files: Annotated[list[UploadFile], File()],
+    dry_run: Annotated[bool, Form()] = False,
+) -> AccountingRequirementReplyResponse:
+    packed: list[tuple[str, bytes]] = []
+    for upload in files:
+        raw = await upload.read()
+        name = (upload.filename or "document.pdf").strip() or "document.pdf"
+        packed.append((name, raw))
+    return await service.reply_requirement(
+        actor,
+        requirement_id,
+        files=packed,
+        dry_run=dry_run,
+    )
+
+
+@router.post("/requirements/{requirement_id}/tasks")
+async def create_task_from_accounting_requirement(
+    requirement_id: int,
+    body: AccountingRequirementTaskCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    service: Annotated[AccountingService, Depends(_service)],
+):
+    from app.modules.tasks.schemas import TaskResponse
+
+    result = await service.create_task_from_requirement(actor, requirement_id, body)
+    return TaskResponse.model_validate(result.model_dump())
 
 
 @router.get("/requirements/{requirement_id}/pdf")

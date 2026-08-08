@@ -646,7 +646,7 @@ class StorageService:
         )
         from app.modules.contacts.scope_loader import ScopeLoader
         from app.modules.db.models.lead import Lead
-        from app.modules.db.models.lead_opt_order import LeadOptOrder
+        from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine
         from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids
         from app.modules.storage.schemas import (
             StorageReceiptItem,
@@ -706,8 +706,22 @@ class StorageService:
                 if code:
                     period_codes.add(str(code).strip())
 
+        from app.modules.accounting.sales_books import normalize_inn
+        from app.modules.db.models.opt_unit import OptUnit
+        from app.modules.storage.schemas import (
+            StorageSalesBookOrderGroup,
+            StorageSalesBookUnitGroup,
+        )
+
         sales_by_period: dict[str, list[StorageSalesBookItem]] = {}
+        units_by_period: dict[str, list[StorageSalesBookUnitGroup]] = {}
         repo = OptSalesBookExtractRepository(self._session)
+
+        units_result = await self._session.execute(select(OptUnit))
+        unit_name_by_inn = {
+            str(u.inn): (u.name or str(u.inn)) for u in units_result.scalars().all()
+        }
+
         for code in period_codes:
             pairs = await pairs_for_period_orders(
                 self._session,
@@ -725,13 +739,104 @@ class StorageService:
                     id=ex.id,
                     seller_inn=ex.seller_inn,
                     buyer_inn=ex.buyer_inn,
-                    seller_name=ex.seller_name,
+                    seller_name=ex.seller_name or unit_name_by_inn.get(ex.seller_inn),
                     buyer_name=ex.buyer_name,
                     source_filename=ex.source_filename,
                     has_pdf=ex.pdf_file_id is not None,
                 )
                 for ex in extracts
             ]
+
+            order_stmt = (
+                select(
+                    LeadOptOrder.id,
+                    LeadOptOrder.order_no,
+                    LeadOptOrder.lead_id,
+                    LeadOptOrder.buyer_inn,
+                    LeadOptOrderLine.supplier_inn,
+                )
+                .join(LeadOptOrderLine, LeadOptOrderLine.order_id == LeadOptOrder.id)
+                .join(Lead, Lead.id == LeadOptOrder.lead_id)
+                .where(
+                    LeadOptOrder.deleted_at.is_(None),
+                    LeadOptOrder.period_code == code,
+                    LeadOptOrder.buyer_inn.is_not(None),
+                    LeadOptOrderLine.supplier_inn.is_not(None),
+                )
+            )
+            if gids is not None:
+                order_stmt = order_stmt.where(Lead.group_id.in_(gids))
+            order_rows = await self._session.execute(order_stmt)
+
+            # seller -> order_id -> meta + pairs
+            by_seller: dict[str, dict[int, dict]] = {}
+            for order_id, order_no, lead_id, buyer_raw, seller_raw in order_rows.all():
+                seller = normalize_inn(str(seller_raw) if seller_raw else None)
+                buyer = normalize_inn(str(buyer_raw) if buyer_raw else None)
+                if not seller or not buyer:
+                    continue
+                if sb_pairs is not None and (seller, buyer) not in sb_pairs:
+                    continue
+                by_seller.setdefault(seller, {})
+                bucket = by_seller[seller].setdefault(
+                    int(order_id),
+                    {
+                        "order_no": int(order_no),
+                        "lead_id": int(lead_id),
+                        "buyer_inn": buyer,
+                        "pairs": set(),
+                    },
+                )
+                bucket["pairs"].add((seller, buyer))
+
+            extract_map = {(e.seller_inn, e.buyer_inn): e for e in extracts}
+            unit_groups: list[StorageSalesBookUnitGroup] = []
+            for seller, orders_map in sorted(
+                by_seller.items(),
+                key=lambda kv: unit_name_by_inn.get(kv[0], kv[0]).casefold(),
+            ):
+                order_groups: list[StorageSalesBookOrderGroup] = []
+                for oid, meta in sorted(orders_map.items(), key=lambda kv: kv[1]["order_no"]):
+                    items: list[StorageSalesBookItem] = []
+                    for pair in meta["pairs"]:
+                        ex = extract_map.get(pair)
+                        if ex is None:
+                            continue
+                        items.append(
+                            StorageSalesBookItem(
+                                id=ex.id,
+                                seller_inn=ex.seller_inn,
+                                buyer_inn=ex.buyer_inn,
+                                seller_name=ex.seller_name
+                                or unit_name_by_inn.get(ex.seller_inn),
+                                buyer_name=ex.buyer_name,
+                                source_filename=ex.source_filename,
+                                has_pdf=ex.pdf_file_id is not None,
+                            ),
+                        )
+                    if not items:
+                        continue
+                    order_groups.append(
+                        StorageSalesBookOrderGroup(
+                            order_id=oid,
+                            order_no=meta["order_no"],
+                            lead_id=meta["lead_id"],
+                            buyer_inn=meta["buyer_inn"],
+                            buyer_name=None,
+                            items=items,
+                        ),
+                    )
+                if not order_groups:
+                    continue
+                unit_groups.append(
+                    StorageSalesBookUnitGroup(
+                        seller_inn=seller,
+                        seller_name=unit_name_by_inn.get(seller) or seller,
+                        orders=order_groups,
+                    ),
+                )
+            if unit_groups:
+                units_by_period[code] = unit_groups
 
         def _period_key(code: str) -> tuple[int, int]:
             # "2/26" → (2026, 2) — newest year/quarter first
@@ -750,7 +855,7 @@ class StorageService:
             kind = 0 if item.doc_kind == "notice" else 1
             return (name, item.supplier_inn, kind, item.source_filename or "")
 
-        all_codes = set(by_period.keys()) | set(sales_by_period.keys())
+        all_codes = set(by_period.keys()) | set(sales_by_period.keys()) | set(units_by_period.keys())
         periods = []
         for code in sorted(all_codes, key=_period_key, reverse=True):
             items_sorted = sorted(by_period.get(code, []), key=_item_key)
@@ -768,6 +873,7 @@ class StorageService:
                     period_code=code,
                     items=items_sorted,
                     sales_books=sales_sorted,
+                    sales_book_units=units_by_period.get(code, []),
                 ),
             )
         return StorageReceiptTreeResponse(periods=periods)

@@ -50,6 +50,11 @@ class TaskResponse(BaseModel):
     task_type: str
     task_type_label: str
     status: str
+    source: str = "manual"
+    opt_unit_id: int | None = None
+    opt_requirement_id: int | None = None
+    chat_id: int | None = None
+    lead_id: int | None = None
     created_by: int
     assignee_id: int
     due_at: datetime | None
@@ -61,8 +66,40 @@ class TaskResponse(BaseModel):
     updated_at: datetime
     is_overdue: bool = False
     due_soon: bool = False
+    needs_ack: bool = False
     creator: TaskUserBrief | None = None
     assignee: TaskUserBrief | None = None
+    file_ids: list[int] = Field(default_factory=list)
+
+
+class ClientRequirementCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: int = Field(gt=0)
+    title: str = Field(min_length=1, max_length=512)
+    description: str | None = Field(default=None, max_length=5000)
+    due_at: datetime | None = None
+    file_ids: list[int] = Field(default_factory=list)
+    chat_id: int | None = Field(default=None, gt=0)
+    lead_id: int | None = Field(default=None, gt=0)
+
+
+class TaskAlertsResponse(BaseModel):
+    blink: bool = False
+    due_soon: int = 0
+    overdue: int = 0
+    unacked_fns: int = 0
+    client_due: int = 0
+
+
+class ClientRequirementUnitOption(BaseModel):
+    id: int
+    inn: str
+    name: str
+
+
+class ClientRequirementUnitListResponse(BaseModel):
+    items: list[ClientRequirementUnitOption]
 
 
 class TaskBoardColumn(BaseModel):

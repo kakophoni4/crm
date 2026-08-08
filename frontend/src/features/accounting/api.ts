@@ -154,6 +154,71 @@ export async function patchAccountingRequirementStatus(
   return data
 }
 
+export async function replyAccountingRequirement(
+  requirementId: number,
+  files: File[],
+  dryRun = false,
+): Promise<{
+  id: number
+  reply_status: string
+  reply_error?: string | null
+  replied_at?: string | null
+  dry_run: boolean
+  success: boolean
+}> {
+  const form = new FormData()
+  form.append('dry_run', dryRun ? 'true' : 'false')
+  for (const file of files) form.append('files', file)
+  const { data } = await http.post<{
+    id: number
+    reply_status: string
+    reply_error?: string | null
+    replied_at?: string | null
+    dry_run: boolean
+    success: boolean
+  }>(`/accounting/requirements/${requirementId}/reply`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 200000,
+  })
+  return data
+}
+
+export async function listAccountingTaskAssignees(): Promise<
+  { id: number; full_name: string; role: string }[]
+> {
+  const { data } = await http.get<{ items: { id: number; full_name: string; role: string }[] }>(
+    '/accounting/task-assignees',
+  )
+  return data.items
+}
+
+export async function createTaskFromRequirement(
+  requirementId: number,
+  payload: {
+    unit_inn?: string | null
+    assignee_id: number
+    title: string
+    description?: string | null
+    due_at?: string | null
+    file_ids?: number[]
+    task_type?: string
+  },
+): Promise<unknown> {
+  const { data } = await http.post(`/accounting/requirements/${requirementId}/tasks`, payload)
+  return data
+}
+
+export async function fetchRequirementsDueSummary(): Promise<{
+  overdue: number
+  due_soon: number
+  unanswered: number
+}> {
+  const { data } = await http.get<{ overdue: number; due_soon: number; unanswered: number }>(
+    '/accounting/requirements/due-summary',
+  )
+  return data
+}
+
 export async function listAccountingUnitOwners(): Promise<{
   items: AccountingUnitOwnerRow[]
   accountants: AccountingAccountantOption[]

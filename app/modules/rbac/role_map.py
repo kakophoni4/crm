@@ -105,13 +105,16 @@ _ACCOUNTANT_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.PROFILE_PRESENCE_UPDATE,
         Permission.PROFILE_AVAILABILITY_UPDATE,
         Permission.FILES_DOWNLOAD,
+        Permission.FILES_UPLOAD,
         Permission.ACCOUNTING_READ,
+        Permission.TASKS_READ,
     }
 )
 
 _CHIEF_ACCOUNTANT_PERMISSIONS: frozenset[Permission] = _ACCOUNTANT_PERMISSIONS | frozenset(
     {
         Permission.ACCOUNTING_MANAGE,
+        Permission.TASKS_MANAGE,
     }
 )
 

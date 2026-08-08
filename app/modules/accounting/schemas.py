@@ -191,11 +191,19 @@ class AccountingRequirementResponse(BaseModel):
     title: str
     description: str | None = None
     status: str
+    response_due_date: date | None = None
+    receipt_due_date: date | None = None
+    reply_status: str = "none"
+    reply_error: str | None = None
+    replied_at: datetime | None = None
+    sbis_requirement_id: int | None = None
     has_pdf: bool
     pdf_filename: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     received_at: datetime
     created_at: datetime
+    is_overdue: bool = False
+    due_soon: bool = False
 
 
 class AccountingRequirementListResponse(BaseModel):
@@ -218,6 +226,12 @@ class AccountingRequirementIngestRequest(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     description: str | None = None
     status: str = "new"
+    response_due_date: date | None = None
+    receipt_due_date: date | None = None
+    reply_status: str = "none"
+    reply_error: str | None = None
+    replied_at: datetime | None = None
+    sbis_requirement_id: int | None = None
     received_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     pdf_base64: str | None = Field(
@@ -225,6 +239,41 @@ class AccountingRequirementIngestRequest(BaseModel):
         description="Base64-encoded PDF body (optional if multipart file is sent)",
     )
     pdf_filename: str | None = "requirement.pdf"
+
+
+class AccountingRequirementReplyResponse(BaseModel):
+    id: int
+    reply_status: str
+    reply_error: str | None = None
+    replied_at: datetime | None = None
+    dry_run: bool = False
+    success: bool = False
+
+
+class AccountingRequirementDueSummary(BaseModel):
+    overdue: int = 0
+    due_soon: int = 0
+    unanswered: int = 0
+
+
+class AccountingRequirementTaskCreateRequest(BaseModel):
+    unit_inn: str | None = Field(default=None, max_length=12)
+    assignee_id: int = Field(gt=0)
+    title: str = Field(min_length=1, max_length=512)
+    description: str | None = None
+    due_at: datetime | None = None
+    file_ids: list[int] = Field(default_factory=list)
+    task_type: str = "normal"
+
+
+class AccountingTaskAssigneeOption(BaseModel):
+    id: int
+    full_name: str
+    role: str
+
+
+class AccountingTaskAssigneeListResponse(BaseModel):
+    items: list[AccountingTaskAssigneeOption]
 
 
 class AccountingRequirementIngestResponse(BaseModel):

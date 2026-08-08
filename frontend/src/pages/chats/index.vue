@@ -96,6 +96,9 @@ const ChatDealSidePanel = defineAsyncComponent(
 const ChatPaymentsSidePanel = defineAsyncComponent(
   () => import('@/widgets/chat/ChatPaymentsSidePanel.vue'),
 )
+const ChatClientRequirementPanel = defineAsyncComponent(
+  () => import('@/widgets/chat/ChatClientRequirementPanel.vue'),
+)
 const NewWhatsappChatDialog = defineAsyncComponent(
   () => import('@/widgets/chat/NewWhatsappChatDialog.vue'),
 )
@@ -154,7 +157,7 @@ const contactClientLabel = computed(() =>
   formatContactClientLabel(store.currentChat?.contact_client_label),
 )
 
-type RightPaneTab = 'deal' | 'payments' | 'notifications'
+type RightPaneTab = 'deal' | 'payments' | 'client_req' | 'notifications'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
 /** Short labels always — fits list pane with WhatsApp action in one row. */
@@ -815,6 +818,7 @@ onUnmounted(() => {
         >
           <NTab name="deal" tab="Сделки" />
           <NTab name="payments" tab="Оплаты клиента" />
+          <NTab name="client_req" tab="От клиента" />
           <NTab
             name="notifications"
             :tab="
@@ -836,6 +840,11 @@ onUnmounted(() => {
         <ChatPaymentsSidePanel
           v-else-if="store.currentChat && rightPaneTab === 'payments'"
           :key="`pay-${store.currentChatId}`"
+          :chat="store.currentChat"
+        />
+        <ChatClientRequirementPanel
+          v-else-if="store.currentChat && rightPaneTab === 'client_req'"
+          :key="`creq-${store.currentChatId}`"
           :chat="store.currentChat"
         />
         <ChatsNotificationsPane

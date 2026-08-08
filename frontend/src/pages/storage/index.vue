@@ -158,7 +158,19 @@ const selectedReceiptCorrectionItems = computed(() =>
   selectedPeriodAllItems.value.filter((row) => !!row.is_correction),
 )
 
+const selectedSalesBookUnits = computed(() => selectedPeriodGroup.value?.sales_book_units ?? [])
+
+const storageSalesUnitInn = ref<string | null>(null)
+const storageSalesOrderId = ref<number | null>(null)
+
 const selectedSalesBookItems = computed((): StorageSalesBookItem[] => {
+  const units = selectedSalesBookUnits.value
+  if (units.length) {
+    const unit = units.find((u) => u.seller_inn === storageSalesUnitInn.value)
+    if (!unit) return []
+    const order = unit.orders.find((o) => o.order_id === storageSalesOrderId.value)
+    return order?.items ?? []
+  }
   const items = selectedPeriodGroup.value?.sales_books ?? []
   return [...items].sort((a, b) => {
     const sa = (a.seller_name || a.seller_inn || '').localeCompare(
@@ -177,7 +189,11 @@ const selectedReceiptItems = computed(() =>
 )
 
 function periodTotalCount(period: StorageReceiptPeriodGroup): number {
-  return period.items.length + (period.sales_books?.length ?? 0)
+  const units = period.sales_book_units ?? []
+  const sb = units.length
+    ? units.reduce((a, u) => a + u.orders.reduce((x, o) => x + o.items.length, 0), 0)
+    : period.sales_books?.length ?? 0
+  return period.items.length + sb
 }
 
 function receiptKindLabel(kind: string, isCorrection = false): string {
@@ -679,10 +695,62 @@ onMounted(async () => {
               <NButton
                 size="small"
                 :type="receiptFolder === 'sales_books' ? 'primary' : 'default'"
-                :disabled="!selectedSalesBookItems.length"
-                @click="receiptFolder = 'sales_books'"
+                :disabled="!selectedSalesBookUnits.length && !selectedPeriodGroup?.sales_books?.length"
+                @click="
+                  () => {
+                    receiptFolder = 'sales_books'
+                    storageSalesUnitInn = null
+                    storageSalesOrderId = null
+                  }
+                "
               >
-                Книги продаж ({{ selectedSalesBookItems.length }})
+                Книги продаж ({{
+                  selectedSalesBookUnits.length
+                    ? selectedSalesBookUnits.reduce(
+                        (a, u) => a + u.orders.reduce((x, o) => x + o.items.length, 0),
+                        0,
+                      )
+                    : selectedPeriodGroup?.sales_books?.length || 0
+                }})
+              </NButton>
+            </NSpace>
+            <NSpace
+              v-if="receiptFolder === 'sales_books' && selectedSalesBookUnits.length"
+              style="margin-bottom: 12px"
+            >
+              <NButton
+                v-for="unit in selectedSalesBookUnits"
+                :key="unit.seller_inn"
+                size="small"
+                :type="storageSalesUnitInn === unit.seller_inn ? 'primary' : 'default'"
+                @click="
+                  () => {
+                    storageSalesUnitInn = unit.seller_inn
+                    storageSalesOrderId = null
+                  }
+                "
+              >
+                {{ unit.seller_name }}
+              </NButton>
+            </NSpace>
+            <NSpace
+              v-if="
+                receiptFolder === 'sales_books' &&
+                storageSalesUnitInn &&
+                selectedSalesBookUnits.find((u) => u.seller_inn === storageSalesUnitInn)
+              "
+              style="margin-bottom: 12px"
+            >
+              <NButton
+                v-for="order in selectedSalesBookUnits.find(
+                  (u) => u.seller_inn === storageSalesUnitInn,
+                )?.orders || []"
+                :key="order.order_id"
+                size="small"
+                :type="storageSalesOrderId === order.order_id ? 'primary' : 'default'"
+                @click="storageSalesOrderId = order.order_id"
+              >
+                Заявка №{{ order.order_no }}
               </NButton>
             </NSpace>
             <div

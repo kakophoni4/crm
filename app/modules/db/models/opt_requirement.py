@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Text, func
+from sqlalchemy import BigInteger, Date, ForeignKey, Index, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +18,8 @@ class OptRequirement(Base):
     __table_args__ = (
         Index("idx_opt_requirements_supplier_inn", "supplier_inn"),
         Index("idx_opt_requirements_received_at", "received_at"),
+        Index("idx_opt_requirements_response_due", "response_due_date"),
+        Index("idx_opt_requirements_reply_status", "reply_status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -28,6 +30,12 @@ class OptRequirement(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="new")
+    response_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    receipt_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reply_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="none")
+    reply_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    replied_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    sbis_requirement_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     pdf_file_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("uploaded_files.id", ondelete="SET NULL"),

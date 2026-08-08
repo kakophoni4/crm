@@ -19,6 +19,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { listDepartments, listUsers, type AdminUser, type Department } from '@/features/admin/api'
 import {
+  acknowledgeTask,
   completeTask,
   confirmTask,
   createTask,
@@ -219,6 +220,16 @@ async function submitCreate(): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось создать задачу')
   } finally {
     createLoading.value = false
+  }
+}
+
+async function onAcknowledge(task: DepartmentTask): Promise<void> {
+  try {
+    await acknowledgeTask(task.id)
+    message.success('Задача принята в работу')
+    await refresh()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Ошибка')
   }
 }
 
@@ -489,6 +500,7 @@ onUnmounted(() => {
                   <NTag :color="{ color: typeColor(task.task_type), textColor: '#fff' }" size="small">
                     {{ task.task_type_label }}
                   </NTag>
+                  <NTag v-if="task.status === 'new'" type="warning" size="small">Новая</NTag>
                   <NTag v-if="task.status === 'done_pending'" type="info" size="small">
                     На проверке
                   </NTag>
@@ -500,7 +512,16 @@ onUnmounted(() => {
                 <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
                 <p class="task-card-meta">Поставил: {{ task.creator?.full_name ?? 'Старший оператор' }}</p>
                 <NButton
-                  v-if="task.status === 'open'"
+                  v-if="task.status === 'new'"
+                  type="primary"
+                  size="small"
+                  style="margin-right: 8px"
+                  @click="onAcknowledge(task)"
+                >
+                  Принять
+                </NButton>
+                <NButton
+                  v-if="task.status === 'open' || task.status === 'new'"
                   type="primary"
                   size="small"
                   @click="onComplete(task)"
@@ -586,9 +607,10 @@ onUnmounted(() => {
 
 .kanban {
   display: grid;
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 16px;
   align-items: start;
+  overflow-x: auto;
 }
 
 @media (max-width: 900px) {

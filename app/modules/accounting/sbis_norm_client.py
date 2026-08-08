@@ -213,3 +213,48 @@ async def mark_synced(ids: list[int]) -> dict[str, Any]:
         "/api/sbis/requirements/mark-synced/",
         json_body={"ids": ids},
     )
+
+
+async def reply_requirement(
+    requirement_id: int,
+    *,
+    attachments: list[dict[str, str]],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """POST …/requirements/<id>/reply/ — timeout ≥180s for EDS."""
+    url = f"{_base_url()}/api/sbis/requirements/{requirement_id}/reply/"
+    timeout = httpx.Timeout(connect=15.0, read=180.0, write=60.0, pool=15.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                url,
+                json={"attachments": attachments, "dry_run": dry_run},
+                headers=_auth_headers(),
+            )
+    except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError) as exc:
+        raise SbisNormApiError(message="Не удалось отправить ответ в sbis-norm") from exc
+    if response.status_code >= 400:
+        detail: dict[str, Any] = {"http_status": response.status_code}
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail["body"] = payload
+                err = payload.get("error")
+                if isinstance(err, dict) and err.get("message"):
+                    raise SbisNormApiError(
+                        message=str(err["message"]),
+                        details=detail,
+                    )
+        except ValueError:
+            detail["text"] = response.text[:500]
+        raise SbisNormApiError(
+            message="sbis-norm отклонил ответ на требование",
+            details=detail,
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise SbisNormApiError(message="sbis-norm вернул некорректный JSON") from exc
+    if not isinstance(data, dict):
+        raise SbisNormApiError(message="sbis-norm вернул неожиданный ответ")
+    return data

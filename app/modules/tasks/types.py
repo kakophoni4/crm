@@ -11,6 +11,7 @@ class TaskType(StrEnum):
 
 
 class TaskStatus(StrEnum):
+    NEW = "new"
     OPEN = "open"
     DONE_PENDING = "done_pending"
     CLOSED = "closed"
@@ -30,4 +31,4 @@ TASK_TYPE_LABELS: dict[TaskType, str] = {
     TaskType.LOW: "Низкий приоритет",
 }
 
-ACTIVE_TASK_STATUSES = frozenset({TaskStatus.OPEN, TaskStatus.DONE_PENDING})
+ACTIVE_TASK_STATUSES = frozenset({TaskStatus.NEW, TaskStatus.OPEN, TaskStatus.DONE_PENDING})

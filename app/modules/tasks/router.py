@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.db.models.user import User
 from app.modules.rbac.permissions import Permission
 from app.modules.tasks.schemas import (
+    ClientRequirementCreateRequest,
+    ClientRequirementUnitListResponse,
+    TaskAlertsResponse,
     TaskBoardResponse,
     TaskCreateRequest,
     TaskListResponse,
@@ -32,6 +35,55 @@ async def list_my_tasks(
     service: Annotated[TaskService, Depends(_service)],
 ) -> TaskListResponse:
     return await service.list_my_tasks(actor)
+
+
+@router.get("/alerts", response_model=TaskAlertsResponse)
+async def task_alerts(
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> TaskAlertsResponse:
+    return await service.alerts(actor)
+
+
+@router.get("/client-requirement-units", response_model=ClientRequirementUnitListResponse)
+async def list_client_requirement_units(
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> ClientRequirementUnitListResponse:
+    return await service.list_client_requirement_units(actor)
+
+
+@router.post("/client-requirements", status_code=201, response_model=TaskResponse)
+async def create_client_requirement(
+    body: ClientRequirementCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    result = await service.create_client_requirement(actor, body)
+    await db.commit()
+    return result
+
+
+@router.get("/by-chat/{chat_id}", response_model=TaskListResponse)
+async def list_client_requirements_by_chat(
+    chat_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> TaskListResponse:
+    return await service.list_for_chat(actor, chat_id)
+
+
+@router.post("/{task_id}/acknowledge", response_model=TaskResponse)
+async def acknowledge_task(
+    task_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    result = await service.acknowledge(actor, task_id)
+    await db.commit()
+    return result
 
 
 @router.get("/board", response_model=TaskBoardResponse)

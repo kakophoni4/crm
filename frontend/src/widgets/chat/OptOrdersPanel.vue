@@ -1675,21 +1675,27 @@ onUnmounted(() => {
 }
 
 .opt-orders__picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .opt-orders__tab {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
   padding: 6px 10px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   background: var(--app-surface, transparent);
   cursor: pointer;
   font-size: 0.8rem;
+  text-align: left;
+  box-sizing: border-box;
 }
 
 .opt-orders__tab--active {
@@ -1699,6 +1705,23 @@ onUnmounted(() => {
 
 .opt-orders__tab-no {
   font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opt-orders__tab :deep(.n-tag) {
+  flex: 0 0 auto;
+  max-width: 52%;
+  justify-content: center;
+}
+
+.opt-orders__tab :deep(.n-tag .n-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .opt-orders__detail {
@@ -1785,15 +1808,39 @@ onUnmounted(() => {
 }
 
 .opt-orders__actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .opt-orders__actions :deep(.n-button) {
-  min-height: 28px;
-  padding: 0 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  justify-content: center;
+}
+
+.opt-orders__actions :deep(.n-button .n-button__content) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* одиночная кнопка в последнем ряду — на всю ширину */
+.opt-orders__actions :deep(.n-button:last-child:nth-child(odd)) {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 420px) {
+  .opt-orders__picker,
+  .opt-orders__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .opt-orders__actions :deep(.n-button:last-child:nth-child(odd)) {
+    grid-column: auto;
+  }
 }
 
 .opt-orders__preview-text {

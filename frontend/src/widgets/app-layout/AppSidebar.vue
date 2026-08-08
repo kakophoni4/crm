@@ -21,6 +21,8 @@ import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu } from 'naive-ui'
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { fetchRequirementsDueSummary } from '@/features/accounting/api'
+import { fetchTaskAlerts } from '@/features/tasks/api'
 import { listTelephonyAccounts } from '@/features/telephony/api'
 import { useAuthStore } from '@/shared/store/auth'
 import BrandMark from './BrandMark.vue'
@@ -61,13 +63,54 @@ async function refreshTelephonyVisibility(): Promise<void> {
   }
 }
 
+const tasksBlink = ref(false)
+const accountingBlink = ref(false)
+let alertsTimer: ReturnType<typeof setInterval> | null = null
+
+async function refreshAlerts(): Promise<void> {
+  try {
+    if (auth.user?.permissions?.includes('tasks.read')) {
+      const alerts = await fetchTaskAlerts()
+      tasksBlink.value = alerts.blink
+    } else {
+      tasksBlink.value = false
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (auth.canAccounting) {
+      const due = await fetchRequirementsDueSummary()
+      accountingBlink.value = due.overdue > 0 || due.due_soon > 0
+    } else {
+      accountingBlink.value = false
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function blinkIcon(icon: unknown, blink: boolean) {
+  return () =>
+    h(
+      NIcon,
+      { class: blink ? 'sidebar-blink' : undefined },
+      { default: () => h(icon as typeof CheckSquare) },
+    )
+}
+
 const menuOptions = computed(() => {
   if (auth.isAccountant) {
     return [
       {
         label: 'Бухгалтерия',
         key: 'accounting',
-        icon: () => h(NIcon, null, { default: () => h(Calculator) }),
+        icon: blinkIcon(Calculator, accountingBlink.value),
+      },
+      {
+        label: 'Задачи',
+        key: 'tasks',
+        icon: blinkIcon(CheckSquare, tasksBlink.value),
       },
     ]
   }
@@ -96,7 +139,7 @@ const menuOptions = computed(() => {
   {
     label: 'Задачи',
     key: 'tasks',
-    icon: () => h(NIcon, null, { default: () => h(CheckSquare) }),
+    icon: blinkIcon(CheckSquare, tasksBlink.value),
   },
   {
     label: 'Уведомления',
@@ -174,12 +217,19 @@ const menuOptions = computed(() => {
     items.push({
       label: 'Бухгалтерия',
       key: 'accounting',
-      icon: () => h(NIcon, null, { default: () => h(Calculator) }),
+      icon: blinkIcon(Calculator, accountingBlink.value),
     })
   }
 
   return items
 })
+
+watch(
+  () => auth.user?.id,
+  () => {
+    void refreshAlerts()
+  },
+)
 
 const activeKey = computed(() => {
   if (route.name === 'chats') return 'chats'
@@ -298,10 +348,15 @@ const collapsedWidth = 64
 
 onMounted(() => {
   void refreshTelephonyVisibility()
+  void refreshAlerts()
+  alertsTimer = setInterval(() => {
+    void refreshAlerts()
+  }, 60000)
   window.addEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
 })
 
 onBeforeUnmount(() => {
+  if (alertsTimer) clearInterval(alertsTimer)
   window.removeEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
 })
 
@@ -410,5 +465,22 @@ watch(
   flex-direction: column;
   height: 100%;
   min-height: 100%;
+}
+
+:deep(.sidebar-blink) {
+  color: #dc2626 !important;
+  animation: sidebar-due-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes sidebar-due-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    opacity: 0.45;
+    filter: drop-shadow(0 0 4px rgba(220, 38, 38, 0.65));
+  }
 }
 </style>

@@ -563,6 +563,29 @@ class AccountingService:
         await self._session.refresh(row)
         return self._requirement_to_response(row)
 
+    def _apply_requirement_meta_fields(
+        self,
+        row: OptRequirement,
+        body: AccountingRequirementIngestRequest,
+    ) -> None:
+        if body.response_due_date is not None:
+            row.response_due_date = body.response_due_date
+        if body.receipt_due_date is not None:
+            row.receipt_due_date = body.receipt_due_date
+        if body.reply_status:
+            row.reply_status = body.reply_status
+        if body.reply_error is not None:
+            row.reply_error = body.reply_error
+        if body.replied_at is not None:
+            replied = body.replied_at
+            if replied.tzinfo is not None:
+                replied = replied.astimezone(UTC).replace(tzinfo=None)
+            row.replied_at = replied
+        if body.sbis_requirement_id is not None:
+            row.sbis_requirement_id = body.sbis_requirement_id
+        if body.metadata:
+            row.metadata_json = {**(row.metadata_json or {}), **body.metadata}
+
     async def ingest_requirement(
         self,
         body: AccountingRequirementIngestRequest,
@@ -572,6 +595,9 @@ class AccountingService:
     ) -> AccountingRequirementIngestResponse:
         existing = await self._repo.get_requirement_by_external_id(body.external_id.strip())
         if existing is not None:
+            self._apply_requirement_meta_fields(existing, body)
+            await self._session.flush()
+            await self._session.commit()
             return AccountingRequirementIngestResponse(
                 id=existing.id,
                 external_id=existing.external_id,
@@ -630,10 +656,18 @@ class AccountingService:
             title=body.title.strip(),
             description=body.description.strip() if body.description else None,
             status=body.status or "new",
+            response_due_date=body.response_due_date,
+            receipt_due_date=body.receipt_due_date,
+            reply_status=body.reply_status or "none",
+            reply_error=body.reply_error,
+            replied_at=body.replied_at,
+            sbis_requirement_id=body.sbis_requirement_id,
             pdf_file_id=file_id,
             metadata_json=body.metadata or {},
             received_at=received_at,
         )
+        if row.replied_at is not None and row.replied_at.tzinfo is not None:
+            row.replied_at = row.replied_at.astimezone(UTC).replace(tzinfo=None)
         created = await self._repo.add_requirement(row)
         await self._session.commit()
         return AccountingRequirementIngestResponse(
@@ -774,7 +808,22 @@ class AccountingService:
         )
 
     def _requirement_to_response(self, row: OptRequirement) -> AccountingRequirementResponse:
+        from datetime import date as date_cls
+        from datetime import timedelta
+
         pdf_name = row.pdf_file.original_name if row.pdf_file is not None else None
+        today = date_cls.today()
+        due = row.response_due_date
+        is_overdue = bool(
+            due is not None
+            and due < today
+            and (row.reply_status or "none") in {"none", "error"}
+        )
+        due_soon = bool(
+            due is not None
+            and today <= due <= today + timedelta(days=1)
+            and (row.reply_status or "none") in {"none", "error"}
+        )
         return AccountingRequirementResponse(
             id=row.id,
             external_id=row.external_id,
@@ -786,9 +835,247 @@ class AccountingService:
             title=row.title,
             description=row.description,
             status=row.status,
+            response_due_date=row.response_due_date,
+            receipt_due_date=row.receipt_due_date,
+            reply_status=row.reply_status or "none",
+            reply_error=row.reply_error,
+            replied_at=row.replied_at,
+            sbis_requirement_id=row.sbis_requirement_id,
             has_pdf=row.pdf_file_id is not None,
             pdf_filename=pdf_name,
             metadata=row.metadata_json or {},
             received_at=row.received_at,
             created_at=row.created_at,
+            is_overdue=is_overdue,
+            due_soon=due_soon,
         )
+
+    async def requirements_due_summary(self, actor: User) -> AccountingRequirementDueSummary:
+        from datetime import date as date_cls
+        from datetime import timedelta
+
+        from app.modules.accounting.schemas import AccountingRequirementDueSummary
+
+        supplier_inns = await self._visible_supplier_inns(actor, active_only=False)
+        rows = await self._repo.list_requirements(
+            limit=500,
+            offset=0,
+            supplier_inns=supplier_inns,
+            supplier_inn=None,
+            status=None,
+            q=None,
+        )
+        today = date_cls.today()
+        overdue = due_soon = unanswered = 0
+        for row in rows:
+            if (row.reply_status or "none") not in {"none", "error"}:
+                continue
+            unanswered += 1
+            due = row.response_due_date
+            if due is None:
+                continue
+            if due < today:
+                overdue += 1
+            elif due <= today + timedelta(days=1):
+                due_soon += 1
+        return AccountingRequirementDueSummary(
+            overdue=overdue,
+            due_soon=due_soon,
+            unanswered=unanswered,
+        )
+
+    async def reply_requirement(
+        self,
+        actor: User,
+        requirement_id: int,
+        *,
+        files: list[tuple[str, bytes]],
+        dry_run: bool = False,
+    ):
+        from app.modules.accounting import sbis_norm_client
+        from app.modules.accounting.schemas import AccountingRequirementReplyResponse
+
+        supplier_inns = await self._visible_supplier_inns(actor, active_only=False)
+        row = await self._repo.get_requirement(requirement_id)
+        if row is None:
+            raise NotFound(message="Требование не найдено")
+        if supplier_inns is not None and row.supplier_inn not in supplier_inns:
+            raise NotFound(message="Требование не найдено")
+        sbis_id = row.sbis_requirement_id
+        if sbis_id is None:
+            meta = row.metadata_json or {}
+            raw = meta.get("sbis_id")
+            if isinstance(raw, int):
+                sbis_id = raw
+            elif isinstance(raw, str) and raw.isdigit():
+                sbis_id = int(raw)
+        if sbis_id is None:
+            raise ValidationError(message="Нет связи с документом sbis-norm")
+        if not files:
+            raise ValidationError(message="Прикрепите хотя бы один файл")
+
+        import base64 as b64mod
+
+        attachments = [
+            {
+                "filename": name or f"doc-{idx}.pdf",
+                "content_b64": b64mod.b64encode(raw).decode("ascii"),
+            }
+            for idx, (name, raw) in enumerate(files, start=1)
+        ]
+        try:
+            payload = await sbis_norm_client.reply_requirement(
+                sbis_id,
+                attachments=attachments,
+                dry_run=dry_run,
+            )
+        except Exception as exc:
+            row.reply_status = "error"
+            row.reply_error = str(getattr(exc, "message", None) or exc)[:2000]
+            await self._session.commit()
+            raise
+
+        success = bool(payload.get("success"))
+        if dry_run:
+            return AccountingRequirementReplyResponse(
+                id=row.id,
+                reply_status=row.reply_status or "none",
+                reply_error=row.reply_error,
+                replied_at=row.replied_at,
+                dry_run=True,
+                success=success,
+            )
+
+        if success:
+            row.reply_status = "sent"
+            row.reply_error = None
+            row.replied_at = datetime.now(UTC).replace(tzinfo=None)
+            row.sbis_requirement_id = sbis_id
+            meta = dict(row.metadata_json or {})
+            meta["last_reply"] = payload.get("send_meta") or {}
+            row.metadata_json = meta
+        else:
+            row.reply_status = "error"
+            row.reply_error = str(payload.get("error") or "reply failed")[:2000]
+        await self._session.commit()
+        await self._session.refresh(row)
+        return AccountingRequirementReplyResponse(
+            id=row.id,
+            reply_status=row.reply_status or "none",
+            reply_error=row.reply_error,
+            replied_at=row.replied_at,
+            dry_run=False,
+            success=success,
+        )
+
+    async def list_task_assignees(self, actor: User):
+        from sqlalchemy import select
+
+        from app.modules.accounting.schemas import (
+            AccountingTaskAssigneeListResponse,
+            AccountingTaskAssigneeOption,
+        )
+        from app.modules.db.models.enums import UserStatus
+
+        del actor
+        result = await self._session.execute(
+            select(User)
+            .where(
+                User.status == UserStatus.ACTIVE,
+                User.role.in_(
+                    [
+                        UserRole.USER,
+                        UserRole.GROUP_SENIOR,
+                        UserRole.SENIOR,
+                        UserRole.ACCOUNTANT,
+                    ],
+                ),
+            )
+            .order_by(User.full_name)
+            .limit(300),
+        )
+        items = [
+            AccountingTaskAssigneeOption(
+                id=u.id,
+                full_name=u.full_name,
+                role=str(u.role.value if hasattr(u.role, "value") else u.role),
+            )
+            for u in result.scalars().all()
+        ]
+        return AccountingTaskAssigneeListResponse(items=items)
+
+    async def create_task_from_requirement(
+        self,
+        actor: User,
+        requirement_id: int,
+        body,
+    ):
+        from app.modules.db.models.department_task import DepartmentTask
+        from app.modules.db.models.department_task_file import DepartmentTaskFile
+        from app.modules.tasks.schemas import TaskResponse
+        from app.modules.tasks.service import TaskService
+        from app.modules.tasks.types import TaskStatus, TaskType
+
+        supplier_inns = await self._visible_supplier_inns(actor, active_only=False)
+        row = await self._repo.get_requirement(requirement_id)
+        if row is None:
+            raise NotFound(message="Требование не найдено")
+        if supplier_inns is not None and row.supplier_inn not in supplier_inns:
+            raise NotFound(message="Требование не найдено")
+
+        unit_inn = (body.unit_inn or row.supplier_inn or "").strip()
+        unit = await self._repo.get_unit_by_inn_any(unit_inn)
+        assignee = await self._session.get(User, body.assignee_id)
+        if assignee is None:
+            raise ValidationError(message="Исполнитель не найден")
+        dept_id = assignee.department_id or actor.department_id
+        if dept_id is None:
+            raise ValidationError(message="У исполнителя нет отдела")
+
+        due_at = body.due_at
+        if due_at is None and row.response_due_date is not None:
+            due_at = datetime(
+                row.response_due_date.year,
+                row.response_due_date.month,
+                row.response_due_date.day,
+                18,
+                0,
+                0,
+                tzinfo=UTC,
+            )
+        task_type = body.task_type if body.task_type in {t.value for t in TaskType} else TaskType.NORMAL.value
+        if row.response_due_date is not None:
+            from datetime import date as date_cls
+            from datetime import timedelta
+
+            if row.response_due_date <= date_cls.today() + timedelta(days=1):
+                task_type = TaskType.URGENT.value
+
+        task = DepartmentTask(
+            department_id=dept_id,
+            title=body.title.strip(),
+            description=body.description.strip() if body.description else None,
+            task_type=task_type,
+            status=TaskStatus.NEW.value,
+            source="fns_requirement",
+            opt_unit_id=unit.id if unit else None,
+            opt_requirement_id=row.id,
+            created_by=actor.id,
+            assignee_id=assignee.id,
+            due_at=due_at,
+        )
+        self._session.add(task)
+        await self._session.flush()
+        for fid in body.file_ids or []:
+            self._session.add(DepartmentTaskFile(task_id=task.id, file_id=int(fid)))
+        await self._session.commit()
+        await self._session.refresh(task)
+        task_service = TaskService(self._session)
+        response = (await task_service._build_responses([task]))[0]
+        from app.realtime.events import publish
+        from app.realtime.topics import TASK_CREATED
+
+        payload = task_service._event_payload(task)
+        await publish(TASK_CREATED, payload, scope={"user_id": task.assignee_id})
+        await publish(TASK_CREATED, payload, scope={"department_id": task.department_id})
+        return response
