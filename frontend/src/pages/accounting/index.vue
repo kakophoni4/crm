@@ -1313,8 +1313,8 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <AppCard>
-      <NTabs v-model:value="activeTab" type="line" animated>
+    <AppCard class="accounting-page__card">
+      <NTabs v-model:value="activeTab" type="line" animated class="accounting-page__main-tabs">
         <NTabPane name="orders" tab="Заявки">
           <div class="accounting-page__filters">
             <NSelect
@@ -1893,6 +1893,20 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 16px;
   padding-bottom: 16px;
+  width: 100%;
+  max-width: none;
+}
+
+.accounting-page__card {
+  width: 100%;
+}
+
+.accounting-page__main-tabs :deep(.n-tabs-nav-scroll-content) {
+  justify-content: center;
+}
+
+.accounting-page__main-tabs :deep(.n-tabs-nav) {
+  width: 100%;
 }
 
 .accounting-page__header {
