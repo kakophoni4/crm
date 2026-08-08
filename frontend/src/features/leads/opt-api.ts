@@ -213,6 +213,44 @@ export async function sendOptOrderReceiptsToClient(
   await http.post(`/leads/${leadId}/opt-orders/${orderId}/send-receipts`)
 }
 
+export interface OptSalesBookExtractItem {
+  id: number
+  seller_inn: string
+  buyer_inn: string
+  seller_name?: string | null
+  buyer_name?: string | null
+  source_filename: string
+  has_pdf: boolean
+}
+
+export async function listOptOrderSalesBookExtracts(
+  leadId: number,
+  orderId: number,
+): Promise<{ items: OptSalesBookExtractItem[]; available: boolean }> {
+  const { data } = await http.get<{ items: OptSalesBookExtractItem[]; available: boolean }>(
+    `/leads/${leadId}/opt-orders/${orderId}/sales-book-extracts`,
+  )
+  return data
+}
+
+export async function downloadOptOrderSalesBooksArchive(
+  leadId: number,
+  orderId: number,
+): Promise<Blob> {
+  const { data } = await http.get<Blob>(
+    `/leads/${leadId}/opt-orders/${orderId}/sales-book-extracts/archive`,
+    { responseType: 'blob' },
+  )
+  return data
+}
+
+export async function sendOptOrderSalesBooksToClient(
+  leadId: number,
+  orderId: number,
+): Promise<void> {
+  await http.post(`/leads/${leadId}/opt-orders/${orderId}/send-sales-book`)
+}
+
 export async function downloadOptPaymentDocument(
   leadId: number,
   orderId: number,

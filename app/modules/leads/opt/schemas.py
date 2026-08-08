@@ -288,3 +288,24 @@ class OptSendReceiptsResponse(BaseModel):
     message_id: int
     chat_id: int
     file_count: int
+
+
+class OptSalesBookExtractItemResponse(BaseModel):
+    id: int
+    seller_inn: str
+    buyer_inn: str
+    seller_name: str | None = None
+    buyer_name: str | None = None
+    source_filename: str
+    has_pdf: bool
+
+
+class OptOrderSalesBookExtractsResponse(BaseModel):
+    items: list[OptSalesBookExtractItemResponse] = Field(default_factory=list)
+    available: bool = False
+
+
+class OptSendSalesBookResponse(BaseModel):
+    message_id: int
+    chat_id: int
+    file_count: int

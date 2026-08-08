@@ -15,6 +15,7 @@ from app.modules.accounting.schemas import (
     AccountingReceiptIngestResponse,
     AccountingReceiptPullClaimResponse,
     AccountingReceiptSyncResponse,
+    AccountingSalesBookIngestResponse,
     AccountingRequirementIngestRequest,
     AccountingRequirementIngestResponse,
     AccountingRequirementListResponse,
@@ -456,6 +457,62 @@ async def ingest_accounting_receipt_multipart(
         period_code=row.period_code,
         doc_kind=row.doc_kind,
         is_correction=bool(getattr(row, "is_correction", False)),
+        created=created,
+    )
+
+
+@router.post(
+    "/sales-books/ingest/multipart",
+    response_model=AccountingSalesBookIngestResponse,
+    dependencies=[Depends(_require_ingest_token)],
+)
+async def ingest_accounting_sales_book_multipart(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    external_id: Annotated[str, Form()],
+    pdf: Annotated[UploadFile, File()],
+    seller_inn: Annotated[str | None, Form()] = None,
+    buyer_inn: Annotated[str | None, Form()] = None,
+    seller_name: Annotated[str | None, Form()] = None,
+    buyer_name: Annotated[str | None, Form()] = None,
+    source_path: Annotated[str | None, Form()] = None,
+    source_filename: Annotated[str | None, Form()] = None,
+    metadata_json: Annotated[str | None, Form()] = None,
+) -> AccountingSalesBookIngestResponse:
+    import json
+
+    from app.modules.accounting.sales_books import ingest_sales_book_pdf
+
+    metadata: dict[str, object] = {}
+    if metadata_json:
+        try:
+            parsed = json.loads(metadata_json)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except json.JSONDecodeError as exc:
+            from app.shared.exceptions import ValidationError
+
+            raise ValidationError(message="Некорректный metadata_json") from exc
+
+    pdf_bytes = await pdf.read()
+    filename = (source_filename or pdf.filename or "sales_book.pdf").strip()
+    row, created = await ingest_sales_book_pdf(
+        db,
+        external_id=external_id,
+        pdf_bytes=pdf_bytes,
+        source_filename=filename,
+        seller_inn=seller_inn,
+        buyer_inn=buyer_inn,
+        seller_name=seller_name,
+        buyer_name=buyer_name,
+        source_path=source_path,
+        metadata=metadata,
+    )
+    await db.commit()
+    return AccountingSalesBookIngestResponse(
+        id=row.id,
+        external_id=row.external_id,
+        seller_inn=row.seller_inn,
+        buyer_inn=row.buyer_inn,
         created=created,
     )
 

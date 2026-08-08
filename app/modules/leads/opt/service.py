@@ -1633,6 +1633,140 @@ class OptOrderService:
         await self._session.commit()
         return {"message_id": message.id, "chat_id": lead.chat_id, "file_count": 1}
 
+    async def list_order_sales_book_extracts(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+    ):
+        from app.modules.accounting.sales_books import (
+            OptSalesBookExtractRepository,
+            order_sales_book_pairs,
+            visible_sales_book_pairs,
+        )
+        from app.modules.contacts.scope_loader import ScopeLoader
+        from app.modules.leads.opt.schemas import (
+            OptOrderSalesBookExtractsResponse,
+            OptSalesBookExtractItemResponse,
+        )
+
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        pairs = await order_sales_book_pairs(order)
+        ctx = await ScopeLoader(self._session).load(actor)
+        visible = await visible_sales_book_pairs(self._session, actor, ctx)
+        if visible is not None:
+            pairs = {p for p in pairs if p in visible}
+        rows = await OptSalesBookExtractRepository(self._session).list_for_pairs(pairs)
+        items = [
+            OptSalesBookExtractItemResponse(
+                id=row.id,
+                seller_inn=row.seller_inn,
+                buyer_inn=row.buyer_inn,
+                seller_name=row.seller_name,
+                buyer_name=row.buyer_name,
+                source_filename=row.source_filename,
+                has_pdf=row.pdf_file_id is not None,
+            )
+            for row in rows
+        ]
+        return OptOrderSalesBookExtractsResponse(items=items, available=bool(items))
+
+    async def export_order_sales_books_archive(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+    ) -> tuple[bytes, str]:
+        from app.modules.accounting.sales_books import (
+            OptSalesBookExtractRepository,
+            build_sales_books_zip,
+            load_sales_book_pdf_bytes,
+            order_sales_book_pairs,
+            visible_sales_book_pairs,
+        )
+        from app.modules.contacts.scope_loader import ScopeLoader
+
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        pairs = await order_sales_book_pairs(order)
+        ctx = await ScopeLoader(self._session).load(actor)
+        visible = await visible_sales_book_pairs(self._session, actor, ctx)
+        if visible is not None:
+            pairs = {p for p in pairs if p in visible}
+        rows = await OptSalesBookExtractRepository(self._session).list_for_pairs(pairs)
+        if not rows:
+            raise ValidationError(message="Нет выписок книги продаж по этой заявке")
+        packed = [
+            (row, await load_sales_book_pdf_bytes(self._session, row)) for row in rows
+        ]
+        content = build_sales_books_zip(packed)
+        period_slug = ((order.period_code or "period").strip() or "period").replace("/", "-")
+        filename = f"книги-продаж-заявка-{order.order_no}-{period_slug}.zip"
+        return content, filename
+
+    async def send_order_sales_books_to_client(
+        self,
+        actor: User,
+        lead_id: int,
+        order_id: int,
+    ) -> dict[str, int]:
+        from app.modules.accounting.sales_books import (
+            OptSalesBookExtractRepository,
+            load_sales_book_pdf_bytes,
+            order_sales_book_pairs,
+            sales_book_download_name,
+            visible_sales_book_pairs,
+        )
+        from app.modules.chats.messages import ChatMessagesService
+        from app.modules.chats.schemas import AttachmentInput, OutboundMessageRequest
+        from app.modules.contacts.scope_loader import ScopeLoader
+        from app.modules.files.service import FilesService
+
+        lead = await self._get_lead_for_actor(actor, lead_id)
+        if lead.chat_id is None:
+            raise ValidationError(message="У сделки нет чата — отправка клиенту недоступна")
+        order = await self._get_order_for_actor(actor, lead_id, order_id)
+        pairs = await order_sales_book_pairs(order)
+        ctx = await ScopeLoader(self._session).load(actor)
+        visible = await visible_sales_book_pairs(self._session, actor, ctx)
+        if visible is not None:
+            pairs = {p for p in pairs if p in visible}
+        rows = await OptSalesBookExtractRepository(self._session).list_for_pairs(pairs)
+        if not rows:
+            raise ValidationError(message="Нет выписок книги продаж по этой заявке")
+
+        files = FilesService(self._session)
+        attachments: list[AttachmentInput] = []
+        for row in rows:
+            raw = await load_sales_book_pdf_bytes(self._session, row)
+            filename = sales_book_download_name(row)
+            uploaded = await files.create_upload(
+                uploaded_by=actor.id,
+                data=raw,
+                original_name=filename,
+                mime_type="application/pdf",
+            )
+            attachments.append(
+                AttachmentInput(
+                    file_id=uploaded.id,
+                    name=filename,
+                    mime="application/pdf",
+                    size=len(raw),
+                ),
+            )
+        text = f"Книги продаж по заявке №{order.order_no} сделки №{lead_id}."
+        messages = ChatMessagesService(self._session)
+        message, _, _ = await messages.send_outbound(
+            actor,
+            lead.chat_id,
+            OutboundMessageRequest(text=text, attachments=attachments),
+        )
+        await self._session.commit()
+        return {
+            "message_id": message.id,
+            "chat_id": lead.chat_id,
+            "file_count": len(attachments),
+        }
+
     async def send_registry_to_client(
         self,
         actor: User,

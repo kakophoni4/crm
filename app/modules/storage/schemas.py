@@ -150,9 +150,20 @@ class StorageReceiptItem(BaseModel):
     has_pdf: bool
 
 
+class StorageSalesBookItem(BaseModel):
+    id: int
+    seller_inn: str
+    buyer_inn: str
+    seller_name: str | None = None
+    buyer_name: str | None = None
+    source_filename: str
+    has_pdf: bool
+
+
 class StorageReceiptPeriodGroup(BaseModel):
     period_code: str
     items: list[StorageReceiptItem] = Field(default_factory=list)
+    sales_books: list[StorageSalesBookItem] = Field(default_factory=list)
 
 
 class StorageReceiptTreeResponse(BaseModel):

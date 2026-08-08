@@ -18,6 +18,7 @@ import { uploadFile } from '@/features/chats/api'
 import {
   downloadGroupFile,
   downloadStorageReceipt,
+  downloadStorageSalesBook,
   listGroupFiles,
   listStorageReceiptsTree,
   listVaultFiles,
@@ -25,6 +26,7 @@ import {
   type GroupChatFile,
   type StorageReceiptItem,
   type StorageReceiptPeriodGroup,
+  type StorageSalesBookItem,
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
@@ -53,10 +55,11 @@ const vaultFiles = ref<VaultFile[]>([])
 const dialogFiles = ref<GroupChatFile[]>([])
 const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
 const receiptPeriod = ref<string | null>(null)
-/** null = period root; 'corrections' = corrections folder */
-const receiptFolder = ref<'main' | 'corrections' | null>(null)
+/** null = period root; folder inside period */
+const receiptFolder = ref<'main' | 'corrections' | 'sales_books' | null>(null)
 const busyId = ref<number | null>(null)
 const selectedReceiptIds = ref<number[]>([])
+const selectedSalesBookIds = ref<number[]>([])
 const confirmingReceipts = ref(false)
 
 function sortReceiptItems(items: StorageReceiptItem[]): StorageReceiptItem[] {
@@ -102,6 +105,18 @@ const periodCorrectionItems = computed(() =>
   sortReceiptItems((selectedPeriodGroup.value?.items ?? []).filter((row) => !!row.is_correction)),
 )
 
+const periodSalesBookItems = computed((): StorageSalesBookItem[] => {
+  const items = selectedPeriodGroup.value?.sales_books ?? []
+  return [...items].sort((a, b) => {
+    const sa = (a.seller_name || a.seller_inn || '').localeCompare(
+      b.seller_name || b.seller_inn || '',
+      'ru',
+    )
+    if (sa !== 0) return sa
+    return a.buyer_inn.localeCompare(b.buyer_inn)
+  })
+})
+
 const visibleReceiptItems = computed(() => {
   if (receiptFolder.value === 'corrections') return periodCorrectionItems.value
   if (receiptFolder.value === 'main') return periodMainItems.value
@@ -109,8 +124,17 @@ const visibleReceiptItems = computed(() => {
 })
 
 const selectedReceiptCount = computed(() => selectedReceiptIds.value.length)
+const selectedSalesBookCount = computed(() => selectedSalesBookIds.value.length)
+const selectedAttachCount = computed(
+  () => selectedReceiptCount.value + selectedSalesBookCount.value,
+)
 
 const allVisibleSelected = computed(() => {
+  if (receiptFolder.value === 'sales_books') {
+    const visible = periodSalesBookItems.value.filter((row) => row.has_pdf)
+    if (!visible.length) return false
+    return visible.every((row) => selectedSalesBookIds.value.includes(row.id))
+  }
   const visible = visibleReceiptItems.value.filter((row) => row.has_pdf)
   if (!visible.length) return false
   return visible.every((row) => selectedReceiptIds.value.includes(row.id))
@@ -118,6 +142,10 @@ const allVisibleSelected = computed(() => {
 
 function isReceiptSelected(id: number): boolean {
   return selectedReceiptIds.value.includes(id)
+}
+
+function isSalesBookSelected(id: number): boolean {
+  return selectedSalesBookIds.value.includes(id)
 }
 
 function toggleReceiptSelected(id: number, checked?: boolean): void {
@@ -131,7 +159,30 @@ function toggleReceiptSelected(id: number, checked?: boolean): void {
   }
 }
 
+function toggleSalesBookSelected(id: number, checked?: boolean): void {
+  const on = checked ?? !isSalesBookSelected(id)
+  if (on) {
+    if (!selectedSalesBookIds.value.includes(id)) {
+      selectedSalesBookIds.value = [...selectedSalesBookIds.value, id]
+    }
+  } else {
+    selectedSalesBookIds.value = selectedSalesBookIds.value.filter((x) => x !== id)
+  }
+}
+
 function toggleSelectAllVisible(): void {
+  if (receiptFolder.value === 'sales_books') {
+    const visible = periodSalesBookItems.value.filter((row) => row.has_pdf)
+    if (allVisibleSelected.value) {
+      const drop = new Set(visible.map((row) => row.id))
+      selectedSalesBookIds.value = selectedSalesBookIds.value.filter((id) => !drop.has(id))
+      return
+    }
+    const merged = new Set(selectedSalesBookIds.value)
+    for (const row of visible) merged.add(row.id)
+    selectedSalesBookIds.value = [...merged]
+    return
+  }
   const visible = visibleReceiptItems.value.filter((row) => row.has_pdf)
   if (allVisibleSelected.value) {
     const drop = new Set(visible.map((row) => row.id))
@@ -149,6 +200,18 @@ function findReceiptById(id: number): StorageReceiptItem | null {
     if (hit) return hit
   }
   return null
+}
+
+function findSalesBookById(id: number): StorageSalesBookItem | null {
+  for (const period of receiptPeriods.value) {
+    const hit = (period.sales_books ?? []).find((row) => row.id === id)
+    if (hit) return hit
+  }
+  return null
+}
+
+function periodSalesBooksCount(period: StorageReceiptPeriodGroup): number {
+  return period.sales_books?.length ?? 0
 }
 
 async function loadVault(): Promise<void> {
@@ -214,6 +277,7 @@ watch(
     receiptPeriod.value = null
     receiptFolder.value = null
     selectedReceiptIds.value = []
+    selectedSalesBookIds.value = []
     void loadActive()
   },
 )
@@ -346,8 +410,12 @@ function openCorrectionsFolder(): void {
   receiptFolder.value = 'corrections'
 }
 
+function openSalesBooksFolder(): void {
+  receiptFolder.value = 'sales_books'
+}
+
 function receiptsBack(): void {
-  if (receiptFolder.value === 'corrections') {
+  if (receiptFolder.value === 'corrections' || receiptFolder.value === 'sales_books') {
     receiptFolder.value = 'main'
     return
   }
@@ -379,16 +447,41 @@ async function onDownloadReceipt(row: StorageReceiptItem): Promise<void> {
   }
 }
 
+async function onPreviewSalesBook(row: StorageSalesBookItem): Promise<void> {
+  if (!row.has_pdf) {
+    message.warning('PDF недоступен')
+    return
+  }
+  busyId.value = row.id
+  const name = row.source_filename || `sales-book-${row.id}.pdf`
+  await openPreview(name, 'application/pdf', () => downloadStorageSalesBook(row.id))
+  busyId.value = null
+}
+
+async function onDownloadSalesBook(row: StorageSalesBookItem): Promise<void> {
+  if (!row.has_pdf) return
+  busyId.value = row.id
+  try {
+    const blob = await downloadStorageSalesBook(row.id)
+    saveBlob(blob, row.source_filename || `sales-book-${row.id}.pdf`)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать книгу продаж')
+  } finally {
+    busyId.value = null
+  }
+}
+
 async function confirmSelectedReceipts(): Promise<void> {
-  const ids = [...selectedReceiptIds.value]
-  if (!ids.length) {
+  const receiptIds = [...selectedReceiptIds.value]
+  const salesIds = [...selectedSalesBookIds.value]
+  if (!receiptIds.length && !salesIds.length) {
     message.warning('Выбери хотя бы один файл')
     return
   }
   confirmingReceipts.value = true
   let ok = 0
   try {
-    for (const id of ids) {
+    for (const id of receiptIds) {
       const row = findReceiptById(id)
       if (!row?.has_pdf) continue
       try {
@@ -410,14 +503,42 @@ async function confirmSelectedReceipts(): Promise<void> {
         )
       }
     }
+    for (const id of salesIds) {
+      const row = findSalesBookById(id)
+      if (!row?.has_pdf) continue
+      try {
+        const blob = await downloadStorageSalesBook(row.id)
+        const name = row.source_filename || `sales-book-${row.id}.pdf`
+        const file = new File([blob], name, { type: 'application/pdf' })
+        const uploaded = await uploadFile(file)
+        emit('select', {
+          file_id: uploaded.id,
+          name: uploaded.name || name,
+          mime: uploaded.mime || 'application/pdf',
+        })
+        ok += 1
+      } catch (err) {
+        message.error(
+          err instanceof AppError
+            ? err.message
+            : `Не удалось добавить «${row.source_filename}»`,
+        )
+      }
+    }
     if (ok > 0) {
       message.success(ok === 1 ? 'Файл добавлен в сообщение' : `Добавлено файлов: ${ok}`)
       selectedReceiptIds.value = []
+      selectedSalesBookIds.value = []
       emit('update:show', false)
     }
   } finally {
     confirmingReceipts.value = false
   }
+}
+
+function clearAttachSelection(): void {
+  selectedReceiptIds.value = []
+  selectedSalesBookIds.value = []
 }
 
 onUnmounted(() => {
@@ -541,12 +662,13 @@ onUnmounted(() => {
           <span class="receipts-nav-path">
             {{ formatOptPeriodLabel(receiptPeriod) || receiptPeriod }}
             <template v-if="receiptFolder === 'corrections'"> / Корректировки</template>
+            <template v-else-if="receiptFolder === 'sales_books'"> / Книги продаж</template>
           </span>
         </div>
 
         <NEmpty
           v-if="!receiptPeriods.length && !loading"
-          description="Квитанций пока нет"
+          description="Квитанций и книг продаж пока нет"
         />
 
         <!-- Period folders -->
@@ -565,7 +687,8 @@ onUnmounted(() => {
                 </div>
                 <div class="file-meta">
                   {{ period.items.filter((i) => !i.is_correction).length }} основных ·
-                  {{ period.items.filter((i) => i.is_correction).length }} корректировок
+                  {{ period.items.filter((i) => i.is_correction).length }} корректировок ·
+                  {{ periodSalesBooksCount(period) }} книг продаж
                 </div>
               </div>
             </div>
@@ -575,7 +698,7 @@ onUnmounted(() => {
           </li>
         </ul>
 
-        <!-- Inside period: main files + corrections folder -->
+        <!-- Inside period: main files + subfolders -->
         <template v-else-if="receiptFolder === 'main' || receiptFolder === 'corrections'">
           <div v-if="visibleReceiptItems.length" class="receipts-toolbar">
             <NCheckbox
@@ -600,6 +723,20 @@ onUnmounted(() => {
                 </div>
               </div>
               <NButton size="small" secondary @click.stop="openCorrectionsFolder">Открыть</NButton>
+            </li>
+            <li
+              v-if="receiptFolder === 'main' && periodSalesBookItems.length"
+              class="file-item file-item--folder"
+              @click="openSalesBooksFolder"
+            >
+              <div class="file-info">
+                <FolderOpen :size="16" class="file-icon" />
+                <div>
+                  <div class="file-name">Книги продаж</div>
+                  <div class="file-meta">{{ periodSalesBookItems.length }} файл(ов)</div>
+                </div>
+              </div>
+              <NButton size="small" secondary @click.stop="openSalesBooksFolder">Открыть</NButton>
             </li>
             <li
               v-for="row in visibleReceiptItems"
@@ -660,6 +797,7 @@ onUnmounted(() => {
               receiptFolder === 'main' &&
               !periodMainItems.length &&
               !periodCorrectionItems.length &&
+              !periodSalesBookItems.length &&
               !loading
             "
             description="В этом периоде пусто"
@@ -669,13 +807,83 @@ onUnmounted(() => {
             description="Корректировок нет"
           />
         </template>
+
+        <template v-else-if="receiptFolder === 'sales_books'">
+          <div v-if="periodSalesBookItems.length" class="receipts-toolbar">
+            <NCheckbox
+              :checked="allVisibleSelected"
+              :disabled="!periodSalesBookItems.some((r) => r.has_pdf)"
+              @update:checked="toggleSelectAllVisible"
+            >
+              Выбрать все на экране
+            </NCheckbox>
+          </div>
+          <ul v-if="periodSalesBookItems.length" class="file-list">
+            <li
+              v-for="row in periodSalesBookItems"
+              :key="`sb-${row.id}`"
+              class="file-item"
+              :class="{ 'file-item--selected': isSalesBookSelected(row.id) }"
+              @click="row.has_pdf && toggleSalesBookSelected(row.id)"
+            >
+              <div class="file-info" @click.stop>
+                <NCheckbox
+                  :checked="isSalesBookSelected(row.id)"
+                  :disabled="!row.has_pdf"
+                  @update:checked="(v) => toggleSalesBookSelected(row.id, v)"
+                />
+                <FileText :size="16" class="file-icon" />
+                <div>
+                  <div class="file-name">{{ row.source_filename }}</div>
+                  <div class="file-meta">
+                    Продавец {{ row.seller_inn }}
+                    <template v-if="row.seller_name"> · {{ row.seller_name }}</template>
+                    · Покупатель {{ row.buyer_inn }}
+                    <template v-if="row.buyer_name"> · {{ row.buyer_name }}</template>
+                  </div>
+                </div>
+              </div>
+              <div class="file-actions" @click.stop>
+                <NTooltip>
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!row.has_pdf"
+                      :loading="busyId === row.id"
+                      @click="onPreviewSalesBook(row)"
+                    >
+                      <template #icon><Eye :size="14" /></template>
+                    </NButton>
+                  </template>
+                  Открыть
+                </NTooltip>
+                <NTooltip>
+                  <template #trigger>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :disabled="!row.has_pdf"
+                      :loading="busyId === row.id"
+                      @click="onDownloadSalesBook(row)"
+                    >
+                      <template #icon><Download :size="14" /></template>
+                    </NButton>
+                  </template>
+                  Скачать
+                </NTooltip>
+              </div>
+            </li>
+          </ul>
+          <NEmpty v-else-if="!loading" description="Книг продаж нет" />
+        </template>
       </template>
     </NSpin>
 
-    <div v-if="activeTab === 'receipts' && selectedReceiptCount" class="receipts-footer">
-      <span>Выбрано: {{ selectedReceiptCount }}</span>
+    <div v-if="activeTab === 'receipts' && selectedAttachCount" class="receipts-footer">
+      <span>Выбрано: {{ selectedAttachCount }}</span>
       <div class="receipts-footer-actions">
-        <NButton quaternary :disabled="confirmingReceipts" @click="selectedReceiptIds = []">
+        <NButton quaternary :disabled="confirmingReceipts" @click="clearAttachSelection">
           Сбросить
         </NButton>
         <NButton

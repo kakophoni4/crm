@@ -21,6 +21,7 @@ import {
   deleteVaultFile,
   downloadGroupFile,
   downloadStorageReceipt,
+  downloadStorageSalesBook,
   downloadVaultFile,
   getVaultFileContent,
   listGroupFileGroups,
@@ -34,6 +35,7 @@ import {
   type GroupChatFile,
   type StorageReceiptItem,
   type StorageReceiptPeriodGroup,
+  type StorageSalesBookItem,
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
@@ -57,9 +59,10 @@ const groupFiles = ref<GroupChatFile[]>([])
 const selectedGroupId = ref<number | null>(null)
 const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
 const selectedReceiptPeriod = ref<string | null>(null)
-/** 'main' | 'corrections' — folder inside selected period */
-const receiptFolder = ref<'main' | 'corrections'>('main')
+/** folder inside selected period */
+const receiptFolder = ref<'main' | 'corrections' | 'sales_books'>('main')
 const downloadingReceiptId = ref<number | null>(null)
+const downloadingSalesBookId = ref<number | null>(null)
 
 const shareModalOpen = ref(false)
 const shareTarget = ref<VaultFile | null>(null)
@@ -139,11 +142,13 @@ async function loadReceipts(): Promise<void> {
   }
 }
 
-const selectedPeriodAllItems = computed(() => {
+const selectedPeriodGroup = computed(() => {
   const period = selectedReceiptPeriod.value
-  if (!period) return [] as StorageReceiptItem[]
-  return receiptPeriods.value.find((row) => row.period_code === period)?.items ?? []
+  if (!period) return null
+  return receiptPeriods.value.find((row) => row.period_code === period) ?? null
 })
+
+const selectedPeriodAllItems = computed(() => selectedPeriodGroup.value?.items ?? [])
 
 const selectedReceiptMainItems = computed(() =>
   selectedPeriodAllItems.value.filter((row) => !row.is_correction),
@@ -153,15 +158,48 @@ const selectedReceiptCorrectionItems = computed(() =>
   selectedPeriodAllItems.value.filter((row) => !!row.is_correction),
 )
 
+const selectedSalesBookItems = computed((): StorageSalesBookItem[] => {
+  const items = selectedPeriodGroup.value?.sales_books ?? []
+  return [...items].sort((a, b) => {
+    const sa = (a.seller_name || a.seller_inn || '').localeCompare(
+      b.seller_name || b.seller_inn || '',
+      'ru',
+    )
+    if (sa !== 0) return sa
+    return a.buyer_inn.localeCompare(b.buyer_inn)
+  })
+})
+
 const selectedReceiptItems = computed(() =>
   receiptFolder.value === 'corrections'
     ? selectedReceiptCorrectionItems.value
     : selectedReceiptMainItems.value,
 )
 
+function periodTotalCount(period: StorageReceiptPeriodGroup): number {
+  return period.items.length + (period.sales_books?.length ?? 0)
+}
+
 function receiptKindLabel(kind: string, isCorrection = false): string {
   const base = kind === 'notice' ? 'Извещение о вводе' : 'Квитанция о приеме'
   return isCorrection ? `${base} · корректировка` : base
+}
+
+async function onDownloadSalesBook(row: StorageSalesBookItem): Promise<void> {
+  downloadingSalesBookId.value = row.id
+  try {
+    const blob = await downloadStorageSalesBook(row.id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = row.source_filename || `sales-book-${row.id}.pdf`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать книгу продаж')
+  } finally {
+    downloadingSalesBookId.value = null
+  }
 }
 
 async function onDownloadReceipt(row: StorageReceiptItem): Promise<void> {
@@ -619,7 +657,7 @@ onMounted(async () => {
                   }
                 "
               >
-                {{ period.period_code }} ({{ period.items.length }})
+                {{ period.period_code }} ({{ periodTotalCount(period) }})
               </NButton>
             </NSpace>
             <NSpace v-if="selectedReceiptPeriod" style="margin-bottom: 12px">
@@ -638,8 +676,76 @@ onMounted(async () => {
               >
                 Корректировки ({{ selectedReceiptCorrectionItems.length }})
               </NButton>
+              <NButton
+                size="small"
+                :type="receiptFolder === 'sales_books' ? 'primary' : 'default'"
+                :disabled="!selectedSalesBookItems.length"
+                @click="receiptFolder = 'sales_books'"
+              >
+                Книги продаж ({{ selectedSalesBookItems.length }})
+              </NButton>
             </NSpace>
-            <div v-if="selectedReceiptItems.length" class="receipts-list">
+            <div
+              v-if="receiptFolder === 'sales_books' && selectedSalesBookItems.length"
+              class="receipts-list"
+            >
+              <div
+                v-for="row in selectedSalesBookItems"
+                :key="`sb-${row.id}`"
+                class="receipts-row"
+              >
+                <div
+                  class="receipts-main receipts-main--clickable"
+                  @click="
+                    row.has_pdf &&
+                      openPreview(
+                        row.source_filename || `sales-book-${row.id}.pdf`,
+                        'application/pdf',
+                        () => downloadStorageSalesBook(row.id),
+                      )
+                  "
+                >
+                  <div class="receipts-title">{{ row.source_filename }}</div>
+                  <div class="receipts-meta">
+                    Продавец {{ row.seller_inn }}
+                    <template v-if="row.seller_name"> · {{ row.seller_name }}</template>
+                    · Покупатель {{ row.buyer_inn }}
+                    <template v-if="row.buyer_name"> · {{ row.buyer_name }}</template>
+                  </div>
+                </div>
+                <NSpace :size="8">
+                  <NButton
+                    size="small"
+                    type="primary"
+                    secondary
+                    :loading="downloadingSalesBookId === row.id"
+                    :disabled="!row.has_pdf"
+                    @click="
+                      openPreview(
+                        row.source_filename || `sales-book-${row.id}.pdf`,
+                        'application/pdf',
+                        () => downloadStorageSalesBook(row.id),
+                      )
+                    "
+                  >
+                    Открыть
+                  </NButton>
+                  <NButton
+                    size="small"
+                    secondary
+                    :loading="downloadingSalesBookId === row.id"
+                    :disabled="!row.has_pdf"
+                    @click="onDownloadSalesBook(row)"
+                  >
+                    Скачать
+                  </NButton>
+                </NSpace>
+              </div>
+            </div>
+            <div
+              v-else-if="receiptFolder !== 'sales_books' && selectedReceiptItems.length"
+              class="receipts-list"
+            >
               <div
                 v-for="row in selectedReceiptItems"
                 :key="row.id"
@@ -695,7 +801,9 @@ onMounted(async () => {
               {{
                 receiptFolder === 'corrections'
                   ? 'Нет корректировок за выбранный период'
-                  : 'Нет квитанций за выбранный период'
+                  : receiptFolder === 'sales_books'
+                    ? 'Нет книг продаж за выбранный период'
+                    : 'Нет квитанций за выбранный период'
               }}
             </p>
           </NSpin>

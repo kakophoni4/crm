@@ -29,12 +29,15 @@ import {
   deleteOptOrder,
   deleteOptOrderLine,
   downloadOptOrderReceiptsArchive,
+  downloadOptOrderSalesBooksArchive,
   downloadOptPaymentDocument,
   downloadOptRegistry,
   listOptOrderReceipts,
+  listOptOrderSalesBookExtracts,
   listOptOrders,
   patchOptOrderPeriod,
   sendOptOrderReceiptsToClient,
+  sendOptOrderSalesBooksToClient,
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
@@ -79,6 +82,10 @@ const downloadingReceiptsId = ref<number | null>(null)
 const sendingReceiptsId = ref<number | null>(null)
 const receiptsAvailable = ref(false)
 const sendReceiptsOpen = ref(false)
+const downloadingSalesBooksId = ref<number | null>(null)
+const sendingSalesBooksId = ref<number | null>(null)
+const salesBooksAvailable = ref(false)
+const sendSalesBooksOpen = ref(false)
 const sendingId = ref<number | null>(null)
 const savingPeriodId = ref<number | null>(null)
 const periodOptions = OPT_PERIOD_OPTIONS
@@ -651,6 +658,7 @@ async function onDelete(): Promise<void> {
 
 async function refreshReceiptsAvailability(): Promise<void> {
   receiptsAvailable.value = false
+  salesBooksAvailable.value = false
   if (props.leadId == null || selectedOrderId.value == null) return
   const order = orders.value.find((row) => row.id === selectedOrderId.value)
   if (!order || order.status !== 'submitted') return
@@ -659,6 +667,12 @@ async function refreshReceiptsAvailability(): Promise<void> {
     receiptsAvailable.value = data.available
   } catch {
     receiptsAvailable.value = false
+  }
+  try {
+    const data = await listOptOrderSalesBookExtracts(props.leadId, order.id)
+    salesBooksAvailable.value = data.available
+  } catch {
+    salesBooksAvailable.value = false
   }
 }
 
@@ -696,6 +710,38 @@ async function onSendReceiptsToClient(order: OptOrder): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось отправить квитанции')
   } finally {
     sendingReceiptsId.value = null
+  }
+}
+
+async function onDownloadSalesBooks(order: OptOrder): Promise<void> {
+  if (props.leadId == null) return
+  downloadingSalesBooksId.value = order.id
+  try {
+    const blob = await downloadOptOrderSalesBooksArchive(props.leadId, order.id)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `книги-продаж-сделка-${order.lead_id}-заявка-${order.order_no}.zip`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось скачать книги продаж')
+  } finally {
+    downloadingSalesBooksId.value = null
+  }
+}
+
+async function onSendSalesBooksToClient(order: OptOrder): Promise<void> {
+  if (props.leadId == null) return
+  sendingSalesBooksId.value = order.id
+  try {
+    await sendOptOrderSalesBooksToClient(props.leadId, order.id)
+    sendSalesBooksOpen.value = false
+    message.success('Книги продаж отправлены клиенту')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось отправить книги продаж')
+  } finally {
+    sendingSalesBooksId.value = null
   }
 }
 
@@ -1089,6 +1135,25 @@ onUnmounted(() => {
               Отправить квитанции
             </NButton>
 
+            <NButton
+              v-if="selectedOrder.status === 'submitted' && salesBooksAvailable"
+              size="small"
+              secondary
+              :loading="downloadingSalesBooksId === selectedOrder.id"
+              @click="onDownloadSalesBooks(selectedOrder)"
+            >
+              Скачать книгу продаж
+            </NButton>
+
+            <NButton
+              v-if="selectedOrder.status === 'submitted' && salesBooksAvailable"
+              size="small"
+              type="primary"
+              secondary
+              @click="sendSalesBooksOpen = true"
+            >
+              Отправить книгу продаж
+            </NButton>
 
             <NButton
               v-if="canAdjustCommission(selectedOrder)"
@@ -1472,6 +1537,31 @@ onUnmounted(() => {
             :loading="selectedOrder != null && sendingReceiptsId === selectedOrder.id"
             :disabled="selectedOrder == null"
             @click="selectedOrder && onSendReceiptsToClient(selectedOrder)"
+          >
+            Отправить
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="sendSalesBooksOpen"
+      preset="card"
+      title="Отправить книгу продаж клиенту"
+      style="max-width: 420px"
+    >
+      <p>
+        В чат будут отправлены короткие выписки книги продаж по парам
+        продавец/покупатель этой заявки (без полных книг).
+      </p>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="sendSalesBooksOpen = false">Отмена</NButton>
+          <NButton
+            type="primary"
+            :loading="selectedOrder != null && sendingSalesBooksId === selectedOrder.id"
+            :disabled="selectedOrder == null"
+            @click="selectedOrder && onSendSalesBooksToClient(selectedOrder)"
           >
             Отправить
           </NButton>

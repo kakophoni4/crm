@@ -334,3 +334,11 @@ class AccountingReceiptPullClaimResponse(BaseModel):
 class AccountingReceiptSyncResponse(BaseModel):
     queued: bool = True
     mode: str = "agent"
+
+
+class AccountingSalesBookIngestResponse(BaseModel):
+    id: int
+    external_id: str
+    seller_inn: str
+    buyer_inn: str
+    created: bool

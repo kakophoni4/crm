@@ -39,10 +39,12 @@ from app.modules.leads.opt.schemas import (
     OptOrderReceiptsResponse,
     OptOrderRegistryListResponse,
     OptOrderResponse,
+    OptOrderSalesBookExtractsResponse,
     OptPaymentLedgerListResponse,
     OptRegistryManagersResponse,
     OptSendReceiptsResponse,
     OptSendRegistryResponse,
+    OptSendSalesBookResponse,
     OptSync1cRequest,
     OptSync1cResponse,
     OptUploadFromAttachmentRequest,
@@ -394,6 +396,56 @@ async def send_opt_order_receipts_to_client(
 ) -> OptSendReceiptsResponse:
     result = await service.send_order_receipts_to_client(actor, lead_id, order_id)
     return OptSendReceiptsResponse(**result)
+
+
+@router.get(
+    "/leads/{lead_id}/opt-orders/{order_id}/sales-book-extracts",
+    response_model=OptOrderSalesBookExtractsResponse,
+)
+async def list_opt_order_sales_book_extracts(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptOrderSalesBookExtractsResponse:
+    return await service.list_order_sales_book_extracts(actor, lead_id, order_id)
+
+
+@router.get("/leads/{lead_id}/opt-orders/{order_id}/sales-book-extracts/archive")
+async def download_opt_order_sales_books_archive(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> Response:
+    content, filename = await service.export_order_sales_books_archive(
+        actor, lead_id, order_id,
+    )
+    ascii_name = filename.encode("ascii", "ignore").decode() or "sales-books.zip"
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{ascii_name}\"; "
+                f"filename*=UTF-8''{quote(filename)}"
+            ),
+        },
+    )
+
+
+@router.post(
+    "/leads/{lead_id}/opt-orders/{order_id}/send-sales-book",
+    response_model=OptSendSalesBookResponse,
+)
+async def send_opt_order_sales_books_to_client(
+    lead_id: int,
+    order_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+) -> OptSendSalesBookResponse:
+    result = await service.send_order_sales_books_to_client(actor, lead_id, order_id)
+    return OptSendSalesBookResponse(**result)
 
 
 @router.get("/leads/{lead_id}/opt-orders/{order_id}/registry")

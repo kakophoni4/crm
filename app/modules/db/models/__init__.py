@@ -57,6 +57,7 @@ from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUn
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_requirement import OptRequirement
 from app.modules.db.models.opt_receipt import OptReceipt
+from app.modules.db.models.opt_sales_book_extract import OptSalesBookExtract
 from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.opt_unit_period import OptUnitPeriodAvailability
 from app.modules.db.models.quick_reply_template import QuickReplyTemplate
@@ -115,6 +116,7 @@ __all__ = [
     "OptBuyer",
     "OptRequirement",
     "OptReceipt",
+    "OptSalesBookExtract",
     "OptUnit",
     "OptUnitPeriodAvailability",
     "QuickReplyTemplate",

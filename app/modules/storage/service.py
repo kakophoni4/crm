@@ -633,15 +633,26 @@ class StorageService:
         raise PermissionDenied(message="Файл недоступен")
 
     async def list_receipts_tree(self, actor: User):
+        from sqlalchemy import select
+
         from app.modules.accounting.receipts import (
             OptReceiptRepository,
             visible_receipt_supplier_inns,
         )
+        from app.modules.accounting.sales_books import (
+            OptSalesBookExtractRepository,
+            pairs_for_period_orders,
+            visible_sales_book_pairs,
+        )
         from app.modules.contacts.scope_loader import ScopeLoader
+        from app.modules.db.models.lead import Lead
+        from app.modules.db.models.lead_opt_order import LeadOptOrder
+        from app.modules.rbac.scope import SCOPE_ALL, visible_group_ids
         from app.modules.storage.schemas import (
             StorageReceiptItem,
             StorageReceiptPeriodGroup,
             StorageReceiptTreeResponse,
+            StorageSalesBookItem,
         )
 
         ctx = await ScopeLoader(self._session).load(actor)
@@ -661,6 +672,67 @@ class StorageService:
                     has_pdf=row.pdf_file_id is not None,
                 ),
             )
+
+        sb_pairs = await visible_sales_book_pairs(self._session, actor, ctx)
+        from app.modules.db.models.enums import UserRole
+
+        role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+        groups = visible_group_ids(ctx)
+        gids: set[int] | None
+        if (
+            role in {UserRole.ADMIN, UserRole.CHIEF_ACCOUNTANT, UserRole.ACCOUNTANT}
+            or groups == SCOPE_ALL
+        ):
+            # Admin/chief/accountant: no chat-group filter (accountant filtered via pairs).
+            gids = None
+        elif isinstance(groups, set) and groups:
+            gids = set(groups)
+        else:
+            gids = set()
+
+        period_codes = set(by_period.keys())
+        if gids is None or gids:
+            period_stmt = select(LeadOptOrder.period_code).join(
+                Lead,
+                Lead.id == LeadOptOrder.lead_id,
+            ).where(
+                LeadOptOrder.deleted_at.is_(None),
+                LeadOptOrder.period_code.is_not(None),
+            )
+            if gids is not None:
+                period_stmt = period_stmt.where(Lead.group_id.in_(gids))
+            period_result = await self._session.execute(period_stmt.distinct())
+            for code in period_result.scalars().all():
+                if code:
+                    period_codes.add(str(code).strip())
+
+        sales_by_period: dict[str, list[StorageSalesBookItem]] = {}
+        repo = OptSalesBookExtractRepository(self._session)
+        for code in period_codes:
+            pairs = await pairs_for_period_orders(
+                self._session,
+                period_code=code,
+                visible_pairs=sb_pairs,
+                visible_group_ids_set=gids,
+            )
+            if not pairs:
+                continue
+            extracts = await repo.list_for_pairs(pairs)
+            if not extracts:
+                continue
+            sales_by_period[code] = [
+                StorageSalesBookItem(
+                    id=ex.id,
+                    seller_inn=ex.seller_inn,
+                    buyer_inn=ex.buyer_inn,
+                    seller_name=ex.seller_name,
+                    buyer_name=ex.buyer_name,
+                    source_filename=ex.source_filename,
+                    has_pdf=ex.pdf_file_id is not None,
+                )
+                for ex in extracts
+            ]
+
         def _period_key(code: str) -> tuple[int, int]:
             # "2/26" → (2026, 2) — newest year/quarter first
             parts = str(code).strip().split("/")
@@ -678,10 +750,26 @@ class StorageService:
             kind = 0 if item.doc_kind == "notice" else 1
             return (name, item.supplier_inn, kind, item.source_filename or "")
 
+        all_codes = set(by_period.keys()) | set(sales_by_period.keys())
         periods = []
-        for code, items in sorted(by_period.items(), key=lambda kv: _period_key(kv[0]), reverse=True):
-            items_sorted = sorted(items, key=_item_key)
-            periods.append(StorageReceiptPeriodGroup(period_code=code, items=items_sorted))
+        for code in sorted(all_codes, key=_period_key, reverse=True):
+            items_sorted = sorted(by_period.get(code, []), key=_item_key)
+            sales = sales_by_period.get(code, [])
+            sales_sorted = sorted(
+                sales,
+                key=lambda s: (
+                    (s.seller_name or s.seller_inn).casefold(),
+                    s.buyer_inn,
+                    s.source_filename or "",
+                ),
+            )
+            periods.append(
+                StorageReceiptPeriodGroup(
+                    period_code=code,
+                    items=items_sorted,
+                    sales_books=sales_sorted,
+                ),
+            )
         return StorageReceiptTreeResponse(periods=periods)
 
     async def get_receipt_bytes(self, actor: User, receipt_id: int) -> tuple[bytes, str]:
@@ -701,3 +789,22 @@ class StorageService:
             raise PermissionDenied(message="Нет доступа к квитанции")
         content = await load_receipt_pdf_bytes(self._session, row)
         return content, row.source_filename or f"receipt-{row.id}.pdf"
+
+    async def get_sales_book_bytes(self, actor: User, extract_id: int) -> tuple[bytes, str]:
+        from app.modules.accounting.sales_books import (
+            OptSalesBookExtractRepository,
+            load_sales_book_pdf_bytes,
+            sales_book_download_name,
+            visible_sales_book_pairs,
+        )
+        from app.modules.contacts.scope_loader import ScopeLoader
+
+        ctx = await ScopeLoader(self._session).load(actor)
+        pairs = await visible_sales_book_pairs(self._session, actor, ctx)
+        row = await OptSalesBookExtractRepository(self._session).get(extract_id)
+        if row is None:
+            raise NotFound(message="Выписка книги продаж не найдена")
+        if pairs is not None and (row.seller_inn, row.buyer_inn) not in pairs:
+            raise PermissionDenied(message="Нет доступа к книге продаж")
+        content = await load_sales_book_pdf_bytes(self._session, row)
+        return content, sales_book_download_name(row)

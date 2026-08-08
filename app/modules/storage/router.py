@@ -271,3 +271,19 @@ async def download_storage_receipt(
         ),
     }
     return Response(content=data, media_type="application/pdf", headers=headers)
+
+
+@router.get("/sales-books/{extract_id}/download")
+async def download_storage_sales_book(
+    extract_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> Response:
+    data, filename = await service.get_sales_book_bytes(actor, extract_id)
+    ascii_name = filename.encode("ascii", "ignore").decode() or "sales-book.pdf"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+        ),
+    }
+    return Response(content=data, media_type="application/pdf", headers=headers)

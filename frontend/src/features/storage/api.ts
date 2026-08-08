@@ -167,9 +167,20 @@ export interface StorageReceiptItem {
   has_pdf: boolean
 }
 
+export interface StorageSalesBookItem {
+  id: number
+  seller_inn: string
+  buyer_inn: string
+  seller_name?: string | null
+  buyer_name?: string | null
+  source_filename: string
+  has_pdf: boolean
+}
+
 export interface StorageReceiptPeriodGroup {
   period_code: string
   items: StorageReceiptItem[]
+  sales_books?: StorageSalesBookItem[]
 }
 
 export async function listStorageReceiptsTree(): Promise<{
@@ -183,6 +194,13 @@ export async function listStorageReceiptsTree(): Promise<{
 
 export async function downloadStorageReceipt(receiptId: number): Promise<Blob> {
   const { data } = await http.get<Blob>(`/storage/receipts/${receiptId}/download`, {
+    responseType: 'blob',
+  })
+  return data
+}
+
+export async function downloadStorageSalesBook(extractId: number): Promise<Blob> {
+  const { data } = await http.get<Blob>(`/storage/sales-books/${extractId}/download`, {
     responseType: 'blob',
   })
   return data

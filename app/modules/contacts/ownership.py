@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.timeutil import utc_now
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
-from app.modules.db.models.enums import UserAvailability, UserRole, UserStatus
+from app.modules.db.models.enums import UserAvailability, UserStatus
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.db.models.user_group_membership import UserGroupMembership
@@ -487,21 +487,46 @@ async def ensure_manual_create_assignment(
     actor: User,
     ctx: ScopeContext,
 ) -> None:
-    """Make a manually created contact visible in the actor's scope."""
-    role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
-    if role == UserRole.ADMIN:
-        return
-
+    """Make a manually created contact visible; set owner = creating manager (incl. admin)."""
     group_ids = visible_group_ids(ctx)
-    if group_ids == SCOPE_ALL or not isinstance(group_ids, set) or not group_ids:
+    actor_groups = await list_user_group_ids(session, actor.id)
+
+    preferred: list[int] = []
+    if group_ids == SCOPE_ALL:
+        preferred = list(actor_groups)
+        if not preferred and actor.group_id is not None:
+            preferred = [int(actor.group_id)]
+        if not preferred and actor.department_id is not None:
+            dept_group = await session.execute(
+                select(Group.id)
+                .where(
+                    Group.department_id == actor.department_id,
+                    Group.name != DEPT_INBOX_GROUP_NAME,
+                )
+                .order_by(Group.id)
+                .limit(1),
+            )
+            gid = dept_group.scalar_one_or_none()
+            if gid is not None:
+                preferred = [int(gid)]
+    elif isinstance(group_ids, set) and group_ids:
+        preferred = [gid for gid in actor_groups if gid in group_ids]
+        if not preferred:
+            preferred = [min(group_ids)]
+    else:
         return
 
-    actor_groups = await list_user_group_ids(session, actor.id)
-    preferred = [gid for gid in actor_groups if gid in group_ids]
-    group_id = preferred[0] if preferred else min(group_ids)
+    if not preferred:
+        return
+    group_id = preferred[0]
 
     existing = await get_assignment(session, contact_id, group_id)
     if existing is not None:
+        if existing.owner_user_id is None:
+            existing.owner_user_id = actor.id
+            if not existing.assignment_source:
+                existing.assignment_source = ASSIGNMENT_MANUAL_CREATE
+            await session.flush()
         return
 
     now = utc_now()
