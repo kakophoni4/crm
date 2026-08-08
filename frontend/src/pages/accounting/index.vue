@@ -79,9 +79,34 @@ import {
   VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
 } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
+import { useAuthStore } from '@/shared/store/auth'
 
 const message = useMessage()
 const dialog = useDialog()
+const auth = useAuthStore()
+
+/** Полное юр.имя → короткое «ООО „АФИНА“». */
+function shortLavkaName(name: string | null | undefined): string {
+  const raw = (name || '').trim()
+  if (!raw) return ''
+  const quoted = raw.match(/[«"“„]([^»"”]+)[»"”]/)
+  if (quoted?.[1]?.trim()) {
+    const inner = quoted[1].trim()
+    if (/общество\s+с\s+ограниченной\s+ответственностью|ооо/i.test(raw)) {
+      return `ООО «${inner}»`
+    }
+    return inner
+  }
+  return raw
+    .replace(/Общество\s+с\s+ограниченной\s+ответственностью/gi, 'ООО')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function lavkaLabel(name: string | null | undefined, inn: string): string {
+  const short = shortLavkaName(name)
+  return short ? `${short} · ${inn}` : inn
+}
 
 const loading = ref(false)
 const syncingRequirements = ref(false)
@@ -289,7 +314,7 @@ function openEditRate(unit: {
     return
   }
   rateEditUnitId.value = id
-  rateEditLabel.value = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
+  rateEditLabel.value = lavkaLabel(unit.name, unit.inn)
   rateEditValue.value =
     unit.commission_rate_percent != null ? Number(unit.commission_rate_percent) : null
   rateEditOpen.value = true
@@ -332,7 +357,7 @@ function openEditLimit(unit: {
     return
   }
   limitEditUnitId.value = id
-  limitEditLabel.value = unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
+  limitEditLabel.value = lavkaLabel(unit.name, unit.inn)
   limitEditValue.value =
     unit.volume_limit != null ? Number(unit.volume_limit) : null
   limitEditOpen.value = true
@@ -366,7 +391,7 @@ async function submitEditLimit(): Promise<void> {
 
 function openEditPeriods(row: AccountingUnitOwnerRow): void {
   periodsEditUnitId.value = row.unit_id
-  periodsEditLabel.value = row.name ? `${row.name} · ${row.inn}` : row.inn
+  periodsEditLabel.value = lavkaLabel(row.name, row.inn)
   periodsEditValue.value = [...(row.period_codes || [])]
   periodsEditOpen.value = true
 }
@@ -467,7 +492,7 @@ const previewKind = ref<AttachmentPreviewKind>('spreadsheet')
 
 const unitOptions = computed<SelectOption[]>(() =>
   units.value.map((unit) => ({
-    label: unit.name ? `${unit.name} (${unit.inn})` : unit.inn,
+    label: lavkaLabel(unit.name, unit.inn),
     value: unit.inn,
   })),
 )
@@ -547,25 +572,7 @@ async function openRequirementPreview(row: AccountingRequirement): Promise<void>
 }
 
 function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
-  return unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
-}
-
-/** Полное юр.имя → короткое «ООО „АФИНА“» / текст в кавычках. */
-function shortLavkaName(name: string | null | undefined): string {
-  const raw = (name || '').trim()
-  if (!raw) return ''
-  const quoted = raw.match(/[«"“„]([^»"”]+)[»"”]/)
-  if (quoted?.[1]?.trim()) {
-    const inner = quoted[1].trim()
-    if (/общество\s+с\s+ограниченной\s+ответственностью|ооо/i.test(raw)) {
-      return `ООО «${inner}»`
-    }
-    return inner
-  }
-  return raw
-    .replace(/Общество\s+с\s+ограниченной\s+ответственностью/gi, 'ООО')
-    .replace(/\s+/g, ' ')
-    .trim()
+  return lavkaLabel(unit.name, unit.inn)
 }
 
 function formatUnitRate(value: number | null | undefined): string {
@@ -685,7 +692,7 @@ const taskSaving = ref(false)
 
 const taskUnitOptions = computed(() =>
   units.value.map((u) => ({
-    label: `${u.name} (${u.inn})`,
+    label: lavkaLabel(u.name, u.inn),
     value: u.inn,
   })),
 )
@@ -761,10 +768,11 @@ function onTaskUploadChange(options: { fileList: UploadFileInfo[] }): void {
 }
 
 async function openTaskFromReqModal(row: AccountingRequirement): Promise<void> {
+  const short = shortLavkaName(row.supplier.name) || row.supplier.inn
   taskTarget.value = row
-  taskTitle.value = `Требование: ${row.title}`
+  taskTitle.value = `Требование ФНС · ${short}`
   taskDescription.value = ''
-  taskAssigneeId.value = null
+  taskAssigneeId.value = auth.user?.id ?? null
   taskUnitInn.value = row.supplier.inn || null
   taskDueAt.value = defaultTaskDueFromRequirement(row)
   taskFiles.value = []
@@ -779,13 +787,26 @@ async function openTaskFromReqModal(row: AccountingRequirement): Promise<void> {
   }
   try {
     const data = await listAccountingTaskAssignees()
+    const meId = auth.user?.id
     taskAssigneeOptions.value = data.map((u) => ({
-      label: u.full_name,
+      label: meId != null && u.id === meId ? `Себе (${u.full_name})` : u.full_name,
       value: u.id,
     }))
+    if (meId != null && !taskAssigneeOptions.value.some((o) => o.value === meId)) {
+      taskAssigneeOptions.value.unshift({
+        label: `Себе (${auth.user?.full_name || 'я'})`,
+        value: meId,
+      })
+    }
   } catch {
     taskAssigneeOptions.value = []
   }
+}
+
+function assignTaskToSelf(): void {
+  const meId = auth.user?.id
+  if (meId == null) return
+  taskAssigneeId.value = meId
 }
 
 async function submitTaskFromReq(): Promise<void> {
@@ -932,7 +953,7 @@ async function onToggleUnitActive(row: AccountingUnitOwnerRow, nextActive: boole
 async function onDeleteUnit(row: AccountingUnitOwnerRow): Promise<void> {
   dialog.warning({
     title: 'Удалить лавку?',
-    content: `Удалить «${row.name || row.inn}» (ИНН ${row.inn}) из CRM? Если на лавке есть активные заявки — удаление будет запрещено.`,
+    content: `Удалить «${shortLavkaName(row.name) || row.inn}» (ИНН ${row.inn}) из CRM? Если на лавке есть активные заявки — удаление будет запрещено.`,
     positiveText: 'Удалить',
     negativeText: 'Отмена',
     onPositiveClick: async () => {
@@ -1489,7 +1510,9 @@ onUnmounted(() => {
                     }"
                   >
                     <div class="accounting-page__owner-lavka">
-                      <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
+                      <span class="accounting-page__owner-name">{{
+                        shortLavkaName(row.name) || row.name || row.inn
+                      }}</span>
                       <span class="accounting-page__owner-inn">
                         {{ row.inn }} · {{ formatUnitRate(row.commission_rate_percent) }}
                       </span>
@@ -1561,7 +1584,9 @@ onUnmounted(() => {
                     }"
                   >
                     <div class="accounting-page__owner-lavka">
-                      <span class="accounting-page__owner-name">{{ row.name || row.inn }}</span>
+                      <span class="accounting-page__owner-name">{{
+                        shortLavkaName(row.name) || row.name || row.inn
+                      }}</span>
                       <span class="accounting-page__owner-inn">{{ row.inn }}</span>
                     </div>
                     <div class="accounting-page__owner-actions">
@@ -1611,7 +1636,12 @@ onUnmounted(() => {
       <p v-if="replyTarget" class="accounting-page__owners-hint">
         Требование ФНС от
         {{ formatDate(replyTarget.received_at || replyTarget.created_at) }}
-        по {{ replyTarget.supplier.name || replyTarget.supplier.inn }}
+        по
+        {{
+          shortLavkaName(replyTarget.supplier.name) ||
+          replyTarget.supplier.name ||
+          replyTarget.supplier.inn
+        }}
       </p>
       <p class="accounting-page__owners-hint">
         Загрузите комплект документов и отправьте.
@@ -1645,12 +1675,16 @@ onUnmounted(() => {
           />
         </NFormItem>
         <NFormItem label="Исполнитель" required>
-          <NSelect
-            v-model:value="taskAssigneeId"
-            :options="taskAssigneeOptions"
-            filterable
-            placeholder="Менеджер / документовед / себе"
-          />
+          <div style="display: flex; gap: 8px; width: 100%">
+            <NSelect
+              v-model:value="taskAssigneeId"
+              :options="taskAssigneeOptions"
+              filterable
+              placeholder="Выберите исполнителя"
+              style="flex: 1"
+            />
+            <NButton secondary @click="assignTaskToSelf">Себе</NButton>
+          </div>
         </NFormItem>
         <NFormItem label="Заголовок" required>
           <NInput v-model:value="taskTitle" />
@@ -1669,7 +1703,10 @@ onUnmounted(() => {
             Из срока ответа по требованию; если в СБИС пусто — 5 рабочих дней от получения.
           </p>
         </NFormItem>
-        <NFormItem label="Файлы">
+        <NFormItem label="Доп. файлы">
+          <p class="accounting-page__owners-hint" style="margin: 0 0 8px">
+            PDF требования прикрепится сам. Здесь — только дополнительные файлы.
+          </p>
           <NUpload multiple :default-upload="false" @change="onTaskUploadChange">
             <NButton secondary>Прикрепить</NButton>
           </NUpload>

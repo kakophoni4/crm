@@ -1058,7 +1058,6 @@ class AccountingService:
         )
         from app.modules.db.models.enums import UserStatus
 
-        del actor
         result = await self._session.execute(
             select(User)
             .where(
@@ -1069,11 +1068,18 @@ class AccountingService:
                         UserRole.GROUP_SENIOR,
                         UserRole.SENIOR,
                         UserRole.ACCOUNTANT,
+                        UserRole.CHIEF_ACCOUNTANT,
+                        UserRole.ADMIN,
                     ],
                 ),
             )
             .order_by(User.full_name)
             .limit(300),
+        )
+        users = list(result.scalars().all())
+        # Текущий пользователь первым — удобно выбрать «себе»
+        users.sort(
+            key=lambda u: (0 if u.id == actor.id else 1, (u.full_name or "").casefold()),
         )
         items = [
             AccountingTaskAssigneeOption(
@@ -1081,7 +1087,7 @@ class AccountingService:
                 full_name=u.full_name,
                 role=str(u.role.value if hasattr(u.role, "value") else u.role),
             )
-            for u in result.scalars().all()
+            for u in users
         ]
         return AccountingTaskAssigneeListResponse(items=items)
 
@@ -1147,8 +1153,16 @@ class AccountingService:
         )
         self._session.add(task)
         await self._session.flush()
+        # PDF требования всегда в задаче; доп. файлы из формы — следом.
+        attached: list[int] = []
+        if row.pdf_file_id is not None:
+            attached.append(int(row.pdf_file_id))
         for fid in body.file_ids or []:
-            self._session.add(DepartmentTaskFile(task_id=task.id, file_id=int(fid)))
+            fid_i = int(fid)
+            if fid_i not in attached:
+                attached.append(fid_i)
+        for fid in attached:
+            self._session.add(DepartmentTaskFile(task_id=task.id, file_id=fid))
         await self._session.commit()
         await self._session.refresh(task)
         task_service = TaskService(self._session)
