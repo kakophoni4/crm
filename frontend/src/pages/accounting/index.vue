@@ -550,6 +550,24 @@ function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
   return unit.name ? `${unit.name} · ${unit.inn}` : unit.inn
 }
 
+/** Полное юр.имя → короткое «ООО „АФИНА“» / текст в кавычках. */
+function shortLavkaName(name: string | null | undefined): string {
+  const raw = (name || '').trim()
+  if (!raw) return ''
+  const quoted = raw.match(/[«"“„]([^»"”]+)[»"”]/)
+  if (quoted?.[1]?.trim()) {
+    const inner = quoted[1].trim()
+    if (/общество\s+с\s+ограниченной\s+ответственностью|ооо/i.test(raw)) {
+      return `ООО «${inner}»`
+    }
+    return inner
+  }
+  return raw
+    .replace(/Общество\s+с\s+ограниченной\s+ответственностью/gi, 'ООО')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function formatUnitRate(value: number | null | undefined): string {
   if (value == null) return '—'
   return `${Number(value)}%`
@@ -1059,62 +1077,79 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
 
 const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() => [
   {
-    title: 'Получено',
-    key: 'received_at',
-    width: 140,
-    render: (row) => formatDate(row.received_at),
-  },
-  {
-    title: 'Срок ответа',
-    key: 'response_due_date',
-    width: 130,
+    title: 'Лавка',
+    key: 'supplier',
+    minWidth: 200,
+    ellipsis: { tooltip: true },
     render: (row) => {
-      if (!row.response_due_date) return '—'
-      const label = row.response_due_date
-      const cls = row.is_overdue
-        ? 'accounting-page__due--overdue'
-        : row.due_soon
-          ? 'accounting-page__due--soon'
-          : ''
-      return h('span', { class: cls }, label)
-    },
-  },
-  {
-    title: 'Ответ ФНС',
-    key: 'reply_status',
-    width: 120,
-    render: (row) => {
-      const map: Record<string, string> = {
-        none: 'Нет',
-        sent: 'Отправлен',
-        answered: 'Есть в СБИС',
-        error: 'Ошибка',
-      }
-      const status = row.reply_status || 'none'
+      const short = shortLavkaName(row.supplier.name) || row.supplier.inn
+      const full = row.supplier.name || row.supplier.inn
       return h(
-        'span',
-        { title: row.reply_error || undefined },
-        map[status] || status,
+        'div',
+        { class: 'accounting-page__deal-cell', title: full },
+        [
+          h('span', { class: 'accounting-page__deal-main accounting-page__lavka-short' }, short),
+          h('span', { class: 'accounting-page__deal-sub' }, `ИНН ${row.supplier.inn}`),
+        ],
       )
     },
   },
   {
-    title: 'Лавка',
-    key: 'supplier',
-    minWidth: 180,
+    title: 'Получено',
+    key: 'received_at',
+    width: 112,
     render: (row) =>
-      row.supplier.name ? `${row.supplier.name} · ${row.supplier.inn}` : row.supplier.inn,
+      h('span', { class: 'accounting-page__mono' }, formatDocumentDate(row.received_at)),
+  },
+  {
+    title: 'Срок',
+    key: 'response_due_date',
+    width: 110,
+    render: (row) => {
+      if (!row.response_due_date) return h('span', { class: 'accounting-page__deal-sub' }, '—')
+      const cls = row.is_overdue
+        ? 'accounting-page__due--overdue'
+        : row.due_soon
+          ? 'accounting-page__due--soon'
+          : 'accounting-page__mono'
+      return h('span', { class: cls }, formatDocumentDate(row.response_due_date))
+    },
+  },
+  {
+    title: 'Ответ',
+    key: 'reply_status',
+    width: 100,
+    render: (row) => {
+      const map: Record<string, { label: string; type: 'default' | 'success' | 'warning' | 'error' | 'info' }> = {
+        none: { label: 'Нет', type: 'default' },
+        sent: { label: 'Отправлен', type: 'info' },
+        answered: { label: 'В СБИС', type: 'success' },
+        error: { label: 'Ошибка', type: 'error' },
+      }
+      const status = row.reply_status || 'none'
+      const meta = map[status] || { label: status, type: 'default' as const }
+      return h(
+        NTag,
+        { size: 'small', bordered: false, type: meta.type, title: row.reply_error || undefined },
+        { default: () => meta.label },
+      )
+    },
   },
   {
     title: 'Требование',
     key: 'title',
-    minWidth: 180,
-    render: (row) => row.title,
+    minWidth: 140,
+    ellipsis: { tooltip: true },
+    render: (row) => {
+      const title = row.title?.replace(/^Требование\s+/i, '') || 'ФНС'
+      return h('span', { title: row.title }, title)
+    },
   },
   {
-    title: 'Файл',
-    key: 'pdf',
-    width: 520,
+    title: '',
+    key: 'actions',
+    width: 280,
+    fixed: 'right',
     render: (row) => {
       const actions = []
       if (row.has_pdf) {
@@ -1122,52 +1157,46 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
           h(
             NButton,
             {
-              size: 'small',
+              size: 'tiny',
               quaternary: true,
+              title: 'Просмотр PDF',
               loading: previewingReqId.value === row.id,
               onClick: () => openRequirementPreview(row),
             },
-            {
-              icon: () => h(Eye, { size: 14 }),
-              default: () => 'Просмотр',
-            },
+            { icon: () => h(Eye, { size: 14 }) },
           ),
           h(
             NButton,
             {
-              size: 'small',
+              size: 'tiny',
               quaternary: true,
+              title: 'Скачать PDF',
               loading: downloadingReqId.value === row.id,
               onClick: () => onDownloadRequirement(row),
             },
-            {
-              icon: () => h(Download, { size: 14 }),
-              default: () => 'Скачать',
-            },
+            { icon: () => h(Download, { size: 14 }) },
           ),
         )
-      } else {
-        actions.push(h('span', '—'))
       }
       actions.push(
         h(
           NButton,
           {
-            size: 'small',
+            size: 'tiny',
             type: 'primary',
             secondary: true,
             onClick: () => openReplyModal(row),
           },
-          { default: () => 'Ответ в ФНС' },
+          { default: () => 'Ответ' },
         ),
         h(
           NButton,
           {
-            size: 'small',
+            size: 'tiny',
             secondary: true,
             onClick: () => openTaskFromReqModal(row),
           },
-          { default: () => 'Поставить задачу' },
+          { default: () => 'Задача' },
         ),
       )
       if (row.status !== 'answered') {
@@ -1175,17 +1204,13 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
           h(
             NButton,
             {
-              size: 'small',
-              type: 'primary',
-              secondary: true,
-              title: 'Отметить требование как прочитанное',
+              size: 'tiny',
+              quaternary: true,
+              title: 'Отметить прочитанным',
               loading: answeringReqId.value === row.id,
               onClick: () => onSetRequirementStatus(row, 'answered'),
             },
-            {
-              icon: () => h(MailOpen, { size: 14 }),
-              default: () => 'Отметить прочитанным',
-            },
+            { icon: () => h(MailOpen, { size: 14 }) },
           ),
         )
       } else {
@@ -1193,20 +1218,17 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
           h(
             NButton,
             {
-              size: 'small',
+              size: 'tiny',
               quaternary: true,
               title: 'Вернуть в непрочитанные',
               loading: answeringReqId.value === row.id,
               onClick: () => onSetRequirementStatus(row, 'new'),
             },
-            {
-              icon: () => h(Undo2, { size: 14 }),
-              default: () => 'В непрочитанные',
-            },
+            { icon: () => h(Undo2, { size: 14 }) },
           ),
         )
       }
-      return h('div', { class: 'accounting-page__registry-actions' }, actions)
+      return h('div', { class: 'accounting-page__req-actions' }, actions)
     },
   },
 ])
@@ -1426,11 +1448,12 @@ onUnmounted(() => {
                   :columns="requirementColumns"
                   :data="requirements"
                   :bordered="false"
-                  :scroll-x="980"
+                  :scroll-x="920"
                   size="small"
                   virtual-scroll
                   :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
-                  :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
+                  :min-row-height="48"
+                  :row-class-name="() => 'accounting-page__req-row'"
                 />
               </div>
               <div class="accounting-page__pagination">
@@ -1878,7 +1901,8 @@ onUnmounted(() => {
 }
 
 .accounting-page__requirements {
-  width: min(1100px, 100%);
+  width: 100%;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -1890,8 +1914,37 @@ onUnmounted(() => {
   width: 100%;
 }
 
+.accounting-page__requirements-table :deep(.n-data-table-td) {
+  vertical-align: middle;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.accounting-page__requirements-table :deep(.accounting-page__req-row td) {
+  white-space: normal;
+}
+
+.accounting-page__lavka-short {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.accounting-page__mono {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.accounting-page__req-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+}
+
 .accounting-page__requirements .accounting-page__filters {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .accounting-page__requirements .accounting-page__pagination {
@@ -1901,11 +1954,15 @@ onUnmounted(() => {
 .accounting-page__due--overdue {
   color: #dc2626;
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .accounting-page__due--soon {
   color: #d97706;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .accounting-page__period-label {
