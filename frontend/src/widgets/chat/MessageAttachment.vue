@@ -84,10 +84,14 @@ function applyCached(path: string): boolean {
   return true
 }
 
-async function load(): Promise<void> {
+/** Images need bytes for thumbnails; archives/docs load only on click. */
+const shouldAutoload = computed(() => isImage.value)
+
+async function load(force = false): Promise<void> {
   if (!isReady.value || !downloadPath.value || !visible.value) return
   if (applyCached(downloadPath.value)) return
   if (blobUrl.value || loading.value) return
+  if (!force && !shouldAutoload.value) return
 
   const token = ++loadToken
   failed.value = false
@@ -114,7 +118,7 @@ async function ensureBlobLoaded(): Promise<boolean> {
   if (blobUrl.value) return true
   if (downloadPath.value && applyCached(downloadPath.value)) return true
   if (!isReady.value || !downloadPath.value) return false
-  await load()
+  await load(true)
   return blobUrl.value != null
 }
 
@@ -188,13 +192,12 @@ onUnmounted(() => {
       @keydown.enter.prevent="openPreview"
       @keydown.space.prevent="openPreview"
     />
-    <NSpin v-else-if="!isImage && isReady && !blobUrl && (loading || previewLoading)" size="small" />
     <div v-else-if="!isImage && isReady" class="message-attachment__doc">
       <button
         type="button"
         class="message-attachment__doc-main"
-        :disabled="previewLoading"
-        @click="openPreview"
+        :disabled="previewLoading || loading"
+        @click="canPreview ? openPreview() : downloadFile()"
       >
         <component :is="docIcon" :size="18" class="message-attachment__doc-icon" />
         <span class="message-attachment__doc-name" :title="label">{{ label }}</span>
@@ -202,6 +205,7 @@ onUnmounted(() => {
       </button>
       <div class="message-attachment__doc-actions">
         <NButton
+          v-if="canPreview"
           size="tiny"
           quaternary
           :loading="previewLoading && !blobUrl"

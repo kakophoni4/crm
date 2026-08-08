@@ -57,9 +57,9 @@ function setCacheEntry(downloadPath: string, entry: CachedAttachmentBlob): void 
 }
 
 /** Parallel attachment warm-up; keep below browser per-host connection budget. */
-const MAX_CONCURRENT_DOWNLOADS = 4
+const MAX_CONCURRENT_DOWNLOADS = 3
 const QUEUE_WAIT_MS = 120_000
-const DOWNLOAD_MS = 120_000
+const DOWNLOAD_MS = 180_000
 
 let activeDownloads = 0
 const highWaitQueue: Array<() => void> = []
@@ -217,12 +217,14 @@ export function prefetchAttachmentsForMessages(
   options: { priority?: AttachmentDownloadPriority; limit?: number } = {},
 ): void {
   const priority = options.priority ?? 'normal'
-  // Background warm-up: only light previews, capped — heavy docs starve open-chat traffic.
-  const limit = options.limit ?? (priority === 'high' ? 24 : 6)
+  // Only light previews (images/pdf/audio). ZIPs/docs must not prefetch —
+  // a chat with many receipt archives otherwise saturates the host and
+  // other API calls hit the 15s axios timeout ("сервер не отвечает").
+  const limit = options.limit ?? (priority === 'high' ? 12 : 6)
   let queued = 0
   for (const { path, mime } of collectReadyAttachments(messages)) {
     if (queued >= limit) break
-    if (priority !== 'high' && !isLightPreviewMime(mime)) continue
+    if (!isLightPreviewMime(mime)) continue
     if (peekAttachmentBlobUrl(path) || inflight.has(path)) continue
     queued += 1
     void fetchAttachmentBlob(path, mime, priority).catch(() => undefined)
