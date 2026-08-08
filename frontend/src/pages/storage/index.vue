@@ -420,6 +420,24 @@ function receiptsBack(): void {
   selectedReceiptPeriod.value = null
 }
 
+function goReceiptsRoot(): void {
+  selectedReceiptPeriod.value = null
+  receiptFolder.value = null
+  storageUnitInn.value = null
+  storageBuyerInn.value = null
+}
+
+function goReceiptPeriodLevel(): void {
+  receiptFolder.value = null
+  storageUnitInn.value = null
+  storageBuyerInn.value = null
+}
+
+function goReceiptFolderLevel(): void {
+  storageUnitInn.value = null
+  storageBuyerInn.value = null
+}
+
 function receiptKindLabel(kind: string, isCorrection = false): string {
   const base = kind === 'notice' ? 'Извещение о вводе' : 'Квитанция о приеме'
   return isCorrection ? `${base} · корректировка` : base
@@ -1003,12 +1021,7 @@ onMounted(() => {
                 <button
                   type="button"
                   class="explorer-crumb"
-                  @click="
-                    selectedReceiptPeriod = null
-                    receiptFolder = null
-                    storageUnitInn = null
-                    storageBuyerInn = null
-                  "
+                  @click="goReceiptsRoot"
                 >
                   Квитанции
                 </button>
@@ -1016,7 +1029,7 @@ onMounted(() => {
                 <button
                   type="button"
                   class="explorer-crumb"
-                  @click="receiptFolder = null; storageUnitInn = null; storageBuyerInn = null"
+                  @click="goReceiptPeriodLevel"
                 >
                   {{ formatOptPeriodLabel(selectedReceiptPeriod) || selectedReceiptPeriod }}
                 </button>
@@ -1025,7 +1038,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="explorer-crumb"
-                    @click="storageUnitInn = null; storageBuyerInn = null"
+                    @click="goReceiptFolderLevel"
                   >
                     {{ receiptFolderLabel }}
                   </button>
