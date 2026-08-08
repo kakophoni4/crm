@@ -43,6 +43,7 @@ import {
 } from '@/features/leads/opt-api'
 import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import {
+  invalidateOrderDocsAvailability,
   loadOrderDocsAvailability,
   peekOrderDocsAvailability,
   setOrderDocsAvailability,
@@ -542,6 +543,8 @@ async function loadOrders(options?: { silent?: boolean }): Promise<void> {
       orders.value,
       selectedOrderId.value ?? props.initialOrderId ?? null,
     )
+    // Selection may stay the same (single order) — still re-check docs.
+    void refreshReceiptsAvailability({ force: !options?.silent })
   } catch (err) {
     if (signal.aborted || isAbortError(err)) return
     if (!options?.silent && !cached?.length && orders.value.length === 0) {
@@ -675,38 +678,54 @@ async function refreshReceiptsAvailability(opts?: { force?: boolean }): Promise<
   }
   const leadId = props.leadId
   const orderId = order.id
+  // Уже отправляли квитанции клиенту — кнопки показываем сразу.
+  if (order.receipts_sent_at) {
+    receiptsAvailable.value = true
+  }
   // Мгновенно показываем кэш — не мигаем кнопками «нет → есть».
   const cached = peekOrderDocsAvailability(orderId)
   if (cached) {
-    receiptsAvailable.value = cached.receipts
+    if (cached.receipts) receiptsAvailable.value = true
+    else if (!order.receipts_sent_at) receiptsAvailable.value = false
     salesBooksAvailable.value = cached.salesBooks
+    // Ложный «нет» при уже отправленных квитанциях — сбрасываем кэш.
+    if (!cached.receipts && order.receipts_sent_at) {
+      invalidateOrderDocsAvailability(orderId)
+    }
   }
+  const force =
+    opts?.force ||
+    (!!order.receipts_sent_at && cached != null && !cached.receipts)
   try {
     const value = await loadOrderDocsAvailability(
       orderId,
       async () => {
-        const [receipts, books] = await Promise.all([
-          listOptOrderReceipts(leadId, orderId).then(
-            (data) => data.available,
-            () => false,
-          ),
-          listOptOrderSalesBookExtracts(leadId, orderId).then(
-            (data) => data.available,
-            () => false,
-          ),
+        const [receiptsRes, booksRes] = await Promise.allSettled([
+          listOptOrderReceipts(leadId, orderId),
+          listOptOrderSalesBookExtracts(leadId, orderId),
         ])
-        return { receipts, salesBooks: books }
+        if (receiptsRes.status === 'rejected' && booksRes.status === 'rejected') {
+          throw receiptsRes.reason
+        }
+        const receipts =
+          receiptsRes.status === 'fulfilled'
+            ? receiptsRes.value.available
+            : Boolean(order.receipts_sent_at)
+        const salesBooks =
+          booksRes.status === 'fulfilled' ? booksRes.value.available : false
+        return { receipts, salesBooks }
       },
-      opts,
+      { force },
     )
     if (selectedOrderId.value === orderId) {
-      receiptsAvailable.value = value.receipts
+      receiptsAvailable.value = value.receipts || Boolean(order.receipts_sent_at)
       salesBooksAvailable.value = value.salesBooks
     }
   } catch {
-    if (!cached && selectedOrderId.value === orderId) {
-      receiptsAvailable.value = false
-      salesBooksAvailable.value = false
+    if (selectedOrderId.value === orderId) {
+      if (order.receipts_sent_at) receiptsAvailable.value = true
+      else if (!cached) receiptsAvailable.value = false
+      if (!cached) salesBooksAvailable.value = false
     }
   }
 }
@@ -831,6 +850,11 @@ watch(
   { immediate: true },
 )
 
+// Period may appear after mount (disabled→enabled) — reload orders.
+watch(hasLead, (ok, wasOk) => {
+  if (ok && !wasOk) void loadOrders()
+})
+
 watch(
   () => store.optOrdersRefreshNonce,
   () => {
@@ -850,6 +874,16 @@ watch(
 watch(selectedOrderId, () => {
   void refreshReceiptsAvailability()
 })
+
+// Same selected id, but status became submitted (poll) — show docs buttons.
+watch(
+  () => selectedOrder.value?.status,
+  (status, prev) => {
+    if (status === 'submitted' && prev !== 'submitted') {
+      void refreshReceiptsAvailability({ force: true })
+    }
+  },
+)
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
@@ -908,7 +942,6 @@ onUnmounted(() => {
 
       <template v-else>
         <div
-          v-if="!isWide || orders.length > 1"
           class="opt-orders__picker"
           role="tablist"
           aria-label="Заявки сделки"

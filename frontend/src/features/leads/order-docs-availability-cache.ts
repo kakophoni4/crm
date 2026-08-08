@@ -9,7 +9,7 @@ interface OrderDocsAvailability {
   at: number
 }
 
-type OrderDocsFlags = { receipts: boolean; salesBooks: boolean }
+export type OrderDocsFlags = { receipts: boolean; salesBooks: boolean }
 
 const store = new Map<number, OrderDocsAvailability>()
 const MAX_AGE_MS = 5 * 60_000
@@ -31,6 +31,12 @@ export function setOrderDocsAvailability(orderId: number, value: OrderDocsFlags)
   store.set(orderId, { ...value, at: Date.now() })
 }
 
+/** Drop cache entry so the next load hits the network. */
+export function invalidateOrderDocsAvailability(orderId: number): void {
+  store.delete(orderId)
+  inflight.delete(orderId)
+}
+
 export async function loadOrderDocsAvailability(
   orderId: number,
   loader: () => Promise<OrderDocsFlags>,
@@ -46,6 +52,9 @@ export async function loadOrderDocsAvailability(
       const value = await loader()
       setOrderDocsAvailability(orderId, value)
       return value
+    } catch (err) {
+      // Do not cache failures as «нет документов».
+      throw err
     } finally {
       inflight.delete(orderId)
     }
