@@ -28,6 +28,7 @@ import {
   listMyTasks,
   moveTask,
   reopenTask,
+  updateTask,
   type DepartmentTask,
   type TaskBoard,
   type TaskStatus,
@@ -88,9 +89,14 @@ const typeOptions = computed(() =>
 
 const assigneeOptions = computed(() =>
   deptUsers.value
-    .filter((u) => u.role === 'user' && u.status === 'active')
+    .filter((u) => u.status === 'active')
     .map((u) => ({ label: u.full_name, value: u.id })),
 )
+
+const reassignOpen = ref(false)
+const reassignLoading = ref(false)
+const reassignTask = ref<DepartmentTask | null>(null)
+const reassignAssigneeId = ref<number | null>(null)
 
 const boardDepartmentOptions = computed(() =>
   departments.value.map((d) => ({ label: d.name, value: d.id })),
@@ -157,12 +163,13 @@ async function loadUsers(): Promise<void> {
   try {
     const params: { department_id?: number } = {}
     if (isAdmin.value) {
-      const deptId = formDepartmentId.value ?? selectedDeptId.value
+      const deptId = formDepartmentId.value ?? selectedDeptId.value ?? reassignTask.value?.department_id
       if (deptId != null) params.department_id = deptId
+      // Admin without dept filter: load all active users for reassign/create.
     } else if (auth.user?.department_id != null) {
       params.department_id = auth.user.department_id
-    } else {
-      return
+    } else if (reassignTask.value?.department_id != null) {
+      params.department_id = reassignTask.value.department_id
     }
     deptUsers.value = await listUsers(params)
   } catch {
@@ -272,6 +279,35 @@ async function onDelete(task: DepartmentTask): Promise<void> {
     await refresh()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Ошибка')
+  }
+}
+
+function openReassign(task: DepartmentTask): void {
+  reassignTask.value = task
+  reassignAssigneeId.value = task.assignee_id
+  reassignOpen.value = true
+  void loadUsers()
+}
+
+async function submitReassign(): Promise<void> {
+  if (!reassignTask.value || reassignAssigneeId.value == null) {
+    message.warning('Выберите исполнителя')
+    return
+  }
+  if (reassignAssigneeId.value === reassignTask.value.assignee_id) {
+    reassignOpen.value = false
+    return
+  }
+  reassignLoading.value = true
+  try {
+    await updateTask(reassignTask.value.id, { assignee_id: reassignAssigneeId.value })
+    message.success('Исполнитель изменён')
+    reassignOpen.value = false
+    await refresh()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось переназначить')
+  } finally {
+    reassignLoading.value = false
   }
 }
 
@@ -462,10 +498,18 @@ onUnmounted(() => {
                     <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
                     <NSpace size="small" class="task-card-actions">
                       <NButton
+                        v-if="task.status !== 'closed'"
+                        size="tiny"
+                        secondary
+                        @click.stop="openReassign(task)"
+                      >
+                        Переназначить
+                      </NButton>
+                      <NButton
                         v-if="task.status === 'done_pending'"
                         size="tiny"
                         type="primary"
-                        @click="onConfirm(task)"
+                        @click.stop="onConfirm(task)"
                       >
                         <template #icon><Check :size="12" /></template>
                         Подтвердить
@@ -473,7 +517,7 @@ onUnmounted(() => {
                       <NButton
                         v-if="task.status === 'done_pending'"
                         size="tiny"
-                        @click="onReopen(task)"
+                        @click.stop="onReopen(task)"
                       >
                         <template #icon><RotateCcw :size="12" /></template>
                         Вернуть
@@ -483,7 +527,7 @@ onUnmounted(() => {
                         size="tiny"
                         quaternary
                         type="error"
-                        @click="onDelete(task)"
+                        @click.stop="onDelete(task)"
                       >
                         <template #icon><Trash2 :size="12" /></template>
                       </NButton>
@@ -575,6 +619,32 @@ onUnmounted(() => {
           Создать
         </NButton>
       </NForm>
+    </NModal>
+
+    <NModal
+      v-model:show="reassignOpen"
+      preset="card"
+      title="Переназначить задачу"
+      style="width: 420px; max-width: 94vw"
+    >
+      <p v-if="reassignTask" class="task-card-desc" style="margin-bottom: 12px">
+        {{ reassignTask.title }}
+      </p>
+      <NForm label-placement="top">
+        <NFormItem label="Исполнитель" required>
+          <NSelect
+            v-model:value="reassignAssigneeId"
+            :options="assigneeOptions"
+            filterable
+            placeholder="Выберите исполнителя"
+          />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NButton type="primary" :loading="reassignLoading" @click="submitReassign">
+          Сохранить
+        </NButton>
+      </template>
     </NModal>
   </div>
 </template>

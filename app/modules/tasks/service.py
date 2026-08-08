@@ -255,7 +255,7 @@ class TaskService:
             raise ValidationError(message="Исполнитель должен быть из вашего отдела")
         if role == UserRole.ADMIN and assignee.department_id is not None and assignee.department_id != dept_id:
             raise ValidationError(message="Исполнитель должен быть из выбранного отдела")
-        if not can_act_on_user(ctx, assignee.id):
+        if not can_act_on_user(ctx, assignee):
             raise ValidationError(message="Нельзя назначить этого исполнителя")
         if body.task_type not in TaskType:
             raise ValidationError(message="Неверный тип задачи")
@@ -297,9 +297,15 @@ class TaskService:
             task.due_reminder_sent_at = None
         if body.assignee_id is not None:
             assignee = await self._load_user(body.assignee_id)
-            if assignee.department_id != task.department_id:
+            role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+            # Many users (admin/chief) have null department_id — don't block reassign.
+            if (
+                role != UserRole.ADMIN
+                and assignee.department_id is not None
+                and assignee.department_id != task.department_id
+            ):
                 raise ValidationError(message="Исполнитель должен быть из отдела задачи")
-            if not can_act_on_user(ctx, assignee.id):
+            if not can_act_on_user(ctx, assignee):
                 raise ValidationError(message="Нельзя назначить этого исполнителя")
             task.assignee_id = assignee.id
 
