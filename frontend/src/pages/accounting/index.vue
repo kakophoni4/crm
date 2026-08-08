@@ -735,7 +735,7 @@ async function openTaskFromReqModal(row: AccountingRequirement): Promise<void> {
   try {
     const data = await listAccountingTaskAssignees()
     taskAssigneeOptions.value = data.map((u) => ({
-      label: `${u.full_name} (${u.role})`,
+      label: u.full_name,
       value: u.id,
     }))
   } catch {
