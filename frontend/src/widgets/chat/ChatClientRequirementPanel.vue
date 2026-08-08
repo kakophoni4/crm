@@ -16,8 +16,8 @@ import {
 import type { UploadFileInfo } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
+import type { ChatDetail } from '@/entities/chat/types'
 import { uploadFile } from '@/features/chats/api'
-import type { Chat } from '@/features/chats/types'
 import {
   createClientRequirement,
   listClientRequirementUnits,
@@ -27,7 +27,7 @@ import {
 import { AppError } from '@/shared/api/http'
 
 const props = defineProps<{
-  chat: Chat
+  chat: ChatDetail
 }>()
 
 const message = useMessage()
