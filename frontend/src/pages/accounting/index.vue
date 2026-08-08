@@ -5,6 +5,7 @@ import {
   NCollapse,
   NCollapseItem,
   NDataTable,
+  NDatePicker,
   NEmpty,
   NForm,
   NFormItem,
@@ -659,6 +660,7 @@ const taskAssigneeId = ref<number | null>(null)
 const taskUnitInn = ref<string | null>(null)
 const taskTitle = ref('')
 const taskDescription = ref('')
+const taskDueAt = ref<number | null>(null)
 const taskAssigneeOptions = ref<{ label: string; value: number }[]>([])
 const taskFiles = ref<File[]>([])
 const taskSaving = ref(false)
@@ -669,6 +671,30 @@ const taskUnitOptions = computed(() =>
     value: u.inn,
   })),
 )
+
+/** +N рабочих дней (пн–пт) со следующего календарного дня — как на бэке. */
+function addWorkingDaysMs(startMs: number, days: number): number {
+  const cur = new Date(startMs)
+  cur.setHours(0, 0, 0, 0)
+  let left = days
+  while (left > 0) {
+    cur.setDate(cur.getDate() + 1)
+    const wd = cur.getDay()
+    if (wd !== 0 && wd !== 6) left -= 1
+  }
+  cur.setHours(18, 0, 0, 0)
+  return cur.getTime()
+}
+
+function defaultTaskDueFromRequirement(row: AccountingRequirement): number {
+  if (row.response_due_date) {
+    const d = new Date(`${row.response_due_date}T18:00:00`)
+    if (!Number.isNaN(d.getTime())) return d.getTime()
+  }
+  const received = new Date(row.received_at || row.created_at)
+  const base = Number.isNaN(received.getTime()) ? Date.now() : received.getTime()
+  return addWorkingDaysMs(base, 5)
+}
 
 function openReplyModal(row: AccountingRequirement): void {
   replyTarget.value = row
@@ -722,6 +748,7 @@ async function openTaskFromReqModal(row: AccountingRequirement): Promise<void> {
   taskDescription.value = ''
   taskAssigneeId.value = null
   taskUnitInn.value = row.supplier.inn || null
+  taskDueAt.value = defaultTaskDueFromRequirement(row)
   taskFiles.value = []
   taskModalOpen.value = true
   if (!units.value.length) {
@@ -764,6 +791,7 @@ async function submitTaskFromReq(): Promise<void> {
       assignee_id: taskAssigneeId.value,
       title: taskTitle.value.trim(),
       description: taskDescription.value.trim() || null,
+      due_at: taskDueAt.value ? new Date(taskDueAt.value).toISOString() : null,
       file_ids: fileIds,
     })
     message.success('Задача создана')
@@ -1606,6 +1634,17 @@ onUnmounted(() => {
         </NFormItem>
         <NFormItem label="Текст">
           <NInput v-model:value="taskDescription" type="textarea" :autosize="{ minRows: 3 }" />
+        </NFormItem>
+        <NFormItem label="Крайний срок" required>
+          <NDatePicker
+            v-model:value="taskDueAt"
+            type="datetime"
+            clearable
+            style="width: 100%"
+          />
+          <p class="accounting-page__owners-hint" style="margin: 6px 0 0">
+            Из срока ответа по требованию; если в СБИС пусто — 5 рабочих дней от получения.
+          </p>
         </NFormItem>
         <NFormItem label="Файлы">
           <NUpload multiple :default-upload="false" @change="onTaskUploadChange">

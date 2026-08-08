@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting.repository import AccountingRepository
+from app.modules.accounting.requirement_deadline import resolve_response_due_date
 from app.modules.accounting.schemas import (
     AccountingAccountantOption,
     AccountingAssignmentItem,
@@ -525,6 +526,16 @@ class AccountingService:
         }
         total = await self._repo.count_requirements(**filters)
         rows = await self._repo.list_requirements(limit=limit, offset=offset, **filters)
+        # Прописать срок, если СБИС не отдал: без PDF — 5 раб. дней от получения.
+        backfilled = False
+        for row in rows:
+            if row.response_due_date is None:
+                before = row.response_due_date
+                self._fill_response_due_from_pdf(row, pdf_bytes=None)
+                if row.response_due_date is not None and row.response_due_date != before:
+                    backfilled = True
+        if backfilled:
+            await self._session.commit()
         return AccountingRequirementListResponse(
             items=[self._requirement_to_response(row) for row in rows],
             total=total,
@@ -586,6 +597,71 @@ class AccountingService:
         if body.metadata:
             row.metadata_json = {**(row.metadata_json or {}), **body.metadata}
 
+    def _received_on(self, row: OptRequirement) -> date | None:
+        meta = row.metadata_json or {}
+        for key in ("document_date", "received_date"):
+            raw = meta.get(key)
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    return date.fromisoformat(raw.strip()[:10])
+                except ValueError:
+                    pass
+        if row.received_at is not None:
+            return row.received_at.date()
+        if row.created_at is not None:
+            return row.created_at.date()
+        return None
+
+    def _fill_response_due_from_pdf(
+        self,
+        row: OptRequirement,
+        *,
+        pdf_bytes: bytes | None,
+        force_default: bool = False,
+    ) -> None:
+        """Если СБИС не дал срок — парсим PDF или ставим 5 рабочих дней от получения."""
+        if row.response_due_date is not None and not force_default:
+            return
+        parsed = resolve_response_due_date(
+            existing=row.response_due_date,
+            received_on=self._received_on(row),
+            pdf_bytes=pdf_bytes,
+        )
+        if parsed.response_due_date is None:
+            return
+        row.response_due_date = parsed.response_due_date
+        meta = dict(row.metadata_json or {})
+        meta["response_due_source"] = parsed.source
+        if parsed.working_days is not None:
+            meta["response_due_working_days"] = parsed.working_days
+        row.metadata_json = meta
+
+    async def _ensure_requirement_response_due(self, row: OptRequirement) -> date | None:
+        if row.response_due_date is not None:
+            return row.response_due_date
+        pdf_bytes: bytes | None = None
+        if row.pdf_file_id is not None:
+            try:
+                files = FilesService(self._session)
+                pdf_bytes, _, _ = await files.get_bytes(row.pdf_file_id)
+            except Exception:
+                pdf_bytes = None
+        self._fill_response_due_from_pdf(row, pdf_bytes=pdf_bytes)
+        if row.response_due_date is None:
+            # последний резерв — 5 раб. дней от сегодня / received
+            parsed = resolve_response_due_date(
+                existing=None,
+                received_on=self._received_on(row) or date.today(),
+                pdf_bytes=None,
+            )
+            row.response_due_date = parsed.response_due_date
+            meta = dict(row.metadata_json or {})
+            meta["response_due_source"] = parsed.source
+            meta["response_due_working_days"] = parsed.working_days
+            row.metadata_json = meta
+        await self._session.flush()
+        return row.response_due_date
+
     async def ingest_requirement(
         self,
         body: AccountingRequirementIngestRequest,
@@ -596,6 +672,10 @@ class AccountingService:
         existing = await self._repo.get_requirement_by_external_id(body.external_id.strip())
         if existing is not None:
             self._apply_requirement_meta_fields(existing, body)
+            if existing.response_due_date is None and pdf_bytes:
+                self._fill_response_due_from_pdf(existing, pdf_bytes=pdf_bytes)
+            elif existing.response_due_date is None:
+                self._fill_response_due_from_pdf(existing, pdf_bytes=None)
             await self._session.flush()
             await self._session.commit()
             return AccountingRequirementIngestResponse(
@@ -668,6 +748,7 @@ class AccountingService:
         )
         if row.replied_at is not None and row.replied_at.tzinfo is not None:
             row.replied_at = row.replied_at.astimezone(UTC).replace(tzinfo=None)
+        self._fill_response_due_from_pdf(row, pdf_bytes=raw_pdf)
         created = await self._repo.add_requirement(row)
         await self._session.commit()
         return AccountingRequirementIngestResponse(
@@ -1032,23 +1113,23 @@ class AccountingService:
         if dept_id is None:
             raise ValidationError(message="У исполнителя нет отдела")
 
+        response_due = await self._ensure_requirement_response_due(row)
         due_at = body.due_at
-        if due_at is None and row.response_due_date is not None:
+        if due_at is None and response_due is not None:
             due_at = datetime(
-                row.response_due_date.year,
-                row.response_due_date.month,
-                row.response_due_date.day,
+                response_due.year,
+                response_due.month,
+                response_due.day,
                 18,
                 0,
                 0,
                 tzinfo=UTC,
             )
         task_type = body.task_type if body.task_type in {t.value for t in TaskType} else TaskType.NORMAL.value
-        if row.response_due_date is not None:
-            from datetime import date as date_cls
+        if response_due is not None:
             from datetime import timedelta
 
-            if row.response_due_date <= date_cls.today() + timedelta(days=1):
+            if response_due <= date.today() + timedelta(days=1):
                 task_type = TaskType.URGENT.value
 
         task = DepartmentTask(
