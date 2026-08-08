@@ -1558,13 +1558,12 @@ onUnmounted(() => {
       style="width: 480px; max-width: 94vw"
     >
       <p v-if="replyTarget" class="accounting-page__owners-hint">
-        {{ replyTarget.title }} · {{ replyTarget.supplier.name || replyTarget.supplier.inn }}
-        <template v-if="replyTarget.response_due_date">
-          · срок {{ replyTarget.response_due_date }}
-        </template>
+        Требование ФНС от
+        {{ formatDate(replyTarget.received_at || replyTarget.created_at) }}
+        по {{ replyTarget.supplier.name || replyTarget.supplier.inn }}
       </p>
       <p class="accounting-page__owners-hint">
-        ЭЦП ставит sbis-norm. Загрузите комплект документов и отправьте.
+        Загрузите комплект документов и отправьте.
       </p>
       <NUpload multiple :default-upload="false" @change="onReplyUploadChange">
         <NButton secondary>Выбрать файлы</NButton>
