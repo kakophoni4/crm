@@ -42,6 +42,11 @@ import {
   uploadOptApplication,
 } from '@/features/leads/opt-api'
 import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import {
+  loadOrderDocsAvailability,
+  peekOrderDocsAvailability,
+  setOrderDocsAvailability,
+} from '@/features/leads/order-docs-availability-cache'
 import { setOptOrdersCache } from '@/features/chats/chats-disk-cache'
 import { peekOptOrders } from '@/features/chats/payments-cache'
 import { useChatsStore } from '@/features/chats/store'
@@ -656,23 +661,53 @@ async function onDelete(): Promise<void> {
 }
 
 
-async function refreshReceiptsAvailability(): Promise<void> {
-  receiptsAvailable.value = false
-  salesBooksAvailable.value = false
-  if (props.leadId == null || selectedOrderId.value == null) return
-  const order = orders.value.find((row) => row.id === selectedOrderId.value)
-  if (!order || order.status !== 'submitted') return
-  try {
-    const data = await listOptOrderReceipts(props.leadId, order.id)
-    receiptsAvailable.value = data.available
-  } catch {
+async function refreshReceiptsAvailability(opts?: { force?: boolean }): Promise<void> {
+  if (props.leadId == null || selectedOrderId.value == null) {
     receiptsAvailable.value = false
+    salesBooksAvailable.value = false
+    return
+  }
+  const order = orders.value.find((row) => row.id === selectedOrderId.value)
+  if (!order || order.status !== 'submitted') {
+    receiptsAvailable.value = false
+    salesBooksAvailable.value = false
+    return
+  }
+  const leadId = props.leadId
+  const orderId = order.id
+  // Мгновенно показываем кэш — не мигаем кнопками «нет → есть».
+  const cached = peekOrderDocsAvailability(orderId)
+  if (cached) {
+    receiptsAvailable.value = cached.receipts
+    salesBooksAvailable.value = cached.salesBooks
   }
   try {
-    const data = await listOptOrderSalesBookExtracts(props.leadId, order.id)
-    salesBooksAvailable.value = data.available
+    const value = await loadOrderDocsAvailability(
+      orderId,
+      async () => {
+        const [receipts, books] = await Promise.all([
+          listOptOrderReceipts(leadId, orderId).then(
+            (data) => data.available,
+            () => false,
+          ),
+          listOptOrderSalesBookExtracts(leadId, orderId).then(
+            (data) => data.available,
+            () => false,
+          ),
+        ])
+        return { receipts, salesBooks: books }
+      },
+      opts,
+    )
+    if (selectedOrderId.value === orderId) {
+      receiptsAvailable.value = value.receipts
+      salesBooksAvailable.value = value.salesBooks
+    }
   } catch {
-    salesBooksAvailable.value = false
+    if (!cached && selectedOrderId.value === orderId) {
+      receiptsAvailable.value = false
+      salesBooksAvailable.value = false
+    }
   }
 }
 
@@ -705,6 +740,10 @@ async function onSendReceiptsToClient(order: OptOrder): Promise<void> {
         ? { ...row, receipts_sent_at: row.receipts_sent_at || new Date().toISOString() }
         : row,
     )
+    setOrderDocsAvailability(order.id, {
+      receipts: true,
+      salesBooks: salesBooksAvailable.value,
+    })
     message.success('Квитанции отправлены клиенту')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось отправить квитанции')

@@ -26,7 +26,6 @@ import {
   getVaultFileContent,
   listGroupFileGroups,
   listGroupFiles,
-  listStorageReceiptsTree,
   listVaultFiles,
   renameVaultFile,
   revokeShareLink,
@@ -49,6 +48,7 @@ import {
 } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 import { compareOptPeriodsDesc, formatOptPeriodLabel } from '@/features/leads/order-fields'
+import { fetchReceiptsTree, peekReceiptsTree } from '@/features/storage/receipts-tree-cache'
 
 type ReceiptFolderKind = 'main' | 'corrections' | 'sales_books'
 
@@ -145,10 +145,20 @@ async function loadGroupSummaries(): Promise<void> {
   }
 }
 
-async function loadReceipts(): Promise<void> {
+async function loadReceipts(opts?: { force?: boolean }): Promise<void> {
+  const cached = peekReceiptsTree()
+  if (cached?.length) {
+    receiptPeriods.value = [...cached].sort((a, b) =>
+      compareOptPeriodsDesc(a.period_code, b.period_code),
+    )
+    if (!selectedReceiptPeriod.value && receiptPeriods.value.length > 0) {
+      selectedReceiptPeriod.value = receiptPeriods.value[0].period_code
+    }
+    receiptsLoaded.value = true
+  }
   if (!receiptPeriods.value.length) receiptsLoading.value = true
   try {
-    const data = await listStorageReceiptsTree()
+    const data = await fetchReceiptsTree(opts)
     receiptPeriods.value = [...data.periods].sort((a, b) =>
       compareOptPeriodsDesc(a.period_code, b.period_code),
     )

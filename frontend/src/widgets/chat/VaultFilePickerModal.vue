@@ -20,7 +20,6 @@ import {
   downloadStorageReceipt,
   downloadStorageSalesBook,
   listGroupFiles,
-  listStorageReceiptsTree,
   listVaultFiles,
   uploadVaultFile,
   type GroupChatFile,
@@ -30,6 +29,7 @@ import {
   type StorageSalesBookUnitGroup,
   type VaultFile,
 } from '@/features/storage/api'
+import { fetchReceiptsTree, peekReceiptsTree } from '@/features/storage/receipts-tree-cache'
 import { AppError } from '@/shared/api/http'
 import {
   attachmentPreviewSupported,
@@ -308,9 +308,15 @@ async function loadDialog(): Promise<void> {
 }
 
 async function loadReceipts(): Promise<void> {
-  loading.value = true
+  const cached = peekReceiptsTree()
+  if (cached?.length) {
+    receiptPeriods.value = [...cached].sort((a, b) =>
+      compareOptPeriodsDesc(a.period_code, b.period_code),
+    )
+  }
+  if (!receiptPeriods.value.length) loading.value = true
   try {
-    const data = await listStorageReceiptsTree()
+    const data = await fetchReceiptsTree()
     receiptPeriods.value = [...data.periods].sort((a, b) =>
       compareOptPeriodsDesc(a.period_code, b.period_code),
     )
