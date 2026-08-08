@@ -1051,6 +1051,57 @@ class AccountingService:
             success=success,
         )
 
+    async def _resolve_task_department_id(
+        self,
+        actor: User,
+        assignee: User,
+    ) -> int | None:
+        """department_id is often null for admin/chief — still need a board dept."""
+        from sqlalchemy import select
+
+        from app.modules.db.models.department import Department
+
+        for candidate in (assignee.department_id, actor.department_id):
+            if candidate is not None:
+                return int(candidate)
+
+        # Any user who already has a department (prefer accountants).
+        user_dept = (
+            await self._session.execute(
+                select(User.department_id)
+                .where(
+                    User.department_id.is_not(None),
+                    User.role.in_(
+                        [
+                            UserRole.ACCOUNTANT,
+                            UserRole.CHIEF_ACCOUNTANT,
+                            UserRole.SENIOR,
+                            UserRole.ADMIN,
+                            UserRole.USER,
+                        ],
+                    ),
+                )
+                .order_by(User.id.asc())
+                .limit(1),
+            )
+        ).scalar_one_or_none()
+        if user_dept is not None:
+            return int(user_dept)
+
+        dept_row = (
+            await self._session.execute(
+                select(Department.id).order_by(Department.id.asc()).limit(1),
+            )
+        ).scalar_one_or_none()
+        if dept_row is not None:
+            return int(dept_row)
+
+        # Last resort: create a default department so FNS tasks are not blocked.
+        dept = Department(name="Бухгалтерия")
+        self._session.add(dept)
+        await self._session.flush()
+        return int(dept.id)
+
     async def list_task_assignees(self, actor: User):
         from sqlalchemy import select
 
@@ -1117,9 +1168,9 @@ class AccountingService:
         assignee = await self._session.get(User, body.assignee_id)
         if assignee is None:
             raise ValidationError(message="Исполнитель не найден")
-        dept_id = assignee.department_id or actor.department_id
+        dept_id = await self._resolve_task_department_id(actor, assignee)
         if dept_id is None:
-            raise ValidationError(message="У исполнителя нет отдела")
+            raise ValidationError(message="Не удалось определить отдел для задачи")
 
         response_due = await self._ensure_requirement_response_due(row)
         due_at = body.due_at

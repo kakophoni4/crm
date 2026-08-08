@@ -1764,17 +1764,28 @@ onUnmounted(() => {
             clearable
             style="width: 100%"
           />
-          <p class="accounting-page__owners-hint" style="margin: 6px 0 0">
-            Из срока ответа по требованию; если в СБИС пусто — 5 рабочих дней от получения.
-          </p>
         </NFormItem>
-        <NFormItem label="Доп. файлы">
-          <p class="accounting-page__owners-hint" style="margin: 0 0 8px">
-            PDF требования прикрепится сам. Здесь — только дополнительные файлы.
-          </p>
-          <NUpload multiple :default-upload="false" @change="onTaskUploadChange">
-            <NButton secondary>Прикрепить</NButton>
-          </NUpload>
+        <NFormItem label="Файлы">
+          <div class="accounting-page__task-files">
+            <div
+              v-if="taskTarget?.has_pdf"
+              class="accounting-page__task-file-attached"
+              :title="taskTarget.pdf_filename || 'Требование.pdf'"
+            >
+              <span class="accounting-page__task-file-name">
+                {{ taskTarget.pdf_filename || 'Требование.pdf' }}
+              </span>
+              <NTag size="small" type="success" :bordered="false">прикреплено</NTag>
+            </div>
+            <NEmpty
+              v-else
+              description="У требования нет PDF"
+              style="padding: 4px 0"
+            />
+            <NUpload multiple :default-upload="false" @change="onTaskUploadChange">
+              <NButton secondary>Ещё файлы</NButton>
+            </NUpload>
+          </div>
         </NFormItem>
       </NForm>
       <template #footer>
@@ -2206,6 +2217,32 @@ onUnmounted(() => {
   margin: 0 0 12px;
   font-size: 0.85rem;
   color: var(--app-text-muted);
+}
+
+.accounting-page__task-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.accounting-page__task-file-attached {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--app-surface-elevated);
+}
+
+.accounting-page__task-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
 }
 
 .accounting-page__owners {
