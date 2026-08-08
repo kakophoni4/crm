@@ -231,7 +231,7 @@ onUnmounted(() => {
     </div>
     <span v-else-if="failed" class="message-attachment message-attachment--failed">
       {{ label }}
-      <NButton size="tiny" quaternary @click="load">Повторить</NButton>
+      <NButton size="tiny" quaternary @click="() => void load(true)">Повторить</NButton>
     </span>
     <span v-else class="message-attachment">{{ label }}</span>
   </span>

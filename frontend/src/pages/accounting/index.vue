@@ -74,10 +74,7 @@ import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order
 import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import AppCard from '@/shared/ui/AppCard.vue'
-import {
-  VIRTUAL_DATA_TABLE_MAX_HEIGHT,
-  VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
-} from '@/shared/ui/virtual-data-table'
+import { VIRTUAL_DATA_TABLE_MAX_HEIGHT } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
