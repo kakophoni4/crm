@@ -26,16 +26,40 @@ export type {
 } from './types'
 
 export async function listVaultFiles(params?: {
+  parent_id?: number | null
   offset?: number
   limit?: number
 }): Promise<VaultFileList> {
-  const { data } = await http.get<VaultFileList>('/storage/vault', { params })
+  const { data } = await http.get<VaultFileList>('/storage/vault', {
+    params: {
+      parent_id: params?.parent_id ?? undefined,
+      offset: params?.offset,
+      limit: params?.limit,
+    },
+  })
   return data
 }
 
-export async function uploadVaultFile(file: File): Promise<VaultFile> {
+export async function createVaultFolder(body: {
+  name: string
+  parent_id?: number | null
+}): Promise<VaultFile> {
+  const { data } = await http.post<VaultFile>('/storage/vault/folders', {
+    name: body.name,
+    parent_id: body.parent_id ?? null,
+  })
+  return data
+}
+
+export async function uploadVaultFile(
+  file: File,
+  opts?: { parent_id?: number | null },
+): Promise<VaultFile> {
   const form = new FormData()
   form.append('file', file)
+  if (opts?.parent_id != null) {
+    form.append('parent_id', String(opts.parent_id))
+  }
   const { data } = await http.post<VaultFile>('/storage/vault', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120_000,

@@ -18,6 +18,7 @@ from app.modules.storage.schemas import (
     VaultFileContentResponse,
     VaultFileContentUpdateRequest,
     VaultFileListResponse,
+    VaultFolderCreateRequest,
     VaultFileRenameRequest,
     VaultFileResponse,
 )
@@ -55,10 +56,27 @@ def _check_upload_size(content: bytes, mime: str) -> None:
 async def list_vault_files(
     actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
     service: Annotated[StorageService, Depends(_service)],
+    parent_id: Annotated[int | None, Query()] = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ) -> VaultFileListResponse:
-    return await service.list_vault(actor, offset=offset, limit=limit)
+    return await service.list_vault(actor, parent_id=parent_id, offset=offset, limit=limit)
+
+
+@router.post("/vault/folders", status_code=201, response_model=VaultFileResponse)
+async def create_vault_folder(
+    body: VaultFolderCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VaultFileResponse:
+    result = await service.create_vault_folder(
+        actor,
+        name=body.name,
+        parent_id=body.parent_id,
+    )
+    await db.commit()
+    return result
 
 
 @router.post("/vault", status_code=201, response_model=VaultFileResponse)
@@ -67,6 +85,7 @@ async def upload_vault_file(
     service: Annotated[StorageService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
     file: Annotated[UploadFile, File()],
+    parent_id: Annotated[int | None, Form()] = None,
 ) -> VaultFileResponse:
     content = await file.read()
     mime = file.content_type or "application/octet-stream"
@@ -76,6 +95,7 @@ async def upload_vault_file(
         data=content,
         original_name=file.filename or "file",
         mime_type=mime,
+        parent_id=parent_id,
     )
     await db.commit()
     return result

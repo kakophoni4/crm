@@ -17,6 +17,7 @@ import { ArrowLeft, Copy, Download, Eye, Folder, Link2, Pencil, Trash2, Upload }
 import { computed, h, onMounted, ref, watch } from 'vue'
 
 import {
+  createVaultFolder,
   createVaultShareLink,
   deleteVaultFile,
   downloadGroupFile,
@@ -68,15 +69,30 @@ const receiptsLoaded = ref(false)
 const groupsLoaded = ref(false)
 
 const vaultFiles = ref<VaultFile[]>([])
+const vaultParentId = ref<number | null>(null)
+const vaultPath = ref<{ id: number; name: string }[]>([])
+const createFolderOpen = ref(false)
+const createFolderName = ref('')
+const createFolderLoading = ref(false)
 const groupSummaries = ref<{ group_id: number; group_name: string; file_count: number }[]>([])
 const groupFiles = ref<GroupChatFile[]>([])
 const selectedGroupId = ref<number | null>(null)
+const selectedChatId = ref<number | null>(null)
+
+const vaultFolderItems = computed(() =>
+  vaultFiles.value.filter((row) => row.is_folder),
+)
+const vaultFileItems = computed(() =>
+  vaultFiles.value.filter((row) => !row.is_folder),
+)
 const receiptPeriods = ref<StorageReceiptPeriodGroup[]>([])
 const selectedReceiptPeriod = ref<string | null>(null)
 /** null = список типов папок внутри периода */
 const receiptFolder = ref<ReceiptFolderKind | null>(null)
 /** ООО внутри типа */
 const storageUnitInn = ref<string | null>(null)
+/** Buyer folder under sales-books lavka */
+const storageBuyerInn = ref<string | null>(null)
 const downloadingReceiptId = ref<number | null>(null)
 const downloadingSalesBookId = ref<number | null>(null)
 
@@ -118,7 +134,10 @@ function formatDate(iso: string): string {
 async function loadVault(): Promise<void> {
   if (!vaultFiles.value.length) vaultLoading.value = true
   try {
-    const data = await listVaultFiles({ limit: 100 })
+    const data = await listVaultFiles({
+      parent_id: vaultParentId.value,
+      limit: 100,
+    })
     vaultFiles.value = data.items
     vaultLoaded.value = true
   } catch (err) {
@@ -128,16 +147,64 @@ async function loadVault(): Promise<void> {
   }
 }
 
+function openVaultFolder(folder: VaultFile): void {
+  vaultPath.value = [...vaultPath.value, { id: folder.id, name: folder.original_name }]
+  vaultParentId.value = folder.id
+  vaultFiles.value = []
+  void loadVault()
+}
+
+function vaultBack(): void {
+  if (!vaultPath.value.length) return
+  const next = vaultPath.value.slice(0, -1)
+  vaultPath.value = next
+  vaultParentId.value = next.length ? next[next.length - 1].id : null
+  vaultFiles.value = []
+  void loadVault()
+}
+
+function goVaultPath(index: number): void {
+  if (index < 0) {
+    vaultPath.value = []
+    vaultParentId.value = null
+  } else {
+    vaultPath.value = vaultPath.value.slice(0, index + 1)
+    vaultParentId.value = vaultPath.value[index]?.id ?? null
+  }
+  vaultFiles.value = []
+  void loadVault()
+}
+
+function openCreateFolder(): void {
+  createFolderName.value = ''
+  createFolderOpen.value = true
+}
+
+async function submitCreateFolder(): Promise<void> {
+  const name = createFolderName.value.trim()
+  if (!name) {
+    message.warning('Укажите имя папки')
+    return
+  }
+  createFolderLoading.value = true
+  try {
+    await createVaultFolder({ name, parent_id: vaultParentId.value })
+    message.success('Папка создана')
+    createFolderOpen.value = false
+    await loadVault()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось создать папку')
+  } finally {
+    createFolderLoading.value = false
+  }
+}
+
 async function loadGroupSummaries(): Promise<void> {
   if (!groupSummaries.value.length) groupLoading.value = true
   try {
     const data = await listGroupFileGroups()
     groupSummaries.value = data.items
     groupsLoaded.value = true
-    if (!selectedGroupId.value && data.items.length > 0) {
-      selectedGroupId.value = data.items[0].group_id
-      await loadGroupFiles()
-    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить группы')
   } finally {
@@ -250,11 +317,41 @@ const receiptUnitFolders = computed((): ReceiptUnitFolder[] => {
   return [...byInn.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'))
 })
 
-const selectedSalesBookItems = computed((): StorageSalesBookItem[] => {
-  if (!storageUnitInn.value) return []
+interface SalesBuyerFolder {
+  inn: string
+  name: string
+  items: StorageSalesBookItem[]
+}
+
+const selectedSalesBuyerFolders = computed((): SalesBuyerFolder[] => {
+  if (!storageUnitInn.value || receiptFolder.value !== 'sales_books') return []
   const unit = selectedSalesBookUnits.value.find((u) => u.seller_inn === storageUnitInn.value)
   if (!unit) return []
-  return unit.orders.flatMap((o) => o.items)
+  const byBuyer = new Map<string, SalesBuyerFolder>()
+  for (const item of unit.orders.flatMap((o) => o.items)) {
+    const inn = item.buyer_inn
+    if (!inn) continue
+    let folder = byBuyer.get(inn)
+    if (!folder) {
+      folder = {
+        inn,
+        name: shortLavkaName(item.buyer_name) || item.buyer_name || inn,
+        items: [],
+      }
+      byBuyer.set(inn, folder)
+    } else if (item.buyer_name && folder.name === inn) {
+      folder.name = shortLavkaName(item.buyer_name) || item.buyer_name
+    }
+    folder.items.push(item)
+  }
+  return [...byBuyer.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+})
+
+const selectedSalesBookItems = computed((): StorageSalesBookItem[] => {
+  if (!storageUnitInn.value || !storageBuyerInn.value) return []
+  return (
+    selectedSalesBuyerFolders.value.find((f) => f.inn === storageBuyerInn.value)?.items ?? []
+  )
 })
 
 const selectedReceiptUnitItems = computed((): StorageReceiptItem[] => {
@@ -279,22 +376,39 @@ const selectedUnitLabel = computed(() => {
   return unit?.name || storageUnitInn.value
 })
 
+const selectedBuyerLabel = computed(() => {
+  if (!storageBuyerInn.value) return ''
+  const folder = selectedSalesBuyerFolders.value.find((f) => f.inn === storageBuyerInn.value)
+  return folder?.name || storageBuyerInn.value
+})
+
 function openReceiptPeriod(periodCode: string): void {
   selectedReceiptPeriod.value = periodCode
   receiptFolder.value = null
   storageUnitInn.value = null
+  storageBuyerInn.value = null
 }
 
 function openReceiptFolder(kind: ReceiptFolderKind): void {
   receiptFolder.value = kind
   storageUnitInn.value = null
+  storageBuyerInn.value = null
 }
 
 function openReceiptUnit(inn: string): void {
   storageUnitInn.value = inn
+  storageBuyerInn.value = null
+}
+
+function openSalesBuyer(inn: string): void {
+  storageBuyerInn.value = inn
 }
 
 function receiptsBack(): void {
+  if (storageBuyerInn.value) {
+    storageBuyerInn.value = null
+    return
+  }
   if (storageUnitInn.value) {
     storageUnitInn.value = null
     return
@@ -352,13 +466,33 @@ async function loadGroupFiles(): Promise<void> {
   }
   if (!groupFiles.value.length) groupLoading.value = true
   try {
-    const data = await listGroupFiles({ group_id: selectedGroupId.value, limit: 100 })
+    const data = await listGroupFiles({ group_id: selectedGroupId.value, limit: 200 })
     groupFiles.value = data.items
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить файлы чатов')
   } finally {
     groupLoading.value = false
   }
+}
+
+async function openGroupFolder(groupId: number): Promise<void> {
+  selectedGroupId.value = groupId
+  selectedChatId.value = null
+  groupFiles.value = []
+  await loadGroupFiles()
+}
+
+function openChatFolder(chatId: number): void {
+  selectedChatId.value = chatId
+}
+
+function groupFilesBack(): void {
+  if (selectedChatId.value != null) {
+    selectedChatId.value = null
+    return
+  }
+  selectedGroupId.value = null
+  groupFiles.value = []
 }
 
 async function ensureActiveTabLoaded(): Promise<void> {
@@ -375,7 +509,7 @@ async function onVaultUpload(data: { file: UploadFileInfo }): Promise<boolean> {
     return false
   }
   try {
-    await uploadVaultFile(file)
+    await uploadVaultFile(file, { parent_id: vaultParentId.value })
     message.success('Файл добавлен в хранилище')
     await loadVault()
   } catch (err) {
@@ -387,7 +521,7 @@ async function onVaultUpload(data: { file: UploadFileInfo }): Promise<boolean> {
 async function onDeleteVault(row: VaultFile): Promise<void> {
   try {
     await deleteVaultFile(row.id)
-    message.success('Файл удалён')
+    message.success(row.is_folder ? 'Папка удалена' : 'Файл удалён')
     await loadVault()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось удалить')
@@ -484,6 +618,7 @@ const EDITABLE_EXTENSIONS = new Set([
 ])
 
 function isEditable(row: VaultFile): boolean {
+  if (row.is_folder || row.file_id == null) return false
   if (row.size_bytes > 1_000_000) return false
   const mime = (row.mime_type || '').toLowerCase()
   if (mime.startsWith('text/')) return true
@@ -501,6 +636,10 @@ function isEditable(row: VaultFile): boolean {
 }
 
 function openShareModal(row: VaultFile): void {
+  if (row.is_folder || row.file_id == null) {
+    message.warning('Ссылку можно создать только для файла')
+    return
+  }
   shareTarget.value = row
   shareExpiresHours.value = 168
   shareMaxDownloads.value = null
@@ -509,7 +648,7 @@ function openShareModal(row: VaultFile): void {
 }
 
 async function submitShare(): Promise<void> {
-  if (!shareTarget.value) return
+  if (!shareTarget.value?.file_id) return
   shareLoading.value = true
   try {
     const link = await createVaultShareLink(shareTarget.value.file_id, {
@@ -668,8 +807,8 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
   },
 ])
 
-const groupFilesByChat = computed(() => {
-  const map = new Map<number, { chatLabel: string; files: GroupChatFile[] }>()
+const groupChatFolders = computed(() => {
+  const map = new Map<number, { chatId: number; chatLabel: string; files: GroupChatFile[] }>()
   for (const file of groupFiles.value) {
     const label = file.contact_name
       ? `${file.contact_name} (чат #${file.chat_id})`
@@ -678,10 +817,33 @@ const groupFilesByChat = computed(() => {
     if (bucket) {
       bucket.files.push(file)
     } else {
-      map.set(file.chat_id, { chatLabel: label, files: [file] })
+      map.set(file.chat_id, { chatId: file.chat_id, chatLabel: label, files: [file] })
     }
   }
-  return [...map.values()]
+  return [...map.values()].sort((a, b) => a.chatLabel.localeCompare(b.chatLabel, 'ru'))
+})
+
+const selectedGroupLabel = computed(() => {
+  if (selectedGroupId.value == null) return ''
+  return (
+    groupSummaries.value.find((g) => g.group_id === selectedGroupId.value)?.group_name ||
+    `Группа #${selectedGroupId.value}`
+  )
+})
+
+const selectedChatLabel = computed(() => {
+  if (selectedChatId.value == null) return ''
+  return (
+    groupChatFolders.value.find((c) => c.chatId === selectedChatId.value)?.chatLabel ||
+    `Чат #${selectedChatId.value}`
+  )
+})
+
+const selectedChatFiles = computed(() => {
+  if (selectedChatId.value == null) return [] as GroupChatFile[]
+  return (
+    groupChatFolders.value.find((c) => c.chatId === selectedChatId.value)?.files ?? []
+  )
 })
 
 const groupColumns = computed<DataTableColumns<GroupChatFile>>(() => [
@@ -744,23 +906,77 @@ onMounted(() => {
               Личные файлы для отправки в чаты. Чтобы передать файл по ссылке без входа — откройте
               <a href="/share" target="_blank" rel="noopener">/share</a>.
             </p>
-            <NUpload :show-file-list="false" @before-upload="onVaultUpload">
-              <NButton type="primary">
-                <template #icon><Upload :size="16" /></template>
-                Загрузить файл
+            <div v-if="vaultPath.length" class="explorer-nav">
+              <NButton size="tiny" quaternary @click="vaultBack">
+                <template #icon><ArrowLeft :size="14" /></template>
+                Назад
               </NButton>
-            </NUpload>
+              <div class="explorer-path">
+                <button type="button" class="explorer-crumb" @click="goVaultPath(-1)">
+                  Мои файлы
+                </button>
+                <template v-for="(crumb, idx) in vaultPath" :key="crumb.id">
+                  <span class="explorer-sep">/</span>
+                  <button
+                    type="button"
+                    class="explorer-crumb"
+                    :class="{ 'explorer-crumb--current': idx === vaultPath.length - 1 }"
+                    @click="goVaultPath(idx)"
+                  >
+                    {{ crumb.name }}
+                  </button>
+                </template>
+              </div>
+            </div>
+            <NSpace>
+              <NButton secondary @click="openCreateFolder">
+                <template #icon><Folder :size="16" /></template>
+                Создать папку
+              </NButton>
+              <NUpload :show-file-list="false" @before-upload="onVaultUpload">
+                <NButton type="primary">
+                  <template #icon><Upload :size="16" /></template>
+                  Загрузить файл
+                </NButton>
+              </NUpload>
+            </NSpace>
             <NSpin :show="vaultLoading && vaultFiles.length === 0">
+              <ul v-if="vaultFolderItems.length" class="explorer-list">
+                <li
+                  v-for="folder in vaultFolderItems"
+                  :key="folder.id"
+                  class="explorer-item"
+                  @click="openVaultFolder(folder)"
+                >
+                  <Folder :size="18" class="explorer-icon" />
+                  <span class="explorer-name">{{ folder.original_name }}</span>
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    type="error"
+                    @click.stop="onDeleteVault(folder)"
+                  >
+                    <Trash2 :size="14" />
+                  </NButton>
+                </li>
+              </ul>
               <NDataTable
+                v-if="vaultFileItems.length || !vaultFolderItems.length"
                 :columns="vaultColumns"
-                :data="vaultFiles"
+                :data="vaultFileItems"
                 :bordered="false"
                 virtual-scroll
                 :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
                 :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
               />
+              <p
+                v-if="!vaultLoading && !vaultFolderItems.length && !vaultFileItems.length"
+                class="empty-hint"
+              >
+                В этой папке пусто
+              </p>
             </NSpin>
-            <div v-for="file in vaultFiles" :key="file.id" class="share-list">
+            <div v-for="file in vaultFileItems" :key="file.id" class="share-list">
               <template v-for="link in file.share_links" :key="link.id">
                 <div class="share-row">
                   <span class="share-url">{{ link.url }}</span>
@@ -774,7 +990,7 @@ onMounted(() => {
               </template>
             </div>
           </NSpace>
-</NTabPane>
+        </NTabPane>
 
         <NTabPane name="receipts" tab="Квитанции">
           <NSpin :show="receiptsLoading && receiptPeriods.length === 0">
@@ -784,14 +1000,23 @@ onMounted(() => {
                 Назад
               </NButton>
               <div class="explorer-path">
-                <button type="button" class="explorer-crumb" @click="selectedReceiptPeriod = null; receiptFolder = null; storageUnitInn = null">
+                <button
+                  type="button"
+                  class="explorer-crumb"
+                  @click="
+                    selectedReceiptPeriod = null
+                    receiptFolder = null
+                    storageUnitInn = null
+                    storageBuyerInn = null
+                  "
+                >
                   Квитанции
                 </button>
                 <span class="explorer-sep">/</span>
                 <button
                   type="button"
                   class="explorer-crumb"
-                  @click="receiptFolder = null; storageUnitInn = null"
+                  @click="receiptFolder = null; storageUnitInn = null; storageBuyerInn = null"
                 >
                   {{ formatOptPeriodLabel(selectedReceiptPeriod) || selectedReceiptPeriod }}
                 </button>
@@ -800,14 +1025,25 @@ onMounted(() => {
                   <button
                     type="button"
                     class="explorer-crumb"
-                    @click="storageUnitInn = null"
+                    @click="storageUnitInn = null; storageBuyerInn = null"
                   >
                     {{ receiptFolderLabel }}
                   </button>
                 </template>
                 <template v-if="storageUnitInn">
                   <span class="explorer-sep">/</span>
-                  <span class="explorer-crumb explorer-crumb--current">{{ selectedUnitLabel }}</span>
+                  <button
+                    type="button"
+                    class="explorer-crumb"
+                    :class="{ 'explorer-crumb--current': !storageBuyerInn }"
+                    @click="storageBuyerInn = null"
+                  >
+                    {{ selectedUnitLabel }}
+                  </button>
+                </template>
+                <template v-if="storageBuyerInn">
+                  <span class="explorer-sep">/</span>
+                  <span class="explorer-crumb explorer-crumb--current">{{ selectedBuyerLabel }}</span>
                 </template>
               </div>
             </div>
@@ -899,9 +1135,32 @@ onMounted(() => {
               <li v-if="!receiptUnitFolders.length" class="empty-hint">Папок нет</li>
             </ul>
 
+            <!-- buyer folders under lavka (sales books) -->
+            <ul
+              v-else-if="
+                receiptFolder === 'sales_books' && storageUnitInn && !storageBuyerInn
+              "
+              class="explorer-list"
+            >
+              <li
+                v-for="buyer in selectedSalesBuyerFolders"
+                :key="buyer.inn"
+                class="explorer-item"
+                @click="openSalesBuyer(buyer.inn)"
+              >
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">{{ buyer.name }}</span>
+              </li>
+              <li v-if="!selectedSalesBuyerFolders.length" class="empty-hint">
+                Покупателей нет
+              </li>
+            </ul>
+
             <!-- files: sales books -->
             <div
-              v-else-if="receiptFolder === 'sales_books' && selectedSalesBookItems.length"
+              v-else-if="
+                receiptFolder === 'sales_books' && storageBuyerInn && selectedSalesBookItems.length
+              "
               class="receipts-list"
             >
               <div
@@ -921,10 +1180,7 @@ onMounted(() => {
                   "
                 >
                   <div class="receipts-title">{{ row.source_filename }}</div>
-                  <div class="receipts-meta">
-                    Покупатель {{ row.buyer_inn }}
-                    <template v-if="row.buyer_name"> · {{ row.buyer_name }}</template>
-                  </div>
+                  <div class="receipts-meta">ИНН {{ row.buyer_inn }}</div>
                 </div>
                 <NSpace :size="8">
                   <NButton
@@ -1011,49 +1267,114 @@ onMounted(() => {
                 </NSpace>
               </div>
             </div>
-            <p v-else-if="storageUnitInn" class="empty-hint">В этой папке пусто</p>
+            <p v-else-if="storageBuyerInn || storageUnitInn" class="empty-hint">
+              В этой папке пусто
+            </p>
           </NSpin>
         </NTabPane>
 
         <NTabPane name="group" tab="Файлы из чатов">
-          <NSpace vertical :size="16">
-            <NSpace>
-              <NButton
+          <NSpin :show="groupLoading && !groupSummaries.length && selectedGroupId == null">
+            <div v-if="selectedGroupId != null" class="explorer-nav">
+              <NButton size="tiny" quaternary @click="groupFilesBack">
+                <template #icon><ArrowLeft :size="14" /></template>
+                Назад
+              </NButton>
+              <div class="explorer-path">
+                <button
+                  type="button"
+                  class="explorer-crumb"
+                  @click="selectedGroupId = null; selectedChatId = null; groupFiles = []"
+                >
+                  Группы
+                </button>
+                <span class="explorer-sep">/</span>
+                <button
+                  type="button"
+                  class="explorer-crumb"
+                  :class="{ 'explorer-crumb--current': selectedChatId == null }"
+                  @click="selectedChatId = null"
+                >
+                  {{ selectedGroupLabel }}
+                </button>
+                <template v-if="selectedChatId != null">
+                  <span class="explorer-sep">/</span>
+                  <span class="explorer-crumb explorer-crumb--current">{{ selectedChatLabel }}</span>
+                </template>
+              </div>
+            </div>
+
+            <ul v-if="selectedGroupId == null" class="explorer-list">
+              <li
                 v-for="g in groupSummaries"
                 :key="g.group_id"
-                :type="selectedGroupId === g.group_id ? 'primary' : 'default'"
-                size="small"
-                @click="
-                  () => {
-                    selectedGroupId = g.group_id
-                    void loadGroupFiles()
-                  }
-                "
+                class="explorer-item"
+                @click="openGroupFolder(g.group_id)"
               >
-                {{ g.group_name }} ({{ g.file_count }})
-              </NButton>
-            </NSpace>
-            <NSpin :show="groupLoading && !groupFilesByChat.length">
-              <div v-for="chat in groupFilesByChat" :key="chat.chatLabel" class="chat-block">
-                <h3 class="chat-block-title">{{ chat.chatLabel }}</h3>
-                <NDataTable
-                  :columns="groupColumns"
-                  :data="chat.files"
-                  :bordered="false"
-                  size="small"
-                  virtual-scroll
-                  :max-height="480"
-                  :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
-                />
-              </div>
-              <p v-if="!groupFilesByChat.length && !groupLoading" class="empty-hint">
-                В выбранной группе пока нет файлов из чатов
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">{{ g.group_name }}</span>
+                <span class="explorer-meta">{{ g.file_count }}</span>
+              </li>
+              <li v-if="!groupSummaries.length && !groupLoading" class="empty-hint">
+                Групп с файлами пока нет
+              </li>
+            </ul>
+
+            <ul
+              v-else-if="selectedChatId == null"
+              class="explorer-list"
+            >
+              <li
+                v-for="chat in groupChatFolders"
+                :key="chat.chatId"
+                class="explorer-item"
+                @click="openChatFolder(chat.chatId)"
+              >
+                <Folder :size="18" class="explorer-icon" />
+                <span class="explorer-name">{{ chat.chatLabel }}</span>
+                <span class="explorer-meta">{{ chat.files.length }}</span>
+              </li>
+              <li v-if="!groupChatFolders.length && !groupLoading" class="empty-hint">
+                В этой группе пока нет файлов из чатов
+              </li>
+            </ul>
+
+            <div v-else>
+              <NDataTable
+                :columns="groupColumns"
+                :data="selectedChatFiles"
+                :bordered="false"
+                size="small"
+                virtual-scroll
+                :max-height="480"
+                :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
+              />
+              <p v-if="!selectedChatFiles.length && !groupLoading" class="empty-hint">
+                В этом чате пока нет файлов
               </p>
-            </NSpin>
-          </NSpace>
+            </div>
+          </NSpin>
         </NTabPane>
       </NTabs>
     </AppCard>
+
+    <NModal
+      v-model:show="createFolderOpen"
+      preset="card"
+      title="Новая папка"
+      style="width: 400px; max-width: 94vw"
+    >
+      <NInput
+        v-model:value="createFolderName"
+        placeholder="Название папки"
+        @keyup.enter="submitCreateFolder"
+      />
+      <template #footer>
+        <NButton type="primary" :loading="createFolderLoading" @click="submitCreateFolder">
+          Создать
+        </NButton>
+      </template>
+    </NModal>
 
     <NModal v-model:show="shareModalOpen" preset="card" title="Ссылка на файл" style="width: 420px">
       <NSpace vertical>
@@ -1222,6 +1543,12 @@ onMounted(() => {
 }
 
 .explorer-sep {
+  color: var(--app-text-muted);
+}
+
+.explorer-meta {
+  margin-left: auto;
+  font-size: 0.8rem;
   color: var(--app-text-muted);
 }
 

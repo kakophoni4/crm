@@ -101,24 +101,75 @@ class StorageService:
         self,
         items: list[FileVaultItem],
     ) -> dict[int, UploadedFile]:
-        if not items:
+        file_ids = [item.file_id for item in items if item.file_id is not None]
+        if not file_ids:
             return {}
-        file_ids = [item.file_id for item in items]
         result = await self._session.execute(
             select(UploadedFile).where(UploadedFile.id.in_(file_ids)),
         )
         return {row.id: row for row in result.scalars().all()}
 
+    async def _assert_vault_parent(
+        self,
+        actor: User,
+        parent_id: int | None,
+    ) -> None:
+        if parent_id is None:
+            return
+        parent = await self._repo.get_vault_item(parent_id)
+        if parent is None or parent.owner_user_id != actor.id or not parent.is_folder:
+            raise ValidationError(message="Папка не найдена")
+
+    def _vault_item_response(
+        self,
+        item: FileVaultItem,
+        uploaded: UploadedFile | None = None,
+        *,
+        share_links: list[ShareLinkResponse] | None = None,
+    ) -> VaultFileResponse:
+        if item.is_folder:
+            return VaultFileResponse(
+                id=item.id,
+                file_id=None,
+                original_name=(item.name or "Папка").strip() or "Папка",
+                mime_type="inode/directory",
+                size_bytes=0,
+                is_folder=True,
+                parent_id=item.parent_id,
+                created_at=item.created_at,
+                share_links=[],
+            )
+        if uploaded is None:
+            raise NotFound(message="File not found")
+        return VaultFileResponse(
+            id=item.id,
+            file_id=uploaded.id,
+            original_name=uploaded.original_name,
+            mime_type=uploaded.mime_type,
+            size_bytes=uploaded.size_bytes,
+            is_folder=False,
+            parent_id=item.parent_id,
+            created_at=item.created_at,
+            share_links=share_links or [],
+        )
+
     async def list_vault(
         self,
         actor: User,
         *,
+        parent_id: int | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> VaultFileListResponse:
-        items, total = await self._repo.list_vault_items(actor.id, offset=offset, limit=limit)
+        await self._assert_vault_parent(actor, parent_id)
+        items, total = await self._repo.list_vault_items(
+            actor.id,
+            parent_id=parent_id,
+            offset=offset,
+            limit=limit,
+        )
         files_map = await self._load_vault_files_map(items)
-        file_ids = [item.file_id for item in items]
+        file_ids = [item.file_id for item in items if item.file_id is not None]
         shares = await self._repo.list_share_links_for_files(file_ids)
         shares_by_file: dict[int, list[ShareLinkResponse]] = {}
         for share in shares:
@@ -126,21 +177,42 @@ class StorageService:
 
         responses: list[VaultFileResponse] = []
         for item in items:
+            if item.is_folder:
+                responses.append(self._vault_item_response(item))
+                continue
+            if item.file_id is None:
+                continue
             uploaded = files_map.get(item.file_id)
             if uploaded is None:
                 continue
             responses.append(
-                VaultFileResponse(
-                    id=item.id,
-                    file_id=uploaded.id,
-                    original_name=uploaded.original_name,
-                    mime_type=uploaded.mime_type,
-                    size_bytes=uploaded.size_bytes,
-                    created_at=item.created_at,
+                self._vault_item_response(
+                    item,
+                    uploaded,
                     share_links=shares_by_file.get(uploaded.id, []),
                 ),
             )
         return VaultFileListResponse(items=responses, total=total)
+
+    async def create_vault_folder(
+        self,
+        actor: User,
+        *,
+        name: str,
+        parent_id: int | None = None,
+    ) -> VaultFileResponse:
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValidationError(message="Имя папки не может быть пустым")
+        await self._assert_vault_parent(actor, parent_id)
+        row = await self._repo.add_vault_item(
+            file_id=None,
+            owner_user_id=actor.id,
+            parent_id=parent_id,
+            is_folder=True,
+            name=cleaned[:255],
+        )
+        return self._vault_item_response(row)
 
     async def upload_to_vault(
         self,
@@ -149,38 +221,46 @@ class StorageService:
         data: bytes,
         original_name: str,
         mime_type: str,
+        parent_id: int | None = None,
     ) -> VaultFileResponse:
+        await self._assert_vault_parent(actor, parent_id)
         uploaded = await self._files.create_upload(
             uploaded_by=actor.id,
             data=data,
             original_name=original_name,
             mime_type=mime_type,
         )
-        vault_item = await self._repo.add_vault_item(file_id=uploaded.id, owner_user_id=actor.id)
-        return VaultFileResponse(
-            id=vault_item.id,
+        vault_item = await self._repo.add_vault_item(
             file_id=uploaded.id,
-            original_name=uploaded.original_name,
-            mime_type=uploaded.mime_type,
-            size_bytes=uploaded.size_bytes,
-            created_at=vault_item.created_at,
-            share_links=[],
+            owner_user_id=actor.id,
+            parent_id=parent_id,
+            is_folder=False,
         )
+        return self._vault_item_response(vault_item, uploaded)
 
-    async def delete_vault_file(self, actor: User, vault_id: int) -> None:
-        item = await self._repo.get_vault_item(vault_id)
-        if item is None or item.owner_user_id != actor.id:
-            raise NotFound(message="File not found")
-        uploaded = await self._repo.get_uploaded_file(item.file_id)
-        deleted = await self._repo.delete_vault_item(vault_id, actor.id)
+    async def _delete_vault_tree(self, actor: User, item: FileVaultItem) -> None:
+        if item.is_folder:
+            children = await self._repo.list_vault_children(item.id)
+            for child in children:
+                await self._delete_vault_tree(actor, child)
+        uploaded = None
+        if item.file_id is not None:
+            uploaded = await self._repo.get_uploaded_file(item.file_id)
+        deleted = await self._repo.delete_vault_item(item.id, actor.id)
         if not deleted:
-            raise NotFound(message="File not found")
+            return
         if uploaded is not None:
             try:
                 await get_file_storage().delete_object(uploaded.storage_key)
             except Exception:
                 pass
             await self._repo.delete_uploaded_file(uploaded.id)
+
+    async def delete_vault_file(self, actor: User, vault_id: int) -> None:
+        item = await self._repo.get_vault_item(vault_id)
+        if item is None or item.owner_user_id != actor.id:
+            raise NotFound(message="File not found")
+        await self._delete_vault_tree(actor, item)
 
     async def _owned_vault_upload(
         self,
@@ -190,21 +270,15 @@ class StorageService:
         item = await self._repo.get_vault_item(vault_id)
         if item is None or item.owner_user_id != actor.id:
             raise NotFound(message="File not found")
+        if item.is_folder or item.file_id is None:
+            raise ValidationError(message="Это папка, не файл")
         uploaded = await self._repo.get_uploaded_file(item.file_id)
         if uploaded is None:
             raise NotFound(message="File not found")
         return item, uploaded
 
     def _vault_response(self, item: FileVaultItem, uploaded: UploadedFile) -> VaultFileResponse:
-        return VaultFileResponse(
-            id=item.id,
-            file_id=uploaded.id,
-            original_name=uploaded.original_name,
-            mime_type=uploaded.mime_type,
-            size_bytes=uploaded.size_bytes,
-            created_at=item.created_at,
-            share_links=[],
-        )
+        return self._vault_item_response(item, uploaded)
 
     async def get_vault_file_bytes(
         self,
@@ -250,12 +324,20 @@ class StorageService:
         *,
         original_name: str,
     ) -> VaultFileResponse:
-        item, uploaded = await self._owned_vault_upload(actor, vault_id)
         name = original_name.strip()
         if not name:
-            raise ValidationError(message="Имя файла не может быть пустым")
+            raise ValidationError(message="Имя не может быть пустым")
+        item = await self._repo.get_vault_item(vault_id)
+        if item is None or item.owner_user_id != actor.id:
+            raise NotFound(message="File not found")
+        if item.is_folder:
+            item.name = name[:255]
+            await self._session.flush()
+            await self._session.refresh(item)
+            return self._vault_item_response(item)
+        _item, uploaded = await self._owned_vault_upload(actor, vault_id)
         uploaded = await self._files.rename(uploaded.id, original_name=name)
-        return self._vault_response(item, uploaded)
+        return self._vault_response(_item, uploaded)
 
     async def update_vault_file_content(
         self,
@@ -753,6 +835,7 @@ class StorageService:
                     LeadOptOrder.order_no,
                     LeadOptOrder.lead_id,
                     LeadOptOrder.buyer_inn,
+                    LeadOptOrder.buyer_name,
                     LeadOptOrderLine.supplier_inn,
                 )
                 .join(LeadOptOrderLine, LeadOptOrderLine.order_id == LeadOptOrder.id)
@@ -770,13 +853,23 @@ class StorageService:
 
             # seller -> order_id -> meta + pairs
             by_seller: dict[str, dict[int, dict]] = {}
-            for order_id, order_no, lead_id, buyer_raw, seller_raw in order_rows.all():
+            buyer_name_by_inn: dict[str, str] = {}
+            for (
+                order_id,
+                order_no,
+                lead_id,
+                buyer_raw,
+                buyer_name_raw,
+                seller_raw,
+            ) in order_rows.all():
                 seller = normalize_inn(str(seller_raw) if seller_raw else None)
                 buyer = normalize_inn(str(buyer_raw) if buyer_raw else None)
                 if not seller or not buyer:
                     continue
                 if sb_pairs is not None and (seller, buyer) not in sb_pairs:
                     continue
+                if buyer_name_raw and buyer not in buyer_name_by_inn:
+                    buyer_name_by_inn[buyer] = str(buyer_name_raw).strip()
                 by_seller.setdefault(seller, {})
                 bucket = by_seller[seller].setdefault(
                     int(order_id),
@@ -784,12 +877,19 @@ class StorageService:
                         "order_no": int(order_no),
                         "lead_id": int(lead_id),
                         "buyer_inn": buyer,
+                        "buyer_name": (str(buyer_name_raw).strip() if buyer_name_raw else None),
                         "pairs": set(),
                     },
                 )
+                if buyer_name_raw and not bucket.get("buyer_name"):
+                    bucket["buyer_name"] = str(buyer_name_raw).strip()
                 bucket["pairs"].add((seller, buyer))
 
             extract_map = {(e.seller_inn, e.buyer_inn): e for e in extracts}
+            # Enrich flat list buyer_name from extracts or orders.
+            for item in sales_by_period[code]:
+                if not item.buyer_name:
+                    item.buyer_name = buyer_name_by_inn.get(item.buyer_inn)
             unit_groups: list[StorageSalesBookUnitGroup] = []
             for seller, orders_map in sorted(
                 by_seller.items(),
@@ -809,7 +909,9 @@ class StorageService:
                                 buyer_inn=ex.buyer_inn,
                                 seller_name=ex.seller_name
                                 or unit_name_by_inn.get(ex.seller_inn),
-                                buyer_name=ex.buyer_name,
+                                buyer_name=ex.buyer_name
+                                or meta.get("buyer_name")
+                                or buyer_name_by_inn.get(ex.buyer_inn),
                                 source_filename=ex.source_filename,
                                 has_pdf=ex.pdf_file_id is not None,
                             ),
@@ -822,7 +924,8 @@ class StorageService:
                             order_no=meta["order_no"],
                             lead_id=meta["lead_id"],
                             buyer_inn=meta["buyer_inn"],
-                            buyer_name=None,
+                            buyer_name=meta.get("buyer_name")
+                            or next((i.buyer_name for i in items if i.buyer_name), None),
                             items=items,
                         ),
                     )

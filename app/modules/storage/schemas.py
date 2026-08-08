@@ -9,10 +9,12 @@ class VaultFileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    file_id: int
+    file_id: int | None = None
     original_name: str
-    mime_type: str
-    size_bytes: int
+    mime_type: str = "application/octet-stream"
+    size_bytes: int = 0
+    is_folder: bool = False
+    parent_id: int | None = None
     created_at: datetime
     share_links: list["ShareLinkResponse"] = Field(default_factory=list)
 
@@ -20,6 +22,13 @@ class VaultFileResponse(BaseModel):
 class VaultFileListResponse(BaseModel):
     items: list[VaultFileResponse]
     total: int
+
+
+class VaultFolderCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+    parent_id: int | None = None
 
 
 class VaultFileRenameRequest(BaseModel):

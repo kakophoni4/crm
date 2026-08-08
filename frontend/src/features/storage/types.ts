@@ -12,10 +12,12 @@ export interface ShareLink {
 
 export interface VaultFile {
   id: number
-  file_id: number
+  file_id: number | null
   original_name: string
   mime_type: string
   size_bytes: number
+  is_folder?: boolean
+  parent_id?: number | null
   created_at: string
   share_links: ShareLink[]
 }

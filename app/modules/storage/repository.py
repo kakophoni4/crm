@@ -19,8 +19,22 @@ class StorageRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def add_vault_item(self, *, file_id: int, owner_user_id: int) -> FileVaultItem:
-        row = FileVaultItem(file_id=file_id, owner_user_id=owner_user_id)
+    async def add_vault_item(
+        self,
+        *,
+        file_id: int | None,
+        owner_user_id: int,
+        parent_id: int | None = None,
+        is_folder: bool = False,
+        name: str | None = None,
+    ) -> FileVaultItem:
+        row = FileVaultItem(
+            file_id=file_id,
+            owner_user_id=owner_user_id,
+            parent_id=parent_id,
+            is_folder=is_folder,
+            name=name,
+        )
         self._session.add(row)
         await self._session.flush()
         await self._session.refresh(row)
@@ -39,13 +53,19 @@ class StorageRepository:
         self,
         owner_user_id: int,
         *,
-        offset: int,
-        limit: int,
+        parent_id: int | None = None,
+        offset: int = 0,
+        limit: int = 50,
     ) -> tuple[list[FileVaultItem], int]:
-        base = (
-            select(FileVaultItem)
-            .where(FileVaultItem.owner_user_id == owner_user_id)
-            .order_by(FileVaultItem.created_at.desc())
+        base = select(FileVaultItem).where(FileVaultItem.owner_user_id == owner_user_id)
+        if parent_id is None:
+            base = base.where(FileVaultItem.parent_id.is_(None))
+        else:
+            base = base.where(FileVaultItem.parent_id == parent_id)
+        # Folders first, then newest.
+        base = base.order_by(
+            FileVaultItem.is_folder.desc(),
+            FileVaultItem.created_at.desc(),
         )
         count_result = await self._session.execute(
             select(func.count()).select_from(base.subquery()),
@@ -55,6 +75,12 @@ class StorageRepository:
             base.offset(offset).limit(limit),
         )
         return list(result.scalars().all()), total
+
+    async def list_vault_children(self, parent_id: int) -> list[FileVaultItem]:
+        result = await self._session.execute(
+            select(FileVaultItem).where(FileVaultItem.parent_id == parent_id),
+        )
+        return list(result.scalars().all())
 
     async def delete_vault_item(self, vault_id: int, owner_user_id: int) -> bool:
         result = await self._session.execute(
