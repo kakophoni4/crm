@@ -23,7 +23,8 @@ class TaskRepository:
         return row
 
     async def save(self, row: DepartmentTask) -> DepartmentTask:
-        row.updated_at = datetime.now(UTC)
+        # updated_at is TIMESTAMP WITHOUT TIME ZONE — asyncpg rejects aware datetimes.
+        row.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         await self._session.refresh(row)
         return row
