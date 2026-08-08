@@ -9,13 +9,13 @@ interface OrderDocsAvailability {
   at: number
 }
 
+type OrderDocsFlags = { receipts: boolean; salesBooks: boolean }
+
 const store = new Map<number, OrderDocsAvailability>()
 const MAX_AGE_MS = 5 * 60_000
-const inflight = new Map<number, Promise<OrderDocsAvailability>>()
+const inflight = new Map<number, Promise<OrderDocsFlags>>()
 
-export function peekOrderDocsAvailability(
-  orderId: number,
-): { receipts: boolean; salesBooks: boolean } | null {
+export function peekOrderDocsAvailability(orderId: number): OrderDocsFlags | null {
   const hit = store.get(orderId)
   if (!hit) return null
   return { receipts: hit.receipts, salesBooks: hit.salesBooks }
@@ -27,18 +27,15 @@ export function isOrderDocsAvailabilityFresh(orderId: number): boolean {
   return Date.now() - hit.at < MAX_AGE_MS
 }
 
-export function setOrderDocsAvailability(
-  orderId: number,
-  value: { receipts: boolean; salesBooks: boolean },
-): void {
+export function setOrderDocsAvailability(orderId: number, value: OrderDocsFlags): void {
   store.set(orderId, { ...value, at: Date.now() })
 }
 
 export async function loadOrderDocsAvailability(
   orderId: number,
-  loader: () => Promise<{ receipts: boolean; salesBooks: boolean }>,
+  loader: () => Promise<OrderDocsFlags>,
   opts?: { force?: boolean },
-): Promise<{ receipts: boolean; salesBooks: boolean }> {
+): Promise<OrderDocsFlags> {
   if (!opts?.force && isOrderDocsAvailabilityFresh(orderId)) {
     return peekOrderDocsAvailability(orderId)!
   }
