@@ -99,6 +99,8 @@ const treeLines = ref<TreeOrderLine[]>([])
 const treeAdjDirection = ref<'decrease' | 'increase'>('decrease')
 const treeAdjAmount = ref<number | null>(null)
 const treePayments = ref<TreePayment[]>([])
+/** Unsaved order edits — block applyLeadDetail from WS/list refresh wiping the form. */
+const orderFormDirty = ref(false)
 const paymentOpen = ref(false)
 const paymentForm = ref({
   amount: null as number | null,
@@ -184,7 +186,12 @@ function statusLabel(lead: LeadListItem): string {
   return lead.status_label ?? 'открыта'
 }
 
+function markOrderFormDirty(): void {
+  orderFormDirty.value = true
+}
+
 function resetOrderForm(): void {
+  orderFormDirty.value = false
   service.value = ''
   period.value = null
   quantity.value = null
@@ -203,6 +210,7 @@ function unitPriceFor(type: string): number | null {
 }
 
 function addTreeLine(): void {
+  markOrderFormDirty()
   treeLines.value = [
     ...treeLines.value,
     {
@@ -215,10 +223,12 @@ function addTreeLine(): void {
 }
 
 function removeTreeLine(id: string): void {
+  markOrderFormDirty()
   treeLines.value = treeLines.value.filter((row) => row.id !== id)
 }
 
 function patchTreeLine(id: string, patch: Partial<TreeOrderLine>): void {
+  markOrderFormDirty()
   treeLines.value = treeLines.value.map((row) => (row.id === id ? { ...row, ...patch } : row))
 }
 
@@ -234,6 +244,16 @@ function onTreeTypeChange(id: string, type: string): void {
   })
 }
 
+function onTreeAdjDirection(value: string | number): void {
+  markOrderFormDirty()
+  treeAdjDirection.value = value === 'increase' ? 'increase' : 'decrease'
+}
+
+function onTreeAdjAmount(value: number | null): void {
+  markOrderFormDirty()
+  treeAdjAmount.value = value
+}
+
 function buildTreeLinesPayload(): TreeOrderLine[] {
   return treeLines.value
     .filter((row) => row.type.trim())
@@ -245,7 +265,13 @@ function buildTreeLinesPayload(): TreeOrderLine[] {
     }))
 }
 
-function applyLeadDetail(detail: LeadDetail): void {
+function applyLeadDetail(detail: LeadDetail, options?: { force?: boolean }): void {
+  // Keep badge/status in sync, but never wipe in-progress position edits.
+  if (!options?.force && orderFormDirty.value && leadDetail.value?.id === detail.id) {
+    leadDetail.value = detail
+    return
+  }
+  orderFormDirty.value = false
   leadDetail.value = detail
   const fields = readLeadDealFields(detail.custom_fields)
   service.value = fields.order?.service?.toString() ?? ''
@@ -424,7 +450,11 @@ async function loadLeads(forceRefresh = false): Promise<void> {
 
 watch(
   () => [props.chat?.id, props.chat?.current_lead?.id] as const,
-  () => {
+  (next, prev) => {
+    // Switching chats discards local draft; same-chat lead refresh keeps dirty form.
+    if (prev != null && next[0] !== prev[0]) {
+      orderFormDirty.value = false
+    }
     void loadLeads()
   },
   { immediate: true },
@@ -432,7 +462,10 @@ watch(
 
 watch(
   selectedLeadId,
-  (id) => {
+  (id, prevId) => {
+    if (id !== prevId) {
+      orderFormDirty.value = false
+    }
     if (id == null) {
       leadDetail.value = null
       resetOrderForm()
@@ -481,7 +514,7 @@ async function persistOrderFields(): Promise<void> {
     })
     const updated = await patchLead(leadDetail.value.id, { custom_fields: customFields })
     setCachedLeadDetail(updated)
-    applyLeadDetail(updated)
+    applyLeadDetail(updated, { force: true })
     message.success('Сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить сделку')
@@ -505,6 +538,7 @@ async function submitTreePayment(): Promise<void> {
     message.warning('Укажите сумму оплаты')
     return
   }
+  markOrderFormDirty()
   treePayments.value = [
     ...treePayments.value,
     {
@@ -752,14 +786,18 @@ async function saveLeadComment(): Promise<void> {
 
             <div v-if="treeLines.length" class="deal-side__tree-adj">
               <span class="deal-side__label">Скидка / надбавка</span>
-              <NRadioGroup v-model:value="treeAdjDirection" :disabled="!hasSelectedOpenLead">
+              <NRadioGroup
+                :value="treeAdjDirection"
+                :disabled="!hasSelectedOpenLead"
+                @update:value="onTreeAdjDirection"
+              >
                 <NSpace>
                   <NRadio value="decrease">Скидка (−)</NRadio>
                   <NRadio value="increase">Надбавка (+)</NRadio>
                 </NSpace>
               </NRadioGroup>
               <NInputNumber
-                v-model:value="treeAdjAmount"
+                :value="treeAdjAmount"
                 size="small"
                 class="deal-side__number"
                 :show-button="false"
@@ -767,6 +805,7 @@ async function saveLeadComment(): Promise<void> {
                 :min="0"
                 placeholder="0"
                 style="margin-top: 6px"
+                @update:value="onTreeAdjAmount"
               />
               <p class="deal-side__hint">
                 База {{ formatMoney(treeBaseTotal) }} ₽
@@ -840,6 +879,7 @@ async function saveLeadComment(): Promise<void> {
               :show-button="false"
               :disabled="!hasSelectedOpenLead"
               :min="0"
+              @update:value="markOrderFormDirty"
               @blur="persistOrderFields"
             />
           </div>
@@ -853,6 +893,7 @@ async function saveLeadComment(): Promise<void> {
               :show-button="false"
               :disabled="!hasSelectedOpenLead"
               :min="0"
+              @update:value="markOrderFormDirty"
               @blur="persistOrderFields"
             />
           </div>
@@ -867,6 +908,7 @@ async function saveLeadComment(): Promise<void> {
               :disabled="!hasSelectedOpenLead"
               :min="0"
               placeholder="Необязательно"
+              @update:value="markOrderFormDirty"
               @blur="persistOrderFields"
             />
           </div>
