@@ -817,16 +817,21 @@ onUnmounted(() => {
           class="chats-page__right-tabs"
         >
           <NTab name="deal" tab="Сделки" />
-          <NTab name="payments" tab="Оплаты клиента" />
+          <NTab name="payments" tab="Оплаты" />
           <NTab name="client_req" tab="От клиента" />
-          <NTab
-            name="notifications"
-            :tab="
-              notifications.unreadCount
-                ? `Уведомления (${notifications.unreadCount})`
-                : 'Уведомления'
-            "
-          />
+          <NTab name="notifications">
+            <template #default>
+              <span class="chats-page__right-tab-label" title="Уведомления">
+                Уведомл.
+                <span
+                  v-if="notifications.unreadCount"
+                  class="chats-page__right-tab-badge"
+                >
+                  {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
+                </span>
+              </span>
+            </template>
+          </NTab>
         </NTabs>
         <ChatDealSidePanel
           v-if="store.currentChat && rightPaneTab === 'deal'"
@@ -1278,8 +1283,60 @@ onUnmounted(() => {
 
 .chats-page__right-tabs {
   flex-shrink: 0;
-  padding: 8px 12px 0;
+  padding: 8px 8px 0;
   border-bottom: 1px solid var(--app-border);
+  min-width: 0;
+}
+
+.chats-page__right-tabs :deep(.n-tabs-nav) {
+  width: 100%;
+}
+
+.chats-page__right-tabs :deep(.n-tabs-nav-scroll-wrapper),
+.chats-page__right-tabs :deep(.n-tabs-nav-scroll-content),
+.chats-page__right-tabs :deep(.n-tabs-wrapper) {
+  width: 100%;
+}
+
+.chats-page__right-tabs :deep(.n-tabs-tab-pad) {
+  display: none;
+}
+
+.chats-page__right-tabs :deep(.n-tabs-tab) {
+  flex: 1 1 0;
+  justify-content: center;
+  min-width: 0;
+  padding-left: 2px;
+  padding-right: 2px;
+  font-size: 0.72rem;
+}
+
+.chats-page__right-tabs :deep(.n-tabs-tab .n-tabs-tab__label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.chats-page__right-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chats-page__right-tab-badge {
+  flex-shrink: 0;
+  min-width: 1.1rem;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--app-accent, #2080f0);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  text-align: center;
 }
 
 .chats-page__inbox-pane > :not(.chats-page__right-tabs) {
