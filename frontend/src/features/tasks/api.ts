@@ -89,17 +89,33 @@ export async function acknowledgeTask(taskId: number): Promise<DepartmentTask> {
   return data
 }
 
-export async function listClientRequirementUnits(): Promise<
-  { id: number; inn: string; name: string }[]
-> {
-  const { data } = await http.get<{ items: { id: number; inn: string; name: string }[] }>(
-    '/tasks/client-requirement-units',
-  )
-  return data.items
+export async function listClientRequirementUnits(): Promise<{
+  items: {
+    id: number
+    inn: string
+    name: string
+    accountant_user_id?: number | null
+  }[]
+  accountants: { id: number; full_name: string }[]
+}> {
+  const { data } = await http.get<{
+    items: {
+      id: number
+      inn: string
+      name: string
+      accountant_user_id?: number | null
+    }[]
+    accountants: { id: number; full_name: string }[]
+  }>('/tasks/client-requirement-units')
+  return {
+    items: data.items,
+    accountants: data.accountants ?? [],
+  }
 }
 
 export async function createClientRequirement(body: {
   unit_id: number
+  assignee_id?: number | null
   title: string
   description?: string | null
   due_at?: string | null

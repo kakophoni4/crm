@@ -76,6 +76,8 @@ class ClientRequirementCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     unit_id: int = Field(gt=0)
+    # Optional: if omitted, falls back to accountant bound to the unit.
+    assignee_id: int | None = Field(default=None, gt=0)
     title: str = Field(min_length=1, max_length=512)
     description: str | None = Field(default=None, max_length=5000)
     due_at: datetime | None = None
@@ -96,10 +98,17 @@ class ClientRequirementUnitOption(BaseModel):
     id: int
     inn: str
     name: str
+    accountant_user_id: int | None = None
+
+
+class ClientRequirementAccountantOption(BaseModel):
+    id: int
+    full_name: str
 
 
 class ClientRequirementUnitListResponse(BaseModel):
     items: list[ClientRequirementUnitOption]
+    accountants: list[ClientRequirementAccountantOption] = Field(default_factory=list)
 
 
 class TaskBoardColumn(BaseModel):

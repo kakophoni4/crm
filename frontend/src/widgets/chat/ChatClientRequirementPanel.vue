@@ -25,6 +25,7 @@ import {
   type DepartmentTask,
 } from '@/features/tasks/api'
 import { AppError } from '@/shared/api/http'
+import { lavkaLabel } from '@/shared/lib/lavka-name'
 
 const props = defineProps<{
   chat: ChatDetail
@@ -33,9 +34,15 @@ const props = defineProps<{
 const message = useMessage()
 const loading = ref(false)
 const submitting = ref(false)
-const units = ref<{ id: number; inn: string; name: string }[]>([])
+const units = ref<
+  { id: number; inn: string; name: string; accountant_user_id?: number | null }[]
+>([])
+const accountants = ref<{ id: number; full_name: string }[]>([])
 const items = ref<DepartmentTask[]>([])
 const unitId = ref<number | null>(null)
+const assigneeId = ref<number | null>(null)
+/** True after manager manually picks an accountant — unit change won't overwrite. */
+const assigneeTouched = ref(false)
 const title = ref('')
 const description = ref('')
 const dueAt = ref<number | null>(null)
@@ -43,20 +50,48 @@ const pendingFiles = ref<File[]>([])
 
 const unitOptions = computed(() =>
   units.value.map((u) => ({
-    label: `${u.name} (${u.inn})`,
+    label: lavkaLabel(u.name, u.inn),
     value: u.id,
+    title: `${u.name} · ${u.inn}`,
   })),
 )
+
+const accountantOptions = computed(() =>
+  accountants.value.map((a) => ({
+    label: a.full_name,
+    value: a.id,
+  })),
+)
+
+function suggestAccountantForUnit(nextUnitId: number | null): void {
+  if (assigneeTouched.value || nextUnitId == null) return
+  const unit = units.value.find((u) => u.id === nextUnitId)
+  if (unit?.accountant_user_id != null) {
+    assigneeId.value = unit.accountant_user_id
+  }
+}
+
+function onUnitChange(value: number | null): void {
+  unitId.value = value
+  suggestAccountantForUnit(value)
+}
+
+function onAssigneeChange(value: number | null): void {
+  assigneeId.value = value
+  assigneeTouched.value = value != null
+}
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [unitRows, list] = await Promise.all([
+    const [unitsPayload, list] = await Promise.all([
       listClientRequirementUnits(),
       listClientRequirementsByChat(props.chat.id),
     ])
-    units.value = unitRows
+    units.value = unitsPayload.items
+    accountants.value = unitsPayload.accountants
     items.value = list.items
+    suggestAccountantForUnit(unitId.value)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить')
   } finally {
@@ -67,6 +102,13 @@ async function load(): Promise<void> {
 watch(
   () => props.chat.id,
   () => {
+    unitId.value = null
+    assigneeId.value = null
+    assigneeTouched.value = false
+    title.value = ''
+    description.value = ''
+    dueAt.value = null
+    pendingFiles.value = []
     void load()
   },
   { immediate: true },
@@ -83,6 +125,10 @@ async function onSubmit(): Promise<void> {
     message.warning('Выберите лавку')
     return
   }
+  if (assigneeId.value == null) {
+    message.warning('Выберите бухгалтера')
+    return
+  }
   if (!title.value.trim()) {
     message.warning('Укажите текст требования')
     return
@@ -96,6 +142,7 @@ async function onSubmit(): Promise<void> {
     }
     await createClientRequirement({
       unit_id: unitId.value,
+      assignee_id: assigneeId.value,
       title: title.value.trim(),
       description: description.value.trim() || null,
       due_at: dueAt.value ? new Date(dueAt.value).toISOString() : null,
@@ -103,7 +150,7 @@ async function onSubmit(): Promise<void> {
       chat_id: props.chat.id,
       lead_id: null,
     })
-    message.success('Отправлено бухгалтеру лавки')
+    message.success('Задача отправлена бухгалтеру')
     title.value = ''
     description.value = ''
     dueAt.value = null
@@ -128,17 +175,26 @@ function statusLabel(status: string): string {
 <template>
   <div class="client-req">
     <h2 class="client-req__title">Требование от клиента</h2>
-    <p class="client-req__hint">
-      Выберите лавку — задача уйдёт бухгалтеру, привязанному к этой ООО.
-    </p>
     <NSpin :show="loading">
       <NForm label-placement="top" size="small">
         <NFormItem label="Лавка (ООО)" required>
           <NSelect
-            v-model:value="unitId"
+            :value="unitId"
             :options="unitOptions"
             filterable
             placeholder="Выберите лавку"
+            :consistent-menu-width="false"
+            @update:value="onUnitChange"
+          />
+        </NFormItem>
+        <NFormItem label="Бухгалтер" required>
+          <NSelect
+            :value="assigneeId"
+            :options="accountantOptions"
+            filterable
+            clearable
+            placeholder="Выберите бухгалтера"
+            @update:value="onAssigneeChange"
           />
         </NFormItem>
         <NFormItem label="Заголовок" required>
@@ -198,20 +254,15 @@ function statusLabel(status: string): string {
   font-size: 1.05rem;
   font-weight: 650;
 }
-.client-req__hint {
-  margin: 0;
-  font-size: 0.82rem;
-  color: var(--n-text-color-3);
-  line-height: 1.35;
-}
 .client-req__list {
   margin-top: 16px;
-  border-top: 1px solid var(--n-border-color);
   padding-top: 12px;
+  border-top: 1px solid var(--app-border);
 }
 .client-req__list-title {
   margin: 0 0 8px;
   font-size: 0.9rem;
+  font-weight: 600;
 }
 .client-req__items {
   list-style: none;
@@ -222,15 +273,19 @@ function statusLabel(status: string): string {
   gap: 8px;
 }
 .client-req__item {
-  padding: 8px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-bg, transparent);
 }
 .client-req__item-title {
-  font-weight: 560;
+  font-size: 0.88rem;
+  font-weight: 600;
   margin-bottom: 4px;
+  word-break: break-word;
 }
 .client-req__meta {
   font-size: 0.75rem;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
 }
 </style>

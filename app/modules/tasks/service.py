@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.department_task import DepartmentTask
-from app.modules.db.models.enums import UserRole
+from app.modules.db.models.enums import UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, can_act_on_user, visible_department_ids
 from app.modules.tasks.repository import TaskRepository
@@ -491,23 +491,55 @@ class TaskService:
         return count
 
     async def list_client_requirement_units(self, actor: User):
+        from app.modules.db.models.opt_accountant_unit_assignment import (
+            OptAccountantUnitAssignment,
+        )
         from app.modules.db.models.opt_unit import OptUnit
         from app.modules.tasks.schemas import (
+            ClientRequirementAccountantOption,
             ClientRequirementUnitListResponse,
             ClientRequirementUnitOption,
         )
 
         del actor  # all active lavkas visible for managers creating client reqs
-        result = await self._session.execute(
+        units_result = await self._session.execute(
             select(OptUnit)
             .where(OptUnit.is_active.is_(True))
             .order_by(OptUnit.name, OptUnit.inn),
         )
-        items = [
-            ClientRequirementUnitOption(id=u.id, inn=u.inn, name=u.name)
-            for u in result.scalars().all()
+        units = list(units_result.scalars().all())
+        assign_result = await self._session.execute(
+            select(OptAccountantUnitAssignment).order_by(OptAccountantUnitAssignment.id),
+        )
+        accountant_by_unit: dict[int, int] = {}
+        for row in assign_result.scalars().all():
+            accountant_by_unit.setdefault(int(row.unit_id), int(row.user_id))
+
+        accountants_result = await self._session.execute(
+            select(User)
+            .where(
+                User.role.in_((UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT)),
+                User.status == UserStatus.ACTIVE,
+            )
+            .order_by(User.full_name),
+        )
+        accountants = [
+            ClientRequirementAccountantOption(
+                id=user.id,
+                full_name=user.full_name or f"user #{user.id}",
+            )
+            for user in accountants_result.scalars().all()
         ]
-        return ClientRequirementUnitListResponse(items=items)
+        items = [
+            ClientRequirementUnitOption(
+                id=u.id,
+                inn=u.inn,
+                name=u.name,
+                accountant_user_id=accountant_by_unit.get(int(u.id)),
+            )
+            for u in units
+        ]
+        return ClientRequirementUnitListResponse(items=items, accountants=accountants)
 
     async def create_client_requirement(
         self,
@@ -528,16 +560,37 @@ class TaskService:
         if unit is None or not unit.is_active:
             raise ValidationError(message="Лавка не найдена")
 
-        result = await self._session.execute(
-            select(OptAccountantUnitAssignment)
-            .where(OptAccountantUnitAssignment.unit_id == unit.id)
-            .order_by(OptAccountantUnitAssignment.id)
-            .limit(1),
+        assignee_id = body.assignee_id
+        if assignee_id is None:
+            result = await self._session.execute(
+                select(OptAccountantUnitAssignment)
+                .where(OptAccountantUnitAssignment.unit_id == unit.id)
+                .order_by(OptAccountantUnitAssignment.id)
+                .limit(1),
+            )
+            assignment = result.scalar_one_or_none()
+            if assignment is None:
+                raise ValidationError(
+                    message="Выберите бухгалтера или привяжите бухгалтера к лавке",
+                )
+            assignee_id = int(assignment.user_id)
+
+        accountant = await self._load_user(assignee_id)
+        role = (
+            accountant.role
+            if isinstance(accountant.role, UserRole)
+            else UserRole(str(accountant.role))
         )
-        assignment = result.scalar_one_or_none()
-        if assignment is None:
-            raise ValidationError(message="К лавке не привязан бухгалтер")
-        accountant = await self._load_user(assignment.user_id)
+        if role not in {UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT}:
+            raise ValidationError(message="Исполнитель должен быть бухгалтером")
+        status = (
+            accountant.status
+            if isinstance(accountant.status, UserStatus)
+            else UserStatus(str(accountant.status))
+        )
+        if status != UserStatus.ACTIVE:
+            raise ValidationError(message="Бухгалтер неактивен")
+
         dept_id = accountant.department_id or actor.department_id
         if dept_id is None:
             # fallback: any department of actor for admin-less accountants
