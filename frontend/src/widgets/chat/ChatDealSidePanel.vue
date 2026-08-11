@@ -12,7 +12,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import type { ChatDetail } from '@/entities/chat/types'
 import type { BotListItem } from '@/entities/bot/types'
@@ -23,14 +23,20 @@ import {
   setCachedLeadDetail,
   setChatDealsSnapshot,
 } from '@/features/chats/deals-cache'
-import { getLead, listContactLeads, patchLead } from '@/features/leads/api'
+import { getLead, listContactLeads, listTreeServiceTypes, patchLead } from '@/features/leads/api'
 import { listOptOrders } from '@/features/leads/opt-api'
 import {
   OPT_PERIOD_OPTIONS,
   buildLeadDealPatch,
   readLeadDealFields,
+  summarizeTreeLines,
 } from '@/features/leads/order-fields'
 import { serviceOptionsForBot } from '@/features/leads/service-types'
+import {
+  TREE_SERVICE_TYPE_FALLBACK,
+  type TreeOrderLine,
+  type TreeServiceTypeOption,
+} from '@/features/leads/tree-service-types'
 import { leadCommentItems } from '@/features/leads/comments'
 import type { LeadDetail, LeadListItem } from '@/features/leads/types'
 import { useChatsStore } from '@/features/chats/store'
@@ -70,6 +76,11 @@ const period = ref<string | null>(null)
 const quantity = ref<number | null>(null)
 const cost = ref<number | null>(null)
 const costPrice = ref<number | null>(null)
+const treeCatalog = ref<TreeServiceTypeOption[]>([...TREE_SERVICE_TYPE_FALLBACK])
+const selectedTreeTypes = ref<string[]>([])
+const treeLines = ref<Record<string, { quantity: number | null; cost: number | null; costTouched: boolean }>>(
+  {},
+)
 const commentDraft = ref('')
 const commentsOpen = ref(false)
 const optPaymentsReady = ref(true)
@@ -82,6 +93,25 @@ const serviceOptions = computed<SelectOption[]>(() => {
 })
 
 const isOptService = computed(() => service.value === 'ОПТ')
+const isTreesService = computed(() => service.value === 'Деревья')
+
+const treeTypeOptions = computed<SelectOption[]>(() =>
+  treeCatalog.value
+    .filter((row) => row.is_active)
+    .map((row) => ({
+      label: row.unit_price != null ? `${row.label} · ${row.unit_price} ₽` : row.label,
+      value: row.type_code,
+    })),
+)
+
+const treeLinesTotal = computed(() => {
+  const lines = selectedTreeTypes.value.map((type) => ({
+    type,
+    quantity: treeLines.value[type]?.quantity ?? null,
+    cost: treeLines.value[type]?.cost ?? null,
+  }))
+  return summarizeTreeLines(lines)
+})
 
 const leadComments = computed(() =>
   leadDetail.value ? leadCommentItems(leadDetail.value) : [],
@@ -130,7 +160,59 @@ function resetOrderForm(): void {
   quantity.value = null
   cost.value = null
   costPrice.value = null
+  selectedTreeTypes.value = []
+  treeLines.value = {}
   commentDraft.value = ''
+}
+
+function unitPriceFor(type: string): number | null {
+  const row = treeCatalog.value.find((item) => item.type_code === type)
+  return row?.unit_price ?? null
+}
+
+function onTreeTypesChange(codes: string[]): void {
+  selectedTreeTypes.value = codes
+  const next = { ...treeLines.value }
+  for (const code of codes) {
+    if (!next[code]) {
+      const price = unitPriceFor(code)
+      next[code] = { quantity: 1, cost: price, costTouched: false }
+    }
+  }
+  for (const key of Object.keys(next)) {
+    if (!codes.includes(key)) delete next[key]
+  }
+  treeLines.value = next
+  void persistOrderFields()
+}
+
+function onTreeQtyChange(type: string, value: number | null): void {
+  const line = treeLines.value[type] ?? { quantity: null, cost: null, costTouched: false }
+  const price = unitPriceFor(type)
+  let costValue = line.cost
+  if (!line.costTouched && price != null && value != null) {
+    costValue = price * value
+  }
+  treeLines.value = {
+    ...treeLines.value,
+    [type]: { ...line, quantity: value, cost: costValue },
+  }
+}
+
+function onTreeCostChange(type: string, value: number | null): void {
+  const line = treeLines.value[type] ?? { quantity: null, cost: null, costTouched: false }
+  treeLines.value = {
+    ...treeLines.value,
+    [type]: { ...line, cost: value, costTouched: true },
+  }
+}
+
+function buildTreeLinesPayload(): TreeOrderLine[] {
+  return selectedTreeTypes.value.map((type) => ({
+    type,
+    quantity: treeLines.value[type]?.quantity ?? null,
+    cost: treeLines.value[type]?.cost ?? null,
+  }))
 }
 
 function applyLeadDetail(detail: LeadDetail): void {
@@ -144,8 +226,35 @@ function applyLeadDetail(detail: LeadDetail): void {
   cost.value = costRaw == null || costRaw === '' ? null : Number(costRaw)
   const cpRaw = fields.order?.cost_price
   costPrice.value = cpRaw == null || cpRaw === '' ? null : Number(cpRaw)
+  const lines = fields.order?.tree_lines ?? []
+  if (Array.isArray(lines) && lines.length) {
+    selectedTreeTypes.value = lines.map((row) => row.type)
+    const map: Record<string, { quantity: number | null; cost: number | null; costTouched: boolean }> =
+      {}
+    for (const row of lines) {
+      map[row.type] = {
+        quantity: row.quantity == null ? null : Number(row.quantity),
+        cost: row.cost == null ? null : Number(row.cost),
+        costTouched: true,
+      }
+    }
+    treeLines.value = map
+  } else {
+    selectedTreeTypes.value = []
+    treeLines.value = {}
+  }
   commentDraft.value = ''
 }
+
+onMounted(() => {
+  void listTreeServiceTypes()
+    .then((items) => {
+      if (items.length) treeCatalog.value = items
+    })
+    .catch(() => {
+      /* keep fallback */
+    })
+})
 
 async function refreshOptPaymentGate(leadId: number | null): Promise<void> {
   if (!isOptService.value || leadId == null) {
@@ -316,13 +425,18 @@ async function persistOrderFields(): Promise<void> {
       savingFields.value = false
       return
     }
+    const svc = service.value.trim()
+    const treePayload = svc === 'Деревья' ? buildTreeLinesPayload() : []
+    const treeTotals = summarizeTreeLines(treePayload)
     const customFields = buildLeadDealPatch(leadDetail.value.custom_fields, {
       order: {
-        service: service.value.trim() || undefined,
-        period: service.value.trim() === 'ОПТ' ? period.value || undefined : undefined,
-        quantity: quantity.value ?? undefined,
-        cost: cost.value ?? undefined,
-        cost_price: costPrice.value ?? undefined,
+        service: svc || undefined,
+        period: svc === 'ОПТ' ? period.value || undefined : undefined,
+        quantity:
+          svc === 'Деревья' ? (treeTotals.quantity ?? undefined) : (quantity.value ?? undefined),
+        cost: svc === 'Деревья' ? (treeTotals.cost ?? undefined) : (cost.value ?? undefined),
+        cost_price: svc === 'Деревья' ? undefined : (costPrice.value ?? undefined),
+        tree_lines: svc === 'Деревья' ? treePayload : undefined,
       },
     })
     const updated = await patchLead(leadDetail.value.id, { custom_fields: customFields })
@@ -478,7 +592,62 @@ async function saveLeadComment(): Promise<void> {
             @payments-changed="refreshOptPaymentGate(leadDetail.id)"
           />
 
-          <template v-if="!isOptService">
+          <template v-if="isTreesService">
+            <div class="deal-side__field deal-side__field--stacked">
+              <span class="deal-side__label">Типы услуги</span>
+              <NSelect
+                :value="selectedTreeTypes"
+                :options="treeTypeOptions"
+                multiple
+                filterable
+                size="small"
+                placeholder="Выберите один или несколько"
+                :disabled="!hasSelectedOpenLead"
+                @update:value="onTreeTypesChange"
+              />
+            </div>
+            <div
+              v-for="typeCode in selectedTreeTypes"
+              :key="typeCode"
+              class="deal-side__tree-line"
+            >
+              <div class="deal-side__tree-line-title">
+                {{ treeCatalog.find((r) => r.type_code === typeCode)?.label || typeCode }}
+              </div>
+              <div class="deal-side__tree-line-fields">
+                <div class="deal-side__field">
+                  <span class="deal-side__label">Количество</span>
+                  <NInputNumber
+                    :value="treeLines[typeCode]?.quantity ?? null"
+                    size="small"
+                    class="deal-side__number"
+                    :disabled="!hasSelectedOpenLead"
+                    :min="0"
+                    @update:value="(v) => onTreeQtyChange(typeCode, v)"
+                    @blur="persistOrderFields"
+                  />
+                </div>
+                <div class="deal-side__field">
+                  <span class="deal-side__label">Стоимость</span>
+                  <NInputNumber
+                    :value="treeLines[typeCode]?.cost ?? null"
+                    size="small"
+                    class="deal-side__number"
+                    :disabled="!hasSelectedOpenLead"
+                    :min="0"
+                    @update:value="(v) => onTreeCostChange(typeCode, v)"
+                    @blur="persistOrderFields"
+                  />
+                </div>
+              </div>
+            </div>
+            <p v-if="selectedTreeTypes.length" class="deal-side__tree-total">
+              Итого: {{ treeLinesTotal.quantity ?? 0 }} шт. ·
+              {{ treeLinesTotal.cost ?? 0 }} ₽
+            </p>
+          </template>
+
+          <template v-else-if="!isOptService">
           <div class="deal-side__field">
             <span class="deal-side__label">Количество</span>
             <NInputNumber
@@ -748,6 +917,32 @@ async function saveLeadComment(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.deal-side__tree-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+}
+
+.deal-side__tree-line-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.deal-side__tree-line-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.deal-side__tree-total {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
 }
 
 .deal-side__comment {

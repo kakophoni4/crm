@@ -28,6 +28,7 @@ TASK_UPDATED = "task.updated"
 TASK_DONE_PENDING = "task.done_pending"
 TASK_CONFIRMED = "task.confirmed"
 TASK_DUE_SOON = "task.due_soon"
+TASK_NOTIFY = "task.notify"
 
 ADMIN_ONLY_TOPICS: frozenset[str] = frozenset(
     {

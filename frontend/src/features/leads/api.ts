@@ -8,6 +8,7 @@ import type {
   StatusKind,
   StatusListResponse,
 } from '@/features/leads/types'
+import type { TreeServiceTypeOption } from '@/features/leads/tree-service-types'
 import { http } from '@/shared/api/http'
 
 function buildLeadListParams(params: LeadListParams): Record<string, string | number | boolean> {
@@ -67,4 +68,9 @@ export async function listStatuses(params?: {
 export async function patchLead(leadId: number, body: LeadPatchBody): Promise<LeadDetail> {
   const { data } = await http.patch<LeadDetail>(`/leads/${leadId}`, body)
   return data
+}
+
+export async function listTreeServiceTypes(): Promise<TreeServiceTypeOption[]> {
+  const { data } = await http.get<{ items: TreeServiceTypeOption[] }>('/tree-service-types')
+  return data.items
 }

@@ -14,7 +14,11 @@ from app.modules.tasks.repository import TaskRepository
 from app.modules.tasks.schemas import (
     TaskBoardColumn,
     TaskBoardResponse,
+    TaskCommentListResponse,
+    TaskCommentResponse,
     TaskCreateRequest,
+    TaskDetailResponse,
+    TaskFileBrief,
     TaskListResponse,
     TaskMoveRequest,
     TaskResponse,
@@ -34,6 +38,7 @@ from app.realtime.topics import (
     TASK_CREATED,
     TASK_DONE_PENDING,
     TASK_DUE_SOON,
+    TASK_NOTIFY,
     TASK_UPDATED,
 )
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
@@ -81,7 +86,7 @@ class TaskService:
         if role in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
             await self._ensure_department_access(ctx, task.department_id)
             return
-        if task.assignee_id != actor.id:
+        if task.assignee_id != actor.id and task.created_by != actor.id:
             raise NotFound(message="Задача не найдена")
 
     def _task_flags(self, task: DepartmentTask, now: datetime) -> tuple[bool, bool]:
@@ -110,6 +115,8 @@ class TaskService:
         *,
         users: dict[int, User],
         now: datetime,
+        file_ids: list[int] | None = None,
+        files: list[TaskFileBrief] | None = None,
     ) -> TaskResponse:
         task_type = TaskType(task.task_type)
         is_overdue, due_soon = self._task_flags(task, now)
@@ -146,7 +153,36 @@ class TaskService:
             needs_ack=needs_ack,
             creator=TaskUserBrief(id=creator.id, full_name=creator.full_name) if creator else None,
             assignee=TaskUserBrief(id=assignee.id, full_name=assignee.full_name) if assignee else None,
+            file_ids=file_ids or [],
+            files=files or [],
         )
+
+    async def _files_by_task(
+        self,
+        task_ids: list[int],
+    ) -> dict[int, list[TaskFileBrief]]:
+        if not task_ids:
+            return {}
+        from app.modules.db.models.department_task_file import DepartmentTaskFile
+        from app.modules.db.models.uploaded_file import UploadedFile
+
+        result = await self._session.execute(
+            select(DepartmentTaskFile, UploadedFile)
+            .join(UploadedFile, UploadedFile.id == DepartmentTaskFile.file_id)
+            .where(DepartmentTaskFile.task_id.in_(task_ids))
+            .order_by(DepartmentTaskFile.id),
+        )
+        out: dict[int, list[TaskFileBrief]] = {}
+        for link, uploaded in result.all():
+            out.setdefault(int(link.task_id), []).append(
+                TaskFileBrief(
+                    id=uploaded.id,
+                    original_name=uploaded.original_name,
+                    mime_type=uploaded.mime_type,
+                    size_bytes=int(uploaded.size_bytes),
+                ),
+            )
+        return out
 
     async def _build_responses(self, tasks: list[DepartmentTask]) -> list[TaskResponse]:
         now = datetime.now(UTC)
@@ -155,7 +191,17 @@ class TaskService:
             user_ids.add(task.created_by)
             user_ids.add(task.assignee_id)
         users = await self._users_map(user_ids)
-        return [self._to_response(t, users=users, now=now) for t in tasks]
+        files_map = await self._files_by_task([t.id for t in tasks])
+        return [
+            self._to_response(
+                t,
+                users=users,
+                now=now,
+                file_ids=[f.id for f in files_map.get(t.id, [])],
+                files=files_map.get(t.id, []),
+            )
+            for t in tasks
+        ]
 
     async def list_my_tasks(self, actor: User) -> TaskListResponse:
         rows = self._repo.sort_tasks_for_assignee(await self._repo.list_for_assignee(actor.id))
@@ -460,6 +506,126 @@ class TaskService:
             self._event_payload(task),
             scope={"department_id": task.department_id},
         )
+
+    async def get_task(self, actor: User, task_id: int) -> TaskDetailResponse:
+        from app.modules.db.models.department_task_comment import DepartmentTaskComment
+
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        base = (await self._build_responses([task]))[0]
+        comments_result = await self._session.execute(
+            select(DepartmentTaskComment)
+            .where(DepartmentTaskComment.task_id == task_id)
+            .order_by(DepartmentTaskComment.created_at.asc())
+            .limit(200),
+        )
+        comment_rows = list(comments_result.scalars().all())
+        author_ids = {c.author_id for c in comment_rows}
+        authors = await self._users_map(author_ids)
+        comments = [
+            TaskCommentResponse(
+                id=c.id,
+                task_id=c.task_id,
+                author_id=c.author_id,
+                body=c.body,
+                created_at=c.created_at,
+                author=(
+                    TaskUserBrief(id=authors[c.author_id].id, full_name=authors[c.author_id].full_name)
+                    if c.author_id in authors
+                    else None
+                ),
+            )
+            for c in comment_rows
+        ]
+        return TaskDetailResponse(**base.model_dump(), comments=comments)
+
+    async def list_comments(self, actor: User, task_id: int) -> TaskCommentListResponse:
+        detail = await self.get_task(actor, task_id)
+        return TaskCommentListResponse(items=detail.comments)
+
+    async def add_comment(self, actor: User, task_id: int, body: str) -> TaskCommentResponse:
+        from app.modules.db.models.department_task_comment import DepartmentTaskComment
+
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        text = body.strip()
+        if not text:
+            raise ValidationError(message="Комментарий пуст")
+        row = DepartmentTaskComment(task_id=task.id, author_id=actor.id, body=text)
+        self._session.add(row)
+        await self._session.flush()
+        await publish(
+            TASK_UPDATED,
+            {**self._event_payload(task), "comment_id": row.id},
+            scope={"user_id": task.assignee_id},
+        )
+        await publish(
+            TASK_UPDATED,
+            {**self._event_payload(task), "comment_id": row.id},
+            scope={"user_id": task.created_by},
+        )
+        return TaskCommentResponse(
+            id=row.id,
+            task_id=row.task_id,
+            author_id=row.author_id,
+            body=row.body,
+            created_at=row.created_at,
+            author=TaskUserBrief(id=actor.id, full_name=actor.full_name),
+        )
+
+    async def notify_assignee(self, actor: User, task_id: int, message: str | None) -> dict:
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        role = self._role(actor)
+        can = (
+            actor.id == task.created_by
+            or role in {UserRole.ADMIN, UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.CHIEF_ACCOUNTANT}
+        )
+        if not can:
+            raise PermissionDenied(message="Нельзя уведомить исполнителя")
+        if actor.id == task.assignee_id and role not in {
+            UserRole.ADMIN,
+            UserRole.SENIOR,
+            UserRole.GROUP_SENIOR,
+            UserRole.CHIEF_ACCOUNTANT,
+        }:
+            raise PermissionDenied(message="Нельзя уведомить самого себя")
+        payload = {
+            **self._event_payload(task),
+            "notify_kind": "assignee",
+            "from_user_id": actor.id,
+            "from_user_name": actor.full_name,
+            "message": (message or "").strip() or None,
+            "title": task.title,
+        }
+        await publish(TASK_NOTIFY, payload, scope={"user_id": task.assignee_id})
+        return {"ok": True}
+
+    async def notify_creator(self, actor: User, task_id: int, message: str | None) -> dict:
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        if actor.id != task.assignee_id and not self._is_senior_or_admin(actor):
+            raise PermissionDenied(message="Нельзя уведомить постановщика")
+        if actor.id == task.created_by and not self._is_senior_or_admin(actor):
+            raise PermissionDenied(message="Нельзя уведомить самого себя")
+        payload = {
+            **self._event_payload(task),
+            "notify_kind": "creator",
+            "from_user_id": actor.id,
+            "from_user_name": actor.full_name,
+            "message": (message or "").strip() or None,
+            "title": task.title,
+        }
+        await publish(TASK_NOTIFY, payload, scope={"user_id": task.created_by})
+        return {"ok": True}
 
     @staticmethod
     def _event_payload(task: DepartmentTask) -> dict[str, object]:

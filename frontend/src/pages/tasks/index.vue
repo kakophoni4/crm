@@ -44,6 +44,7 @@ import {
 } from '@/shared/realtime/tasks-ws'
 import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
+import TaskDetailModal from '@/widgets/tasks/TaskDetailModal.vue'
 
 const message = useMessage()
 const auth = useAuthStore()
@@ -97,6 +98,14 @@ const reassignOpen = ref(false)
 const reassignLoading = ref(false)
 const reassignTask = ref<DepartmentTask | null>(null)
 const reassignAssigneeId = ref<number | null>(null)
+
+const detailOpen = ref(false)
+const detailTaskId = ref<number | null>(null)
+
+function openTaskDetail(task: DepartmentTask): void {
+  detailTaskId.value = task.id
+  detailOpen.value = true
+}
 
 const boardDepartmentOptions = computed(() =>
   departments.value.map((d) => ({ label: d.name, value: d.id })),
@@ -413,7 +422,11 @@ onMounted(async () => {
   await Promise.all([loadDepartments(), loadUsers(), refresh()])
   await connectTasksRealtime()
   unsubTasks = onTasksEvent((topic, payload) => {
-    if (topic === 'task.created' || topic === 'task.due_soon') {
+    if (
+      topic === 'task.created' ||
+      topic === 'task.due_soon' ||
+      topic === 'task.notify'
+    ) {
       message.info(showTaskNotification(topic, payload))
     }
     scheduleWsRefresh()
@@ -476,6 +489,7 @@ onUnmounted(() => {
                     data-task-card
                     :data-task-id="task.id"
                     draggable="true"
+                    @click="openTaskDetail(task)"
                     @dragstart="onDragStart(task, $event)"
                     @dragend="onDragEnd"
                   >
@@ -543,7 +557,12 @@ onUnmounted(() => {
         <NTabPane name="mine" tab="Мои задачи">
           <NSpin :show="mineLoading && myTasks.length === 0">
             <div v-if="myTasks.length" class="task-list">
-              <div v-for="task in myTasks" :key="task.id" class="task-card">
+              <div
+                v-for="task in myTasks"
+                :key="task.id"
+                class="task-card task-card--clickable"
+                @click="openTaskDetail(task)"
+              >
                 <div class="task-card-head">
                   <NTag :color="{ color: typeColor(task.task_type), textColor: '#fff' }" size="small">
                     {{ task.task_type_label }}
@@ -564,7 +583,7 @@ onUnmounted(() => {
                   type="primary"
                   size="small"
                   style="margin-right: 8px"
-                  @click="onAcknowledge(task)"
+                  @click.stop="onAcknowledge(task)"
                 >
                   Принять
                 </NButton>
@@ -572,7 +591,7 @@ onUnmounted(() => {
                   v-if="task.status === 'open' || task.status === 'new'"
                   type="primary"
                   size="small"
-                  @click="onComplete(task)"
+                  @click.stop="onComplete(task)"
                 >
                   <template #icon><Check :size="14" /></template>
                   Выполнено
@@ -646,6 +665,12 @@ onUnmounted(() => {
         </NButton>
       </template>
     </NModal>
+
+    <TaskDetailModal
+      v-model:show="detailOpen"
+      :task-id="detailTaskId"
+      @updated="activeTab === 'board' ? loadBoard() : loadMine()"
+    />
   </div>
 </template>
 
@@ -773,6 +798,10 @@ onUnmounted(() => {
   border-radius: var(--app-control-radius);
   padding: 12px;
   background: var(--app-surface);
+}
+
+.task-card--clickable {
+  cursor: pointer;
 }
 
 .task-card--draggable {

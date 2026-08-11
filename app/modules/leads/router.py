@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.decorator import AuditedResult, audit
-from app.modules.db.models.enums import AuditAction
+from app.modules.db.models.enums import AuditAction, UserRole
+from app.modules.db.models.tree_service_price import TreeServicePrice
 from app.modules.db.models.user import User
 from app.modules.leads.api_service import LeadApiService, LeadMutationResult
 from app.modules.leads.rate_limit import (
@@ -20,10 +23,19 @@ from app.modules.leads.schemas import (
     LeadDetailResponse,
     LeadListResponse,
     LeadPatchRequest,
+    TreeServicePricePatchRequest,
+    TreeServiceTypeListResponse,
+    TreeServiceTypeOption,
 )
 from app.modules.leads.serialization import to_lead_detail
+from app.modules.leads.tree_service_types import (
+    TREE_SERVICE_TYPE_LABELS,
+    TREE_SERVICE_TYPE_OPTIONS,
+    normalize_tree_type_code,
+)
 from app.modules.rbac.permissions import Permission
 from app.shared.db import get_db
+from app.shared.exceptions import PermissionDenied, ValidationError
 from app.shared.security.permissions import requires_permission
 
 router = APIRouter(prefix="/api/v1", tags=["leads"])
@@ -39,6 +51,66 @@ async def get_crm_dashboard_summary(
     service: Annotated[LeadApiService, Depends(_service)],
 ) -> CrmDashboardSummaryResponse:
     return await service.get_dashboard_crm_summary(actor)
+
+
+@router.get("/tree-service-types", response_model=TreeServiceTypeListResponse)
+async def list_tree_service_types(
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TreeServiceTypeListResponse:
+    del actor
+    result = await db.execute(select(TreeServicePrice))
+    by_code = {row.type_code: row for row in result.scalars().all()}
+    items: list[TreeServiceTypeOption] = []
+    for code, label in TREE_SERVICE_TYPE_OPTIONS:
+        row = by_code.get(code)
+        items.append(
+            TreeServiceTypeOption(
+                type_code=code,
+                label=row.label if row else label,
+                unit_price=float(row.unit_price) if row and row.unit_price is not None else None,
+                is_active=bool(row.is_active) if row else True,
+            ),
+        )
+    return TreeServiceTypeListResponse(items=items)
+
+
+@router.patch("/tree-service-types/{type_code}", response_model=TreeServiceTypeOption)
+async def patch_tree_service_type(
+    type_code: str,
+    body: TreeServicePricePatchRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TreeServiceTypeOption:
+    role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
+    if role not in {UserRole.ADMIN, UserRole.CHIEF_ACCOUNTANT}:
+        raise PermissionDenied(message="Недостаточно прав для изменения прайса")
+    code = normalize_tree_type_code(type_code)
+    if code is None:
+        raise ValidationError(message="Неизвестный тип услуги")
+    row = await db.get(TreeServicePrice, code)
+    if row is None:
+        row = TreeServicePrice(
+            type_code=code,
+            label=TREE_SERVICE_TYPE_LABELS[code],
+            unit_price=None,
+            is_active=True,
+        )
+        db.add(row)
+    if body.unit_price is not None:
+        row.unit_price = Decimal(str(body.unit_price))
+    elif "unit_price" in body.model_fields_set and body.unit_price is None:
+        row.unit_price = None
+    if body.is_active is not None:
+        row.is_active = body.is_active
+    await db.commit()
+    await db.refresh(row)
+    return TreeServiceTypeOption(
+        type_code=row.type_code,
+        label=row.label,
+        unit_price=float(row.unit_price) if row.unit_price is not None else None,
+        is_active=bool(row.is_active),
+    )
 
 
 @router.get("/contacts/{contact_id}/leads", response_model=LeadListResponse)

@@ -3,7 +3,9 @@ import { http } from '@/shared/api/http'
 import type {
   DepartmentTask,
   TaskBoard,
+  TaskComment,
   TaskCreateBody,
+  TaskDetail,
   TaskStatus,
   TaskUpdateBody,
 } from './types'
@@ -11,7 +13,9 @@ import type {
 export type {
   DepartmentTask,
   TaskBoard,
+  TaskComment,
   TaskCreateBody,
+  TaskDetail,
   TaskStatus,
   TaskType,
   TaskUpdateBody,
@@ -87,6 +91,30 @@ export async function fetchTaskAlerts(): Promise<{
 export async function acknowledgeTask(taskId: number): Promise<DepartmentTask> {
   const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/acknowledge`)
   return data
+}
+
+export async function getTask(taskId: number): Promise<TaskDetail> {
+  const { data } = await http.get<TaskDetail>(`/tasks/${taskId}`)
+  return data
+}
+
+export async function addTaskComment(taskId: number, body: string): Promise<TaskComment> {
+  const { data } = await http.post<TaskComment>(`/tasks/${taskId}/comments`, { body })
+  return data
+}
+
+export async function notifyTaskAssignee(
+  taskId: number,
+  message?: string | null,
+): Promise<void> {
+  await http.post(`/tasks/${taskId}/notify-assignee`, { message: message ?? null })
+}
+
+export async function notifyTaskCreator(
+  taskId: number,
+  message?: string | null,
+): Promise<void> {
+  await http.post(`/tasks/${taskId}/notify-creator`, { message: message ?? null })
 }
 
 export async function listClientRequirementUnits(): Promise<{

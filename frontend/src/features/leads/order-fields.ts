@@ -1,3 +1,5 @@
+import type { TreeOrderLine } from './tree-service-types'
+
 export interface LeadOrderFields {
   service?: string
   /** OPT period code, e.g. "2/26" = Q2 2026. */
@@ -5,6 +7,8 @@ export interface LeadOrderFields {
   quantity?: number | string | null
   cost?: number | string | null
   cost_price?: number | string | null
+  /** Lines for service «Деревья» (multi-type qty/cost). */
+  tree_lines?: TreeOrderLine[] | null
 }
 
 /** Quarter/year options for OPT deals (2025–2026). */
@@ -45,6 +49,49 @@ export interface LeadDealCustomFields {
   service_suggestions?: string[]
 }
 
+function parseTreeLines(raw: unknown): TreeOrderLine[] {
+  if (!Array.isArray(raw)) return []
+  const out: TreeOrderLine[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+    const type = String((row as TreeOrderLine).type || '').trim()
+    if (!type) continue
+    const quantity = (row as TreeOrderLine).quantity
+    const cost = (row as TreeOrderLine).cost
+    out.push({
+      type,
+      quantity:
+        quantity == null || quantity === ('' as unknown) ? null : Number(quantity),
+      cost: cost == null || cost === ('' as unknown) ? null : Number(cost),
+    })
+  }
+  return out
+}
+
+export function summarizeTreeLines(lines: TreeOrderLine[]): {
+  quantity: number | null
+  cost: number | null
+} {
+  let qtySum = 0
+  let costSum = 0
+  let hasQty = false
+  let hasCost = false
+  for (const line of lines) {
+    if (line.quantity != null && !Number.isNaN(Number(line.quantity))) {
+      qtySum += Number(line.quantity)
+      hasQty = true
+    }
+    if (line.cost != null && !Number.isNaN(Number(line.cost))) {
+      costSum += Number(line.cost)
+      hasCost = true
+    }
+  }
+  return {
+    quantity: hasQty ? qtySum : null,
+    cost: hasCost ? costSum : null,
+  }
+}
+
 export function readLeadDealFields(
   customFields: Record<string, unknown> | null | undefined,
 ): LeadDealCustomFields {
@@ -52,10 +99,21 @@ export function readLeadDealFields(
     return {}
   }
   const orderRaw = customFields.order
-  const order =
-    orderRaw && typeof orderRaw === 'object' && !Array.isArray(orderRaw)
-      ? (orderRaw as LeadOrderFields)
-      : null
+  if (!orderRaw || typeof orderRaw !== 'object' || Array.isArray(orderRaw)) {
+    const suggestions = customFields.service_suggestions
+    return {
+      order: null,
+      service_suggestions: Array.isArray(suggestions)
+        ? suggestions.filter((v): v is string => typeof v === 'string')
+        : [],
+    }
+  }
+  const base = orderRaw as LeadOrderFields
+  const tree_lines = parseTreeLines(base.tree_lines)
+  const order: LeadOrderFields = {
+    ...base,
+    tree_lines: tree_lines.length ? tree_lines : base.tree_lines ?? null,
+  }
   const suggestions = customFields.service_suggestions
   return {
     order,

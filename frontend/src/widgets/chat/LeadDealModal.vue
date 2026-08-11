@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 
 import { getLead } from '@/features/leads/api'
 import { readLeadDealFields } from '@/features/leads/order-fields'
+import { TREE_SERVICE_TYPE_FALLBACK } from '@/features/leads/tree-service-types'
 import type { LeadDetail } from '@/features/leads/types'
 import { leadCommentItems } from '@/features/leads/comments'
 import { formatLeadDate, formatLeadOpenState, leadListItemLabel } from '@/features/leads/mapping'
@@ -21,6 +22,12 @@ const lead = ref<LeadDetail | null>(null)
 const loading = ref(false)
 
 const orderFields = computed(() => readLeadDealFields(lead.value?.custom_fields))
+
+const treeLines = computed(() => orderFields.value.order?.tree_lines ?? [])
+
+function treeTypeLabel(code: string): string {
+  return TREE_SERVICE_TYPE_FALLBACK.find((row) => row.type_code === code)?.label || code
+}
 
 const comments = computed(() => (lead.value ? leadCommentItems(lead.value) : []))
 
@@ -72,6 +79,17 @@ async function load(leadId: number): Promise<void> {
         <dl class="lead-deal-modal__grid">
           <dt>Услуга</dt>
           <dd>{{ orderFields.order?.service || '—' }}</dd>
+          <template v-if="treeLines.length">
+            <dt>Типы</dt>
+            <dd>
+              <ul class="lead-deal-modal__tree-lines">
+                <li v-for="line in treeLines" :key="line.type">
+                  {{ treeTypeLabel(line.type) }}:
+                  {{ line.quantity ?? '—' }} шт. · {{ line.cost ?? '—' }} ₽
+                </li>
+              </ul>
+            </dd>
+          </template>
           <dt>Количество</dt>
           <dd>{{ orderFields.order?.quantity ?? '—' }}</dd>
           <dt>Стоимость</dt>
@@ -119,6 +137,15 @@ async function load(leadId: number): Promise<void> {
   margin: 0;
   font-size: 0.9rem;
   color: var(--app-text-muted);
+}
+
+.lead-deal-modal__tree-lines {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.lead-deal-modal__tree-lines li {
+  margin: 2px 0;
 }
 
 .lead-deal-modal__grid {

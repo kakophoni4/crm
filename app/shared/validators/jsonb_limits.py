@@ -6,7 +6,8 @@ MAX_TITLE_LEN = 500
 MAX_LEAD_COMMENT_LEN = 2000
 MAX_JSONB_MAP_KEYS = 50
 MAX_JSONB_STRING_VALUE_LEN = 2000
-MAX_JSONB_NESTING_DEPTH = 2
+# Depth 3 allows order.tree_lines[{ type, quantity, cost }] for «Деревья».
+MAX_JSONB_NESTING_DEPTH = 3
 
 
 def _validate_custom_field_value_depth(value: Any, *, depth: int, max_depth: int) -> None:

@@ -34,6 +34,27 @@ export interface DepartmentTask {
   creator: TaskUserBrief | null
   assignee: TaskUserBrief | null
   file_ids?: number[]
+  files?: TaskFileBrief[]
+}
+
+export interface TaskFileBrief {
+  id: number
+  original_name: string
+  mime_type: string
+  size_bytes: number
+}
+
+export interface TaskComment {
+  id: number
+  task_id: number
+  author_id: number
+  body: string
+  created_at: string
+  author: TaskUserBrief | null
+}
+
+export interface TaskDetail extends DepartmentTask {
+  comments: TaskComment[]
 }
 
 export interface TaskBoardColumn {

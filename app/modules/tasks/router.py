@@ -12,9 +12,14 @@ from app.modules.tasks.schemas import (
     ClientRequirementUnitListResponse,
     TaskAlertsResponse,
     TaskBoardResponse,
+    TaskCommentCreateRequest,
+    TaskCommentListResponse,
+    TaskCommentResponse,
     TaskCreateRequest,
+    TaskDetailResponse,
     TaskListResponse,
     TaskMoveRequest,
+    TaskNotifyRequest,
     TaskResponse,
     TaskUpdateRequest,
 )
@@ -105,6 +110,57 @@ async def create_task(
     result = await service.create(actor, body)
     await db.commit()
     return result
+
+
+@router.get("/{task_id}", response_model=TaskDetailResponse)
+async def get_task(
+    task_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> TaskDetailResponse:
+    return await service.get_task(actor, task_id)
+
+
+@router.get("/{task_id}/comments", response_model=TaskCommentListResponse)
+async def list_task_comments(
+    task_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> TaskCommentListResponse:
+    return await service.list_comments(actor, task_id)
+
+
+@router.post("/{task_id}/comments", status_code=201, response_model=TaskCommentResponse)
+async def add_task_comment(
+    task_id: int,
+    body: TaskCommentCreateRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskCommentResponse:
+    result = await service.add_comment(actor, task_id, body.body)
+    await db.commit()
+    return result
+
+
+@router.post("/{task_id}/notify-assignee")
+async def notify_task_assignee(
+    task_id: int,
+    body: TaskNotifyRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> dict[str, bool]:
+    return await service.notify_assignee(actor, task_id, body.message)
+
+
+@router.post("/{task_id}/notify-creator")
+async def notify_task_creator(
+    task_id: int,
+    body: TaskNotifyRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> dict[str, bool]:
+    return await service.notify_creator(actor, task_id, body.message)
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)

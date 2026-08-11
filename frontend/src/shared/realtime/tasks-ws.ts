@@ -6,6 +6,7 @@ const TASK_TOPICS = [
   'task.done_pending',
   'task.confirmed',
   'task.due_soon',
+  'task.notify',
 ] as const
 
 type TaskTopic = (typeof TASK_TOPICS)[number]
@@ -46,6 +47,11 @@ export function showTaskNotification(topic: TaskTopic, payload: Record<string, u
       return `Задача закрыта: ${title}`
     case 'task.updated':
       return `Задача обновлена: ${title}`
+    case 'task.notify': {
+      const fromName = String(payload.from_user_name || 'Коллега')
+      const note = payload.message ? `: ${String(payload.message)}` : ''
+      return `${fromName} просит внимания к задаче «${title}»${note}`
+    }
     default:
       return title
   }

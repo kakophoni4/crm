@@ -70,6 +70,43 @@ class TaskResponse(BaseModel):
     creator: TaskUserBrief | None = None
     assignee: TaskUserBrief | None = None
     file_ids: list[int] = Field(default_factory=list)
+    files: list["TaskFileBrief"] = Field(default_factory=list)
+
+
+class TaskFileBrief(BaseModel):
+    id: int
+    original_name: str
+    mime_type: str
+    size_bytes: int
+
+
+class TaskCommentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=5000)
+
+
+class TaskCommentResponse(BaseModel):
+    id: int
+    task_id: int
+    author_id: int
+    body: str
+    created_at: datetime
+    author: TaskUserBrief | None = None
+
+
+class TaskCommentListResponse(BaseModel):
+    items: list[TaskCommentResponse]
+
+
+class TaskNotifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str | None = Field(default=None, max_length=1000)
+
+
+class TaskDetailResponse(TaskResponse):
+    comments: list[TaskCommentResponse] = Field(default_factory=list)
 
 
 class ClientRequirementCreateRequest(BaseModel):

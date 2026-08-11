@@ -56,7 +56,9 @@ from app.modules.db.models.user_telegram_link import UserTelegramLink
 from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_requirement import OptRequirement
+from app.modules.db.models.department_task_comment import DepartmentTaskComment
 from app.modules.db.models.department_task_file import DepartmentTaskFile
+from app.modules.db.models.tree_service_price import TreeServicePrice
 from app.modules.db.models.opt_receipt import OptReceipt
 from app.modules.db.models.opt_sales_book_extract import OptSalesBookExtract
 from app.modules.db.models.opt_unit import OptUnit
@@ -114,6 +116,7 @@ __all__ = [
     "MessageKind",
     "MessageReplyAudit",
     "NotificationBotSettings",
+    "DepartmentTaskComment",
     "OptAccountantUnitAssignment",
     "OptBuyer",
     "OptRequirement",
@@ -135,6 +138,7 @@ __all__ = [
     "TelephonyCall",
     "TelephonyExtension",
     "TransferStatus",
+    "TreeServicePrice",
     "UploadedFile",
     "User",
     "UserAvailability",

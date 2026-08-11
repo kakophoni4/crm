@@ -129,3 +129,21 @@ class LeadRead(BaseModel):
     chat_id: int | None
     status_id: int
     closed_at: datetime | None
+
+
+class TreeServiceTypeOption(BaseModel):
+    type_code: str
+    label: str
+    unit_price: float | None = None
+    is_active: bool = True
+
+
+class TreeServiceTypeListResponse(BaseModel):
+    items: list[TreeServiceTypeOption]
+
+
+class TreeServicePricePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_price: float | None = Field(default=None, ge=0)
+    is_active: bool | None = None
