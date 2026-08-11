@@ -6,17 +6,21 @@ MAX_TITLE_LEN = 500
 MAX_LEAD_COMMENT_LEN = 2000
 MAX_JSONB_MAP_KEYS = 50
 MAX_JSONB_STRING_VALUE_LEN = 2000
-# Depth 3 allows order.tree_lines[{ type, quantity, cost }] for «Деревья».
-MAX_JSONB_NESTING_DEPTH = 3
+# Container depth for order.tree_lines[{…}] and order.tree_payments[{…}].
+# Leaf scalars under the deepest object do not consume an extra level.
+MAX_JSONB_NESTING_DEPTH = 4
 
 
 def _validate_custom_field_value_depth(value: Any, *, depth: int, max_depth: int) -> None:
-    if depth > max_depth:
-        raise ValueError(f"custom_fields nesting exceeds max depth {max_depth}")
     if isinstance(value, dict):
+        if depth > max_depth:
+            raise ValueError(f"custom_fields nesting exceeds max depth {max_depth}")
         for nested in value.values():
             _validate_custom_field_value_depth(nested, depth=depth + 1, max_depth=max_depth)
-    elif isinstance(value, list):
+        return
+    if isinstance(value, list):
+        if depth > max_depth:
+            raise ValueError(f"custom_fields nesting exceeds max depth {max_depth}")
         for nested in value:
             _validate_custom_field_value_depth(nested, depth=depth + 1, max_depth=max_depth)
 

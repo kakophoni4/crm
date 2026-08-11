@@ -1,4 +1,4 @@
-import type { TreeOrderLine } from './tree-service-types'
+import type { TreeOrderLine, TreePayment } from './tree-service-types'
 
 export interface LeadOrderFields {
   service?: string
@@ -9,6 +9,9 @@ export interface LeadOrderFields {
   cost_price?: number | string | null
   /** Lines for service «Деревья» (multi-type qty/cost). */
   tree_lines?: TreeOrderLine[] | null
+  /** Payments recorded on «Деревья» deals. */
+  tree_payments?: TreePayment[] | null
+  amount_paid?: number | string | null
 }
 
 /** Quarter/year options for OPT deals (2025–2026). */
@@ -92,6 +95,40 @@ export function summarizeTreeLines(lines: TreeOrderLine[]): {
   }
 }
 
+function parseTreePayments(raw: unknown): TreePayment[] {
+  if (!Array.isArray(raw)) return []
+  const out: TreePayment[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+    const item = row as Partial<TreePayment>
+    const amount = Number(item.amount)
+    if (!item.id || !Number.isFinite(amount) || amount <= 0 || !item.paid_at) continue
+    out.push({
+      id: String(item.id),
+      amount,
+      paid_at: String(item.paid_at),
+      payment_type: (item.payment_type as TreePayment['payment_type']) || 'wire',
+      recipient: (item.recipient as TreePayment['recipient']) || 'orange',
+    })
+  }
+  return out
+}
+
+export function summarizeTreePayments(payments: TreePayment[]): number {
+  return payments.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+}
+
+export function treePaymentStatus(
+  cost: number | null | undefined,
+  paid: number,
+): 'unpaid' | 'partial' | 'paid' {
+  const due = Number(cost || 0)
+  if (due <= 0) return paid > 0 ? 'paid' : 'unpaid'
+  if (paid <= 0) return 'unpaid'
+  if (paid + 0.001 >= due) return 'paid'
+  return 'partial'
+}
+
 export function readLeadDealFields(
   customFields: Record<string, unknown> | null | undefined,
 ): LeadDealCustomFields {
@@ -110,9 +147,14 @@ export function readLeadDealFields(
   }
   const base = orderRaw as LeadOrderFields
   const tree_lines = parseTreeLines(base.tree_lines)
+  const tree_payments = parseTreePayments(base.tree_payments)
   const order: LeadOrderFields = {
     ...base,
     tree_lines: tree_lines.length ? tree_lines : base.tree_lines ?? null,
+    tree_payments: tree_payments.length ? tree_payments : base.tree_payments ?? null,
+    amount_paid: tree_payments.length
+      ? summarizeTreePayments(tree_payments)
+      : base.amount_paid ?? null,
   }
   const suggestions = customFields.service_suggestions
   return {

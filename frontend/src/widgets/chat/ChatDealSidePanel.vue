@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import {
   NButton,
+  NDatePicker,
+  NForm,
+  NFormItem,
   NInput,
   NInputNumber,
   NModal,
@@ -30,11 +33,20 @@ import {
   buildLeadDealPatch,
   readLeadDealFields,
   summarizeTreeLines,
+  summarizeTreePayments,
+  treePaymentStatus,
 } from '@/features/leads/order-fields'
+import {
+  OPT_PAYMENT_RECIPIENT_OPTIONS,
+  OPT_PAYMENT_TYPE_OPTIONS,
+  optPaymentStatusLabel,
+  optPaymentTypeLabel,
+} from '@/features/leads/opt-types'
 import { serviceOptionsForBot } from '@/features/leads/service-types'
 import {
   TREE_SERVICE_TYPE_FALLBACK,
   type TreeOrderLine,
+  type TreePayment,
   type TreeServiceTypeOption,
 } from '@/features/leads/tree-service-types'
 import { leadCommentItems } from '@/features/leads/comments'
@@ -81,6 +93,14 @@ const selectedTreeTypes = ref<string[]>([])
 const treeLines = ref<Record<string, { quantity: number | null; cost: number | null; costTouched: boolean }>>(
   {},
 )
+const treePayments = ref<TreePayment[]>([])
+const paymentOpen = ref(false)
+const paymentForm = ref({
+  amount: null as number | null,
+  paid_at: Date.now() as number,
+  payment_type: 'wire' as TreePayment['payment_type'],
+  recipient: 'orange' as TreePayment['recipient'],
+})
 const commentDraft = ref('')
 const commentsOpen = ref(false)
 const optPaymentsReady = ref(true)
@@ -112,6 +132,14 @@ const treeLinesTotal = computed(() => {
   }))
   return summarizeTreeLines(lines)
 })
+
+const treeAmountPaid = computed(() => summarizeTreePayments(treePayments.value))
+const treeAmountRemaining = computed(() =>
+  Math.max(0, Number(treeLinesTotal.value.cost || 0) - treeAmountPaid.value),
+)
+const treePayStatus = computed(() =>
+  treePaymentStatus(treeLinesTotal.value.cost, treeAmountPaid.value),
+)
 
 const leadComments = computed(() =>
   leadDetail.value ? leadCommentItems(leadDetail.value) : [],
@@ -162,6 +190,7 @@ function resetOrderForm(): void {
   costPrice.value = null
   selectedTreeTypes.value = []
   treeLines.value = {}
+  treePayments.value = []
   commentDraft.value = ''
 }
 
@@ -183,7 +212,6 @@ function onTreeTypesChange(codes: string[]): void {
     if (!codes.includes(key)) delete next[key]
   }
   treeLines.value = next
-  void persistOrderFields()
 }
 
 function onTreeQtyChange(type: string, value: number | null): void {
@@ -243,6 +271,7 @@ function applyLeadDetail(detail: LeadDetail): void {
     selectedTreeTypes.value = []
     treeLines.value = {}
   }
+  treePayments.value = [...(fields.order?.tree_payments ?? [])]
   commentDraft.value = ''
 }
 
@@ -428,6 +457,7 @@ async function persistOrderFields(): Promise<void> {
     const svc = service.value.trim()
     const treePayload = svc === 'Деревья' ? buildTreeLinesPayload() : []
     const treeTotals = summarizeTreeLines(treePayload)
+    const paid = svc === 'Деревья' ? summarizeTreePayments(treePayments.value) : undefined
     const customFields = buildLeadDealPatch(leadDetail.value.custom_fields, {
       order: {
         service: svc || undefined,
@@ -437,16 +467,60 @@ async function persistOrderFields(): Promise<void> {
         cost: svc === 'Деревья' ? (treeTotals.cost ?? undefined) : (cost.value ?? undefined),
         cost_price: svc === 'Деревья' ? undefined : (costPrice.value ?? undefined),
         tree_lines: svc === 'Деревья' ? treePayload : undefined,
+        tree_payments: svc === 'Деревья' ? treePayments.value : undefined,
+        amount_paid: paid,
       },
     })
     const updated = await patchLead(leadDetail.value.id, { custom_fields: customFields })
     setCachedLeadDetail(updated)
     applyLeadDetail(updated)
+    message.success('Сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить сделку')
   } finally {
     savingFields.value = false
   }
+}
+
+function openTreePaymentModal(): void {
+  paymentForm.value = {
+    amount: treeAmountRemaining.value > 0 ? Math.round(treeAmountRemaining.value) : null,
+    paid_at: Date.now(),
+    payment_type: 'wire',
+    recipient: 'orange',
+  }
+  paymentOpen.value = true
+}
+
+async function submitTreePayment(): Promise<void> {
+  if (paymentForm.value.amount == null || paymentForm.value.amount <= 0) {
+    message.warning('Укажите сумму оплаты')
+    return
+  }
+  treePayments.value = [
+    ...treePayments.value,
+    {
+      id: `tp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      amount: Number(paymentForm.value.amount),
+      paid_at: new Date(paymentForm.value.paid_at).toISOString(),
+      payment_type: paymentForm.value.payment_type,
+      recipient: paymentForm.value.recipient,
+    },
+  ]
+  paymentOpen.value = false
+  await persistOrderFields()
+}
+
+function paymentStatusClass(status: string): string {
+  if (status === 'paid') return 'deal-side__pay-pill deal-side__pay-pill--ok'
+  if (status === 'partial') return 'deal-side__pay-pill deal-side__pay-pill--warn'
+  return 'deal-side__pay-pill deal-side__pay-pill--danger'
+}
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 0,
+  }).format(Math.round(value))
 }
 
 async function updateSelectedLeadStatus(statusId: number): Promise<void> {
@@ -603,6 +677,7 @@ async function saveLeadComment(): Promise<void> {
                 size="small"
                 placeholder="Выберите один или несколько"
                 :disabled="!hasSelectedOpenLead"
+                style="width: 100%"
                 @update:value="onTreeTypesChange"
               />
             </div>
@@ -615,69 +690,123 @@ async function saveLeadComment(): Promise<void> {
                 {{ treeCatalog.find((r) => r.type_code === typeCode)?.label || typeCode }}
               </div>
               <div class="deal-side__tree-line-fields">
-                <div class="deal-side__field">
+                <div class="deal-side__field deal-side__field--stacked">
                   <span class="deal-side__label">Количество</span>
                   <NInputNumber
                     :value="treeLines[typeCode]?.quantity ?? null"
                     size="small"
                     class="deal-side__number"
+                    :show-button="false"
                     :disabled="!hasSelectedOpenLead"
                     :min="0"
+                    placeholder="0"
                     @update:value="(v) => onTreeQtyChange(typeCode, v)"
-                    @blur="persistOrderFields"
                   />
                 </div>
-                <div class="deal-side__field">
-                  <span class="deal-side__label">Стоимость</span>
+                <div class="deal-side__field deal-side__field--stacked">
+                  <span class="deal-side__label">Стоимость, ₽</span>
                   <NInputNumber
                     :value="treeLines[typeCode]?.cost ?? null"
                     size="small"
                     class="deal-side__number"
+                    :show-button="false"
                     :disabled="!hasSelectedOpenLead"
                     :min="0"
+                    placeholder="0"
                     @update:value="(v) => onTreeCostChange(typeCode, v)"
-                    @blur="persistOrderFields"
                   />
                 </div>
               </div>
             </div>
-            <p v-if="selectedTreeTypes.length" class="deal-side__tree-total">
-              Итого: {{ treeLinesTotal.quantity ?? 0 }} шт. ·
-              {{ treeLinesTotal.cost ?? 0 }} ₽
-            </p>
+
+            <dl v-if="selectedTreeTypes.length" class="deal-side__pay-facts">
+              <div>
+                <dt>К оплате</dt>
+                <dd>{{ formatMoney(treeLinesTotal.cost ?? 0) }} ₽</dd>
+              </div>
+              <div>
+                <dt>Оплачено</dt>
+                <dd>{{ formatMoney(treeAmountPaid) }} ₽</dd>
+              </div>
+              <div>
+                <dt>Остаток</dt>
+                <dd>{{ formatMoney(treeAmountRemaining) }} ₽</dd>
+              </div>
+              <div>
+                <dt>Оплата</dt>
+                <dd>
+                  <span :class="paymentStatusClass(treePayStatus)">
+                    {{ optPaymentStatusLabel(treePayStatus) }}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+
+            <ul v-if="treePayments.length" class="deal-side__pay-list">
+              <li v-for="pay in treePayments" :key="pay.id">
+                {{ formatMoney(pay.amount) }} ₽ ·
+                {{ optPaymentTypeLabel(pay.payment_type) }} ·
+                {{ new Date(pay.paid_at).toLocaleString('ru-RU') }}
+              </li>
+            </ul>
+
+            <NSpace vertical v-if="hasSelectedOpenLead">
+              <NButton
+                type="primary"
+                secondary
+                block
+                size="small"
+                :loading="savingFields"
+                @click="persistOrderFields"
+              >
+                Сохранить
+              </NButton>
+              <NButton
+                type="primary"
+                block
+                size="small"
+                :disabled="!selectedTreeTypes.length"
+                @click="openTreePaymentModal"
+              >
+                Записать оплату
+              </NButton>
+            </NSpace>
           </template>
 
           <template v-else-if="!isOptService">
-          <div class="deal-side__field">
+          <div class="deal-side__field deal-side__field--stacked">
             <span class="deal-side__label">Количество</span>
             <NInputNumber
               v-model:value="quantity"
               size="small"
               class="deal-side__number"
+              :show-button="false"
               :disabled="!hasSelectedOpenLead"
               :min="0"
               @blur="persistOrderFields"
             />
           </div>
 
-          <div class="deal-side__field">
+          <div class="deal-side__field deal-side__field--stacked">
             <span class="deal-side__label">Стоимость</span>
             <NInputNumber
               v-model:value="cost"
               size="small"
               class="deal-side__number"
+              :show-button="false"
               :disabled="!hasSelectedOpenLead"
               :min="0"
               @blur="persistOrderFields"
             />
           </div>
 
-          <div class="deal-side__field">
+          <div class="deal-side__field deal-side__field--stacked">
             <span class="deal-side__label">Себестоимость</span>
             <NInputNumber
               v-model:value="costPrice"
               size="small"
               class="deal-side__number"
+              :show-button="false"
               :disabled="!hasSelectedOpenLead"
               :min="0"
               placeholder="Необязательно"
@@ -784,6 +913,44 @@ async function saveLeadComment(): Promise<void> {
         </li>
       </ul>
       <p v-else class="deal-side__hint">Комментариев пока нет</p>
+    </NModal>
+
+    <NModal
+      v-model:show="paymentOpen"
+      preset="card"
+      title="Записать оплату"
+      style="width: min(420px, 94vw)"
+    >
+      <NForm label-placement="top" size="small">
+        <NFormItem label="Сумма оплаты">
+          <NInputNumber
+            v-model:value="paymentForm.amount"
+            :min="1"
+            :show-button="false"
+            style="width: 100%"
+          />
+        </NFormItem>
+        <NFormItem label="Когда оплачено">
+          <NDatePicker v-model:value="paymentForm.paid_at" type="datetime" style="width: 100%" />
+        </NFormItem>
+        <NFormItem label="Тип оплаты">
+          <NSelect v-model:value="paymentForm.payment_type" :options="OPT_PAYMENT_TYPE_OPTIONS" />
+        </NFormItem>
+        <NFormItem label="Кому">
+          <NSelect
+            v-model:value="paymentForm.recipient"
+            :options="OPT_PAYMENT_RECIPIENT_OPTIONS"
+          />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="paymentOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="savingFields" @click="submitTreePayment">
+            Сохранить оплату
+          </NButton>
+        </NSpace>
+      </template>
     </NModal>
   </section>
 </template>
@@ -896,10 +1063,6 @@ async function saveLeadComment(): Promise<void> {
   line-height: 1.35;
 }
 
-.deal-side__number {
-  width: 100%;
-}
-
 .deal-side__empty {
   display: flex;
   flex-direction: column;
@@ -922,27 +1085,80 @@ async function saveLeadComment(): Promise<void> {
 .deal-side__tree-line {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
 }
 
 .deal-side__tree-line-title {
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   font-weight: 600;
 }
 
 .deal-side__tree-line-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 10px;
 }
 
-.deal-side__tree-total {
+.deal-side__number {
+  width: 100% !important;
+}
+
+.deal-side__number :deep(.n-input) {
+  width: 100%;
+}
+
+.deal-side__pay-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
   margin: 0;
-  font-size: 0.8rem;
+}
+
+.deal-side__pay-facts dt {
+  font-size: 0.72rem;
   color: var(--app-text-muted);
+}
+
+.deal-side__pay-facts dd {
+  margin: 2px 0 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.deal-side__pay-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--app-text-muted);
+}
+
+.deal-side__pay-pill {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  background: #6b7280;
+}
+
+.deal-side__pay-pill--ok {
+  background: #1a7f37;
+}
+
+.deal-side__pay-pill--warn {
+  background: #9a6700;
+}
+
+.deal-side__pay-pill--danger {
+  background: #cf222e;
 }
 
 .deal-side__comment {

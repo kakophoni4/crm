@@ -21,3 +21,11 @@ export interface TreeOrderLine {
   quantity?: number | null
   cost?: number | null
 }
+
+export interface TreePayment {
+  id: string
+  amount: number
+  paid_at: string
+  payment_type: 'card' | 'crypto' | 'wire' | 'cash'
+  recipient: 'orange' | 'beneficiary'
+}
