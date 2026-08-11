@@ -9,7 +9,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Download } from 'lucide-vue-next'
+import { Download, Eye } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 
 import {
@@ -20,9 +20,15 @@ import {
   type DepartmentTask,
   type TaskDetail,
 } from '@/features/tasks/api'
-import { TASK_TYPE_COLORS } from '@/features/tasks/types'
+import { TASK_TYPE_COLORS, type TaskFileBrief } from '@/features/tasks/types'
+import {
+  attachmentPreviewSupported,
+  resolveAttachmentPreviewKind,
+  type AttachmentPreviewKind,
+} from '@/shared/lib/attachment-preview-kind'
 import { AppError, http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
+import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const props = defineProps<{
   show: boolean
@@ -41,6 +47,18 @@ const detail = ref<TaskDetail | null>(null)
 const commentBody = ref('')
 const commentLoading = ref(false)
 const notifyLoading = ref<string | null>(null)
+
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewName = ref('')
+const previewMime = ref('')
+const previewBlob = ref<Blob | null>(null)
+const previewBlobUrl = ref<string | null>(null)
+const previewKind = computed<AttachmentPreviewKind>(() =>
+  previewName.value
+    ? resolveAttachmentPreviewKind({ name: previewName.value, mime: previewMime.value })
+    : 'unsupported',
+)
 
 const meId = computed(() => auth.user?.id ?? null)
 const isManager = computed(
@@ -72,6 +90,7 @@ watch(
     if (!open || id == null) {
       detail.value = null
       commentBody.value = ''
+      closeFilePreview()
       return
     }
     void load(id)
@@ -150,6 +169,45 @@ async function downloadFile(fileId: number, name: string): Promise<void> {
   }
 }
 
+function canPreviewFile(file: TaskFileBrief): boolean {
+  return attachmentPreviewSupported(
+    resolveAttachmentPreviewKind({ name: file.original_name, mime: file.mime_type }),
+  )
+}
+
+function resetPreviewBlob(): void {
+  if (previewBlobUrl.value) URL.revokeObjectURL(previewBlobUrl.value)
+  previewBlobUrl.value = null
+  previewBlob.value = null
+}
+
+async function openFilePreview(file: TaskFileBrief): Promise<void> {
+  if (!canPreviewFile(file)) {
+    message.warning('Просмотр этого типа файла не поддерживается')
+    return
+  }
+  resetPreviewBlob()
+  previewName.value = file.original_name
+  previewMime.value = file.mime_type || ''
+  previewOpen.value = true
+  previewLoading.value = true
+  try {
+    const { data } = await http.get<Blob>(`/files/${file.id}`, { responseType: 'blob' })
+    previewBlob.value = data
+    previewBlobUrl.value = URL.createObjectURL(data)
+  } catch (err) {
+    previewOpen.value = false
+    message.error(err instanceof AppError ? err.message : 'Не удалось открыть файл')
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function closeFilePreview(): void {
+  previewOpen.value = false
+  resetPreviewBlob()
+}
+
 function formatDue(iso: string | null): string {
   if (!iso) return 'без срока'
   return new Date(iso).toLocaleString('ru-RU')
@@ -205,10 +263,21 @@ function typeColor(task: DepartmentTask): string {
             <ul v-if="detail.files?.length" class="task-detail__files">
               <li v-for="file in detail.files" :key="file.id">
                 <span>{{ file.original_name }}</span>
-                <NButton size="tiny" secondary @click="downloadFile(file.id, file.original_name)">
-                  <template #icon><Download :size="12" /></template>
-                  Скачать
-                </NButton>
+                <NSpace size="small">
+                  <NButton
+                    v-if="canPreviewFile(file)"
+                    size="tiny"
+                    secondary
+                    @click="openFilePreview(file)"
+                  >
+                    <template #icon><Eye :size="12" /></template>
+                    Просмотр
+                  </NButton>
+                  <NButton size="tiny" secondary @click="downloadFile(file.id, file.original_name)">
+                    <template #icon><Download :size="12" /></template>
+                    Скачать
+                  </NButton>
+                </NSpace>
               </li>
             </ul>
             <NEmpty v-else description="Файлов нет" size="small" />
@@ -270,6 +339,16 @@ function typeColor(task: DepartmentTask): string {
       </NSpace>
     </template>
   </NModal>
+
+  <AttachmentPreviewModal
+    :open="previewOpen"
+    :loading="previewLoading"
+    :label="previewName"
+    :blob-url="previewBlobUrl"
+    :blob="previewBlob"
+    :preview-kind="previewKind"
+    @close="closeFilePreview"
+  />
 </template>
 
 <style scoped>

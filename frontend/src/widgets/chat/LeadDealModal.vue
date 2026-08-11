@@ -4,7 +4,10 @@ import { computed, ref, watch } from 'vue'
 
 import { getLead } from '@/features/leads/api'
 import { readLeadDealFields } from '@/features/leads/order-fields'
-import { TREE_SERVICE_TYPE_FALLBACK } from '@/features/leads/tree-service-types'
+import {
+  TREE_SERVICE_TYPE_FALLBACK,
+  treeLineTotal,
+} from '@/features/leads/tree-service-types'
 import type { LeadDetail } from '@/features/leads/types'
 import { leadCommentItems } from '@/features/leads/comments'
 import { formatLeadDate, formatLeadOpenState, leadListItemLabel } from '@/features/leads/mapping'
@@ -24,9 +27,14 @@ const loading = ref(false)
 const orderFields = computed(() => readLeadDealFields(lead.value?.custom_fields))
 
 const treeLines = computed(() => orderFields.value.order?.tree_lines ?? [])
+const treeAdjustment = computed(() => Number(orderFields.value.order?.tree_adjustment || 0))
 
 function treeTypeLabel(code: string): string {
   return TREE_SERVICE_TYPE_FALLBACK.find((row) => row.type_code === code)?.label || code
+}
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(value))
 }
 
 const comments = computed(() => (lead.value ? leadCommentItems(lead.value) : []))
@@ -80,22 +88,27 @@ async function load(leadId: number): Promise<void> {
           <dt>Услуга</dt>
           <dd>{{ orderFields.order?.service || '—' }}</dd>
           <template v-if="treeLines.length">
-            <dt>Типы</dt>
+            <dt>Позиции</dt>
             <dd>
               <ul class="lead-deal-modal__tree-lines">
-                <li v-for="line in treeLines" :key="line.type">
+                <li v-for="line in treeLines" :key="line.id || `${line.type}-${line.unit_price}`">
                   {{ treeTypeLabel(line.type) }}:
-                  {{ line.quantity ?? '—' }} шт. · {{ line.cost ?? '—' }} ₽
+                  {{ line.quantity ?? '—' }} × {{ line.unit_price ?? '—' }} ₽
+                  = {{ formatMoney(treeLineTotal(line)) }} ₽
                 </li>
               </ul>
             </dd>
+            <template v-if="treeAdjustment">
+              <dt>{{ treeAdjustment > 0 ? 'Надбавка' : 'Скидка' }}</dt>
+              <dd>{{ formatMoney(Math.abs(treeAdjustment)) }} ₽</dd>
+            </template>
           </template>
           <dt>Количество</dt>
           <dd>{{ orderFields.order?.quantity ?? '—' }}</dd>
           <dt>Стоимость</dt>
           <dd>{{ orderFields.order?.cost ?? '—' }}</dd>
-          <dt>Себестоимость</dt>
-          <dd>{{ orderFields.order?.cost_price ?? '—' }}</dd>
+          <dt v-if="!treeLines.length">Себестоимость</dt>
+          <dd v-if="!treeLines.length">{{ orderFields.order?.cost_price ?? '—' }}</dd>
         </dl>
 
         <div v-if="comments.length" class="lead-deal-modal__comments">

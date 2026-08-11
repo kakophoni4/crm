@@ -1,4 +1,9 @@
-import type { TreeOrderLine, TreePayment } from './tree-service-types'
+import {
+  newTreeLineId,
+  treeLineTotal,
+  type TreeOrderLine,
+  type TreePayment,
+} from './tree-service-types'
 
 export interface LeadOrderFields {
   service?: string
@@ -12,6 +17,10 @@ export interface LeadOrderFields {
   /** Payments recorded on «Деревья» deals. */
   tree_payments?: TreePayment[] | null
   amount_paid?: number | string | null
+  /**
+   * Adjustment to base total: positive = надбавка, negative = скидка.
+   */
+  tree_adjustment?: number | string | null
 }
 
 /** Quarter/year options for OPT deals (2025–2026). */
@@ -57,15 +66,30 @@ function parseTreeLines(raw: unknown): TreeOrderLine[] {
   const out: TreeOrderLine[] = []
   for (const row of raw) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue
-    const type = String((row as TreeOrderLine).type || '').trim()
+    const item = row as Partial<TreeOrderLine> & { cost?: number | null }
+    const type = String(item.type || '').trim()
     if (!type) continue
-    const quantity = (row as TreeOrderLine).quantity
-    const cost = (row as TreeOrderLine).cost
+    const quantity =
+      item.quantity == null || item.quantity === ('' as unknown)
+        ? null
+        : Number(item.quantity)
+    let unitPrice =
+      item.unit_price == null || item.unit_price === ('' as unknown)
+        ? null
+        : Number(item.unit_price)
+    // Migrate legacy: `cost` was line total → unit_price = cost / qty
+    if (unitPrice == null && item.cost != null && item.cost !== ('' as unknown)) {
+      const legacy = Number(item.cost)
+      if (Number.isFinite(legacy)) {
+        const qty = quantity && quantity > 0 ? quantity : 1
+        unitPrice = legacy / qty
+      }
+    }
     out.push({
+      id: item.id ? String(item.id) : newTreeLineId(),
       type,
-      quantity:
-        quantity == null || quantity === ('' as unknown) ? null : Number(quantity),
-      cost: cost == null || cost === ('' as unknown) ? null : Number(cost),
+      quantity,
+      unit_price: unitPrice,
     })
   }
   return out
@@ -73,7 +97,7 @@ function parseTreeLines(raw: unknown): TreeOrderLine[] {
 
 export function summarizeTreeLines(lines: TreeOrderLine[]): {
   quantity: number | null
-  cost: number | null
+  base_cost: number | null
 } {
   let qtySum = 0
   let costSum = 0
@@ -84,15 +108,24 @@ export function summarizeTreeLines(lines: TreeOrderLine[]): {
       qtySum += Number(line.quantity)
       hasQty = true
     }
-    if (line.cost != null && !Number.isNaN(Number(line.cost))) {
-      costSum += Number(line.cost)
+    const total = treeLineTotal(line)
+    if (total > 0 || (line.unit_price != null && line.quantity != null)) {
+      costSum += total
       hasCost = true
     }
   }
   return {
     quantity: hasQty ? qtySum : null,
-    cost: hasCost ? costSum : null,
+    base_cost: hasCost ? costSum : null,
   }
+}
+
+export function treeDueAmount(
+  lines: TreeOrderLine[],
+  adjustment: number | null | undefined,
+): number {
+  const base = summarizeTreeLines(lines).base_cost ?? 0
+  return Math.max(0, base + Number(adjustment || 0))
 }
 
 function parseTreePayments(raw: unknown): TreePayment[] {
@@ -148,6 +181,7 @@ export function readLeadDealFields(
   const base = orderRaw as LeadOrderFields
   const tree_lines = parseTreeLines(base.tree_lines)
   const tree_payments = parseTreePayments(base.tree_payments)
+  const due = treeDueAmount(tree_lines, Number(base.tree_adjustment || 0))
   const order: LeadOrderFields = {
     ...base,
     tree_lines: tree_lines.length ? tree_lines : base.tree_lines ?? null,
@@ -155,6 +189,11 @@ export function readLeadDealFields(
     amount_paid: tree_payments.length
       ? summarizeTreePayments(tree_payments)
       : base.amount_paid ?? null,
+    cost: tree_lines.length ? due : base.cost,
+    tree_adjustment:
+      base.tree_adjustment == null || base.tree_adjustment === ''
+        ? null
+        : Number(base.tree_adjustment),
   }
   const suggestions = customFields.service_suggestions
   return {

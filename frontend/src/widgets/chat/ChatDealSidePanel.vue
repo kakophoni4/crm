@@ -7,6 +7,8 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NRadio,
+  NRadioGroup,
   NSelect,
   NSpace,
   NSpin,
@@ -14,6 +16,7 @@ import {
   NTooltip,
   useMessage,
 } from 'naive-ui'
+import { Plus, Trash2 } from 'lucide-vue-next'
 import type { SelectOption } from 'naive-ui'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -34,6 +37,7 @@ import {
   readLeadDealFields,
   summarizeTreeLines,
   summarizeTreePayments,
+  treeDueAmount,
   treePaymentStatus,
 } from '@/features/leads/order-fields'
 import {
@@ -45,6 +49,8 @@ import {
 import { serviceOptionsForBot } from '@/features/leads/service-types'
 import {
   TREE_SERVICE_TYPE_FALLBACK,
+  newTreeLineId,
+  treeLineTotal,
   type TreeOrderLine,
   type TreePayment,
   type TreeServiceTypeOption,
@@ -89,10 +95,9 @@ const quantity = ref<number | null>(null)
 const cost = ref<number | null>(null)
 const costPrice = ref<number | null>(null)
 const treeCatalog = ref<TreeServiceTypeOption[]>([...TREE_SERVICE_TYPE_FALLBACK])
-const selectedTreeTypes = ref<string[]>([])
-const treeLines = ref<Record<string, { quantity: number | null; cost: number | null; costTouched: boolean }>>(
-  {},
-)
+const treeLines = ref<TreeOrderLine[]>([])
+const treeAdjDirection = ref<'decrease' | 'increase'>('decrease')
+const treeAdjAmount = ref<number | null>(null)
 const treePayments = ref<TreePayment[]>([])
 const paymentOpen = ref(false)
 const paymentForm = ref({
@@ -124,22 +129,19 @@ const treeTypeOptions = computed<SelectOption[]>(() =>
     })),
 )
 
-const treeLinesTotal = computed(() => {
-  const lines = selectedTreeTypes.value.map((type) => ({
-    type,
-    quantity: treeLines.value[type]?.quantity ?? null,
-    cost: treeLines.value[type]?.cost ?? null,
-  }))
-  return summarizeTreeLines(lines)
+const treeSignedAdjustment = computed(() => {
+  const amount = Number(treeAdjAmount.value || 0)
+  if (!amount) return 0
+  return treeAdjDirection.value === 'increase' ? amount : -amount
 })
 
+const treeBaseTotal = computed(() => summarizeTreeLines(treeLines.value).base_cost ?? 0)
+const treeDueTotal = computed(() => treeDueAmount(treeLines.value, treeSignedAdjustment.value))
 const treeAmountPaid = computed(() => summarizeTreePayments(treePayments.value))
 const treeAmountRemaining = computed(() =>
-  Math.max(0, Number(treeLinesTotal.value.cost || 0) - treeAmountPaid.value),
+  Math.max(0, treeDueTotal.value - treeAmountPaid.value),
 )
-const treePayStatus = computed(() =>
-  treePaymentStatus(treeLinesTotal.value.cost, treeAmountPaid.value),
-)
+const treePayStatus = computed(() => treePaymentStatus(treeDueTotal.value, treeAmountPaid.value))
 
 const leadComments = computed(() =>
   leadDetail.value ? leadCommentItems(leadDetail.value) : [],
@@ -188,8 +190,9 @@ function resetOrderForm(): void {
   quantity.value = null
   cost.value = null
   costPrice.value = null
-  selectedTreeTypes.value = []
-  treeLines.value = {}
+  treeLines.value = []
+  treeAdjDirection.value = 'decrease'
+  treeAdjAmount.value = null
   treePayments.value = []
   commentDraft.value = ''
 }
@@ -199,48 +202,47 @@ function unitPriceFor(type: string): number | null {
   return row?.unit_price ?? null
 }
 
-function onTreeTypesChange(codes: string[]): void {
-  selectedTreeTypes.value = codes
-  const next = { ...treeLines.value }
-  for (const code of codes) {
-    if (!next[code]) {
-      const price = unitPriceFor(code)
-      next[code] = { quantity: 1, cost: price, costTouched: false }
-    }
-  }
-  for (const key of Object.keys(next)) {
-    if (!codes.includes(key)) delete next[key]
-  }
-  treeLines.value = next
+function addTreeLine(): void {
+  treeLines.value = [
+    ...treeLines.value,
+    {
+      id: newTreeLineId(),
+      type: '',
+      quantity: 1,
+      unit_price: null,
+    },
+  ]
 }
 
-function onTreeQtyChange(type: string, value: number | null): void {
-  const line = treeLines.value[type] ?? { quantity: null, cost: null, costTouched: false }
-  const price = unitPriceFor(type)
-  let costValue = line.cost
-  if (!line.costTouched && price != null && value != null) {
-    costValue = price * value
-  }
-  treeLines.value = {
-    ...treeLines.value,
-    [type]: { ...line, quantity: value, cost: costValue },
-  }
+function removeTreeLine(id: string): void {
+  treeLines.value = treeLines.value.filter((row) => row.id !== id)
 }
 
-function onTreeCostChange(type: string, value: number | null): void {
-  const line = treeLines.value[type] ?? { quantity: null, cost: null, costTouched: false }
-  treeLines.value = {
-    ...treeLines.value,
-    [type]: { ...line, cost: value, costTouched: true },
-  }
+function patchTreeLine(id: string, patch: Partial<TreeOrderLine>): void {
+  treeLines.value = treeLines.value.map((row) => (row.id === id ? { ...row, ...patch } : row))
+}
+
+function onTreeTypeChange(id: string, type: string): void {
+  const current = treeLines.value.find((row) => row.id === id)
+  const catalogPrice = unitPriceFor(type)
+  patchTreeLine(id, {
+    type,
+    unit_price:
+      current?.unit_price != null && current.unit_price > 0
+        ? current.unit_price
+        : catalogPrice,
+  })
 }
 
 function buildTreeLinesPayload(): TreeOrderLine[] {
-  return selectedTreeTypes.value.map((type) => ({
-    type,
-    quantity: treeLines.value[type]?.quantity ?? null,
-    cost: treeLines.value[type]?.cost ?? null,
-  }))
+  return treeLines.value
+    .filter((row) => row.type.trim())
+    .map((row) => ({
+      id: row.id,
+      type: row.type.trim(),
+      quantity: row.quantity ?? null,
+      unit_price: row.unit_price ?? null,
+    }))
 }
 
 function applyLeadDetail(detail: LeadDetail): void {
@@ -255,21 +257,24 @@ function applyLeadDetail(detail: LeadDetail): void {
   const cpRaw = fields.order?.cost_price
   costPrice.value = cpRaw == null || cpRaw === '' ? null : Number(cpRaw)
   const lines = fields.order?.tree_lines ?? []
-  if (Array.isArray(lines) && lines.length) {
-    selectedTreeTypes.value = lines.map((row) => row.type)
-    const map: Record<string, { quantity: number | null; cost: number | null; costTouched: boolean }> =
-      {}
-    for (const row of lines) {
-      map[row.type] = {
+  treeLines.value = Array.isArray(lines)
+    ? lines.map((row) => ({
+        id: row.id || newTreeLineId(),
+        type: row.type,
         quantity: row.quantity == null ? null : Number(row.quantity),
-        cost: row.cost == null ? null : Number(row.cost),
-        costTouched: true,
-      }
-    }
-    treeLines.value = map
+        unit_price: row.unit_price == null ? null : Number(row.unit_price),
+      }))
+    : []
+  const adj = Number(fields.order?.tree_adjustment || 0)
+  if (adj < 0) {
+    treeAdjDirection.value = 'decrease'
+    treeAdjAmount.value = Math.abs(adj)
+  } else if (adj > 0) {
+    treeAdjDirection.value = 'increase'
+    treeAdjAmount.value = adj
   } else {
-    selectedTreeTypes.value = []
-    treeLines.value = {}
+    treeAdjDirection.value = 'decrease'
+    treeAdjAmount.value = null
   }
   treePayments.value = [...(fields.order?.tree_payments ?? [])]
   commentDraft.value = ''
@@ -457,6 +462,8 @@ async function persistOrderFields(): Promise<void> {
     const svc = service.value.trim()
     const treePayload = svc === 'Деревья' ? buildTreeLinesPayload() : []
     const treeTotals = summarizeTreeLines(treePayload)
+    const due =
+      svc === 'Деревья' ? treeDueAmount(treePayload, treeSignedAdjustment.value) : undefined
     const paid = svc === 'Деревья' ? summarizeTreePayments(treePayments.value) : undefined
     const customFields = buildLeadDealPatch(leadDetail.value.custom_fields, {
       order: {
@@ -464,10 +471,11 @@ async function persistOrderFields(): Promise<void> {
         period: svc === 'ОПТ' ? period.value || undefined : undefined,
         quantity:
           svc === 'Деревья' ? (treeTotals.quantity ?? undefined) : (quantity.value ?? undefined),
-        cost: svc === 'Деревья' ? (treeTotals.cost ?? undefined) : (cost.value ?? undefined),
+        cost: svc === 'Деревья' ? (due ?? undefined) : (cost.value ?? undefined),
         cost_price: svc === 'Деревья' ? undefined : (costPrice.value ?? undefined),
         tree_lines: svc === 'Деревья' ? treePayload : undefined,
         tree_payments: svc === 'Деревья' ? treePayments.value : undefined,
+        tree_adjustment: svc === 'Деревья' ? treeSignedAdjustment.value : undefined,
         amount_paid: paid,
       },
     })
@@ -668,61 +676,110 @@ async function saveLeadComment(): Promise<void> {
 
           <template v-if="isTreesService">
             <div class="deal-side__field deal-side__field--stacked">
-              <span class="deal-side__label">Типы услуги</span>
-              <NSelect
-                :value="selectedTreeTypes"
-                :options="treeTypeOptions"
-                multiple
-                filterable
+              <span class="deal-side__label">Позиции</span>
+              <div class="deal-side__tree-rows">
+                <div v-for="line in treeLines" :key="line.id" class="deal-side__tree-row">
+                  <div class="deal-side__tree-row-main">
+                    <div class="deal-side__field deal-side__field--stacked">
+                      <span class="deal-side__label">Тип</span>
+                      <NSelect
+                        :value="line.type || null"
+                        :options="treeTypeOptions"
+                        filterable
+                        size="small"
+                        placeholder="Тип услуги"
+                        :disabled="!hasSelectedOpenLead"
+                        @update:value="(v) => onTreeTypeChange(line.id, String(v || ''))"
+                      />
+                    </div>
+                    <div class="deal-side__tree-row-nums">
+                      <div class="deal-side__field deal-side__field--stacked">
+                        <span class="deal-side__label">Цена за ед., ₽</span>
+                        <NInputNumber
+                          :value="line.unit_price ?? null"
+                          size="small"
+                          class="deal-side__number"
+                          :show-button="false"
+                          :disabled="!hasSelectedOpenLead"
+                          :min="0"
+                          placeholder="0"
+                          @update:value="(v) => patchTreeLine(line.id, { unit_price: v })"
+                        />
+                      </div>
+                      <div class="deal-side__field deal-side__field--stacked">
+                        <span class="deal-side__label">Кол-во</span>
+                        <NInputNumber
+                          :value="line.quantity ?? null"
+                          size="small"
+                          class="deal-side__number"
+                          :show-button="false"
+                          :disabled="!hasSelectedOpenLead"
+                          :min="0"
+                          placeholder="0"
+                          @update:value="(v) => patchTreeLine(line.id, { quantity: v })"
+                        />
+                      </div>
+                    </div>
+                    <div class="deal-side__tree-row-sum">
+                      <span class="deal-side__label">Сумма</span>
+                      <strong>{{ formatMoney(treeLineTotal(line)) }} ₽</strong>
+                    </div>
+                  </div>
+                  <NButton
+                    v-if="hasSelectedOpenLead"
+                    size="tiny"
+                    quaternary
+                    type="error"
+                    class="deal-side__tree-row-remove"
+                    @click="removeTreeLine(line.id)"
+                  >
+                    <template #icon><Trash2 :size="14" /></template>
+                  </NButton>
+                </div>
+              </div>
+              <NButton
+                v-if="hasSelectedOpenLead"
                 size="small"
-                placeholder="Выберите один или несколько"
-                :disabled="!hasSelectedOpenLead"
-                style="width: 100%"
-                @update:value="onTreeTypesChange"
-              />
-            </div>
-            <div
-              v-for="typeCode in selectedTreeTypes"
-              :key="typeCode"
-              class="deal-side__tree-line"
-            >
-              <div class="deal-side__tree-line-title">
-                {{ treeCatalog.find((r) => r.type_code === typeCode)?.label || typeCode }}
-              </div>
-              <div class="deal-side__tree-line-fields">
-                <div class="deal-side__field deal-side__field--stacked">
-                  <span class="deal-side__label">Количество</span>
-                  <NInputNumber
-                    :value="treeLines[typeCode]?.quantity ?? null"
-                    size="small"
-                    class="deal-side__number"
-                    :show-button="false"
-                    :disabled="!hasSelectedOpenLead"
-                    :min="0"
-                    placeholder="0"
-                    @update:value="(v) => onTreeQtyChange(typeCode, v)"
-                  />
-                </div>
-                <div class="deal-side__field deal-side__field--stacked">
-                  <span class="deal-side__label">Стоимость, ₽</span>
-                  <NInputNumber
-                    :value="treeLines[typeCode]?.cost ?? null"
-                    size="small"
-                    class="deal-side__number"
-                    :show-button="false"
-                    :disabled="!hasSelectedOpenLead"
-                    :min="0"
-                    placeholder="0"
-                    @update:value="(v) => onTreeCostChange(typeCode, v)"
-                  />
-                </div>
-              </div>
+                secondary
+                block
+                style="margin-top: 8px"
+                @click="addTreeLine"
+              >
+                <template #icon><Plus :size="14" /></template>
+                Добавить позицию
+              </NButton>
             </div>
 
-            <dl v-if="selectedTreeTypes.length" class="deal-side__pay-facts">
+            <div v-if="treeLines.length" class="deal-side__tree-adj">
+              <span class="deal-side__label">Скидка / надбавка</span>
+              <NRadioGroup v-model:value="treeAdjDirection" :disabled="!hasSelectedOpenLead">
+                <NSpace>
+                  <NRadio value="decrease">Скидка (−)</NRadio>
+                  <NRadio value="increase">Надбавка (+)</NRadio>
+                </NSpace>
+              </NRadioGroup>
+              <NInputNumber
+                v-model:value="treeAdjAmount"
+                size="small"
+                class="deal-side__number"
+                :show-button="false"
+                :disabled="!hasSelectedOpenLead"
+                :min="0"
+                placeholder="0"
+                style="margin-top: 6px"
+              />
+              <p class="deal-side__hint">
+                База {{ formatMoney(treeBaseTotal) }} ₽
+                <template v-if="treeSignedAdjustment">
+                  · корректировка {{ treeSignedAdjustment > 0 ? '+' : '' }}{{ formatMoney(treeSignedAdjustment) }} ₽
+                </template>
+              </p>
+            </div>
+
+            <dl v-if="treeLines.length" class="deal-side__pay-facts">
               <div>
                 <dt>К оплате</dt>
-                <dd>{{ formatMoney(treeLinesTotal.cost ?? 0) }} ₽</dd>
+                <dd>{{ formatMoney(treeDueTotal) }} ₽</dd>
               </div>
               <div>
                 <dt>Оплачено</dt>
@@ -765,7 +822,7 @@ async function saveLeadComment(): Promise<void> {
                 type="primary"
                 block
                 size="small"
-                :disabled="!selectedTreeTypes.length"
+                :disabled="!treeLines.length"
                 @click="openTreePaymentModal"
               >
                 Записать оплату
@@ -1082,24 +1139,51 @@ async function saveLeadComment(): Promise<void> {
   gap: 8px;
 }
 
-.deal-side__tree-line {
+.deal-side__tree-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+.deal-side__tree-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   padding: 10px 12px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
 }
 
-.deal-side__tree-line-title {
-  font-size: 0.88rem;
-  font-weight: 600;
+.deal-side__tree-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.deal-side__tree-line-fields {
+.deal-side__tree-row-nums {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.2fr 0.8fr;
   gap: 10px;
+}
+
+.deal-side__tree-row-sum {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9rem;
+}
+
+.deal-side__tree-row-remove {
+  margin-top: 18px;
+  flex-shrink: 0;
+}
+
+.deal-side__tree-adj {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .deal-side__number {
