@@ -579,6 +579,11 @@ class AccountingService:
         row: OptRequirement,
         body: AccountingRequirementIngestRequest,
     ) -> None:
+        title = (body.title or "").strip()
+        if title:
+            row.title = title
+        if body.description is not None:
+            row.description = body.description.strip() or None
         if body.response_due_date is not None:
             row.response_due_date = body.response_due_date
         if body.receipt_due_date is not None:
