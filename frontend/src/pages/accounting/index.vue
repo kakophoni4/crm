@@ -75,7 +75,6 @@ import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import { peekCached, setCached } from '@/shared/lib/stale-cache'
 import AppCard from '@/shared/ui/AppCard.vue'
-import { VIRTUAL_DATA_TABLE_MAX_HEIGHT } from '@/shared/ui/virtual-data-table'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -193,11 +192,57 @@ function renderOrderPeriodCell(row: AccountingUnitOrder) {
 const requirements = ref<AccountingRequirement[]>([])
 const requirementsTotal = ref(0)
 const requirementsPage = ref(1)
-const requirementsPageSize = 50
+const requirementsPageSize = 20
 const reqSupplierInn = ref<string | null>(null)
 const reqSearch = ref('')
 const requirementsStatusTab = ref<'new' | 'answered' | 'replied'>('new')
 const answeringReqId = ref<number | null>(null)
+const expandedReqLavki = ref<string[]>([])
+
+interface RequirementLavkaGroup {
+  inn: string
+  name: string | null
+  items: AccountingRequirement[]
+}
+
+function requirementCountLabel(n: number): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return 'требование'
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'требования'
+  return 'требований'
+}
+
+const requirementGroupsAll = computed<RequirementLavkaGroup[]>(() => {
+  const map = new Map<string, RequirementLavkaGroup>()
+  for (const row of requirements.value) {
+    const inn = row.supplier.inn || '—'
+    const existing = map.get(inn)
+    if (existing) {
+      existing.items.push(row)
+      if (!existing.name && row.supplier.name) existing.name = row.supplier.name
+    } else {
+      map.set(inn, {
+        inn,
+        name: row.supplier.name || null,
+        items: [row],
+      })
+    }
+  }
+  return [...map.values()].sort((a, b) =>
+    (shortLavkaName(a.name) || a.name || a.inn).localeCompare(
+      shortLavkaName(b.name) || b.name || b.inn,
+      'ru',
+    ),
+  )
+})
+
+const requirementGroupsTotal = computed(() => requirementGroupsAll.value.length)
+
+const requirementGroups = computed(() => {
+  const start = (requirementsPage.value - 1) * requirementsPageSize
+  return requirementGroupsAll.value.slice(start, start + requirementsPageSize)
+})
 
 const unitOwners = ref<AccountingUnitOwnerRow[]>([])
 const accountantOptions = ref<SelectOption[]>([])
@@ -607,7 +652,6 @@ function requirementsCacheKey(): string {
     REQUIREMENTS_CACHE_PREFIX + requirementsStatusTab.value,
     reqSupplierInn.value || '',
     reqSearch.value.trim(),
-    String(requirementsPage.value),
   ].join(':')
 }
 
@@ -642,16 +686,28 @@ async function loadOrders(): Promise<void> {
 async function loadRequirements(): Promise<void> {
   if (!requirements.value.length) requirementsLoading.value = true
   try {
-    const data = await listAccountingRequirements({
-      supplier_inn: reqSupplierInn.value || undefined,
-      status: requirementsStatusTab.value,
-      q: reqSearch.value.trim() || undefined,
-      limit: requirementsPageSize,
-      offset: (requirementsPage.value - 1) * requirementsPageSize,
-    })
-    requirements.value = data.items
-    requirementsTotal.value = data.total
-    setCached(requirementsCacheKey(), { items: data.items, total: data.total })
+    const pageSize = 200
+    const items: AccountingRequirement[] = []
+    let total = 0
+    let offset = 0
+    for (;;) {
+      const data = await listAccountingRequirements({
+        supplier_inn: reqSupplierInn.value || undefined,
+        status: requirementsStatusTab.value,
+        q: reqSearch.value.trim() || undefined,
+        limit: pageSize,
+        offset,
+      })
+      total = data.total
+      items.push(...data.items)
+      if (items.length >= total || data.items.length < pageSize) break
+      offset += pageSize
+    }
+    requirements.value = items
+    requirementsTotal.value = total
+    const maxPage = Math.max(1, Math.ceil(requirementGroupsAll.value.length / requirementsPageSize) || 1)
+    if (requirementsPage.value > maxPage) requirementsPage.value = maxPage
+    setCached(requirementsCacheKey(), { items, total })
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить требования')
   } finally {
@@ -1292,6 +1348,10 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
   },
 ])
 
+const requirementInnerColumns = computed<DataTableColumns<AccountingRequirement>>(() =>
+  requirementColumns.value.filter((col) => 'key' in col && col.key !== 'supplier'),
+)
+
 watch(activeTab, async (tab) => {
   if (tab === 'orders') await loadOrders()
   else if (tab === 'requirements') await loadRequirements()
@@ -1302,7 +1362,8 @@ watch([ordersPage, orderSupplierInn, orderPeriodCode], () => {
   if (activeTab.value === 'orders') void loadOrders()
 })
 
-watch([requirementsPage, reqSupplierInn], () => {
+watch(reqSupplierInn, () => {
+  requirementsPage.value = 1
   if (activeTab.value === 'requirements') void loadRequirements()
 })
 
@@ -1317,10 +1378,7 @@ watch(requirementsStatusTab, () => {
     requirements.value = []
     requirementsTotal.value = 0
   }
-  if (requirementsPage.value !== 1) {
-    requirementsPage.value = 1
-    return
-  }
+  requirementsPage.value = 1
   if (activeTab.value === 'requirements') void loadRequirements()
 })
 
@@ -1529,24 +1587,58 @@ onUnmounted(() => {
                       : 'Нет непрочитанных требований'
                 "
               />
-              <div v-else class="accounting-page__requirements-table">
-                <NDataTable
-                  :columns="requirementColumns"
-                  :data="requirements"
-                  :bordered="false"
-                  :scroll-x="920"
-                  size="small"
-                  virtual-scroll
-                  :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
-                  :min-row-height="48"
-                  :row-class-name="() => 'accounting-page__req-row'"
-                />
-              </div>
-              <div class="accounting-page__pagination">
+              <NCollapse v-else v-model:expanded-names="expandedReqLavki">
+                <NCollapseItem
+                  v-for="group in requirementGroups"
+                  :key="group.inn"
+                  :name="group.inn"
+                >
+                  <template #header>
+                    <div class="accounting-page__lavka-header">
+                      <div class="accounting-page__lavka-main">
+                        <span class="accounting-page__lavka-title">
+                          {{ shortLavkaName(group.name) || group.name || group.inn }}
+                        </span>
+                        <div class="accounting-page__lavka-meta">
+                          <NTag size="small" :bordered="false">
+                            {{ group.items.length }}
+                            {{ requirementCountLabel(group.items.length) }}
+                          </NTag>
+                          <NTag
+                            v-if="group.items.some((row) => row.is_overdue)"
+                            size="small"
+                            type="error"
+                            :bordered="false"
+                          >
+                            просрочено
+                          </NTag>
+                          <span class="accounting-page__deal-sub">ИНН {{ group.inn }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <div class="accounting-page__requirements-table">
+                    <NDataTable
+                      :columns="requirementInnerColumns"
+                      :data="group.items"
+                      :bordered="false"
+                      :single-line="false"
+                      :row-key="(row: AccountingRequirement) => row.id"
+                      size="small"
+                      :scroll-x="720"
+                      :row-class-name="() => 'accounting-page__req-row'"
+                    />
+                  </div>
+                </NCollapseItem>
+              </NCollapse>
+              <div
+                v-if="requirementGroupsTotal > requirementsPageSize"
+                class="accounting-page__pagination"
+              >
                 <NPagination
                   v-model:page="requirementsPage"
                   :page-size="requirementsPageSize"
-                  :item-count="requirementsTotal"
+                  :item-count="requirementGroupsTotal"
                 />
               </div>
             </NSpin>
