@@ -17,19 +17,22 @@ import {
 import { Check, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { listDepartments, listUsers, type AdminUser, type Department } from '@/features/admin/api'
+import { listDepartments, type Department } from '@/features/admin/api'
 import {
   acknowledgeTask,
   completeTask,
   confirmTask,
   createTask,
   deleteTask,
+  formatTaskAssigneeLabel,
   getTaskBoard,
   listMyTasks,
+  listTaskAssignees,
   moveTask,
   reopenTask,
   updateTask,
   type DepartmentTask,
+  type TaskAssigneeOption,
   type TaskBoard,
   type TaskStatus,
   type TaskType,
@@ -63,7 +66,7 @@ const boardLoading = ref(false)
 const activeTab = ref(isManager.value ? 'board' : 'mine')
 const myTasks = ref<DepartmentTask[]>([])
 const board = ref<TaskBoard | null>(null)
-const deptUsers = ref<AdminUser[]>([])
+const assigneeUsers = ref<TaskAssigneeOption[]>([])
 const departments = ref<Department[]>([])
 const selectedDeptId = ref<number | null>(null)
 
@@ -89,9 +92,10 @@ const typeOptions = computed(() =>
 )
 
 const assigneeOptions = computed(() =>
-  deptUsers.value
-    .filter((u) => u.status === 'active')
-    .map((u) => ({ label: u.full_name, value: u.id })),
+  assigneeUsers.value.map((u) => ({
+    label: formatTaskAssigneeLabel(u, auth.user?.id),
+    value: u.id,
+  })),
 )
 
 const reassignOpen = ref(false)
@@ -167,33 +171,18 @@ async function loadDepartments(): Promise<void> {
   }
 }
 
-async function loadUsers(): Promise<void> {
+async function loadAssignees(): Promise<void> {
   if (!isManager.value) return
   try {
-    const params: { department_id?: number } = {}
-    if (isAdmin.value) {
-      const deptId = formDepartmentId.value ?? selectedDeptId.value ?? reassignTask.value?.department_id
-      if (deptId != null) params.department_id = deptId
-      // Admin without dept filter: load all active users for reassign/create.
-    } else if (auth.user?.department_id != null) {
-      params.department_id = auth.user.department_id
-    } else if (reassignTask.value?.department_id != null) {
-      params.department_id = reassignTask.value.department_id
-    }
-    deptUsers.value = await listUsers(params)
+    assigneeUsers.value = await listTaskAssignees()
   } catch {
-    deptUsers.value = []
+    assigneeUsers.value = []
   }
 }
 
 async function onBoardDepartmentChange(deptId: number | null): Promise<void> {
   selectedDeptId.value = deptId
   await loadBoard()
-}
-
-async function onCreateDepartmentChange(): Promise<void> {
-  formAssigneeId.value = null
-  await loadUsers()
 }
 
 async function refresh(): Promise<void> {
@@ -209,7 +198,7 @@ function openCreate(): void {
   formDepartmentId.value = isAdmin.value ? selectedDeptId.value : auth.user?.department_id ?? null
   formDueAt.value = null
   createOpen.value = true
-  void loadUsers()
+  void loadAssignees()
 }
 
 async function submitCreate(): Promise<void> {
@@ -295,7 +284,7 @@ function openReassign(task: DepartmentTask): void {
   reassignTask.value = task
   reassignAssigneeId.value = task.assignee_id
   reassignOpen.value = true
-  void loadUsers()
+  void loadAssignees()
 }
 
 async function submitReassign(): Promise<void> {
@@ -419,7 +408,7 @@ onMounted(async () => {
   const cachedBoard = peekCached<TaskBoard>(boardCacheKey.value)
   if (cachedBoard) board.value = cachedBoard
 
-  await Promise.all([loadDepartments(), loadUsers(), refresh()])
+  await Promise.all([loadDepartments(), loadAssignees(), refresh()])
   await connectTasksRealtime()
   unsubTasks = onTasksEvent((topic, payload) => {
     if (
@@ -620,11 +609,15 @@ onUnmounted(() => {
             v-model:value="formDepartmentId"
             :options="departments.map((d) => ({ label: d.name, value: d.id }))"
             filterable
-            @update:value="onCreateDepartmentChange"
           />
         </NFormItem>
         <NFormItem label="Исполнитель" required>
-          <NSelect v-model:value="formAssigneeId" :options="assigneeOptions" filterable />
+          <NSelect
+            v-model:value="formAssigneeId"
+            :options="assigneeOptions"
+            filterable
+            placeholder="Любой сотрудник"
+          />
         </NFormItem>
         <NFormItem label="Срок выполнения">
           <NDatePicker
@@ -655,7 +648,7 @@ onUnmounted(() => {
             v-model:value="reassignAssigneeId"
             :options="assigneeOptions"
             filterable
-            placeholder="Выберите исполнителя"
+            placeholder="Любой сотрудник"
           />
         </NFormItem>
       </NForm>

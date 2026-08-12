@@ -11,6 +11,7 @@ from app.modules.tasks.schemas import (
     ClientRequirementCreateRequest,
     ClientRequirementUnitListResponse,
     TaskAlertsResponse,
+    TaskAssigneeListResponse,
     TaskBoardResponse,
     TaskCommentCreateRequest,
     TaskCommentListResponse,
@@ -48,6 +49,14 @@ async def task_alerts(
     service: Annotated[TaskService, Depends(_service)],
 ) -> TaskAlertsResponse:
     return await service.alerts(actor)
+
+
+@router.get("/assignees", response_model=TaskAssigneeListResponse)
+async def list_task_assignees(
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+) -> TaskAssigneeListResponse:
+    return await service.list_assignees(actor)
 
 
 @router.get("/client-requirement-units", response_model=ClientRequirementUnitListResponse)

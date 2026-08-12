@@ -2,6 +2,7 @@ import { http } from '@/shared/api/http'
 
 import type {
   DepartmentTask,
+  TaskAssigneeOption,
   TaskBoard,
   TaskComment,
   TaskCreateBody,
@@ -12,6 +13,7 @@ import type {
 
 export type {
   DepartmentTask,
+  TaskAssigneeOption,
   TaskBoard,
   TaskComment,
   TaskCreateBody,
@@ -20,10 +22,16 @@ export type {
   TaskType,
   TaskUpdateBody,
 } from './types'
+export { formatTaskAssigneeLabel } from './types'
 
 export async function listMyTasks(): Promise<{ items: DepartmentTask[]; total: number }> {
   const { data } = await http.get<{ items: DepartmentTask[]; total: number }>('/tasks/mine')
   return data
+}
+
+export async function listTaskAssignees(): Promise<TaskAssigneeOption[]> {
+  const { data } = await http.get<{ items: TaskAssigneeOption[] }>('/tasks/assignees')
+  return data.items ?? []
 }
 
 export async function getTaskBoard(departmentId?: number): Promise<TaskBoard> {
@@ -124,7 +132,8 @@ export async function listClientRequirementUnits(): Promise<{
     name: string
     accountant_user_id?: number | null
   }[]
-  accountants: { id: number; full_name: string }[]
+  accountants: { id: number; full_name: string; role?: string }[]
+  assignees: { id: number; full_name: string; role?: string }[]
 }> {
   const { data } = await http.get<{
     items: {
@@ -133,11 +142,14 @@ export async function listClientRequirementUnits(): Promise<{
       name: string
       accountant_user_id?: number | null
     }[]
-    accountants: { id: number; full_name: string }[]
+    accountants: { id: number; full_name: string; role?: string }[]
+    assignees?: { id: number; full_name: string; role?: string }[]
   }>('/tasks/client-requirement-units')
+  const people = data.assignees?.length ? data.assignees : (data.accountants ?? [])
   return {
     items: data.items,
-    accountants: data.accountants ?? [],
+    accountants: people,
+    assignees: people,
   }
 }
 

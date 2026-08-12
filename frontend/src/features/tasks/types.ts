@@ -91,3 +91,28 @@ export const TASK_TYPE_COLORS: Record<TaskType, string> = {
   normal: '#2563eb',
   low: '#6b7280',
 }
+
+const ROLE_SHORT_LABEL: Record<string, string> = {
+  user: 'оператор',
+  senior: 'старший',
+  group_senior: 'ст. группы',
+  admin: 'админ',
+  accountant: 'бухгалтер',
+  chief_accountant: 'главбух',
+}
+
+export interface TaskAssigneeOption {
+  id: number
+  full_name: string
+  role?: string
+  department_id?: number | null
+}
+
+export function formatTaskAssigneeLabel(
+  user: { id: number; full_name: string; role?: string },
+  meId?: number | null,
+): string {
+  const role = user.role ? ROLE_SHORT_LABEL[user.role] || user.role : ''
+  const name = role ? `${user.full_name} · ${role}` : user.full_name
+  return meId != null && user.id === meId ? `Себе (${name})` : name
+}

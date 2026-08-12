@@ -49,7 +49,6 @@ import {
   listAccountingUnitOwners,
   listAccountingUnits,
   createTaskFromRequirement,
-  listAccountingTaskAssignees,
   patchAccountingRequirementStatus,
   patchAccountingUnit,
   replyAccountingRequirement,
@@ -57,6 +56,7 @@ import {
   syncAccountingRequirements,
 } from '@/features/accounting/api'
 import { uploadFile } from '@/features/chats/api'
+import { formatTaskAssigneeLabel, listTaskAssignees } from '@/features/tasks/api'
 import type {
   AccountingOrderLineBrief,
   AccountingRequirement,
@@ -821,10 +821,10 @@ async function openTaskFromReqModal(row: AccountingRequirement): Promise<void> {
     }
   }
   try {
-    const data = await listAccountingTaskAssignees()
+    const data = await listTaskAssignees()
     const meId = auth.user?.id
     taskAssigneeOptions.value = data.map((u) => ({
-      label: meId != null && u.id === meId ? `Себе (${u.full_name})` : u.full_name,
+      label: formatTaskAssigneeLabel(u, meId),
       value: u.id,
     }))
     if (meId != null && !taskAssigneeOptions.value.some((o) => o.value === meId)) {

@@ -20,6 +20,7 @@ import type { ChatDetail } from '@/entities/chat/types'
 import { uploadFile } from '@/features/chats/api'
 import {
   createClientRequirement,
+  formatTaskAssigneeLabel,
   listClientRequirementUnits,
   listClientRequirementsByChat,
   type DepartmentTask,
@@ -37,7 +38,7 @@ const submitting = ref(false)
 const units = ref<
   { id: number; inn: string; name: string; accountant_user_id?: number | null }[]
 >([])
-const accountants = ref<{ id: number; full_name: string }[]>([])
+const accountants = ref<{ id: number; full_name: string; role?: string }[]>([])
 const items = ref<DepartmentTask[]>([])
 const unitId = ref<number | null>(null)
 const assigneeId = ref<number | null>(null)
@@ -58,7 +59,7 @@ const unitOptions = computed(() =>
 
 const accountantOptions = computed(() =>
   accountants.value.map((a) => ({
-    label: a.full_name,
+    label: formatTaskAssigneeLabel(a),
     value: a.id,
   })),
 )
@@ -89,7 +90,9 @@ async function load(): Promise<void> {
       listClientRequirementsByChat(props.chat.id),
     ])
     units.value = unitsPayload.items
-    accountants.value = unitsPayload.accountants
+    accountants.value = unitsPayload.assignees?.length
+      ? unitsPayload.assignees
+      : unitsPayload.accountants
     items.value = list.items
     suggestAccountantForUnit(unitId.value)
   } catch (err) {
@@ -126,7 +129,7 @@ async function onSubmit(): Promise<void> {
     return
   }
   if (assigneeId.value == null) {
-    message.warning('Выберите бухгалтера')
+    message.warning('Выберите исполнителя')
     return
   }
   if (!title.value.trim()) {
@@ -150,7 +153,7 @@ async function onSubmit(): Promise<void> {
       chat_id: props.chat.id,
       lead_id: null,
     })
-    message.success('Задача отправлена бухгалтеру')
+    message.success('Задача отправлена')
     title.value = ''
     description.value = ''
     dueAt.value = null
@@ -187,13 +190,13 @@ function statusLabel(status: string): string {
             @update:value="onUnitChange"
           />
         </NFormItem>
-        <NFormItem label="Бухгалтер" required>
+        <NFormItem label="Исполнитель" required>
           <NSelect
             :value="assigneeId"
             :options="accountantOptions"
             filterable
             clearable
-            placeholder="Выберите бухгалтера"
+            placeholder="Любой сотрудник"
             @update:value="onAssigneeChange"
           />
         </NFormItem>
@@ -217,7 +220,7 @@ function statusLabel(status: string): string {
           </NUpload>
         </NFormItem>
         <NButton type="primary" block :loading="submitting" @click="onSubmit">
-          Отправить бухгалтеру
+          Отправить задачу
         </NButton>
       </NForm>
 

@@ -9,9 +9,12 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.department_task import DepartmentTask
 from app.modules.db.models.enums import UserRole, UserStatus
 from app.modules.db.models.user import User
-from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, can_act_on_user, visible_department_ids
+from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_department_ids
 from app.modules.tasks.repository import TaskRepository
 from app.modules.tasks.schemas import (
+    ClientRequirementAccountantOption,
+    TaskAssigneeListResponse,
+    TaskAssigneeOption,
     TaskBoardColumn,
     TaskBoardResponse,
     TaskCommentListResponse,
@@ -72,6 +75,68 @@ class TaskService:
         if user is None:
             raise ValidationError(message="Пользователь не найден")
         return user
+
+    async def _ensure_active_assignee(self, user_id: int) -> User:
+        user = await self._load_user(user_id)
+        status = user.status if isinstance(user.status, UserStatus) else UserStatus(str(user.status))
+        if status != UserStatus.ACTIVE:
+            raise ValidationError(message="Исполнитель неактивен")
+        return user
+
+    async def _resolve_department_for_task(
+        self,
+        actor: User,
+        assignee: User,
+        preferred_department_id: int | None = None,
+    ) -> int:
+        from app.modules.db.models.department import Department
+
+        for candidate in (preferred_department_id, actor.department_id, assignee.department_id):
+            if candidate is not None:
+                return int(candidate)
+        user_dept = (
+            await self._session.execute(
+                select(User.department_id)
+                .where(User.department_id.is_not(None))
+                .order_by(User.id.asc())
+                .limit(1),
+            )
+        ).scalar_one_or_none()
+        if user_dept is not None:
+            return int(user_dept)
+        dept_row = (
+            await self._session.execute(
+                select(Department.id).order_by(Department.id.asc()).limit(1),
+            )
+        ).scalar_one_or_none()
+        if dept_row is not None:
+            return int(dept_row)
+        dept = Department(name="Общий")
+        self._session.add(dept)
+        await self._session.flush()
+        return int(dept.id)
+
+    def _assignee_option(self, user: User) -> TaskAssigneeOption:
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        return TaskAssigneeOption(
+            id=user.id,
+            full_name=user.full_name or f"user #{user.id}",
+            role=role,
+            department_id=user.department_id,
+        )
+
+    async def list_assignees(self, actor: User) -> TaskAssigneeListResponse:
+        result = await self._session.execute(
+            select(User)
+            .where(User.status == UserStatus.ACTIVE)
+            .order_by(User.full_name)
+            .limit(500),
+        )
+        users = list(result.scalars().all())
+        users.sort(
+            key=lambda u: (0 if u.id == actor.id else 1, (u.full_name or "").casefold()),
+        )
+        return TaskAssigneeListResponse(items=[self._assignee_option(u) for u in users])
 
     async def _ensure_department_access(self, ctx: ScopeContext, department_id: int) -> None:
         visible = visible_department_ids(ctx)
@@ -283,26 +348,13 @@ class TaskService:
             raise PermissionDenied(message="Создавать задачи может только старший оператор")
         ctx = await self._ctx(actor)
         role = self._role(actor)
-        assignee = await self._load_user(body.assignee_id)
+        assignee = await self._ensure_active_assignee(body.assignee_id)
 
-        dept_id = actor.department_id
-        if role == UserRole.ADMIN:
-            if body.department_id is not None:
-                dept_id = body.department_id
-                await self._ensure_department_access(ctx, dept_id)
-            elif dept_id is None:
-                dept_id = assignee.department_id
-                if dept_id is None:
-                    raise ValidationError(message="Укажите отдел или выберите исполнителя с отделом")
-        elif dept_id is None:
-            raise ValidationError(message="Отдел не назначен")
+        preferred_dept = body.department_id if role == UserRole.ADMIN else actor.department_id
+        if role == UserRole.ADMIN and body.department_id is not None:
+            await self._ensure_department_access(ctx, body.department_id)
+        dept_id = await self._resolve_department_for_task(actor, assignee, preferred_dept)
 
-        if assignee.department_id != dept_id and role != UserRole.ADMIN:
-            raise ValidationError(message="Исполнитель должен быть из вашего отдела")
-        if role == UserRole.ADMIN and assignee.department_id is not None and assignee.department_id != dept_id:
-            raise ValidationError(message="Исполнитель должен быть из выбранного отдела")
-        if not can_act_on_user(ctx, assignee):
-            raise ValidationError(message="Нельзя назначить этого исполнителя")
         if body.task_type not in TaskType:
             raise ValidationError(message="Неверный тип задачи")
 
@@ -330,7 +382,6 @@ class TaskService:
         if task is None or task.status not in {s.value for s in ACTIVE_TASK_STATUSES}:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
-        ctx = await self._ctx(actor)
 
         if body.title is not None:
             task.title = body.title.strip()
@@ -342,17 +393,7 @@ class TaskService:
             task.due_at = body.due_at
             task.due_reminder_sent_at = None
         if body.assignee_id is not None:
-            assignee = await self._load_user(body.assignee_id)
-            role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
-            # Many users (admin/chief) have null department_id — don't block reassign.
-            if (
-                role != UserRole.ADMIN
-                and assignee.department_id is not None
-                and assignee.department_id != task.department_id
-            ):
-                raise ValidationError(message="Исполнитель должен быть из отдела задачи")
-            if not can_act_on_user(ctx, assignee):
-                raise ValidationError(message="Нельзя назначить этого исполнителя")
+            assignee = await self._ensure_active_assignee(body.assignee_id)
             task.assignee_id = assignee.id
 
         task = await self._repo.save(task)
@@ -662,12 +703,10 @@ class TaskService:
         )
         from app.modules.db.models.opt_unit import OptUnit
         from app.modules.tasks.schemas import (
-            ClientRequirementAccountantOption,
             ClientRequirementUnitListResponse,
             ClientRequirementUnitOption,
         )
 
-        del actor  # all active lavkas visible for managers creating client reqs
         units_result = await self._session.execute(
             select(OptUnit)
             .where(OptUnit.is_active.is_(True))
@@ -683,18 +722,21 @@ class TaskService:
 
         accountants_result = await self._session.execute(
             select(User)
-            .where(
-                User.role.in_((UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT)),
-                User.status == UserStatus.ACTIVE,
-            )
-            .order_by(User.full_name),
+            .where(User.status == UserStatus.ACTIVE)
+            .order_by(User.full_name)
+            .limit(500),
         )
-        accountants = [
+        people = list(accountants_result.scalars().all())
+        people.sort(
+            key=lambda u: (0 if u.id == actor.id else 1, (u.full_name or "").casefold()),
+        )
+        assignees = [
             ClientRequirementAccountantOption(
                 id=user.id,
                 full_name=user.full_name or f"user #{user.id}",
+                role=user.role.value if hasattr(user.role, "value") else str(user.role),
             )
-            for user in accountants_result.scalars().all()
+            for user in people
         ]
         items = [
             ClientRequirementUnitOption(
@@ -705,7 +747,11 @@ class TaskService:
             )
             for u in units
         ]
-        return ClientRequirementUnitListResponse(items=items, accountants=accountants)
+        return ClientRequirementUnitListResponse(
+            items=items,
+            accountants=assignees,
+            assignees=assignees,
+        )
 
     async def create_client_requirement(
         self,
@@ -737,32 +783,12 @@ class TaskService:
             assignment = result.scalar_one_or_none()
             if assignment is None:
                 raise ValidationError(
-                    message="Выберите бухгалтера или привяжите бухгалтера к лавке",
+                    message="Выберите исполнителя или привяжите бухгалтера к лавке",
                 )
             assignee_id = int(assignment.user_id)
 
-        accountant = await self._load_user(assignee_id)
-        role = (
-            accountant.role
-            if isinstance(accountant.role, UserRole)
-            else UserRole(str(accountant.role))
-        )
-        if role not in {UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT}:
-            raise ValidationError(message="Исполнитель должен быть бухгалтером")
-        status = (
-            accountant.status
-            if isinstance(accountant.status, UserStatus)
-            else UserStatus(str(accountant.status))
-        )
-        if status != UserStatus.ACTIVE:
-            raise ValidationError(message="Бухгалтер неактивен")
-
-        dept_id = accountant.department_id or actor.department_id
-        if dept_id is None:
-            # fallback: any department of actor for admin-less accountants
-            dept_id = actor.department_id
-        if dept_id is None:
-            raise ValidationError(message="Не удалось определить отдел для задачи")
+        assignee = await self._ensure_active_assignee(assignee_id)
+        dept_id = await self._resolve_department_for_task(actor, assignee)
 
         due_at = body.due_at
         if due_at is None:
@@ -779,7 +805,7 @@ class TaskService:
             chat_id=body.chat_id,
             lead_id=body.lead_id,
             created_by=actor.id,
-            assignee_id=accountant.id,
+            assignee_id=assignee.id,
             due_at=due_at,
         )
         row = await self._repo.create(row)

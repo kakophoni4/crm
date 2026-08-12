@@ -138,14 +138,27 @@ class ClientRequirementUnitOption(BaseModel):
     accountant_user_id: int | None = None
 
 
+class TaskAssigneeOption(BaseModel):
+    id: int
+    full_name: str
+    role: str = ""
+    department_id: int | None = None
+
+
+class TaskAssigneeListResponse(BaseModel):
+    items: list[TaskAssigneeOption]
+
+
 class ClientRequirementAccountantOption(BaseModel):
     id: int
     full_name: str
+    role: str = ""
 
 
 class ClientRequirementUnitListResponse(BaseModel):
     items: list[ClientRequirementUnitOption]
     accountants: list[ClientRequirementAccountantOption] = Field(default_factory=list)
+    assignees: list[ClientRequirementAccountantOption] = Field(default_factory=list)
 
 
 class TaskBoardColumn(BaseModel):
