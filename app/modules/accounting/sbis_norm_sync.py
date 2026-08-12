@@ -2,10 +2,11 @@
 
 Flow (sbis-norm API v2 — binary file endpoint):
   1. GET /api/sbis/requirements/?unsynced=1
-  2. Keep only storage_file_name ending with .pdf (.p7m → mark-synced, skip)
-  3. GET /api/sbis/requirements/{id}/file/  → raw PDF bytes
-  4. AccountingService.ingest_requirement (idempotent by external_id)
-  5. POST /api/sbis/requirements/mark-synced/ after successful save
+  2. Account-block notices (title «блокировка» / *.stub / empty file) → ingest without PDF
+  3. Keep only storage_file_name ending with .pdf (.p7m → mark-synced, skip)
+  4. GET /api/sbis/requirements/{id}/file/  → raw PDF bytes
+  5. AccountingService.ingest_requirement (idempotent by external_id)
+  6. POST /api/sbis/requirements/mark-synced/ after successful save
 
 Do not use detail?include_file=1 / file_b64.
 """
@@ -20,6 +21,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting import sbis_norm_client
+from app.modules.accounting.requirement_kinds import is_account_block_notice
 from app.modules.accounting.schemas import AccountingRequirementIngestRequest
 from app.modules.accounting.service import AccountingService
 from app.shared.settings import get_settings
@@ -97,9 +99,14 @@ def map_meta_to_ingest(
 ) -> AccountingRequirementIngestRequest:
     sbis_id = int(meta["id"])
     inn = str(meta.get("inn") or "").strip()
-    title = str(meta.get("doc_title") or "Требование ФНС").strip() or "Требование ФНС"
-    filename = str(meta.get("storage_file_name") or f"requirement_{sbis_id}.pdf").strip()
-    reply_status = str(meta.get("reply_status") or "none").strip().lower() or "none"
+    title = str(meta.get("doc_title") or "").strip()
+    filename = str(meta.get("storage_file_name") or "").strip()
+    notice = is_account_block_notice(title=title, filename=filename, metadata=meta)
+    if not filename:
+        filename = "account-block.stub" if notice else f"requirement_{sbis_id}.pdf"
+    if not title:
+        title = "Уведомление о блокировке счёта" if notice else "Требование ФНС"
+    reply_status = "none" if notice else str(meta.get("reply_status") or "none").strip().lower() or "none"
     if reply_status not in {"none", "sent", "answered", "error"}:
         reply_status = "none"
     metadata: dict[str, Any] = {
@@ -116,6 +123,9 @@ def map_meta_to_ingest(
         "knd": meta.get("knd"),
         "mime_type": _guess_mime(filename, pdf_bytes),
     }
+    if notice:
+        metadata["doc_kind"] = "account_block"
+        metadata["can_reply"] = False
     return AccountingRequirementIngestRequest(
         external_id=external_id_for_sbis(sbis_id),
         supplier_inn=inn,
@@ -133,6 +143,23 @@ def map_meta_to_ingest(
         pdf_base64=None,
         pdf_filename=filename,
     )
+
+
+async def _ingest_notice(
+    service: AccountingService,
+    meta: dict[str, Any],
+) -> tuple[bool, int]:
+    """Account-block stub: upsert card, no PDF."""
+    sbis_id = int(meta["id"])
+    body = map_meta_to_ingest(meta, pdf_bytes=b"")
+    if not body.supplier_inn:
+        raise ValueError("empty inn")
+    ingested = await service.ingest_requirement(
+        body,
+        pdf_bytes=None,
+        pdf_filename=None,
+    )
+    return ingested.created, sbis_id
 
 
 async def _ingest_pdf(
@@ -166,6 +193,17 @@ async def sync_requirement_by_id(
     try:
         detail = await sbis_norm_client.get_requirement(sbis_id)
         filename = detail.get("storage_file_name")
+        title = str(detail.get("doc_title") or "")
+        if is_account_block_notice(title=title, filename=str(filename or ""), metadata=detail):
+            created, _ = await _ingest_notice(service, detail)
+            if created:
+                result.created = 1
+            else:
+                result.existing = 1
+            if mark:
+                await sbis_norm_client.mark_synced([sbis_id])
+                result.marked_synced = 1
+            return result
         if not _is_pdf_filename(filename):
             result.skipped_non_pdf = 1
             if mark:
@@ -218,6 +256,26 @@ async def sync_unsynced_requirements(
                 continue
             sbis_id = int(item["id"])
             aggregate.fetched += 1
+
+            if is_account_block_notice(
+                title=str(item.get("doc_title") or ""),
+                filename=str(item.get("storage_file_name") or ""),
+                metadata=item,
+            ):
+                try:
+                    created, _ = await _ingest_notice(service, item)
+                    if created:
+                        aggregate.created += 1
+                    else:
+                        aggregate.existing += 1
+                    ok_ids.append(sbis_id)
+                except Exception as exc:
+                    await session.rollback()
+                    aggregate.failed += 1
+                    aggregate.errors.append(f"id={sbis_id}: {exc}")
+                    logger.exception("sbis_norm_sync_item_failed", sbis_id=sbis_id)
+                    service = AccountingService(session)
+                continue
 
             if not _is_pdf_filename(item.get("storage_file_name")):
                 aggregate.skipped_non_pdf += 1

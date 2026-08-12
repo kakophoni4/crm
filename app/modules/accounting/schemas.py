@@ -204,6 +204,8 @@ class AccountingRequirementResponse(BaseModel):
     created_at: datetime
     is_overdue: bool = False
     due_soon: bool = False
+    can_reply: bool = True
+    doc_kind: str = "requirement"
 
 
 class AccountingRequirementListResponse(BaseModel):

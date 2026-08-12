@@ -105,6 +105,12 @@ function lavkaLabel(name: string | null | undefined, inn: string): string {
   return short ? `${short} · ${inn}` : inn
 }
 
+function isAccountBlockNotice(row: AccountingRequirement): boolean {
+  if (row.doc_kind === 'account_block' || row.can_reply === false) return true
+  const t = (row.title || '').toLowerCase().replace(/ё/g, 'е')
+  return t.includes('блокировк')
+}
+
 const ordersLoading = ref(false)
 const requirementsLoading = ref(false)
 const ownersLoading = ref(false)
@@ -813,6 +819,10 @@ function defaultTaskDueFromRequirement(row: AccountingRequirement): number {
 }
 
 function openReplyModal(row: AccountingRequirement): void {
+  if (isAccountBlockNotice(row)) {
+    message.warning('На уведомление о блокировке счёта ответить через СБИС нельзя')
+    return
+  }
   replyTarget.value = row
   replyFiles.value = []
   replyModalOpen.value = true
@@ -1216,7 +1226,9 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     key: 'response_due_date',
     width: 110,
     render: (row) => {
-      if (!row.response_due_date) return h('span', { class: 'accounting-page__deal-sub' }, '—')
+      if (isAccountBlockNotice(row) || !row.response_due_date) {
+        return h('span', { class: 'accounting-page__deal-sub' }, '—')
+      }
       const cls = row.is_overdue
         ? 'accounting-page__due--overdue'
         : row.due_soon
@@ -1230,6 +1242,13 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     key: 'reply_status',
     width: 100,
     render: (row) => {
+      if (isAccountBlockNotice(row)) {
+        return h(
+          NTag,
+          { size: 'small', bordered: false, type: 'warning' },
+          { default: () => 'не требуется' },
+        )
+      }
       const map: Record<string, { label: string; type: 'default' | 'success' | 'warning' | 'error' | 'info' }> = {
         none: { label: 'Нет', type: 'default' },
         sent: { label: 'Отправлен', type: 'info' },
@@ -1251,8 +1270,16 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     minWidth: 140,
     ellipsis: { tooltip: true },
     render: (row) => {
-      const title = row.title?.replace(/^Требование\s+/i, '') || 'ФНС'
-      return h('span', { title: row.title }, title)
+      const notice = isAccountBlockNotice(row)
+      const title = notice
+        ? row.title || 'Уведомление о блокировке счёта'
+        : row.title?.replace(/^Требование\s+/i, '') || 'ФНС'
+      const label = h('span', { title: row.title }, title)
+      if (!notice) return label
+      return h('div', { class: 'accounting-page__req-title' }, [
+        label,
+        h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => 'уведомление' }),
+      ])
     },
   },
   {
@@ -1289,7 +1316,7 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
         )
       }
       const replyDone = ['sent', 'answered'].includes(row.reply_status || 'none')
-      if (!replyDone) {
+      if (!replyDone && !isAccountBlockNotice(row)) {
         actions.push(
           h(
             NButton,
@@ -2272,6 +2299,13 @@ onUnmounted(() => {
 .accounting-page__deal-sub {
   font-size: 0.75rem;
   color: var(--app-text-muted);
+}
+
+.accounting-page__req-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .accounting-page__registry-actions {

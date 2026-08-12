@@ -82,6 +82,8 @@ export interface AccountingRequirement {
   created_at: string
   is_overdue?: boolean
   due_soon?: boolean
+  can_reply?: boolean
+  doc_kind?: string
 }
 
 export interface AccountingAccountantOption {

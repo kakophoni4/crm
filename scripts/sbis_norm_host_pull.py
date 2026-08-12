@@ -69,6 +69,14 @@ def _is_pdf(name: object) -> bool:
     return str(name or "").strip().lower().endswith(".pdf")
 
 
+def _is_account_block(item: dict[str, Any]) -> bool:
+    name = str(item.get("storage_file_name") or "").strip().lower()
+    if name.endswith(".stub"):
+        return True
+    title = str(item.get("doc_title") or "").lower().replace("ё", "е")
+    return "блокировк" in title
+
+
 def _multipart_ingest(
     crm: str,
     token: str,
@@ -76,8 +84,8 @@ def _multipart_ingest(
     external_id: str,
     supplier_inn: str,
     title: str,
-    filename: str,
-    raw: bytes,
+    filename: str | None = None,
+    raw: bytes | None = None,
     metadata: dict[str, Any],
 ) -> Any:
     boundary = f"----crm{uuid.uuid4().hex}"
@@ -97,15 +105,16 @@ def _multipart_ingest(
     add_field("status", "new")
     add_field("metadata_json", json.dumps(metadata, ensure_ascii=False))
 
-    chunks.append(f"--{boundary}\r\n".encode())
-    chunks.append(
-        (
-            f'Content-Disposition: form-data; name="pdf"; filename="{filename}"\r\n'
-            "Content-Type: application/pdf\r\n\r\n"
-        ).encode()
-    )
-    chunks.append(raw)
-    chunks.append(b"\r\n")
+    if raw:
+        chunks.append(f"--{boundary}\r\n".encode())
+        chunks.append(
+            (
+                f'Content-Disposition: form-data; name="pdf"; filename="{filename or "file.pdf"}"\r\n'
+                "Content-Type: application/pdf\r\n\r\n"
+            ).encode()
+        )
+        chunks.append(raw)
+        chunks.append(b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode())
     body = b"".join(chunks)
 
@@ -152,6 +161,42 @@ def run_pull() -> int:
         for item in rows:
             sbis_id = int(item["id"])
             name = item.get("storage_file_name") or ""
+            inn = str(item.get("inn") or "").strip()
+            title = str(item.get("doc_title") or "").strip()
+            metadata = {
+                "source": "sbis-norm-host-pull",
+                "sbis_id": sbis_id,
+                "sbis_doc_id": item.get("sbis_doc_id"),
+                "content_sha256": item.get("content_sha256"),
+                "document_date": item.get("document_date"),
+                "storage_file_name": name,
+                "file_url": item.get("file_url"),
+            }
+
+            if _is_account_block(item):
+                try:
+                    metadata["doc_kind"] = "account_block"
+                    metadata["can_reply"] = False
+                    ingest = _multipart_ingest(
+                        crm,
+                        token,
+                        external_id=f"sbis-req:{sbis_id}",
+                        supplier_inn=inn,
+                        title=title or "Уведомление о блокировке счёта",
+                        filename=None,
+                        raw=None,
+                        metadata=metadata,
+                    )
+                    if ingest and ingest.get("created"):
+                        created += 1
+                    else:
+                        existing += 1
+                    mark_ids.append(sbis_id)
+                    print(f"notice ok id={sbis_id} inn={inn} created={ingest.get('created') if ingest else None}")
+                except Exception as exc:
+                    failed += 1
+                    print(f"notice FAIL id={sbis_id}: {exc}", file=sys.stderr)
+                continue
 
             if not _is_pdf(name):
                 mark_ids.append(sbis_id)
@@ -169,23 +214,13 @@ def run_pull() -> int:
                 filename = str(name or f"requirement_{sbis_id}.pdf")
                 # ASCII-safe filename for Content-Disposition; keep real name in metadata
                 safe_name = f"requirement_{sbis_id}.pdf"
-                inn = str(item.get("inn") or "").strip()
-                title = str(item.get("doc_title") or "Требование ФНС").strip() or "Требование ФНС"
-                metadata = {
-                    "source": "sbis-norm-host-pull",
-                    "sbis_id": sbis_id,
-                    "sbis_doc_id": item.get("sbis_doc_id"),
-                    "content_sha256": item.get("content_sha256"),
-                    "document_date": item.get("document_date"),
-                    "storage_file_name": filename,
-                    "file_url": item.get("file_url"),
-                }
+                ingest_title = title or "Требование ФНС"
                 ingest = _multipart_ingest(
                     crm,
                     token,
                     external_id=f"sbis-req:{sbis_id}",
                     supplier_inn=inn,
-                    title=title,
+                    title=ingest_title,
                     filename=safe_name,
                     raw=raw,
                     metadata=metadata,

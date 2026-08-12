@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting.repository import AccountingRepository
 from app.modules.accounting.requirement_deadline import resolve_response_due_date
+from app.modules.accounting.requirement_kinds import (
+    DOC_KIND_ACCOUNT_BLOCK,
+    is_account_block_notice,
+)
 from app.modules.accounting.schemas import (
     AccountingAccountantOption,
     AccountingAssignmentItem,
@@ -529,7 +533,11 @@ class AccountingService:
         # Прописать срок, если СБИС не отдал: без PDF — 5 раб. дней от получения.
         backfilled = False
         for row in rows:
-            if row.response_due_date is None:
+            if row.response_due_date is None and not is_account_block_notice(
+                title=row.title,
+                filename=str((row.metadata_json or {}).get("storage_file_name") or ""),
+                metadata=row.metadata_json,
+            ):
                 before = row.response_due_date
                 self._fill_response_due_from_pdf(row, pdf_bytes=None)
                 if row.response_due_date is not None and row.response_due_date != before:
@@ -588,7 +596,14 @@ class AccountingService:
             row.response_due_date = body.response_due_date
         if body.receipt_due_date is not None:
             row.receipt_due_date = body.receipt_due_date
-        if body.reply_status:
+        notice = is_account_block_notice(
+            title=row.title,
+            filename=str((body.metadata or {}).get("storage_file_name") or ""),
+            metadata={**(row.metadata_json or {}), **(body.metadata or {})},
+        )
+        if notice:
+            row.reply_status = "none"
+        elif body.reply_status:
             row.reply_status = body.reply_status
         if body.reply_error is not None:
             row.reply_error = body.reply_error
@@ -642,6 +657,12 @@ class AccountingService:
         row.metadata_json = meta
 
     async def _ensure_requirement_response_due(self, row: OptRequirement) -> date | None:
+        if is_account_block_notice(
+            title=row.title,
+            filename=str((row.metadata_json or {}).get("storage_file_name") or ""),
+            metadata=row.metadata_json,
+        ):
+            return row.response_due_date
         if row.response_due_date is not None:
             return row.response_due_date
         pdf_bytes: bytes | None = None
@@ -675,12 +696,23 @@ class AccountingService:
         pdf_filename: str | None,
     ) -> AccountingRequirementIngestResponse:
         existing = await self._repo.get_requirement_by_external_id(body.external_id.strip())
+        notice = is_account_block_notice(
+            title=body.title,
+            filename=pdf_filename or body.pdf_filename,
+            metadata=body.metadata,
+        )
+        if notice:
+            body.reply_status = "none"
+            body.replied_at = None
+            pdf_bytes = None
+            meta = dict(body.metadata or {})
+            meta["doc_kind"] = DOC_KIND_ACCOUNT_BLOCK
+            meta["can_reply"] = False
+            body.metadata = meta
         if existing is not None:
             self._apply_requirement_meta_fields(existing, body)
-            if existing.response_due_date is None and pdf_bytes:
+            if not notice and existing.response_due_date is None:
                 self._fill_response_due_from_pdf(existing, pdf_bytes=pdf_bytes)
-            elif existing.response_due_date is None:
-                self._fill_response_due_from_pdf(existing, pdf_bytes=None)
             await self._session.flush()
             await self._session.commit()
             return AccountingRequirementIngestResponse(
@@ -694,8 +726,8 @@ class AccountingService:
         supplier_name = body.supplier_name or (unit.name if unit else None)
 
         file_id: int | None = None
-        raw_pdf = pdf_bytes
-        if raw_pdf is None and body.pdf_base64:
+        raw_pdf = None if notice else pdf_bytes
+        if raw_pdf is None and not notice and body.pdf_base64:
             try:
                 raw_pdf = base64.b64decode(body.pdf_base64, validate=True)
             except (binascii.Error, ValueError) as exc:
@@ -753,7 +785,8 @@ class AccountingService:
         )
         if row.replied_at is not None and row.replied_at.tzinfo is not None:
             row.replied_at = row.replied_at.astimezone(UTC).replace(tzinfo=None)
-        self._fill_response_due_from_pdf(row, pdf_bytes=raw_pdf)
+        if not notice:
+            self._fill_response_due_from_pdf(row, pdf_bytes=raw_pdf)
         created = await self._repo.add_requirement(row)
         await self._session.commit()
         return AccountingRequirementIngestResponse(
@@ -900,13 +933,20 @@ class AccountingService:
         pdf_name = row.pdf_file.original_name if row.pdf_file is not None else None
         today = date_cls.today()
         due = row.response_due_date
+        notice = is_account_block_notice(
+            title=row.title,
+            filename=pdf_name or str((row.metadata_json or {}).get("storage_file_name") or ""),
+            metadata=row.metadata_json,
+        )
         is_overdue = bool(
-            due is not None
+            not notice
+            and due is not None
             and due < today
             and (row.reply_status or "none") in {"none", "error"}
         )
         due_soon = bool(
-            due is not None
+            not notice
+            and due is not None
             and today <= due <= today + timedelta(days=1)
             and (row.reply_status or "none") in {"none", "error"}
         )
@@ -934,6 +974,8 @@ class AccountingService:
             created_at=row.created_at,
             is_overdue=is_overdue,
             due_soon=due_soon,
+            can_reply=not notice,
+            doc_kind=DOC_KIND_ACCOUNT_BLOCK if notice else "requirement",
         )
 
     async def requirements_due_summary(self, actor: User) -> AccountingRequirementDueSummary:
@@ -954,6 +996,12 @@ class AccountingService:
         today = date_cls.today()
         overdue = due_soon = unanswered = 0
         for row in rows:
+            if is_account_block_notice(
+                title=row.title,
+                filename=str((row.metadata_json or {}).get("storage_file_name") or ""),
+                metadata=row.metadata_json,
+            ):
+                continue
             if (row.reply_status or "none") not in {"none", "error"}:
                 continue
             unanswered += 1
@@ -997,6 +1045,12 @@ class AccountingService:
                 sbis_id = int(raw)
         if sbis_id is None:
             raise ValidationError(message="Нет связи с документом sbis-norm")
+        if is_account_block_notice(
+            title=row.title,
+            filename=str((row.metadata_json or {}).get("storage_file_name") or ""),
+            metadata=row.metadata_json,
+        ):
+            raise ValidationError(message="На уведомление о блокировке счёта ответить нельзя")
         if not files:
             raise ValidationError(message="Прикрепите хотя бы один файл")
 
