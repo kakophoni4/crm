@@ -17,6 +17,7 @@ from app.modules.tasks.schemas import (
     TaskAssigneeOption,
     TaskBoardColumn,
     TaskBoardResponse,
+    TaskChildBrief,
     TaskCommentListResponse,
     TaskCommentResponse,
     TaskCreateRequest,
@@ -156,8 +157,102 @@ class TaskService:
         if role in (UserRole.SENIOR, UserRole.GROUP_SENIOR):
             await self._ensure_department_access(ctx, task.department_id)
             return
-        if task.assignee_id != actor.id and task.created_by != actor.id:
-            raise NotFound(message="Задача не найдена")
+        if task.assignee_id == actor.id or task.created_by == actor.id:
+            return
+        if actor.id in await self._collaborator_ids(task.id):
+            return
+        raise NotFound(message="Задача не найдена")
+
+    async def _collaborator_ids(self, task_id: int) -> set[int]:
+        from app.modules.db.models.department_task_collaborator import (
+            DepartmentTaskCollaborator,
+        )
+
+        result = await self._session.execute(
+            select(DepartmentTaskCollaborator.user_id).where(
+                DepartmentTaskCollaborator.task_id == task_id,
+            ),
+        )
+        return {int(uid) for uid in result.scalars().all()}
+
+    async def _is_working_on(self, actor: User, task: DepartmentTask) -> bool:
+        if task.assignee_id == actor.id:
+            return True
+        return actor.id in await self._collaborator_ids(task.id)
+
+    async def _attach_files(self, task_id: int, file_ids: list[int] | None) -> None:
+        from app.modules.db.models.department_task_file import DepartmentTaskFile
+        from app.modules.db.models.uploaded_file import UploadedFile
+
+        ids = [int(fid) for fid in (file_ids or []) if int(fid) > 0]
+        if not ids:
+            return
+        existing = await self._session.execute(
+            select(DepartmentTaskFile.file_id).where(
+                DepartmentTaskFile.task_id == task_id,
+                DepartmentTaskFile.file_id.in_(ids),
+            ),
+        )
+        already = {int(x) for x in existing.scalars().all()}
+        valid = await self._session.execute(
+            select(UploadedFile.id).where(UploadedFile.id.in_(ids)),
+        )
+        valid_ids = {int(x) for x in valid.scalars().all()}
+        for fid in ids:
+            if fid in already or fid not in valid_ids:
+                continue
+            self._session.add(DepartmentTaskFile(task_id=task_id, file_id=fid))
+        await self._session.flush()
+
+    async def _add_comment_row(
+        self,
+        task: DepartmentTask,
+        actor: User,
+        body: str,
+        *,
+        file_ids: list[int] | None = None,
+    ):
+        from app.modules.db.models.department_task_comment import DepartmentTaskComment
+
+        text = (body or "").strip()
+        files = [int(fid) for fid in (file_ids or []) if int(fid) > 0]
+        if not text and not files:
+            return None
+        if not text:
+            text = "Прикреплены файлы"
+        await self._attach_files(task.id, files)
+        row = DepartmentTaskComment(task_id=task.id, author_id=actor.id, body=text)
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def _add_collaborator(
+        self,
+        task: DepartmentTask,
+        user_id: int,
+        *,
+        added_by: int,
+    ) -> None:
+        from app.modules.db.models.department_task_collaborator import (
+            DepartmentTaskCollaborator,
+        )
+
+        if user_id == task.assignee_id:
+            return
+        existing = await self._session.get(
+            DepartmentTaskCollaborator,
+            (task.id, user_id),
+        )
+        if existing is not None:
+            return
+        self._session.add(
+            DepartmentTaskCollaborator(
+                task_id=task.id,
+                user_id=user_id,
+                added_by=added_by,
+            ),
+        )
+        await self._session.flush()
 
     def _task_flags(self, task: DepartmentTask, now: datetime) -> tuple[bool, bool]:
         active = task.status in {TaskStatus.NEW.value, TaskStatus.OPEN.value}
@@ -187,6 +282,7 @@ class TaskService:
         now: datetime,
         file_ids: list[int] | None = None,
         files: list[TaskFileBrief] | None = None,
+        collaborators: list[TaskUserBrief] | None = None,
     ) -> TaskResponse:
         task_type: TaskType
         try:
@@ -213,6 +309,7 @@ class TaskService:
             opt_requirement_id=getattr(task, "opt_requirement_id", None),
             chat_id=getattr(task, "chat_id", None),
             lead_id=getattr(task, "lead_id", None),
+            parent_task_id=getattr(task, "parent_task_id", None),
             created_by=task.created_by,
             assignee_id=task.assignee_id,
             due_at=task.due_at,
@@ -227,6 +324,7 @@ class TaskService:
             needs_ack=needs_ack,
             creator=TaskUserBrief(id=creator.id, full_name=creator.full_name) if creator else None,
             assignee=TaskUserBrief(id=assignee.id, full_name=assignee.full_name) if assignee else None,
+            collaborators=collaborators or [],
             file_ids=file_ids or [],
             files=files or [],
         )
@@ -258,12 +356,36 @@ class TaskService:
             )
         return out
 
+    async def _collaborators_by_task(
+        self,
+        task_ids: list[int],
+    ) -> dict[int, list[int]]:
+        if not task_ids:
+            return {}
+        from app.modules.db.models.department_task_collaborator import (
+            DepartmentTaskCollaborator,
+        )
+
+        result = await self._session.execute(
+            select(
+                DepartmentTaskCollaborator.task_id,
+                DepartmentTaskCollaborator.user_id,
+            ).where(DepartmentTaskCollaborator.task_id.in_(task_ids)),
+        )
+        out: dict[int, list[int]] = {}
+        for task_id, user_id in result.all():
+            out.setdefault(int(task_id), []).append(int(user_id))
+        return out
+
     async def _build_responses(self, tasks: list[DepartmentTask]) -> list[TaskResponse]:
         now = datetime.now(UTC)
         user_ids: set[int] = set()
         for task in tasks:
             user_ids.add(task.created_by)
             user_ids.add(task.assignee_id)
+        collab_map = await self._collaborators_by_task([t.id for t in tasks])
+        for uids in collab_map.values():
+            user_ids.update(uids)
         users = await self._users_map(user_ids)
         files_map = await self._files_by_task([t.id for t in tasks])
         return [
@@ -273,6 +395,11 @@ class TaskService:
                 now=now,
                 file_ids=[f.id for f in files_map.get(t.id, [])],
                 files=files_map.get(t.id, []),
+                collaborators=[
+                    TaskUserBrief(id=users[uid].id, full_name=users[uid].full_name)
+                    for uid in collab_map.get(t.id, [])
+                    if uid in users
+                ],
             )
             for t in tasks
         ]
@@ -468,19 +595,28 @@ class TaskService:
         if task is None or task.status != TaskStatus.NEW.value:
             raise NotFound(message="Задача не найдена")
         if task.assignee_id != actor.id and not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Принять задачу может только исполнитель")
+            if not await self._is_working_on(actor, task):
+                raise PermissionDenied(message="Принять задачу может только исполнитель")
         task.status = TaskStatus.OPEN.value
         task = await self._repo.save(task)
         response = (await self._build_responses([task]))[0]
         await publish(TASK_UPDATED, self._event_payload(task), scope={"user_id": task.assignee_id})
         return response
 
-    async def complete(self, actor: User, task_id: int) -> TaskResponse:
+    async def complete(
+        self,
+        actor: User,
+        task_id: int,
+        *,
+        comment: str | None = None,
+        file_ids: list[int] | None = None,
+    ) -> TaskResponse:
         task = await self._repo.get_by_id(task_id)
         if task is None or task.status not in {TaskStatus.OPEN.value, TaskStatus.NEW.value}:
             raise NotFound(message="Задача не найдена")
-        if task.assignee_id != actor.id:
+        if not await self._is_working_on(actor, task) and not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Отметить выполнение может только исполнитель")
+        await self._add_comment_row(task, actor, comment or "", file_ids=file_ids)
         now = datetime.now(UTC)
         task.status = TaskStatus.DONE_PENDING.value
         task.completed_at = now
@@ -589,25 +725,55 @@ class TaskService:
             )
             for c in comment_rows
         ]
-        return TaskDetailResponse(**base.model_dump(), comments=comments)
+        children_result = await self._session.execute(
+            select(DepartmentTask)
+            .where(DepartmentTask.parent_task_id == task_id)
+            .order_by(DepartmentTask.id.desc())
+            .limit(50),
+        )
+        child_rows = list(children_result.scalars().all())
+        child_users = await self._users_map({c.assignee_id for c in child_rows})
+        child_briefs = [
+            TaskChildBrief(
+                id=c.id,
+                title=c.title,
+                status=c.status,
+                assignee=(
+                    TaskUserBrief(
+                        id=child_users[c.assignee_id].id,
+                        full_name=child_users[c.assignee_id].full_name,
+                    )
+                    if c.assignee_id in child_users
+                    else None
+                ),
+            )
+            for c in child_rows
+        ]
+        return TaskDetailResponse(
+            **base.model_dump(),
+            comments=comments,
+            child_tasks=child_briefs,
+        )
 
     async def list_comments(self, actor: User, task_id: int) -> TaskCommentListResponse:
         detail = await self.get_task(actor, task_id)
         return TaskCommentListResponse(items=detail.comments)
 
-    async def add_comment(self, actor: User, task_id: int, body: str) -> TaskCommentResponse:
-        from app.modules.db.models.department_task_comment import DepartmentTaskComment
-
+    async def add_comment(
+        self,
+        actor: User,
+        task_id: int,
+        body: str,
+        *,
+        file_ids: list[int] | None = None,
+    ) -> TaskCommentResponse:
         task = await self._repo.get_by_id(task_id)
         if task is None:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
-        text = body.strip()
-        if not text:
-            raise ValidationError(message="Комментарий пуст")
-        row = DepartmentTaskComment(task_id=task.id, author_id=actor.id, body=text)
-        self._session.add(row)
-        await self._session.flush()
+        row = await self._add_comment_row(task, actor, body, file_ids=file_ids)
+        if row is None:
+            raise ValidationError(message="Напишите комментарий или прикрепите файл")
         await publish(
             TASK_UPDATED,
             {**self._event_payload(task), "comment_id": row.id},
@@ -626,6 +792,123 @@ class TaskService:
             created_at=row.created_at,
             author=TaskUserBrief(id=actor.id, full_name=actor.full_name),
         )
+
+    async def attach_files(self, actor: User, task_id: int, file_ids: list[int]) -> TaskResponse:
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        if task.status == TaskStatus.CLOSED.value:
+            raise ValidationError(message="К закрытой задаче файлы не добавить")
+        await self._attach_files(task.id, file_ids)
+        return (await self._build_responses([task]))[0]
+
+    async def handoff(self, actor: User, task_id: int, body) -> TaskResponse:
+        from app.modules.tasks.schemas import TaskHandoffRequest
+
+        if not isinstance(body, TaskHandoffRequest):
+            body = TaskHandoffRequest.model_validate(body)
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        if task.status not in {
+            TaskStatus.NEW.value,
+            TaskStatus.OPEN.value,
+            TaskStatus.DONE_PENDING.value,
+        }:
+            raise ValidationError(message="Эту задачу уже нельзя передать")
+        if not await self._is_working_on(actor, task) and not self._is_senior_or_admin(actor):
+            raise PermissionDenied(message="Передать задачу может только исполнитель")
+
+        next_user = await self._ensure_active_assignee(body.user_id)
+        if next_user.id == actor.id and body.action != "follow_up":
+            raise ValidationError(message="Выберите другого сотрудника")
+        if body.action in {"add", "transfer"} and next_user.id == task.assignee_id:
+            raise ValidationError(message="Этот сотрудник уже исполнитель")
+
+        comment = (body.comment or "").strip()
+        await self._add_comment_row(task, actor, comment, file_ids=body.file_ids)
+
+        if body.action == "add":
+            await self._add_collaborator(task, next_user.id, added_by=actor.id)
+            note = (
+                f"{actor.full_name} добавил(а) соисполнителя: {next_user.full_name}"
+            )
+            if not comment:
+                await self._add_comment_row(task, actor, note)
+            await publish(TASK_CREATED, self._event_payload(task), scope={"user_id": next_user.id})
+            await publish(
+                TASK_UPDATED,
+                self._event_payload(task),
+                scope={"department_id": task.department_id},
+            )
+            return (await self._build_responses([task]))[0]
+
+        if body.action == "transfer":
+            previous_id = task.assignee_id
+            await self._add_collaborator(task, previous_id, added_by=actor.id)
+            from app.modules.db.models.department_task_collaborator import (
+                DepartmentTaskCollaborator,
+            )
+
+            current_collab = await self._session.get(
+                DepartmentTaskCollaborator,
+                (task.id, next_user.id),
+            )
+            if current_collab is not None:
+                await self._session.delete(current_collab)
+            task.assignee_id = next_user.id
+            if task.status == TaskStatus.DONE_PENDING.value:
+                task.status = TaskStatus.OPEN.value
+                task.completed_at = None
+                task.completed_by = None
+            elif task.status == TaskStatus.NEW.value:
+                task.status = TaskStatus.OPEN.value
+            task = await self._repo.save(task)
+            if not comment:
+                await self._add_comment_row(
+                    task,
+                    actor,
+                    f"{actor.full_name} передал(а) задачу {next_user.full_name}",
+                )
+            await publish(TASK_CREATED, self._event_payload(task), scope={"user_id": next_user.id})
+            await publish(
+                TASK_UPDATED,
+                self._event_payload(task),
+                scope={"department_id": task.department_id},
+            )
+            return (await self._build_responses([task]))[0]
+
+        title = (body.follow_up_title or "").strip() or f"Продолжение: {task.title}"
+        child = DepartmentTask(
+            department_id=task.department_id,
+            title=title,
+            description=(body.follow_up_description or "").strip() or None,
+            task_type=task.task_type,
+            status=TaskStatus.OPEN.value,
+            source="follow_up",
+            opt_unit_id=task.opt_unit_id,
+            opt_requirement_id=task.opt_requirement_id,
+            chat_id=task.chat_id,
+            lead_id=task.lead_id,
+            parent_task_id=task.id,
+            created_by=actor.id,
+            assignee_id=next_user.id,
+            due_at=body.follow_up_due_at,
+        )
+        child = await self._repo.create(child)
+        await self._attach_files(child.id, body.file_ids)
+        if not comment:
+            await self._add_comment_row(
+                task,
+                actor,
+                f"{actor.full_name} поставил(а) связанную задачу «{child.title}» для {next_user.full_name}",
+            )
+        payload = self._event_payload(child)
+        await publish(TASK_CREATED, payload, scope={"user_id": child.assignee_id})
+        await publish(TASK_CREATED, payload, scope={"department_id": child.department_id})
+        return (await self._build_responses([task]))[0]
 
     async def notify_assignee(self, actor: User, task_id: int, message: str | None) -> dict:
         task = await self._repo.get_by_id(task_id)
@@ -662,7 +945,7 @@ class TaskService:
         if task is None:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
-        if actor.id != task.assignee_id and not self._is_senior_or_admin(actor):
+        if not await self._is_working_on(actor, task) and not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Нельзя уведомить постановщика")
         if actor.id == task.created_by and not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Нельзя уведомить самого себя")

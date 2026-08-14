@@ -56,6 +56,7 @@ from app.modules.db.models.user_telegram_link import UserTelegramLink
 from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
 from app.modules.db.models.opt_buyer import OptBuyer
 from app.modules.db.models.opt_requirement import OptRequirement
+from app.modules.db.models.department_task_collaborator import DepartmentTaskCollaborator
 from app.modules.db.models.department_task_comment import DepartmentTaskComment
 from app.modules.db.models.department_task_file import DepartmentTaskFile
 from app.modules.db.models.tree_service_price import TreeServicePrice
@@ -98,6 +99,7 @@ __all__ = [
     "FileVaultItem",
     "ContactGroupAssignment",
     "DepartmentTask",
+    "DepartmentTaskCollaborator",
     "DepartmentTaskFile",
     "ContactGroupTransfer",
     "ContactStatus",

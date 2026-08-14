@@ -60,8 +60,11 @@ export async function moveTask(
   return data
 }
 
-export async function completeTask(taskId: number): Promise<DepartmentTask> {
-  const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/complete`)
+export async function completeTask(
+  taskId: number,
+  body?: { comment?: string | null; file_ids?: number[] },
+): Promise<DepartmentTask> {
+  const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/complete`, body ?? {})
   return data
 }
 
@@ -106,8 +109,41 @@ export async function getTask(taskId: number): Promise<TaskDetail> {
   return data
 }
 
-export async function addTaskComment(taskId: number, body: string): Promise<TaskComment> {
-  const { data } = await http.post<TaskComment>(`/tasks/${taskId}/comments`, { body })
+export async function addTaskComment(
+  taskId: number,
+  body: string,
+  fileIds?: number[],
+): Promise<TaskComment> {
+  const { data } = await http.post<TaskComment>(`/tasks/${taskId}/comments`, {
+    body,
+    file_ids: fileIds ?? [],
+  })
+  return data
+}
+
+export async function attachTaskFiles(
+  taskId: number,
+  fileIds: number[],
+): Promise<DepartmentTask> {
+  const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/files`, {
+    file_ids: fileIds,
+  })
+  return data
+}
+
+export async function handoffTask(
+  taskId: number,
+  body: {
+    action: 'add' | 'transfer' | 'follow_up'
+    user_id: number
+    comment?: string | null
+    file_ids?: number[]
+    follow_up_title?: string | null
+    follow_up_description?: string | null
+    follow_up_due_at?: string | null
+  },
+): Promise<DepartmentTask> {
+  const { data } = await http.post<DepartmentTask>(`/tasks/${taskId}/handoff`, body)
   return data
 }
 

@@ -55,6 +55,7 @@ class TaskResponse(BaseModel):
     opt_requirement_id: int | None = None
     chat_id: int | None = None
     lead_id: int | None = None
+    parent_task_id: int | None = None
     created_by: int
     assignee_id: int
     due_at: datetime | None
@@ -69,6 +70,7 @@ class TaskResponse(BaseModel):
     needs_ack: bool = False
     creator: TaskUserBrief | None = None
     assignee: TaskUserBrief | None = None
+    collaborators: list[TaskUserBrief] = Field(default_factory=list)
     file_ids: list[int] = Field(default_factory=list)
     files: list["TaskFileBrief"] = Field(default_factory=list)
 
@@ -83,7 +85,40 @@ class TaskFileBrief(BaseModel):
 class TaskCommentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    body: str = Field(min_length=1, max_length=5000)
+    body: str = Field(default="", max_length=5000)
+    file_ids: list[int] = Field(default_factory=list)
+
+
+class TaskAttachFilesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_ids: list[int] = Field(min_length=1)
+
+
+class TaskCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    comment: str | None = Field(default=None, max_length=5000)
+    file_ids: list[int] = Field(default_factory=list)
+
+
+class TaskHandoffRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(pattern="^(add|transfer|follow_up)$")
+    user_id: int = Field(gt=0)
+    comment: str | None = Field(default=None, max_length=5000)
+    file_ids: list[int] = Field(default_factory=list)
+    follow_up_title: str | None = Field(default=None, max_length=512)
+    follow_up_description: str | None = Field(default=None, max_length=5000)
+    follow_up_due_at: datetime | None = None
+
+
+class TaskChildBrief(BaseModel):
+    id: int
+    title: str
+    status: str
+    assignee: TaskUserBrief | None = None
 
 
 class TaskCommentResponse(BaseModel):
@@ -107,6 +142,7 @@ class TaskNotifyRequest(BaseModel):
 
 class TaskDetailResponse(TaskResponse):
     comments: list[TaskCommentResponse] = Field(default_factory=list)
+    child_tasks: list[TaskChildBrief] = Field(default_factory=list)
 
 
 class ClientRequirementCreateRequest(BaseModel):

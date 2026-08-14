@@ -1,23 +1,35 @@
 <script setup lang="ts">
 import {
   NButton,
+  NDatePicker,
   NEmpty,
   NInput,
   NModal,
+  NRadio,
+  NRadioGroup,
+  NSelect,
   NSpace,
   NSpin,
   NTag,
+  NUpload,
   useMessage,
 } from 'naive-ui'
+import type { UploadFileInfo } from 'naive-ui'
 import { Download, Eye } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 
+import { uploadFile } from '@/features/chats/api'
 import {
   addTaskComment,
+  completeTask,
+  formatTaskAssigneeLabel,
   getTask,
+  handoffTask,
+  listTaskAssignees,
   notifyTaskAssignee,
   notifyTaskCreator,
   type DepartmentTask,
+  type TaskAssigneeOption,
   type TaskDetail,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS, type TaskFileBrief } from '@/features/tasks/types'
@@ -38,6 +50,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:show': [value: boolean]
   updated: []
+  open: [taskId: number]
 }>()
 
 const message = useMessage()
@@ -47,6 +60,17 @@ const detail = ref<TaskDetail | null>(null)
 const commentBody = ref('')
 const commentLoading = ref(false)
 const notifyLoading = ref<string | null>(null)
+const commentFiles = ref<File[]>([])
+const uploadKey = ref(0)
+const actionBusy = ref(false)
+const completeBusy = ref(false)
+
+const handoffUserId = ref<number | null>(null)
+const handoffAction = ref<'add' | 'transfer' | 'follow_up'>('add')
+const followTitle = ref('')
+const followDescription = ref('')
+const followDueAt = ref<number | null>(null)
+const assigneeUsers = ref<TaskAssigneeOption[]>([])
 
 const previewOpen = ref(false)
 const previewLoading = ref(false)
@@ -63,6 +87,20 @@ const previewKind = computed<AttachmentPreviewKind>(() =>
 const meId = computed(() => auth.user?.id ?? null)
 const isManager = computed(() => auth.canManageTasks)
 
+const isWorkingOn = computed(() => {
+  const task = detail.value
+  if (!task || meId.value == null) return false
+  if (task.assignee_id === meId.value) return true
+  return (task.collaborators ?? []).some((c) => c.id === meId.value)
+})
+
+const isActive = computed(() => {
+  const status = detail.value?.status
+  return status === 'new' || status === 'open' || status === 'done_pending'
+})
+
+const canReply = computed(() => isWorkingOn.value && isActive.value)
+
 const canNotifyAssignee = computed(() => {
   const task = detail.value
   if (!task || meId.value == null) return false
@@ -74,7 +112,26 @@ const canNotifyCreator = computed(() => {
   const task = detail.value
   if (!task || meId.value == null) return false
   if (meId.value === task.created_by && !isManager.value) return false
-  return meId.value === task.assignee_id || isManager.value
+  return isWorkingOn.value || isManager.value
+})
+
+const assigneeOptions = computed(() =>
+  assigneeUsers.value
+    .filter((u) => u.id !== meId.value)
+    .map((u) => ({
+      label: formatTaskAssigneeLabel(u, meId.value),
+      value: u.id,
+    })),
+)
+
+const statusLabel = computed(() => {
+  const map: Record<string, string> = {
+    new: 'Новая',
+    open: 'В работе',
+    done_pending: 'На проверке',
+    closed: 'Готово',
+  }
+  return map[detail.value?.status || ''] || detail.value?.status || ''
 })
 
 watch(
@@ -83,12 +140,28 @@ watch(
     if (!open || id == null) {
       detail.value = null
       commentBody.value = ''
+      commentFiles.value = []
+    uploadKey.value += 1
+      handoffUserId.value = null
+      handoffAction.value = 'add'
+      followTitle.value = ''
+      followDescription.value = ''
+      followDueAt.value = null
       closeFilePreview()
       return
     }
     void load(id)
+    void loadAssignees()
   },
 )
+
+async function loadAssignees(): Promise<void> {
+  try {
+    assigneeUsers.value = await listTaskAssignees()
+  } catch {
+    assigneeUsers.value = []
+  }
+}
 
 async function load(id: number): Promise<void> {
   loading.value = true
@@ -102,13 +175,27 @@ async function load(id: number): Promise<void> {
   }
 }
 
+async function uploadPending(): Promise<number[]> {
+  const ids: number[] = []
+  for (const file of commentFiles.value) {
+    const uploaded = await uploadFile(file)
+    ids.push(uploaded.id)
+  }
+  return ids
+}
+
 async function onAddComment(): Promise<void> {
-  if (props.taskId == null || !commentBody.value.trim()) return
+  if (props.taskId == null) return
+  if (!commentBody.value.trim() && !commentFiles.value.length) return
   commentLoading.value = true
   try {
-    const created = await addTaskComment(props.taskId, commentBody.value.trim())
+    const fileIds = await uploadPending()
+    const created = await addTaskComment(props.taskId, commentBody.value.trim(), fileIds)
     commentBody.value = ''
-    if (detail.value) {
+    commentFiles.value = []
+    uploadKey.value += 1
+    await load(props.taskId)
+    if (detail.value && !detail.value.comments.some((c) => c.id === created.id)) {
       detail.value = {
         ...detail.value,
         comments: [...detail.value.comments, created],
@@ -120,6 +207,78 @@ async function onAddComment(): Promise<void> {
   } finally {
     commentLoading.value = false
   }
+}
+
+async function onComplete(): Promise<void> {
+  if (props.taskId == null) return
+  completeBusy.value = true
+  try {
+    const fileIds = await uploadPending()
+    await completeTask(props.taskId, {
+      comment: commentBody.value.trim() || null,
+      file_ids: fileIds,
+    })
+    commentBody.value = ''
+    commentFiles.value = []
+    uploadKey.value += 1
+    message.success('Отмечено как выполненное — ждёт подтверждения')
+    await load(props.taskId)
+    emit('updated')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось отметить выполнение')
+  } finally {
+    completeBusy.value = false
+  }
+}
+
+async function onHandoff(): Promise<void> {
+  if (props.taskId == null || handoffUserId.value == null) {
+    message.warning('Выберите сотрудника')
+    return
+  }
+  if (handoffAction.value === 'follow_up' && !followTitle.value.trim() && !detail.value?.title) {
+    message.warning('Укажите название связанной задачи')
+    return
+  }
+  actionBusy.value = true
+  try {
+    const fileIds = await uploadPending()
+    await handoffTask(props.taskId, {
+      action: handoffAction.value,
+      user_id: handoffUserId.value,
+      comment: commentBody.value.trim() || null,
+      file_ids: fileIds,
+      follow_up_title: followTitle.value.trim() || null,
+      follow_up_description: followDescription.value.trim() || null,
+      follow_up_due_at: followDueAt.value ? new Date(followDueAt.value).toISOString() : null,
+    })
+    const done =
+      handoffAction.value === 'add'
+        ? 'Соисполнитель добавлен'
+        : handoffAction.value === 'transfer'
+          ? 'Задача передана'
+          : 'Связанная задача создана'
+    message.success(done)
+    commentBody.value = ''
+    commentFiles.value = []
+    uploadKey.value += 1
+    followTitle.value = ''
+    followDescription.value = ''
+    followDueAt.value = null
+    handoffUserId.value = null
+    await load(props.taskId)
+    emit('updated')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось выполнить действие')
+  } finally {
+    actionBusy.value = false
+  }
+}
+
+function onUploadChange(options: { fileList: UploadFileInfo[] }): void {
+  commentFiles.value = options.fileList
+    .map((f) => f.file)
+    .filter((f): f is File => f instanceof File)
 }
 
 async function onNotifyAssignee(): Promise<void> {
@@ -209,6 +368,10 @@ function formatDue(iso: string | null): string {
 function typeColor(task: DepartmentTask): string {
   return TASK_TYPE_COLORS[task.task_type] || '#6b7280'
 }
+
+function openChild(id: number): void {
+  emit('open', id)
+}
 </script>
 
 <template>
@@ -216,7 +379,7 @@ function typeColor(task: DepartmentTask): string {
     :show="show"
     preset="card"
     :title="detail ? detail.title : 'Задача'"
-    style="width: min(640px, 96vw)"
+    style="width: min(720px, 96vw)"
     @update:show="emit('update:show', $event)"
   >
     <NSpin :show="loading">
@@ -226,7 +389,7 @@ function typeColor(task: DepartmentTask): string {
             <NTag :color="{ color: typeColor(detail), textColor: '#fff' }" size="small">
               {{ detail.task_type_label }}
             </NTag>
-            <NTag size="small" :bordered="false">{{ detail.status }}</NTag>
+            <NTag size="small" :bordered="false">{{ statusLabel }}</NTag>
             <NTag v-if="detail.is_overdue" type="error" size="small">Просрочена</NTag>
           </NSpace>
 
@@ -244,6 +407,11 @@ function typeColor(task: DepartmentTask): string {
               <dd>{{ formatDue(detail.due_at) }}</dd>
             </div>
           </dl>
+
+          <p v-if="detail.collaborators?.length" class="task-detail__collab">
+            Соисполнители:
+            {{ detail.collaborators.map((c) => c.full_name).join(', ') }}
+          </p>
 
           <section>
             <h4>Описание</h4>
@@ -276,6 +444,18 @@ function typeColor(task: DepartmentTask): string {
             <NEmpty v-else description="Файлов нет" size="small" />
           </section>
 
+          <section v-if="detail.child_tasks?.length">
+            <h4>Связанные задачи</h4>
+            <ul class="task-detail__children">
+              <li v-for="child in detail.child_tasks" :key="child.id">
+                <button type="button" class="task-detail__child-btn" @click="openChild(child.id)">
+                  {{ child.title }}
+                </button>
+                <span>{{ child.assignee?.full_name || '—' }} · {{ child.status }}</span>
+              </li>
+            </ul>
+          </section>
+
           <section>
             <h4>Комментарии</h4>
             <ul v-if="detail.comments.length" class="task-detail__comments">
@@ -290,18 +470,93 @@ function typeColor(task: DepartmentTask): string {
               v-model:value="commentBody"
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 5 }"
-              placeholder="Оставить комментарий"
+              placeholder="Комментарий к ответу"
               style="margin-top: 8px"
             />
+            <NUpload
+              :key="uploadKey"
+              multiple
+              :default-upload="false"
+              style="margin-top: 8px"
+              @change="onUploadChange"
+            >
+              <NButton size="small" secondary>Прикрепить файлы</NButton>
+            </NUpload>
+            <NSpace style="margin-top: 8px" wrap>
+              <NButton
+                type="primary"
+                size="small"
+                :loading="commentLoading"
+                :disabled="!commentBody.trim() && !commentFiles.length"
+                @click="onAddComment"
+              >
+                Отправить комментарий
+              </NButton>
+              <NButton
+                v-if="canReply && detail.status !== 'done_pending'"
+                size="small"
+                :loading="completeBusy"
+                @click="onComplete"
+              >
+                Отметить выполненным
+              </NButton>
+            </NSpace>
+          </section>
+
+          <section v-if="canReply" class="task-detail__handoff">
+            <h4>Если свою часть сделали</h4>
+            <p class="task-detail__hint">
+              Можно добавить соисполнителя, передать задачу дальше или поставить связанную задачу.
+              Комментарий и файлы сверху уйдут вместе с действием.
+            </p>
+            <NRadioGroup v-model:value="handoffAction" name="handoff" style="margin-bottom: 8px">
+              <NSpace>
+                <NRadio value="add">Добавить соисполнителя</NRadio>
+                <NRadio value="transfer">Передать задачу</NRadio>
+                <NRadio value="follow_up">Связанная задача</NRadio>
+              </NSpace>
+            </NRadioGroup>
+            <NSelect
+              v-model:value="handoffUserId"
+              :options="assigneeOptions"
+              filterable
+              placeholder="Сотрудник"
+            />
+            <template v-if="handoffAction === 'follow_up'">
+              <NInput
+                v-model:value="followTitle"
+                maxlength="512"
+                placeholder="Название связанной задачи"
+                style="margin-top: 8px"
+              />
+              <NInput
+                v-model:value="followDescription"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 4 }"
+                placeholder="Что нужно сделать дальше"
+                style="margin-top: 8px"
+              />
+              <NDatePicker
+                v-model:value="followDueAt"
+                type="datetime"
+                clearable
+                style="width: 100%; margin-top: 8px"
+              />
+            </template>
             <NButton
               type="primary"
-              size="small"
-              style="margin-top: 8px"
-              :loading="commentLoading"
-              :disabled="!commentBody.trim()"
-              @click="onAddComment"
+              style="margin-top: 10px"
+              :loading="actionBusy"
+              :disabled="handoffUserId == null"
+              @click="onHandoff"
             >
-              Отправить
+              {{
+                handoffAction === 'add'
+                  ? 'Добавить соисполнителя'
+                  : handoffAction === 'transfer'
+                    ? 'Передать задачу'
+                    : 'Поставить связанную задачу'
+              }}
             </NButton>
           </section>
         </div>
@@ -369,14 +624,25 @@ function typeColor(task: DepartmentTask): string {
   font-size: 0.88rem;
   font-weight: 600;
 }
+.task-detail__collab {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--app-text-muted);
+}
 .task-detail__desc {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.9rem;
 }
+.task-detail__hint {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
 .task-detail__files,
-.task-detail__comments {
+.task-detail__comments,
+.task-detail__children {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -384,7 +650,8 @@ function typeColor(task: DepartmentTask): string {
   flex-direction: column;
   gap: 8px;
 }
-.task-detail__files li {
+.task-detail__files li,
+.task-detail__children li {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -393,6 +660,15 @@ function typeColor(task: DepartmentTask): string {
   border: 1px solid var(--app-border);
   border-radius: 8px;
   font-size: 0.85rem;
+}
+.task-detail__child-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--app-primary, #2563eb);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 .task-detail__comments li {
   padding: 8px 10px;
@@ -408,6 +684,10 @@ function typeColor(task: DepartmentTask): string {
 .task-detail__comments span {
   font-size: 0.72rem;
   color: var(--app-text-muted);
+}
+.task-detail__handoff {
+  padding-top: 4px;
+  border-top: 1px solid var(--app-border);
 }
 @media (max-width: 640px) {
   .task-detail__meta {

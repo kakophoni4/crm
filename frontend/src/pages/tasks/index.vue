@@ -107,6 +107,10 @@ function openTaskDetail(task: DepartmentTask): void {
   detailOpen.value = true
 }
 
+function onOpenRelatedTask(id: number): void {
+  detailTaskId.value = id
+}
+
 const boardDepartmentOptions = computed(() =>
   departments.value.map((d) => ({ label: d.name, value: d.id })),
 )
@@ -659,6 +663,7 @@ onUnmounted(() => {
       v-model:show="detailOpen"
       :task-id="detailTaskId"
       @updated="activeTab === 'board' ? loadBoard() : loadMine()"
+      @open="onOpenRelatedTask"
     />
   </div>
 </template>

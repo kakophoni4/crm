@@ -45,6 +45,12 @@ class DepartmentTask(Base):
         ForeignKey("leads.id", ondelete="SET NULL"),
         nullable=True,
     )
+    parent_task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("department_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     position: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_by: Mapped[int] = mapped_column(
         BigInteger,

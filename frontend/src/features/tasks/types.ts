@@ -19,6 +19,7 @@ export interface DepartmentTask {
   opt_requirement_id?: number | null
   chat_id?: number | null
   lead_id?: number | null
+  parent_task_id?: number | null
   created_by: number
   assignee_id: number
   due_at: string | null
@@ -33,6 +34,7 @@ export interface DepartmentTask {
   needs_ack?: boolean
   creator: TaskUserBrief | null
   assignee: TaskUserBrief | null
+  collaborators?: TaskUserBrief[]
   file_ids?: number[]
   files?: TaskFileBrief[]
 }
@@ -53,8 +55,16 @@ export interface TaskComment {
   author: TaskUserBrief | null
 }
 
+export interface TaskChildBrief {
+  id: number
+  title: string
+  status: string
+  assignee: TaskUserBrief | null
+}
+
 export interface TaskDetail extends DepartmentTask {
   comments: TaskComment[]
+  child_tasks?: TaskChildBrief[]
 }
 
 export interface TaskBoardColumn {

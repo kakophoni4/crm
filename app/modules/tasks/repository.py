@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.department_task import DepartmentTask
+from app.modules.db.models.department_task_collaborator import DepartmentTaskCollaborator
 from app.modules.tasks.types import ACTIVE_TASK_STATUSES, TASK_TYPE_SORT_ORDER, TaskStatus, TaskType
 
 
@@ -94,11 +95,17 @@ class TaskRepository:
             row.position = pos
 
     async def list_for_assignee(self, assignee_id: int) -> list[DepartmentTask]:
+        collab_ids = select(DepartmentTaskCollaborator.task_id).where(
+            DepartmentTaskCollaborator.user_id == assignee_id,
+        )
         result = await self._session.execute(
             select(DepartmentTask)
             .where(
-                DepartmentTask.assignee_id == assignee_id,
                 self._active_filter(),
+                or_(
+                    DepartmentTask.assignee_id == assignee_id,
+                    DepartmentTask.id.in_(collab_ids),
+                ),
             )
             .order_by(DepartmentTask.created_at.desc()),
         )

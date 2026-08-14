@@ -16,8 +16,11 @@ from app.modules.tasks.schemas import (
     TaskCommentCreateRequest,
     TaskCommentListResponse,
     TaskCommentResponse,
+    TaskCompleteRequest,
     TaskCreateRequest,
     TaskDetailResponse,
+    TaskHandoffRequest,
+    TaskAttachFilesRequest,
     TaskListResponse,
     TaskMoveRequest,
     TaskNotifyRequest,
@@ -147,7 +150,12 @@ async def add_task_comment(
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskCommentResponse:
-    result = await service.add_comment(actor, task_id, body.body)
+    result = await service.add_comment(
+        actor,
+        task_id,
+        body.body,
+        file_ids=body.file_ids,
+    )
     await db.commit()
     return result
 
@@ -198,14 +206,47 @@ async def move_task(
     return result
 
 
+@router.post("/{task_id}/files", response_model=TaskResponse)
+async def attach_task_files(
+    task_id: int,
+    body: TaskAttachFilesRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    result = await service.attach_files(actor, task_id, body.file_ids)
+    await db.commit()
+    return result
+
+
+@router.post("/{task_id}/handoff", response_model=TaskResponse)
+async def handoff_task(
+    task_id: int,
+    body: TaskHandoffRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    result = await service.handoff(actor, task_id, body)
+    await db.commit()
+    return result
+
+
 @router.post("/{task_id}/complete", response_model=TaskResponse)
 async def complete_task(
     task_id: int,
     actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    body: TaskCompleteRequest | None = None,
 ) -> TaskResponse:
-    result = await service.complete(actor, task_id)
+    payload = body or TaskCompleteRequest()
+    result = await service.complete(
+        actor,
+        task_id,
+        comment=payload.comment,
+        file_ids=payload.file_ids,
+    )
     await db.commit()
     return result
 
