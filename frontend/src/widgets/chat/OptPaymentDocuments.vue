@@ -6,7 +6,6 @@ import { computed, ref } from 'vue'
 import { downloadOptPaymentDocument } from '@/features/leads/opt-api'
 import type { OptPayment, OptPaymentDocument } from '@/features/leads/opt-types'
 import {
-  attachmentPreviewSupported,
   resolveAttachmentPreviewKind,
   type AttachmentPreviewKind,
 } from '@/shared/lib/attachment-preview-kind'
@@ -47,17 +46,6 @@ const documents = computed<OptPaymentDocument[]>(() => {
   }
   return []
 })
-
-function docKind(doc: OptPaymentDocument): AttachmentPreviewKind {
-  return resolveAttachmentPreviewKind({ name: doc.name || '', mime: '' })
-}
-
-function canPreview(doc: OptPaymentDocument): boolean {
-  const kind = docKind(doc)
-  if (attachmentPreviewSupported(kind)) return true
-  const name = (doc.name || '').trim()
-  return !name || !name.includes('.')
-}
 
 function resetPreview(): void {
   if (previewBlobUrl.value) URL.revokeObjectURL(previewBlobUrl.value)
@@ -123,7 +111,6 @@ function closePreview(): void {
       </span>
       <div class="opt-pay-docs__actions">
         <NButton
-          v-if="canPreview(doc)"
           size="tiny"
           type="primary"
           secondary

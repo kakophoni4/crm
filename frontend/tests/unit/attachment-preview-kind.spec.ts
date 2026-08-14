@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 
 describe('attachment preview kind', () => {
+  it('detects images by filename when mime is missing', () => {
+    expect(resolveAttachmentPreviewKind({ name: 'photo_5462914675432429903_y.jpg', mime: '' })).toBe(
+      'image',
+    )
+    expect(
+      resolveAttachmentPreviewKind({ filename: 'scan.png', mime: 'application/octet-stream' }),
+    ).toBe('image')
+  })
+
   it('detects pdf by filename', () => {
     expect(
       resolveAttachmentPreviewKind({

@@ -20,7 +20,24 @@ export function resolveAttachmentPreviewKind(att: Record<string, unknown>): Atta
   const mime = mimeType(att)
   const name = fileName(att)
 
-  if (att.type === 'photo' || mime.startsWith('image/')) return 'image'
+  if (
+    att.type === 'photo' ||
+    mime.startsWith('image/') ||
+    name.endsWith('.jpg') ||
+    name.endsWith('.jpeg') ||
+    name.endsWith('.png') ||
+    name.endsWith('.gif') ||
+    name.endsWith('.webp') ||
+    name.endsWith('.bmp') ||
+    name.endsWith('.svg') ||
+    name.endsWith('.heic') ||
+    name.endsWith('.heif') ||
+    name.endsWith('.tif') ||
+    name.endsWith('.tiff') ||
+    name.endsWith('.avif')
+  ) {
+    return 'image'
+  }
   if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf'
   if (
     mime.startsWith('text/') ||
