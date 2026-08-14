@@ -61,14 +61,7 @@ const previewKind = computed<AttachmentPreviewKind>(() =>
 )
 
 const meId = computed(() => auth.user?.id ?? null)
-const isManager = computed(
-  () =>
-    auth.user?.role === 'admin' ||
-    auth.user?.role === 'senior' ||
-    auth.user?.role === 'group_senior' ||
-    auth.user?.role === 'chief_accountant' ||
-    !!auth.user?.permissions.includes('tasks.manage'),
-)
+const isManager = computed(() => auth.canManageTasks)
 
 const canNotifyAssignee = computed(() => {
   const task = detail.value

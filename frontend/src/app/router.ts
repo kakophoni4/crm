@@ -452,7 +452,10 @@ router.beforeEach(async (to) => {
     return { name: 'contacts' }
   }
 
-  if (auth.isAccountant && !needsAccounting) {
+  // Бухгалтерам в меню есть «Задачи» — не выкидывать их обратно в кабинет.
+  const accountantAllowed =
+    needsAccounting || to.name === 'tasks' || to.name === 'accounting'
+  if (auth.isAccountant && !accountantAllowed) {
     return { name: 'accounting' }
   }
 

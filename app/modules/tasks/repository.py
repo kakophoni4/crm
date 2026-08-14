@@ -132,7 +132,10 @@ class TaskRepository:
     @staticmethod
     def sort_tasks_for_assignee(tasks: list[DepartmentTask]) -> list[DepartmentTask]:
         def sort_key(row: DepartmentTask) -> tuple[int, float, int]:
-            type_order = TASK_TYPE_SORT_ORDER.get(TaskType(row.task_type), 99)
+            try:
+                type_order = TASK_TYPE_SORT_ORDER.get(TaskType(row.task_type), 99)
+            except ValueError:
+                type_order = 99
             due_ts = row.due_at.timestamp() if row.due_at else float("inf")
             return (type_order, due_ts, -row.id)
 

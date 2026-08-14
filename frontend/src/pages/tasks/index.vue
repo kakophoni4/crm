@@ -52,12 +52,7 @@ import TaskDetailModal from '@/widgets/tasks/TaskDetailModal.vue'
 const message = useMessage()
 const auth = useAuthStore()
 
-const isManager = computed(
-  () =>
-    auth.user?.role === 'senior' ||
-    auth.user?.role === 'admin' ||
-    auth.user?.permissions.includes('tasks.manage'),
-)
+const isManager = computed(() => auth.canManageTasks)
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
 

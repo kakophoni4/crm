@@ -156,15 +156,15 @@ class TaskService:
 
     def _task_flags(self, task: DepartmentTask, now: datetime) -> tuple[bool, bool]:
         active = task.status in {TaskStatus.NEW.value, TaskStatus.OPEN.value}
-        is_overdue = (
-            active
-            and task.due_at is not None
-            and task.due_at < now
-        )
+        due = task.due_at
+        if due is not None and due.tzinfo is None:
+            due = due.replace(tzinfo=UTC)
+        now_utc = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        is_overdue = active and due is not None and due < now_utc
         due_soon = (
             active
-            and task.due_at is not None
-            and now <= task.due_at <= now + DUE_SOON_WINDOW
+            and due is not None
+            and now_utc <= due <= now_utc + DUE_SOON_WINDOW
         )
         return is_overdue, due_soon
 
@@ -183,7 +183,11 @@ class TaskService:
         file_ids: list[int] | None = None,
         files: list[TaskFileBrief] | None = None,
     ) -> TaskResponse:
-        task_type = TaskType(task.task_type)
+        task_type: TaskType
+        try:
+            task_type = TaskType(task.task_type)
+        except ValueError:
+            task_type = TaskType.NORMAL
         is_overdue, due_soon = self._task_flags(task, now)
         creator = users.get(task.created_by)
         assignee = users.get(task.assignee_id)
