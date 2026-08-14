@@ -112,7 +112,7 @@ async def task_board(
 @router.post("", status_code=201, response_model=TaskResponse)
 async def create_task(
     body: TaskCreateRequest,
-    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:

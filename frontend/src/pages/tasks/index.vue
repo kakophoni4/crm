@@ -53,6 +53,7 @@ const message = useMessage()
 const auth = useAuthStore()
 
 const isManager = computed(() => auth.canManageTasks)
+const canCreateTasks = computed(() => auth.canCreateTasks)
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
 
@@ -167,7 +168,7 @@ async function loadDepartments(): Promise<void> {
 }
 
 async function loadAssignees(): Promise<void> {
-  if (!isManager.value) return
+  if (!canCreateTasks.value && !isManager.value) return
   try {
     assigneeUsers.value = await listTaskAssignees()
   } catch {
@@ -428,7 +429,7 @@ onUnmounted(() => {
     <AppCard>
       <div class="tasks-header">
         <h2 class="tasks-title">Задачи</h2>
-        <NButton v-if="isManager" type="primary" @click="openCreate">
+        <NButton v-if="canCreateTasks" type="primary" @click="openCreate">
           <template #icon><Plus :size="16" /></template>
           Новая задача
         </NButton>

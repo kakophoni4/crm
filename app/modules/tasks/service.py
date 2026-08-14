@@ -70,6 +70,11 @@ class TaskService:
             UserRole.CHIEF_ACCOUNTANT,
         )
 
+    def _can_create_task(self, actor: User) -> bool:
+        if self._is_senior_or_admin(actor):
+            return True
+        return self._role(actor) == UserRole.USER
+
     async def _load_user(self, user_id: int) -> User:
         user = await self._session.get(User, user_id)
         if user is None:
@@ -348,8 +353,8 @@ class TaskService:
         return TaskBoardResponse(columns=columns, task_types=task_types)
 
     async def create(self, actor: User, body: TaskCreateRequest) -> TaskResponse:
-        if not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Создавать задачи может только старший оператор")
+        if not self._can_create_task(actor):
+            raise PermissionDenied(message="Недостаточно прав, чтобы поставить задачу")
         ctx = await self._ctx(actor)
         role = self._role(actor)
         assignee = await self._ensure_active_assignee(body.assignee_id)
