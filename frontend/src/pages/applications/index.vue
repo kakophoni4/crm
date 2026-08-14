@@ -48,6 +48,7 @@ import {
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
+import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
 /** Heavy order detail panel — load on first open, not with /applications TTI. */
 const OptOrdersPanel = defineAsyncComponent(
@@ -105,6 +106,25 @@ const paymentDetailOpen = ref(false)
 const selectedPayment = ref<OptPaymentLedgerItem | null>(null)
 const paymentHistoryLoading = ref(false)
 const paymentHistory = ref<OptPayment[]>([])
+const selectedPaymentDocs = computed(() => {
+  const selected = selectedPayment.value
+  if (!selected) return null
+  const fromHistory = paymentHistory.value.find((item) => item.id === selected.id)
+  if (fromHistory) {
+    return {
+      id: fromHistory.id,
+      documents: fromHistory.documents,
+      document_file_id: fromHistory.document_file_id,
+      document_name: fromHistory.document_name,
+    }
+  }
+  return {
+    id: selected.id,
+    documents: undefined,
+    document_file_id: selected.document_file_id,
+    document_name: selected.documents_count > 0 ? 'Подтверждение оплаты' : null,
+  }
+})
 
 const paymentStatusOptions = computed(() => {
   if (activeTab.value === 'payments') {
@@ -339,6 +359,12 @@ const paymentColumns = computed<DataTableColumns<OptPaymentLedgerItem>>(() => {
       width: 110,
       render: (row) =>
         `${optPaymentTypeLabel(row.payment_type)} · ${optPaymentRecipientLabel(row.recipient)}`,
+    },
+    {
+      title: 'Подтверждение',
+      key: 'documents_count',
+      width: 130,
+      render: (row) => (row.documents_count > 0 ? 'есть файл' : 'нет'),
     },
     {
       title: 'Сделка',
@@ -904,6 +930,16 @@ onMounted(() => {
           </div>
         </dl>
 
+        <div class="applications-page__payment-docs">
+          <h3 class="applications-page__section-title">Подтверждение оплаты</h3>
+          <OptPaymentDocuments
+            v-if="selectedPaymentDocs"
+            :lead-id="selectedPayment.lead_id"
+            :order-id="selectedPayment.order_id"
+            :payment="selectedPaymentDocs"
+          />
+        </div>
+
         <h3 class="applications-page__section-title">История оплат по заявке</h3>
         <NSpin :show="paymentHistoryLoading">
           <NEmpty
@@ -929,6 +965,12 @@ onMounted(() => {
               <p class="applications-page__muted">
                 внёс: {{ payment.created_by_name || `user #${payment.created_by}` }}
               </p>
+              <OptPaymentDocuments
+                compact
+                :lead-id="selectedPayment.lead_id"
+                :order-id="selectedPayment.order_id"
+                :payment="payment"
+              />
             </li>
           </ul>
         </NSpin>
@@ -1165,6 +1207,14 @@ onMounted(() => {
   font-weight: 700;
 }
 
+.applications-page__payment-docs {
+  margin: 16px 0 18px;
+}
+
+.applications-page__payment-docs .applications-page__section-title {
+  margin-bottom: 8px;
+}
+
 .applications-page__history {
   list-style: none;
   margin: 0;
@@ -1195,6 +1245,11 @@ onMounted(() => {
 .applications-page__history p {
   margin: 2px 0 0;
   font-size: 0.85rem;
+}
+
+.applications-page__history :deep(.opt-pay-docs),
+.applications-page__history :deep(.opt-pay-docs__empty) {
+  margin-top: 8px;
 }
 
 .applications-page__muted {

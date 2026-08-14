@@ -30,7 +30,6 @@ import {
   deleteOptOrderLine,
   downloadOptOrderReceiptsArchive,
   downloadOptOrderSalesBooksArchive,
-  downloadOptPaymentDocument,
   downloadOptRegistry,
   listOptOrderReceipts,
   listOptOrderSalesBookExtracts,
@@ -62,6 +61,7 @@ import {
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { AppError } from '@/shared/api/http'
+import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
 const props = defineProps<{
   leadId: number | null
@@ -393,31 +393,6 @@ async function onDeleteLine(): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось удалить фактуру')
   } finally {
     deletingLineId.value = null
-  }
-}
-
-async function onDownloadPaymentDocument(paymentId: number, fileId?: number | null): Promise<void> {
-  if (!selectedOrder.value || props.leadId == null) return
-  try {
-    const blob = await downloadOptPaymentDocument(
-      props.leadId,
-      selectedOrder.value.id,
-      paymentId,
-      fileId,
-    )
-    const payment = selectedOrder.value.payments.find((row) => row.id === paymentId)
-    const doc =
-      fileId != null
-        ? payment?.documents?.find((row) => row.file_id === fileId)
-        : payment?.documents?.[0]
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = doc?.name || payment?.document_name || `payment-${paymentId}`
-    anchor.click()
-    URL.revokeObjectURL(url)
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось скачать документ')
   }
 }
 
@@ -1116,6 +1091,13 @@ onUnmounted(() => {
                     {{ optPaymentTypeLabel(payment.payment_type) }} ·
                     {{ payment.created_by_name || `user #${payment.created_by}` }}
                   </span>
+                  <OptPaymentDocuments
+                    v-if="leadId != null"
+                    compact
+                    :lead-id="leadId"
+                    :order-id="selectedOrder.id"
+                    :payment="payment"
+                  />
                 </div>
               </li>
             </ul>
@@ -1307,26 +1289,12 @@ onUnmounted(() => {
                   </span>
                 </div>
                 <div class="opt-orders__payment-docs">
-                  <template v-if="(payment.documents?.length || 0) > 0">
-                    <NButton
-                      v-for="doc in payment.documents"
-                      :key="doc.file_id"
-                      size="tiny"
-                      quaternary
-                      @click="onDownloadPaymentDocument(payment.id, doc.file_id)"
-                    >
-                      {{ doc.name || 'Документ' }}
-                    </NButton>
-                  </template>
-                  <NButton
-                    v-else-if="payment.document_file_id"
-                    size="tiny"
-                    quaternary
-                    @click="onDownloadPaymentDocument(payment.id)"
-                  >
-                    {{ payment.document_name || 'Документ' }}
-                  </NButton>
-                  <span v-else class="opt-orders__meta">без документа</span>
+                  <OptPaymentDocuments
+                    v-if="leadId != null && selectedOrder"
+                    :lead-id="leadId"
+                    :order-id="selectedOrder.id"
+                    :payment="payment"
+                  />
                 </div>
               </li>
             </ul>
@@ -1983,6 +1951,11 @@ onUnmounted(() => {
 
 .opt-orders__payment-main .opt-orders__meta {
   margin-top: 0;
+}
+
+.opt-orders__payment-main :deep(.opt-pay-docs),
+.opt-orders__payment-main :deep(.opt-pay-docs__empty) {
+  margin-top: 4px;
 }
 
 .opt-orders__payment-docs {

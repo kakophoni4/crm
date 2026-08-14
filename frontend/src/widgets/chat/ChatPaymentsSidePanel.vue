@@ -24,7 +24,6 @@ import type { ChatDetail } from '@/entities/chat/types'
 import { useChatsStore } from '@/features/chats/store'
 import {
   addOptOrderPayment,
-  downloadOptPaymentDocument,
   listOptOrders,
   listOptOrdersRegistry,
 } from '@/features/leads/opt-api'
@@ -39,6 +38,7 @@ import {
 import { uploadFile } from '@/features/chats/api'
 import { validateOptPaymentDocuments } from '@/features/leads/opt-payment-validation'
 import { AppError } from '@/shared/api/http'
+import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
 const props = defineProps<{
   chat: ChatDetail | null
@@ -80,7 +80,6 @@ const previewOpen = ref(false)
 const previewTab = ref<'application' | 'commission' | 'payments'>('application')
 const previewLoading = ref(false)
 const previewOrder = ref<OptOrder | null>(null)
-const historyDownloading = ref<string | null>(null)
 
 const previewPayments = computed(() => {
   const order = previewOrder.value
@@ -278,33 +277,6 @@ async function openPreview(
     message.error(err instanceof AppError ? err.message : 'Не удалось открыть заявку')
   } finally {
     previewLoading.value = false
-  }
-}
-
-async function onDownloadHistoryDocument(
-  order: OptOrder,
-  paymentId: number,
-  fileId?: number | null,
-): Promise<void> {
-  const key = `${paymentId}:${fileId ?? 'primary'}`
-  historyDownloading.value = key
-  try {
-    const blob = await downloadOptPaymentDocument(order.lead_id, order.id, paymentId, fileId)
-    const payment = order.payments.find((row) => row.id === paymentId)
-    const doc =
-      fileId != null
-        ? payment?.documents?.find((row) => row.file_id === fileId)
-        : payment?.documents?.[0]
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = doc?.name || payment?.document_name || `payment-${paymentId}`
-    anchor.click()
-    URL.revokeObjectURL(url)
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось скачать документ')
-  } finally {
-    historyDownloading.value = null
   }
 }
 
@@ -517,19 +489,11 @@ onMounted(() => {
                     </p>
                   </div>
                   <div class="payments-side__history-docs">
-                    <template v-if="(payment.documents?.length || 0) > 0">
-                      <NButton
-                        v-for="doc in payment.documents"
-                        :key="doc.file_id"
-                        size="tiny"
-                        quaternary
-                        :loading="historyDownloading === `${payment.id}:${doc.file_id}`"
-                        @click="onDownloadHistoryDocument(previewOrder, payment.id, doc.file_id)"
-                      >
-                        {{ doc.name || 'Документ' }}
-                      </NButton>
-                    </template>
-                    <span v-else class="payments-side__muted">без документа</span>
+                    <OptPaymentDocuments
+                      :lead-id="previewOrder.lead_id"
+                      :order-id="previewOrder.id"
+                      :payment="payment"
+                    />
                   </div>
                 </li>
               </ul>
