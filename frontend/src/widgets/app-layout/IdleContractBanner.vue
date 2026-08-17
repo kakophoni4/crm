@@ -8,7 +8,7 @@ import { connectIdleBannerRealtime } from '@/shared/realtime/idle-banner-ws'
 const IDLE_MS = 10 * 60 * 1000
 const DEFAULT_BANNER = '/idle-contract-banner.png'
 
-const { idle } = useIdle(IDLE_MS, {
+const { idle, reset } = useIdle(IDLE_MS, {
   events: [
     'mousemove',
     'mousedown',
@@ -48,8 +48,10 @@ function onVisibility(): void {
   else markFocused()
 }
 
-function dismissForced(): void {
+function dismissBanner(): void {
+  if (!visible.value) return
   forceShow.value = false
+  reset()
 }
 
 function onKeyDown(event: KeyboardEvent): void {
@@ -61,7 +63,7 @@ function onKeyDown(event: KeyboardEvent): void {
     }, 1500)
     return
   }
-  dismissForced()
+  dismissBanner()
 }
 
 function setImageUrl(url: string): void {
@@ -81,8 +83,12 @@ onMounted(() => {
   window.addEventListener('beforeprint', markUnfocused)
   document.addEventListener('visibilitychange', onVisibility)
   window.addEventListener('keydown', onKeyDown, true)
-  window.addEventListener('pointerdown', dismissForced, true)
-  window.addEventListener('touchstart', dismissForced, true)
+  window.addEventListener('pointerdown', dismissBanner, true)
+  window.addEventListener('pointermove', dismissBanner, true)
+  window.addEventListener('mousemove', dismissBanner, true)
+  window.addEventListener('wheel', dismissBanner, true)
+  window.addEventListener('touchstart', dismissBanner, true)
+  window.addEventListener('touchmove', dismissBanner, true)
   void getIdleBannerStatus()
     .then(async (data) => {
       enabled.value = data.is_enabled
@@ -112,8 +118,12 @@ onUnmounted(() => {
   window.removeEventListener('beforeprint', markUnfocused)
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('keydown', onKeyDown, true)
-  window.removeEventListener('pointerdown', dismissForced, true)
-  window.removeEventListener('touchstart', dismissForced, true)
+  window.removeEventListener('pointerdown', dismissBanner, true)
+  window.removeEventListener('pointermove', dismissBanner, true)
+  window.removeEventListener('mousemove', dismissBanner, true)
+  window.removeEventListener('wheel', dismissBanner, true)
+  window.removeEventListener('touchstart', dismissBanner, true)
+  window.removeEventListener('touchmove', dismissBanner, true)
   setImageUrl(DEFAULT_BANNER)
 })
 </script>
