@@ -104,6 +104,7 @@ class TaskRepository:
                 self._active_filter(),
                 or_(
                     DepartmentTask.assignee_id == assignee_id,
+                    DepartmentTask.created_by == assignee_id,
                     DepartmentTask.id.in_(collab_ids),
                 ),
             )

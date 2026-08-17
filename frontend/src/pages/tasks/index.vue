@@ -102,6 +102,13 @@ const reassignAssigneeId = ref<number | null>(null)
 const detailOpen = ref(false)
 const detailTaskId = ref<number | null>(null)
 
+function isAssignedToMe(task: DepartmentTask): boolean {
+  const uid = auth.user?.id
+  if (uid == null) return false
+  if (task.assignee_id === uid) return true
+  return (task.collaborators ?? []).some((row) => row.id === uid)
+}
+
 function openTaskDetail(task: DepartmentTask): void {
   detailTaskId.value = task.id
   detailOpen.value = true
@@ -562,13 +569,22 @@ onUnmounted(() => {
                   </NTag>
                   <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
                   <NTag v-else-if="task.due_soon" type="warning" size="small">Скоро срок</NTag>
+                  <NTag
+                    v-if="task.created_by === auth.user?.id && task.assignee_id !== auth.user?.id"
+                    size="small"
+                  >
+                    Я поставил
+                  </NTag>
                 </div>
                 <p class="task-card-title">{{ task.title }}</p>
                 <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
                 <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
+                <p class="task-card-meta">
+                  Исполнитель: {{ task.assignee?.full_name ?? '—' }}
+                </p>
                 <p class="task-card-meta">Поставил: {{ task.creator?.full_name ?? 'Старший оператор' }}</p>
                 <NButton
-                  v-if="task.status === 'new'"
+                  v-if="task.status === 'new' && isAssignedToMe(task)"
                   type="primary"
                   size="small"
                   style="margin-right: 8px"
@@ -577,7 +593,7 @@ onUnmounted(() => {
                   Принять
                 </NButton>
                 <NButton
-                  v-if="task.status === 'open' || task.status === 'new'"
+                  v-if="(task.status === 'open' || task.status === 'new') && isAssignedToMe(task)"
                   type="primary"
                   size="small"
                   @click.stop="onComplete(task)"

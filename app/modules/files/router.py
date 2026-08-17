@@ -69,7 +69,10 @@ async def download_file(
     role = actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
     is_privileged = role in (UserRole.SENIOR, UserRole.GROUP_SENIOR, UserRole.ADMIN)
     if row.uploaded_by is not None and row.uploaded_by != actor.id and not is_privileged:
-        raise PermissionDenied(message="Файл недоступен")
+        from app.modules.tasks.service import TaskService
+
+        if not await TaskService(service._session).actor_can_access_file(actor, file_id):
+            raise PermissionDenied(message="Файл недоступен")
     data, content_type, filename = await service.get_bytes(file_id)
     from urllib.parse import quote
 

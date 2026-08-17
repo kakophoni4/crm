@@ -163,6 +163,24 @@ class TaskService:
             return
         raise NotFound(message="Задача не найдена")
 
+    async def actor_can_access_file(self, actor: User, file_id: int) -> bool:
+        from app.modules.db.models.department_task_file import DepartmentTaskFile
+
+        result = await self._session.execute(
+            select(DepartmentTaskFile.task_id).where(DepartmentTaskFile.file_id == file_id),
+        )
+        task_ids = {int(tid) for tid in result.scalars().all()}
+        for task_id in task_ids:
+            task = await self._repo.get_by_id(task_id)
+            if task is None:
+                continue
+            try:
+                await self._ensure_task_visible(actor, task)
+            except NotFound:
+                continue
+            return True
+        return False
+
     async def _collaborator_ids(self, task_id: int) -> set[int]:
         from app.modules.db.models.department_task_collaborator import (
             DepartmentTaskCollaborator,
