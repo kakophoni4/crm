@@ -106,7 +106,7 @@ async def websocket_endpoint(
             except TimeoutError:
                 if time.monotonic() - last_client_activity >= idle_seconds:
                     stop.set()
-                    with contextlib.suppress(RuntimeError):
+                    with contextlib.suppress(RuntimeError, WebSocketDisconnect):
                         await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
                     break
                 continue
@@ -135,5 +135,5 @@ async def websocket_endpoint(
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         await hub.unsubscribe(client)
-        with contextlib.suppress(RuntimeError):
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
             await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
