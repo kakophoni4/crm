@@ -12,8 +12,10 @@ import {
   NTabPane,
   NTabs,
   NTag,
+  NUpload,
   useMessage,
 } from 'naive-ui'
+import type { UploadFileInfo } from 'naive-ui'
 import { Check, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
@@ -38,6 +40,7 @@ import {
   type TaskType,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS } from '@/features/tasks/types'
+import { uploadFile } from '@/features/chats/api'
 import { AppError } from '@/shared/api/http'
 import { peekCached, setCached } from '@/shared/lib/stale-cache'
 import {
@@ -77,6 +80,8 @@ const formType = ref<TaskType>('normal')
 const formAssigneeId = ref<number | null>(null)
 const formDepartmentId = ref<number | null>(null)
 const formDueAt = ref<number | null>(null)
+const formFiles = ref<File[]>([])
+const formUploadKey = ref(0)
 
 const typeOptions = computed(() =>
   (board.value?.task_types ?? [
@@ -204,6 +209,8 @@ function openCreate(): void {
   formAssigneeId.value = null
   formDepartmentId.value = isAdmin.value ? selectedDeptId.value : auth.user?.department_id ?? null
   formDueAt.value = null
+  formFiles.value = []
+  formUploadKey.value += 1
   createOpen.value = true
   void loadAssignees()
 }
@@ -219,6 +226,11 @@ async function submitCreate(): Promise<void> {
   }
   createLoading.value = true
   try {
+    const fileIds: number[] = []
+    for (const file of formFiles.value) {
+      const uploaded = await uploadFile(file)
+      fileIds.push(uploaded.id)
+    }
     await createTask({
       title: formTitle.value.trim(),
       description: formDescription.value.trim() || null,
@@ -226,6 +238,7 @@ async function submitCreate(): Promise<void> {
       assignee_id: formAssigneeId.value,
       department_id: isAdmin.value ? formDepartmentId.value ?? undefined : undefined,
       due_at: formDueAt.value ? new Date(formDueAt.value).toISOString() : null,
+      file_ids: fileIds,
     })
     message.success('Задача создана')
     createOpen.value = false
@@ -314,6 +327,12 @@ async function submitReassign(): Promise<void> {
   } finally {
     reassignLoading.value = false
   }
+}
+
+function onCreateUploadChange(options: { fileList: UploadFileInfo[] }): void {
+  formFiles.value = options.fileList
+    .map((item) => item.file)
+    .filter((file): file is File => file instanceof File)
 }
 
 function onDragStart(task: DepartmentTask, event: DragEvent): void {
@@ -642,6 +661,16 @@ onUnmounted(() => {
             clearable
             style="width: 100%"
           />
+        </NFormItem>
+        <NFormItem label="Файлы">
+          <NUpload
+            :key="formUploadKey"
+            multiple
+            :default-upload="false"
+            @change="onCreateUploadChange"
+          >
+            <NButton size="small" secondary>Прикрепить файлы</NButton>
+          </NUpload>
         </NFormItem>
         <NButton type="primary" block :loading="createLoading" @click="submitCreate">
           Создать

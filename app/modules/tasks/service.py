@@ -523,6 +523,7 @@ class TaskService:
             due_at=body.due_at,
         )
         row = await self._repo.create(row)
+        await self._attach_files(row.id, body.file_ids)
         response = (await self._build_responses([row]))[0]
         payload = self._event_payload(row)
         await publish(TASK_CREATED, payload, scope={"user_id": row.assignee_id})

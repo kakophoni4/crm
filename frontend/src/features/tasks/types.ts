@@ -85,6 +85,7 @@ export interface TaskCreateBody {
   assignee_id: number
   department_id?: number
   due_at?: string | null
+  file_ids?: number[]
 }
 
 export interface TaskUpdateBody {

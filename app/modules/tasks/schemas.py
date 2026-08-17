@@ -16,6 +16,7 @@ class TaskCreateRequest(BaseModel):
     assignee_id: int = Field(gt=0)
     department_id: int | None = Field(default=None, gt=0)
     due_at: datetime | None = None
+    file_ids: list[int] = Field(default_factory=list)
 
 
 class TaskUpdateRequest(BaseModel):

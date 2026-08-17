@@ -21,6 +21,7 @@ import { computed, ref, watch } from 'vue'
 import { uploadFile } from '@/features/chats/api'
 import {
   addTaskComment,
+  attachTaskFiles,
   completeTask,
   formatTaskAssigneeLabel,
   getTask,
@@ -64,6 +65,9 @@ const commentFiles = ref<File[]>([])
 const uploadKey = ref(0)
 const actionBusy = ref(false)
 const completeBusy = ref(false)
+const attachBusy = ref(false)
+const attachKey = ref(0)
+const attachPending = ref<File[]>([])
 
 const handoffUserId = ref<number | null>(null)
 const handoffAction = ref<'add' | 'transfer' | 'follow_up'>('add')
@@ -100,6 +104,10 @@ const isActive = computed(() => {
 })
 
 const canReply = computed(() => isWorkingOn.value && isActive.value)
+const canAttachFiles = computed(() => {
+  const status = detail.value?.status
+  return status != null && status !== 'closed'
+})
 
 const canNotifyAssignee = computed(() => {
   const task = detail.value
@@ -275,6 +283,33 @@ async function onHandoff(): Promise<void> {
   }
 }
 
+function onAttachSelect(options: { fileList: UploadFileInfo[] }): void {
+  attachPending.value = options.fileList
+    .map((item) => item.file)
+    .filter((file): file is File => file instanceof File)
+}
+
+async function submitAttachFiles(): Promise<void> {
+  if (props.taskId == null || !canAttachFiles.value || !attachPending.value.length) return
+  attachBusy.value = true
+  try {
+    const ids: number[] = []
+    for (const file of attachPending.value) {
+      const uploaded = await uploadFile(file)
+      ids.push(uploaded.id)
+    }
+    await attachTaskFiles(props.taskId, ids)
+    attachPending.value = []
+    attachKey.value += 1
+    await load(props.taskId)
+    emit('updated')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось прикрепить файл')
+  } finally {
+    attachBusy.value = false
+  }
+}
+
 function onUploadChange(options: { fileList: UploadFileInfo[] }): void {
   commentFiles.value = options.fileList
     .map((f) => f.file)
@@ -442,6 +477,27 @@ function openChild(id: number): void {
               </li>
             </ul>
             <NEmpty v-else description="Файлов нет" size="small" />
+            <template v-if="canAttachFiles">
+              <NUpload
+                :key="attachKey"
+                multiple
+                :default-upload="false"
+                style="margin-top: 8px"
+                @change="onAttachSelect"
+              >
+                <NButton size="small" secondary>Выбрать файлы</NButton>
+              </NUpload>
+              <NButton
+                v-if="attachPending.length"
+                size="small"
+                type="primary"
+                style="margin-top: 8px"
+                :loading="attachBusy"
+                @click="submitAttachFiles"
+              >
+                Добавить к задаче
+              </NButton>
+            </template>
           </section>
 
           <section v-if="detail.child_tasks?.length">
