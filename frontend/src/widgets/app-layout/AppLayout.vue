@@ -8,6 +8,7 @@ import GlobalSearchModal from '@/features/search/GlobalSearchModal.vue'
 import { useAppHotkeys } from '@/features/search/useAppHotkeys'
 import AppSidebar from '@/widgets/app-layout/AppSidebar.vue'
 import AppTopbar from '@/widgets/app-layout/AppTopbar.vue'
+import IdleContractBanner from '@/widgets/app-layout/IdleContractBanner.vue'
 
 const globalSearchOpen = ref(false)
 useAppHotkeys(globalSearchOpen)
@@ -51,6 +52,7 @@ function toggleSidebar(): void {
       </NLayoutContent>
     </NLayout>
     <GlobalSearchModal v-model:show="globalSearchOpen" />
+    <IdleContractBanner />
   </NLayout>
 </template>
 
