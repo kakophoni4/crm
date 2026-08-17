@@ -30,6 +30,9 @@ TASK_CONFIRMED = "task.confirmed"
 TASK_DUE_SOON = "task.due_soon"
 TASK_NOTIFY = "task.notify"
 
+IDLE_BANNER_SETTINGS = "idle.banner.settings"
+IDLE_BANNER_SHOW = "idle.banner.show"
+
 ADMIN_ONLY_TOPICS: frozenset[str] = frozenset(
     {
         BOT_HEALTH_CHANGED,

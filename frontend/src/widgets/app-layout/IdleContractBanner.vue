@@ -2,14 +2,35 @@
 import { useIdle } from '@vueuse/core'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
+import { getIdleBannerStatus } from '@/features/idle-banner/api'
+import { connectIdleBannerRealtime } from '@/shared/realtime/idle-banner-ws'
+
 const IDLE_MS = 10 * 60 * 1000
 
 const { idle } = useIdle(IDLE_MS, {
-  events: ['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup', 'scroll', 'touchstart', 'touchmove', 'wheel', 'pointerdown', 'pointermove'],
+  events: [
+    'mousemove',
+    'mousedown',
+    'mouseup',
+    'keydown',
+    'keyup',
+    'scroll',
+    'touchstart',
+    'touchmove',
+    'wheel',
+    'pointerdown',
+    'pointermove',
+  ],
 })
-const pageFocused = ref(typeof document === 'undefined' ? true : document.hasFocus() && !document.hidden)
+const enabled = ref(false)
+const forceShow = ref(false)
+const pageFocused = ref(
+  typeof document === 'undefined' ? true : document.hasFocus() && !document.hidden,
+)
 
-const visible = computed(() => idle.value && pageFocused.value)
+const visible = computed(
+  () => forceShow.value || (enabled.value && idle.value && pageFocused.value),
+)
 
 function markUnfocused(): void {
   pageFocused.value = false
@@ -24,13 +45,20 @@ function onVisibility(): void {
   else markFocused()
 }
 
+function dismissForced(): void {
+  forceShow.value = false
+}
+
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'PrintScreen') {
     pageFocused.value = false
+    forceShow.value = false
     window.setTimeout(() => {
       pageFocused.value = !document.hidden && document.hasFocus()
     }, 1500)
+    return
   }
+  dismissForced()
 }
 
 onMounted(() => {
@@ -39,6 +67,24 @@ onMounted(() => {
   window.addEventListener('beforeprint', markUnfocused)
   document.addEventListener('visibilitychange', onVisibility)
   window.addEventListener('keydown', onKeyDown, true)
+  window.addEventListener('pointerdown', dismissForced, true)
+  window.addEventListener('touchstart', dismissForced, true)
+  void getIdleBannerStatus()
+    .then((data) => {
+      enabled.value = data.is_enabled
+    })
+    .catch(() => {
+      enabled.value = false
+    })
+  void connectIdleBannerRealtime(
+    (isEnabled) => {
+      enabled.value = isEnabled
+      if (!isEnabled) forceShow.value = false
+    },
+    () => {
+      forceShow.value = true
+    },
+  )
 })
 
 onUnmounted(() => {
@@ -47,6 +93,8 @@ onUnmounted(() => {
   window.removeEventListener('beforeprint', markUnfocused)
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('keydown', onKeyDown, true)
+  window.removeEventListener('pointerdown', dismissForced, true)
+  window.removeEventListener('touchstart', dismissForced, true)
 })
 </script>
 

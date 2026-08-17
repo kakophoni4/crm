@@ -1,6 +1,21 @@
 <script setup lang="ts">
-import { NCard, NGrid, NGridItem } from 'naive-ui'
+import {
+  NButton,
+  NCard,
+  NGrid,
+  NGridItem,
+  NModal,
+  NSelect,
+  NSpace,
+  NSwitch,
+  useMessage,
+} from 'naive-ui'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+
+import { listUsers, type AdminUser } from '@/features/admin/api'
+import { getIdleBannerStatus, patchIdleBanner, sendIdleBanner } from '@/features/idle-banner/api'
+import { AppError } from '@/shared/api/http'
 
 const links = [
   { name: 'admin-departments', label: 'Отделы', desc: 'Создание и редактирование отделов' },
@@ -10,6 +25,79 @@ const links = [
   { name: 'admin-notification-bot', label: 'Бот уведомлений', desc: 'Токен Telegram-бота' },
   { name: 'admin-statuses', label: 'Воронка сделок', desc: 'Этапы открытых сделок (лидов)' },
 ] as const
+
+const message = useMessage()
+const bannerEnabled = ref(false)
+const bannerSaving = ref(false)
+const sendOpen = ref(false)
+const sendLoading = ref(false)
+const users = ref<AdminUser[]>([])
+const selectedUserIds = ref<number[]>([])
+
+const userOptions = computed(() =>
+  users.value
+    .filter((user) => user.status === 'active')
+    .map((user) => ({
+      label: `${user.full_name} · ${user.username}`,
+      value: user.id,
+    })),
+)
+
+async function loadBanner(): Promise<void> {
+  try {
+    const data = await getIdleBannerStatus()
+    bannerEnabled.value = data.is_enabled
+  } catch {
+    bannerEnabled.value = false
+  }
+}
+
+async function onBannerToggle(value: boolean): Promise<void> {
+  bannerSaving.value = true
+  try {
+    const data = await patchIdleBanner(value)
+    bannerEnabled.value = data.is_enabled
+    message.success(data.is_enabled ? 'Баннер включён' : 'Баннер выключен')
+  } catch (err) {
+    bannerEnabled.value = !value
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
+  } finally {
+    bannerSaving.value = false
+  }
+}
+
+async function openSend(): Promise<void> {
+  sendOpen.value = true
+  if (!users.value.length) {
+    try {
+      users.value = await listUsers()
+    } catch (err) {
+      message.error(err instanceof AppError ? err.message : 'Не удалось загрузить пользователей')
+    }
+  }
+}
+
+async function sendNow(): Promise<void> {
+  if (!selectedUserIds.value.length) {
+    message.warning('Выберите пользователей')
+    return
+  }
+  sendLoading.value = true
+  try {
+    const data = await sendIdleBanner(selectedUserIds.value)
+    message.success(`Показано ${data.sent} пользователям`)
+    sendOpen.value = false
+    selectedUserIds.value = []
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось отправить')
+  } finally {
+    sendLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadBanner()
+})
 </script>
 
 <template>
@@ -17,6 +105,16 @@ const links = [
     <header class="admin-page__header">
       <h1 class="admin-page__title">Админка</h1>
       <p class="admin-page__subtitle">Управление организацией и справочниками</p>
+      <div class="admin-page__banner">
+        <span class="admin-page__banner-label">Баннер</span>
+        <NSwitch
+          :value="bannerEnabled"
+          :loading="bannerSaving"
+          size="small"
+          @update:value="onBannerToggle"
+        />
+        <NButton size="tiny" secondary @click="openSend">Показать сейчас</NButton>
+      </div>
     </header>
 
     <NGrid :x-gap="16" :y-gap="16" cols="1 s:2 m:3">
@@ -28,6 +126,28 @@ const links = [
         </RouterLink>
       </NGridItem>
     </NGrid>
+
+    <NModal
+      v-model:show="sendOpen"
+      preset="card"
+      title="Показать баннер"
+      style="width: min(480px, 94vw)"
+    >
+      <p class="admin-page__hint">Выберите, кому показать баннер прямо сейчас. Закроется по клику или клавише.</p>
+      <NSelect
+        v-model:value="selectedUserIds"
+        multiple
+        filterable
+        :options="userOptions"
+        placeholder="Пользователи"
+      />
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="sendOpen = false">Отмена</NButton>
+          <NButton type="primary" :loading="sendLoading" @click="sendNow">Показать</NButton>
+        </NSpace>
+      </template>
+    </NModal>
   </section>
 </template>
 
@@ -44,6 +164,27 @@ const links = [
 
 .admin-page__subtitle {
   margin: 8px 0 0;
+  color: var(--app-text-muted);
+}
+
+.admin-page__banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+}
+
+.admin-page__banner-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.admin-page__hint {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
   color: var(--app-text-muted);
 }
 

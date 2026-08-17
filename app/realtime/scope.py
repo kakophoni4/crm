@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from app.modules.db.models.enums import UserRole
 from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_user_ids
 from app.realtime.events import Event
-from app.realtime.topics import ADMIN_ONLY_TOPICS
+from app.realtime.topics import ADMIN_ONLY_TOPICS, IDLE_BANNER_SETTINGS, IDLE_BANNER_SHOW
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,12 @@ class WsScope:
 
 
 def event_visible(ws_scope: WsScope, event: Event) -> bool:
+    if event.topic == IDLE_BANNER_SHOW:
+        target = event.scope.get("user_id") or event.payload.get("user_id")
+        return target is not None and int(target) == ws_scope.user_id
+    if event.topic == IDLE_BANNER_SETTINGS:
+        return True
+
     if event.topic in ADMIN_ONLY_TOPICS:
         return ws_scope.role == UserRole.ADMIN
 
