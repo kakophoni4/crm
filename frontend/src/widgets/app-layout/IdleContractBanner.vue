@@ -151,18 +151,39 @@ onUnmounted(() => {
 <style scoped>
 .idle-banner {
   position: fixed;
-  inset: 0;
+  right: 20px;
+  bottom: 20px;
   z-index: 20000;
-  background: #111;
+  width: min(280px, 32vw);
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 12px 32px rgba(0, 0, 0, 0.28);
   user-select: none;
   -webkit-user-select: none;
   -webkit-user-drag: none;
+  animation: idle-banner-in 0.35s ease-out;
 }
 
 .idle-banner__img {
+  display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: 200px;
   object-fit: cover;
   pointer-events: none;
+}
+
+@keyframes idle-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(12px, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
 }
 </style>
