@@ -2,10 +2,11 @@
 import { useIdle } from '@vueuse/core'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-import { getIdleBannerStatus } from '@/features/idle-banner/api'
+import { fetchIdleBannerImageUrl, getIdleBannerStatus } from '@/features/idle-banner/api'
 import { connectIdleBannerRealtime } from '@/shared/realtime/idle-banner-ws'
 
 const IDLE_MS = 10 * 60 * 1000
+const DEFAULT_BANNER = '/idle-contract-banner.png'
 
 const { idle } = useIdle(IDLE_MS, {
   events: [
@@ -24,6 +25,8 @@ const { idle } = useIdle(IDLE_MS, {
 })
 const enabled = ref(false)
 const forceShow = ref(false)
+const imageUrl = ref(DEFAULT_BANNER)
+const imageVersion = ref(0)
 const pageFocused = ref(
   typeof document === 'undefined' ? true : document.hasFocus() && !document.hidden,
 )
@@ -61,6 +64,17 @@ function onKeyDown(event: KeyboardEvent): void {
   dismissForced()
 }
 
+function setImageUrl(url: string): void {
+  if (imageUrl.value.startsWith('blob:')) URL.revokeObjectURL(imageUrl.value)
+  imageUrl.value = url
+}
+
+async function loadImage(hasImage: boolean, version: number): Promise<void> {
+  imageVersion.value = version
+  const url = await fetchIdleBannerImageUrl(hasImage)
+  setImageUrl(url)
+}
+
 onMounted(() => {
   window.addEventListener('blur', markUnfocused)
   window.addEventListener('focus', markFocused)
@@ -70,16 +84,21 @@ onMounted(() => {
   window.addEventListener('pointerdown', dismissForced, true)
   window.addEventListener('touchstart', dismissForced, true)
   void getIdleBannerStatus()
-    .then((data) => {
+    .then(async (data) => {
       enabled.value = data.is_enabled
+      await loadImage(data.has_image, data.image_version)
     })
     .catch(() => {
       enabled.value = false
     })
   void connectIdleBannerRealtime(
-    (isEnabled) => {
-      enabled.value = isEnabled
-      if (!isEnabled) forceShow.value = false
+    (payload) => {
+      enabled.value = payload.is_enabled
+      if (!payload.is_enabled) forceShow.value = false
+      const version = payload.image_version ?? 0
+      if (version !== imageVersion.value) {
+        void loadImage(Boolean(payload.has_image), version)
+      }
     },
     () => {
       forceShow.value = true
@@ -95,6 +114,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown, true)
   window.removeEventListener('pointerdown', dismissForced, true)
   window.removeEventListener('touchstart', dismissForced, true)
+  setImageUrl(DEFAULT_BANNER)
 })
 </script>
 
@@ -110,7 +130,7 @@ onUnmounted(() => {
     >
       <img
         class="idle-banner__img"
-        src="/idle-contract-banner.png"
+        :src="imageUrl"
         alt=""
         draggable="false"
       />

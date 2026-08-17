@@ -8,13 +8,15 @@ import {
   NSelect,
   NSpace,
   NSwitch,
+  NUpload,
   useMessage,
 } from 'naive-ui'
+import type { UploadFileInfo } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { listUsers, type AdminUser } from '@/features/admin/api'
-import { getIdleBannerStatus, patchIdleBanner, sendIdleBanner } from '@/features/idle-banner/api'
+import { getIdleBannerStatus, patchIdleBanner, sendIdleBanner, uploadIdleBannerImage, fetchIdleBannerImageUrl } from '@/features/idle-banner/api'
 import { AppError } from '@/shared/api/http'
 
 const links = [
@@ -29,6 +31,8 @@ const links = [
 const message = useMessage()
 const bannerEnabled = ref(false)
 const bannerSaving = ref(false)
+const bannerUploading = ref(false)
+const bannerPreview = ref('/idle-contract-banner.png')
 const sendOpen = ref(false)
 const sendLoading = ref(false)
 const users = ref<AdminUser[]>([])
@@ -47,8 +51,26 @@ async function loadBanner(): Promise<void> {
   try {
     const data = await getIdleBannerStatus()
     bannerEnabled.value = data.is_enabled
+    const url = await fetchIdleBannerImageUrl(data.has_image)
+    if (bannerPreview.value.startsWith('blob:')) URL.revokeObjectURL(bannerPreview.value)
+    bannerPreview.value = url
   } catch {
     bannerEnabled.value = false
+  }
+}
+
+async function onBannerImage(options: { fileList: UploadFileInfo[] }): Promise<void> {
+  const file = options.fileList.at(-1)?.file
+  if (!(file instanceof File)) return
+  bannerUploading.value = true
+  try {
+    await uploadIdleBannerImage(file)
+    await loadBanner()
+    message.success('Фото баннера обновлено')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить фото')
+  } finally {
+    bannerUploading.value = false
   }
 }
 
@@ -114,6 +136,16 @@ onMounted(() => {
           @update:value="onBannerToggle"
         />
         <NButton size="tiny" secondary @click="openSend">Показать сейчас</NButton>
+        <NUpload
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          :show-file-list="false"
+          :default-upload="false"
+          :disabled="bannerUploading"
+          @change="onBannerImage"
+        >
+          <NButton size="tiny" secondary :loading="bannerUploading">Сменить фото</NButton>
+        </NUpload>
+        <img class="admin-page__banner-preview" :src="bannerPreview" alt="" />
       </div>
     </header>
 
@@ -180,6 +212,14 @@ onMounted(() => {
 .admin-page__banner-label {
   font-size: 0.85rem;
   font-weight: 600;
+}
+
+.admin-page__banner-preview {
+  width: 72px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--n-border-color);
 }
 
 .admin-page__hint {

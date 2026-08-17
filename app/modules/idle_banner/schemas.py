@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class IdleBannerStatus(BaseModel):
     is_enabled: bool
+    has_image: bool
+    image_version: int
 
 
 class IdleBannerPatchRequest(BaseModel):
