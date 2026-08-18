@@ -39,7 +39,8 @@ import {
   resolveAttachmentPreviewKind,
   type AttachmentPreviewKind,
 } from '@/shared/lib/attachment-preview-kind'
-import { AppError, http } from '@/shared/api/http'
+import { AppError } from '@/shared/api/http'
+import { fetchAttachmentBlob } from '@/shared/lib/attachment-blob-cache'
 import { useAuthStore } from '@/shared/store/auth'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
@@ -103,6 +104,15 @@ const isActive = computed(() => {
   return status === 'new' || status === 'open' || status === 'done_pending'
 })
 
+const isCreator = computed(() => {
+  const task = detail.value
+  return task != null && meId.value != null && task.created_by === meId.value
+})
+
+const canChangeAssignee = computed(
+  () => isActive.value && (isCreator.value || isWorkingOn.value || isManager.value),
+)
+
 const canReply = computed(() => isWorkingOn.value && isActive.value)
 const canAttachFiles = computed(() => {
   const status = detail.value?.status
@@ -125,7 +135,7 @@ const canNotifyCreator = computed(() => {
 
 const assigneeOptions = computed(() =>
   assigneeUsers.value
-    .filter((u) => u.id !== meId.value)
+    .filter((u) => u.id !== detail.value?.assignee_id)
     .map((u) => ({
       label: formatTaskAssigneeLabel(u, meId.value),
       value: u.id,
@@ -175,6 +185,12 @@ async function load(id: number): Promise<void> {
   loading.value = true
   try {
     detail.value = await getTask(id)
+    const me = meId.value
+    const working =
+      me != null &&
+      (detail.value.assignee_id === me ||
+        (detail.value.collaborators ?? []).some((c) => c.id === me))
+    handoffAction.value = working ? 'add' : 'transfer'
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось открыть задачу')
     emit('update:show', false)
@@ -342,15 +358,13 @@ async function onNotifyCreator(): Promise<void> {
   }
 }
 
-async function downloadFile(fileId: number, name: string): Promise<void> {
+async function downloadFile(fileId: number, name: string, mime?: string | null): Promise<void> {
   try {
-    const { data } = await http.get<Blob>(`/files/${fileId}`, { responseType: 'blob' })
-    const url = URL.createObjectURL(data)
+    const entry = await fetchAttachmentBlob(`/files/${fileId}`, mime)
     const a = document.createElement('a')
-    a.href = url
+    a.href = entry.url
     a.download = name
     a.click()
-    URL.revokeObjectURL(url)
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось скачать файл')
   }
@@ -379,9 +393,9 @@ async function openFilePreview(file: TaskFileBrief): Promise<void> {
   previewOpen.value = true
   previewLoading.value = true
   try {
-    const { data } = await http.get<Blob>(`/files/${file.id}`, { responseType: 'blob' })
-    previewBlob.value = data
-    previewBlobUrl.value = URL.createObjectURL(data)
+    const entry = await fetchAttachmentBlob(`/files/${file.id}`, file.mime_type)
+    previewBlob.value = entry.blob
+    previewBlobUrl.value = URL.createObjectURL(entry.blob)
   } catch (err) {
     previewOpen.value = false
     message.error(err instanceof AppError ? err.message : 'Не удалось открыть файл')
@@ -469,7 +483,7 @@ function openChild(id: number): void {
                     <template #icon><Eye :size="12" /></template>
                     Просмотр
                   </NButton>
-                  <NButton size="tiny" secondary @click="downloadFile(file.id, file.original_name)">
+                  <NButton size="tiny" secondary @click="downloadFile(file.id, file.original_name, file.mime_type)">
                     <template #icon><Download :size="12" /></template>
                     Скачать
                   </NButton>
@@ -559,11 +573,14 @@ function openChild(id: number): void {
             </NSpace>
           </section>
 
-          <section v-if="canReply" class="task-detail__handoff">
-            <h4>Если свою часть сделали</h4>
+          <section v-if="canChangeAssignee" class="task-detail__handoff">
+            <h4>{{ isWorkingOn ? 'Если свою часть сделали' : 'Сменить исполнителя' }}</h4>
             <p class="task-detail__hint">
-              Можно добавить соисполнителя, передать задачу дальше или поставить связанную задачу.
-              Комментарий и файлы сверху уйдут вместе с действием.
+              {{
+                isWorkingOn
+                  ? 'Можно добавить соисполнителя, передать задачу дальше или поставить связанную задачу. Комментарий и файлы сверху уйдут вместе с действием.'
+                  : 'Можно передать задачу другому сотруднику, добавить соисполнителя или поставить связанную задачу.'
+              }}
             </p>
             <NRadioGroup v-model:value="handoffAction" name="handoff" style="margin-bottom: 8px">
               <NSpace>

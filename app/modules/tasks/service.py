@@ -9,7 +9,7 @@ from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.department_task import DepartmentTask
 from app.modules.db.models.enums import UserRole, UserStatus
 from app.modules.db.models.user import User
-from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_department_ids
+from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_department_ids, visible_user_ids
 from app.modules.tasks.repository import TaskRepository
 from app.modules.tasks.schemas import (
     ClientRequirementAccountantOption,
@@ -197,6 +197,48 @@ class TaskService:
         if task.assignee_id == actor.id:
             return True
         return actor.id in await self._collaborator_ids(task.id)
+
+    async def _can_change_assignee(self, actor: User, task: DepartmentTask) -> bool:
+        if actor.id in {task.created_by, task.assignee_id}:
+            return True
+        role = self._role(actor)
+        if role in {UserRole.ADMIN, UserRole.CHIEF_ACCOUNTANT}:
+            return True
+        if role == UserRole.SENIOR:
+            ctx = await self._ctx(actor)
+            visible = visible_department_ids(ctx)
+            return visible == SCOPE_ALL or task.department_id in visible
+        if role == UserRole.GROUP_SENIOR:
+            ctx = await self._ctx(actor)
+            users = visible_user_ids(ctx)
+            return users == SCOPE_ALL or task.assignee_id in users
+        return False
+
+    async def _can_handoff(self, actor: User, task: DepartmentTask) -> bool:
+        if await self._can_change_assignee(actor, task):
+            return True
+        return await self._is_working_on(actor, task)
+
+    async def _ensure_assignee_target_allowed(self, actor: User, task: DepartmentTask, next_user: User) -> None:
+        if actor.id in {task.created_by, task.assignee_id}:
+            return
+        role = self._role(actor)
+        if role in {UserRole.ADMIN, UserRole.CHIEF_ACCOUNTANT}:
+            return
+        if role == UserRole.SENIOR:
+            if (
+                actor.department_id is not None
+                and next_user.department_id is not None
+                and next_user.department_id != actor.department_id
+            ):
+                raise PermissionDenied(message="Можно назначить только сотрудника своего отдела")
+            return
+        if role == UserRole.GROUP_SENIOR:
+            ctx = await self._ctx(actor)
+            users = visible_user_ids(ctx)
+            if users != SCOPE_ALL and next_user.id not in users:
+                raise PermissionDenied(message="Можно назначить только сотрудника своей группы")
+            return
 
     async def _attach_files(self, task_id: int, file_ids: list[int] | None) -> None:
         from app.modules.db.models.department_task_file import DepartmentTaskFile
@@ -548,7 +590,10 @@ class TaskService:
             task.due_at = body.due_at
             task.due_reminder_sent_at = None
         if body.assignee_id is not None:
+            if not await self._can_change_assignee(actor, task):
+                raise PermissionDenied(message="Нельзя сменить исполнителя этой задачи")
             assignee = await self._ensure_active_assignee(body.assignee_id)
+            await self._ensure_assignee_target_allowed(actor, task, assignee)
             task.assignee_id = assignee.id
 
         task = await self._repo.save(task)
@@ -837,14 +882,17 @@ class TaskService:
             TaskStatus.DONE_PENDING.value,
         }:
             raise ValidationError(message="Эту задачу уже нельзя передать")
-        if not await self._is_working_on(actor, task) and not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Передать задачу может только исполнитель")
+        if not await self._can_handoff(actor, task):
+            raise PermissionDenied(
+                message="Сменить исполнителя может постановщик, исполнитель, админ или старший группы",
+            )
 
         next_user = await self._ensure_active_assignee(body.user_id)
-        if next_user.id == actor.id and body.action != "follow_up":
-            raise ValidationError(message="Выберите другого сотрудника")
-        if body.action in {"add", "transfer"} and next_user.id == task.assignee_id:
+        await self._ensure_assignee_target_allowed(actor, task, next_user)
+        if next_user.id == task.assignee_id and body.action in {"add", "transfer"}:
             raise ValidationError(message="Этот сотрудник уже исполнитель")
+        if body.action != "follow_up" and next_user.id == actor.id and actor.id == task.assignee_id:
+            raise ValidationError(message="Выберите другого сотрудника")
 
         comment = (body.comment or "").strip()
         await self._add_comment_row(task, actor, comment, file_ids=body.file_ids)

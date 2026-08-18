@@ -32,6 +32,7 @@ import {
   listTaskAssignees,
   moveTask,
   reopenTask,
+  handoffTask,
   updateTask,
   type DepartmentTask,
   type TaskAssigneeOption,
@@ -114,6 +115,13 @@ function isAssignedToMe(task: DepartmentTask): boolean {
   return (task.collaborators ?? []).some((row) => row.id === uid)
 }
 
+function canReassignTask(task: DepartmentTask): boolean {
+  if (task.status === 'closed') return false
+  const uid = auth.user?.id
+  if (uid != null && (task.created_by === uid || task.assignee_id === uid)) return true
+  return isManager.value
+}
+
 function openTaskDetail(task: DepartmentTask): void {
   detailTaskId.value = task.id
   detailOpen.value = true
@@ -184,7 +192,6 @@ async function loadDepartments(): Promise<void> {
 }
 
 async function loadAssignees(): Promise<void> {
-  if (!canCreateTasks.value && !isManager.value) return
   try {
     assigneeUsers.value = await listTaskAssignees()
   } catch {
@@ -318,7 +325,14 @@ async function submitReassign(): Promise<void> {
   }
   reassignLoading.value = true
   try {
-    await updateTask(reassignTask.value.id, { assignee_id: reassignAssigneeId.value })
+    if (isManager.value) {
+      await updateTask(reassignTask.value.id, { assignee_id: reassignAssigneeId.value })
+    } else {
+      await handoffTask(reassignTask.value.id, {
+        action: 'transfer',
+        user_id: reassignAssigneeId.value,
+      })
+    }
     message.success('Исполнитель изменён')
     reassignOpen.value = false
     await refresh()
@@ -527,7 +541,7 @@ onUnmounted(() => {
                     <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
                     <NSpace size="small" class="task-card-actions">
                       <NButton
-                        v-if="task.status !== 'closed'"
+                        v-if="canReassignTask(task)"
                         size="tiny"
                         secondary
                         @click.stop="openReassign(task)"
@@ -602,6 +616,15 @@ onUnmounted(() => {
                   Исполнитель: {{ task.assignee?.full_name ?? '—' }}
                 </p>
                 <p class="task-card-meta">Поставил: {{ task.creator?.full_name ?? 'Старший оператор' }}</p>
+                <NButton
+                  v-if="canReassignTask(task)"
+                  size="small"
+                  secondary
+                  style="margin-right: 8px"
+                  @click.stop="openReassign(task)"
+                >
+                  Переназначить
+                </NButton>
                 <NButton
                   v-if="task.status === 'new' && isAssignedToMe(task)"
                   type="primary"
