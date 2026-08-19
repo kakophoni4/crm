@@ -212,6 +212,7 @@ class TaskWorkloadSummary(BaseModel):
     overdue: int = 0
     pending_review: int = 0
     done: int = 0
+    deleted: int = 0
 
 
 class TaskBoardResponse(BaseModel):

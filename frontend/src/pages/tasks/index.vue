@@ -14,6 +14,7 @@ import {
   NTabs,
   NTag,
   NUpload,
+  useDialog,
   useMessage,
 } from 'naive-ui'
 import type { UploadFileInfo } from 'naive-ui'
@@ -57,6 +58,7 @@ import AppCard from '@/shared/ui/AppCard.vue'
 import TaskDetailModal from '@/widgets/tasks/TaskDetailModal.vue'
 
 const message = useMessage()
+const dialog = useDialog()
 const auth = useAuthStore()
 
 const isManager = computed(() => auth.canManageTasks)
@@ -79,7 +81,7 @@ const filterAssigneeId = ref<number | null>(null)
 const filterCreatedBy = ref<number | null>(null)
 const filterStatus = ref<TaskStatus | null>(null)
 const includeClosedMine = ref(false)
-const includeClosedBoard = ref(true)
+const includeClosedBoard = ref(false)
 const mineSummary = ref<TaskWorkloadSummary | null>(null)
 let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -113,12 +115,17 @@ const assigneeOptions = computed(() =>
   })),
 )
 
-const statusFilterOptions = [
-  { label: 'Новые', value: 'new' },
-  { label: 'В работе', value: 'open' },
-  { label: 'На проверке', value: 'done_pending' },
-  { label: 'Готово', value: 'closed' },
-]
+const statusFilterOptions = computed(() => {
+  const options: { label: string; value: TaskStatus }[] = [
+    { label: 'Новые', value: 'new' },
+    { label: 'В работе', value: 'open' },
+    { label: 'На проверке', value: 'done_pending' },
+  ]
+  if (isAdmin.value) {
+    options.push({ label: 'Готово', value: 'closed' }, { label: 'Удалённые', value: 'deleted' })
+  }
+  return options
+})
 
 const hasTaskFilters = computed(
   () =>
@@ -154,6 +161,7 @@ function formatWorkload(summary: TaskWorkloadSummary | null | undefined): string
   if (summary.overdue) parts.push(`просрочено ${summary.overdue}`)
   if (summary.pending_review) parts.push(`на проверке ${summary.pending_review}`)
   if (summary.done) parts.push(`готово ${summary.done}`)
+  if (summary.deleted) parts.push(`удалено ${summary.deleted}`)
   return `Всего ${summary.total}${parts.length ? `: ${parts.join(' · ')}` : ''}`
 }
 
@@ -170,7 +178,7 @@ function resetTaskFilters(): void {
   filterCreatedBy.value = null
   filterStatus.value = null
   includeClosedMine.value = false
-  includeClosedBoard.value = true
+  includeClosedBoard.value = false
 }
 
 const reassignOpen = ref(false)
@@ -189,7 +197,7 @@ function isAssignedToMe(task: DepartmentTask): boolean {
 }
 
 function canReassignTask(task: DepartmentTask): boolean {
-  if (task.status === 'closed') return false
+  if (task.status === 'closed' || task.status === 'deleted') return false
   const uid = auth.user?.id
   if (uid != null && (task.created_by === uid || task.assignee_id === uid)) return true
   return isManager.value
@@ -213,6 +221,10 @@ const departmentMap = computed(() =>
 )
 
 const showAllDepartments = computed(() => isAdmin.value && selectedDeptId.value == null)
+
+const kanbanGridStyle = computed(() => ({
+  gridTemplateColumns: `repeat(${board.value?.columns.length || 3}, minmax(200px, 1fr))`,
+}))
 
 function formatDue(iso: string | null): string {
   if (!iso) return 'Без срока'
@@ -379,11 +391,39 @@ async function onReopen(task: DepartmentTask): Promise<void> {
 async function onDelete(task: DepartmentTask): Promise<void> {
   try {
     await deleteTask(task.id)
-    message.success('Задача снята')
+    message.success('Задача перенесена в удалённые')
     await refresh()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Ошибка')
   }
+}
+
+async function onRestore(task: DepartmentTask): Promise<void> {
+  try {
+    await moveTask(task.id, 'open', 0)
+    message.success('Задача возвращена в работу')
+    await refresh()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Ошибка')
+  }
+}
+
+function onPurge(task: DepartmentTask): void {
+  dialog.warning({
+    title: 'Удалить безвозвратно?',
+    content: `Задача «${task.title}» будет удалена навсегда. Это нельзя отменить.`,
+    positiveText: 'Удалить',
+    negativeText: 'Отмена',
+    onPositiveClick: async () => {
+      try {
+        await deleteTask(task.id, { permanent: true })
+        message.success('Задача удалена навсегда')
+        await refresh()
+      } catch (err) {
+        message.error(err instanceof AppError ? err.message : 'Ошибка')
+      }
+    },
+  })
 }
 
 function openReassign(task: DepartmentTask): void {
@@ -529,7 +569,7 @@ watch(filterQuery, (value) => {
 })
 
 watch([filterAssigneeId, filterCreatedBy], ([assignee, creator]) => {
-  if (assignee != null || creator != null) {
+  if ((assignee != null || creator != null) && isAdmin.value) {
     includeClosedMine.value = true
     includeClosedBoard.value = true
   }
@@ -617,7 +657,7 @@ onUnmounted(() => {
           placeholder="Статус"
           style="min-width: 160px"
         />
-        <label class="task-filters__closed">
+        <label v-if="isAdmin" class="task-filters__closed">
           <NSwitch v-model:value="includeClosed" size="small" />
           Показать готовые
         </label>
@@ -637,14 +677,22 @@ onUnmounted(() => {
               @update:value="onBoardDepartmentChange"
             />
           </div>
-          <p class="kanban-hint">Перетаскивайте карточки между колонками, чтобы менять статус.</p>
+          <p class="kanban-hint">
+            Перетаскивайте карточки между колонками, чтобы менять статус.
+            <template v-if="isAdmin">
+              Колонка «Готово» открывается фильтром «Показать готовые». «Удалённые» видите только вы.
+            </template>
+          </p>
           <NSpin :show="boardLoading && !board">
-            <div v-if="board" class="kanban">
+            <div v-if="board" class="kanban" :style="kanbanGridStyle">
               <div
                 v-for="col in board.columns"
                 :key="col.status"
                 class="kanban-col"
-                :class="{ 'kanban-col--over': dragOverStatus === col.status }"
+                :class="{
+                  'kanban-col--over': dragOverStatus === col.status,
+                  'kanban-col--deleted': col.status === 'deleted',
+                }"
               >
                 <h3 class="kanban-col-title">
                   <span class="kanban-col-dot" :class="`kanban-col-dot--${col.status}`" />
@@ -713,7 +761,25 @@ onUnmounted(() => {
                         Вернуть
                       </NButton>
                       <NButton
-                        v-if="task.status !== 'closed'"
+                        v-if="task.status === 'deleted' && isAdmin"
+                        size="tiny"
+                        secondary
+                        @click.stop="onRestore(task)"
+                      >
+                        <template #icon><RotateCcw :size="12" /></template>
+                        Вернуть
+                      </NButton>
+                      <NButton
+                        v-if="task.status === 'deleted' && isAdmin"
+                        size="tiny"
+                        type="error"
+                        @click.stop="onPurge(task)"
+                      >
+                        <template #icon><Trash2 :size="12" /></template>
+                        Навсегда
+                      </NButton>
+                      <NButton
+                        v-if="task.status !== 'deleted' && (task.status !== 'closed' || isAdmin)"
                         size="tiny"
                         quaternary
                         type="error"
@@ -724,7 +790,13 @@ onUnmounted(() => {
                     </NSpace>
                   </div>
                   <p v-if="!col.items.length" class="kanban-empty">
-                    {{ hasTaskFilters ? 'Нет задач по фильтру' : 'Перетащите задачу сюда' }}
+                    {{
+                      col.status === 'deleted'
+                        ? 'Удалённые задачи'
+                        : hasTaskFilters
+                          ? 'Нет задач по фильтру'
+                          : 'Перетащите задачу сюда'
+                    }}
                   </p>
                 </div>
               </div>
@@ -942,7 +1014,6 @@ onUnmounted(() => {
 
 .kanban {
   display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 16px;
   align-items: start;
   overflow-x: auto;
@@ -995,8 +1066,16 @@ onUnmounted(() => {
   background: var(--app-warning);
 }
 
+.kanban-col--deleted {
+  border-color: color-mix(in srgb, var(--app-danger, #dc2626) 35%, var(--app-border));
+}
+
 .kanban-col-dot--closed {
   background: var(--app-success);
+}
+
+.kanban-col-dot--deleted {
+  background: var(--app-danger, #dc2626);
 }
 
 .kanban-col-count {

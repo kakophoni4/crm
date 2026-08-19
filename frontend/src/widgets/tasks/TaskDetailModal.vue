@@ -120,7 +120,7 @@ const canChangeAssignee = computed(
 const canReply = computed(() => isWorkingOn.value && isActive.value)
 const canAttachFiles = computed(() => {
   const status = detail.value?.status
-  return status != null && status !== 'closed'
+  return status != null && status !== 'closed' && status !== 'deleted'
 })
 
 const canNotifyAssignee = computed(() => {
@@ -152,6 +152,7 @@ const statusLabel = computed(() => {
     open: 'В работе',
     done_pending: 'На проверке',
     closed: 'Готово',
+    deleted: 'Удалённые',
   }
   return map[detail.value?.status || ''] || detail.value?.status || ''
 })

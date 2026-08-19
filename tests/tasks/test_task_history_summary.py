@@ -24,3 +24,9 @@ def test_format_create_and_status_summaries() -> None:
         "task.handoff",
         {"kind": "follow_up", "user_name": "Иван", "child_title": "Доработка"},
     )
+    assert format_task_history_summary("task.delete", {"kind": "delete"}) == (
+        "перенёс(ла) задачу в удалённые"
+    )
+    assert format_task_history_summary("task.delete", {"kind": "purge"}) == (
+        "удалил(а) задачу безвозвратно"
+    )

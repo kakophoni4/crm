@@ -15,6 +15,7 @@ class TaskStatus(StrEnum):
     OPEN = "open"
     DONE_PENDING = "done_pending"
     CLOSED = "closed"
+    DELETED = "deleted"
 
 
 TASK_TYPE_SORT_ORDER: dict[TaskType, int] = {

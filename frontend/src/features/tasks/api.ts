@@ -105,8 +105,10 @@ export async function reopenTask(taskId: number): Promise<DepartmentTask> {
   return data
 }
 
-export async function deleteTask(taskId: number): Promise<void> {
-  await http.delete(`/tasks/${taskId}`)
+export async function deleteTask(taskId: number, options?: { permanent?: boolean }): Promise<void> {
+  await http.delete(`/tasks/${taskId}`, {
+    params: options?.permanent ? { permanent: true } : undefined,
+  })
 }
 
 export async function fetchTaskAlerts(): Promise<{

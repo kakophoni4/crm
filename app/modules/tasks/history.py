@@ -9,6 +9,7 @@ TASK_STATUS_LABELS: dict[str, str] = {
     "open": "В работе",
     "done_pending": "На проверке",
     "closed": "Готово",
+    "deleted": "Удалённые",
 }
 
 FIELD_LABELS: dict[str, str] = {
@@ -57,8 +58,10 @@ def format_task_history_summary(action: str, payload: dict[str, Any] | None) -> 
         assignee = _person(data, "assignee")
         return f"создал(а) задачу и назначил(а) на {assignee}"
 
-    if action == "task.delete" or kind == "delete":
-        return "закрыл(а) задачу"
+    if action == "task.delete" or kind in {"delete", "purge"}:
+        if kind == "purge":
+            return "удалил(а) задачу безвозвратно"
+        return "перенёс(ла) задачу в удалённые"
 
     if action == "task.handoff" or kind in HANDOFF_KIND_LABELS:
         verb = HANDOFF_KIND_LABELS.get(kind or str(data.get("action") or ""), "передал(а) задачу")

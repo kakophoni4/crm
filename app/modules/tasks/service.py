@@ -66,6 +66,9 @@ class TaskService:
     def _role(self, actor: User) -> UserRole:
         return actor.role if isinstance(actor.role, UserRole) else UserRole(str(actor.role))
 
+    def _is_admin(self, actor: User) -> bool:
+        return self._role(actor) == UserRole.ADMIN
+
     def _is_senior_or_admin(self, actor: User) -> bool:
         role = self._role(actor)
         return role in (
@@ -154,6 +157,8 @@ class TaskService:
             raise NotFound(message="Задача не найдена")
 
     async def _ensure_task_visible(self, actor: User, task: DepartmentTask) -> None:
+        if task.status == TaskStatus.DELETED.value and not self._is_admin(actor):
+            raise NotFound(message="Задача не найдена")
         ctx = await self._ctx(actor)
         role = self._role(actor)
         if role in (UserRole.ADMIN, UserRole.CHIEF_ACCOUNTANT):
@@ -501,15 +506,30 @@ class TaskService:
             overdue=sum(1 for item in items if item.is_overdue),
             pending_review=sum(1 for item in items if item.status == TaskStatus.DONE_PENDING.value),
             done=sum(1 for item in items if item.status == TaskStatus.CLOSED.value),
+            deleted=sum(1 for item in items if item.status == TaskStatus.DELETED.value),
         )
 
-    @staticmethod
-    def _filter_statuses(*, status: TaskStatus | None, include_closed: bool) -> list[str] | None:
+    def _filter_statuses(
+        self,
+        actor: User,
+        *,
+        status: TaskStatus | None,
+        include_closed: bool,
+        include_deleted: bool = False,
+    ) -> list[str] | None:
+        is_admin = self._is_admin(actor)
         if status is not None:
+            if status == TaskStatus.DELETED and not is_admin:
+                return []
+            if status == TaskStatus.CLOSED and not is_admin:
+                return []
             return [status.value]
-        if include_closed:
-            return None
-        return [item.value for item in ACTIVE_TASK_STATUSES]
+        statuses = [item.value for item in ACTIVE_TASK_STATUSES]
+        if include_closed and is_admin:
+            statuses.append(TaskStatus.CLOSED.value)
+        if include_deleted and is_admin:
+            statuses.append(TaskStatus.DELETED.value)
+        return statuses
 
     async def list_my_tasks(
         self,
@@ -531,7 +551,11 @@ class TaskService:
                     related_user_id=actor.id,
                     assignee_id=assignee_id,
                     created_by=created_by,
-                    statuses=self._filter_statuses(status=status, include_closed=include_closed),
+                    statuses=self._filter_statuses(
+                        actor,
+                        status=status,
+                        include_closed=include_closed,
+                    ),
                     q=needle,
                 ),
             )
@@ -547,7 +571,7 @@ class TaskService:
         created_by: int | None = None,
         q: str | None = None,
         status: TaskStatus | None = None,
-        include_closed: bool = True,
+        include_closed: bool = False,
     ) -> TaskBoardResponse:
         if not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Доска задач доступна старшему оператору")
@@ -574,28 +598,49 @@ class TaskService:
 
         needle = (q or "").strip() or None
         filtered = any([assignee_id, created_by, needle, status])
+        is_admin = self._is_admin(actor)
+        show_closed = bool(include_closed and is_admin)
         if filtered:
             rows = await self._repo.list_filtered(
                 department_ids=dept_ids,
                 assignee_id=assignee_id,
                 created_by=created_by,
-                statuses=self._filter_statuses(status=status, include_closed=include_closed),
+                statuses=self._filter_statuses(
+                    actor,
+                    status=status,
+                    include_closed=show_closed,
+                    include_deleted=is_admin,
+                ),
                 q=needle,
             )
         else:
             active_rows = await self._repo.list_for_departments(dept_ids)
             closed_rows = (
-                await self._repo.list_closed_for_departments(dept_ids, limit=50)
-                if include_closed
+                await self._repo.list_status_for_departments(
+                    dept_ids,
+                    status=TaskStatus.CLOSED.value,
+                    limit=80,
+                )
+                if show_closed
                 else []
             )
-            rows = [*active_rows, *closed_rows]
+            deleted_rows = (
+                await self._repo.list_status_for_departments(
+                    dept_ids,
+                    status=TaskStatus.DELETED.value,
+                    limit=80,
+                )
+                if is_admin
+                else []
+            )
+            rows = [*active_rows, *closed_rows, *deleted_rows]
         responses = await self._build_responses(rows)
         by_status: dict[str, list[TaskResponse]] = {
             TaskStatus.NEW.value: [],
             TaskStatus.OPEN.value: [],
             TaskStatus.DONE_PENDING.value: [],
             TaskStatus.CLOSED.value: [],
+            TaskStatus.DELETED.value: [],
         }
         for item in responses:
             if item.status in by_status:
@@ -617,12 +662,23 @@ class TaskService:
                 label="На проверке",
                 items=by_status[TaskStatus.DONE_PENDING.value],
             ),
-            TaskBoardColumn(
-                status=TaskStatus.CLOSED.value,
-                label="Готово",
-                items=by_status[TaskStatus.CLOSED.value],
-            ),
         ]
+        if show_closed:
+            columns.append(
+                TaskBoardColumn(
+                    status=TaskStatus.CLOSED.value,
+                    label="Готово",
+                    items=by_status[TaskStatus.CLOSED.value],
+                ),
+            )
+        if is_admin:
+            columns.append(
+                TaskBoardColumn(
+                    status=TaskStatus.DELETED.value,
+                    label="Удалённые",
+                    items=by_status[TaskStatus.DELETED.value],
+                ),
+            )
         task_types = [
             {"value": t.value, "label": TASK_TYPE_LABELS[t], "sort_order": TASK_TYPE_SORT_ORDER[t]}
             for t in TaskType
@@ -751,6 +807,11 @@ class TaskService:
         if task is None:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
+        if target == TaskStatus.DELETED:
+            await self._soft_delete(actor, task)
+            return (await self._build_responses([task]))[0]
+        if task.status == TaskStatus.DELETED.value and not self._is_admin(actor):
+            raise NotFound(message="Задача не найдена")
         now = datetime.now(UTC)
         previous_status = task.status
 
@@ -781,8 +842,8 @@ class TaskService:
             task.confirmed_at = now
             task.confirmed_by = actor.id
 
-        # Ручной порядок нужен только для активных колонок; закрытые сортируются по дате.
-        if target != TaskStatus.CLOSED:
+        # Ручной порядок нужен только для активных колонок; архив сортируется по дате.
+        if target not in {TaskStatus.CLOSED, TaskStatus.DELETED}:
             await self._repo.reorder_column(task, status=task.status, position=body.position)
         task = await self._repo.save(task)
         if previous_status != task.status:
@@ -909,30 +970,55 @@ class TaskService:
         )
         return response
 
-    async def delete(self, actor: User, task_id: int) -> None:
-        if not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Удалять задачи может только старший оператор")
-        task = await self._repo.get_by_id(task_id)
-        if task is None or task.status not in {s.value for s in ACTIVE_TASK_STATUSES}:
+    async def _soft_delete(self, actor: User, task: DepartmentTask) -> DepartmentTask:
+        if task.status == TaskStatus.DELETED.value:
+            return task
+        allowed = {s.value for s in ACTIVE_TASK_STATUSES}
+        if self._is_admin(actor):
+            allowed.add(TaskStatus.CLOSED.value)
+        if task.status not in allowed:
             raise NotFound(message="Задача не найдена")
-        await self._ensure_task_visible(actor, task)
         previous_status = task.status
-        task.status = TaskStatus.CLOSED.value
-        task.confirmed_at = datetime.now(UTC)
-        task.confirmed_by = actor.id
-        await self._repo.save(task)
+        task.status = TaskStatus.DELETED.value
+        task = await self._repo.save(task)
         await self._write_history(
             actor,
             task,
             AuditAction.TASK_DELETE,
             {"kind": "delete", "from": previous_status, "to": task.status},
         )
-        await publish(TASK_CONFIRMED, self._event_payload(task), scope={"user_id": task.assignee_id})
+        await publish(TASK_UPDATED, self._event_payload(task), scope={"user_id": task.assignee_id})
         await publish(
-            TASK_CONFIRMED,
+            TASK_UPDATED,
             self._event_payload(task),
             scope={"department_id": task.department_id},
         )
+        return task
+
+    async def delete(self, actor: User, task_id: int, *, permanent: bool = False) -> None:
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        if permanent:
+            if not self._is_admin(actor):
+                raise PermissionDenied(message="Безвозвратно удалить может только админ")
+            if task.status != TaskStatus.DELETED.value:
+                raise ValidationError(message="Сначала перенесите задачу в удалённые")
+            await self._write_history(
+                actor,
+                task,
+                AuditAction.TASK_DELETE,
+                {"kind": "purge", "title": task.title},
+            )
+            payload = self._event_payload(task)
+            await self._repo.hard_delete(task)
+            await publish(TASK_UPDATED, payload, scope={"user_id": payload["assignee_id"]})
+            await publish(TASK_UPDATED, payload, scope={"department_id": payload["department_id"]})
+            return
+        if not self._is_senior_or_admin(actor):
+            raise PermissionDenied(message="Удалять задачи может только старший оператор")
+        await self._ensure_task_visible(actor, task)
+        await self._soft_delete(actor, task)
 
     async def get_task(self, actor: User, task_id: int) -> TaskDetailResponse:
         from app.modules.db.models.department_task_comment import DepartmentTaskComment
@@ -1072,7 +1158,7 @@ class TaskService:
         if task is None:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
-        if task.status == TaskStatus.CLOSED.value:
+        if task.status in {TaskStatus.CLOSED.value, TaskStatus.DELETED.value}:
             raise ValidationError(message="К закрытой задаче файлы не добавить")
         await self._attach_files(task.id, file_ids)
         await self._write_history(
@@ -1457,6 +1543,7 @@ class TaskService:
             .where(
                 DepartmentTask.chat_id == chat_id,
                 DepartmentTask.source == "client_request",
+                DepartmentTask.status != TaskStatus.DELETED.value,
             )
             .order_by(DepartmentTask.created_at.desc())
             .limit(50),

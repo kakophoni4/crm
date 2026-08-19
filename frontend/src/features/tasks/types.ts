@@ -1,5 +1,5 @@
 export type TaskType = 'urgent' | 'high' | 'normal' | 'low'
-export type TaskStatus = 'new' | 'open' | 'done_pending' | 'closed'
+export type TaskStatus = 'new' | 'open' | 'done_pending' | 'closed' | 'deleted'
 
 export interface TaskUserBrief {
   id: number
@@ -80,6 +80,7 @@ export interface TaskWorkloadSummary {
   overdue: number
   pending_review: number
   done: number
+  deleted?: number
 }
 
 export interface TaskHistoryItem {

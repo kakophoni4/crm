@@ -59,18 +59,37 @@ class TaskRepository:
         *,
         limit: int = 50,
     ) -> list[DepartmentTask]:
-        stmt = select(DepartmentTask).where(DepartmentTask.status == TaskStatus.CLOSED.value)
+        return await self.list_status_for_departments(
+            department_ids,
+            status=TaskStatus.CLOSED.value,
+            limit=limit,
+        )
+
+    async def list_status_for_departments(
+        self,
+        department_ids: list[int] | None,
+        *,
+        status: str,
+        limit: int = 80,
+    ) -> list[DepartmentTask]:
+        stmt = select(DepartmentTask).where(DepartmentTask.status == status)
         if department_ids is not None:
             if not department_ids:
                 return []
             stmt = stmt.where(DepartmentTask.department_id.in_(department_ids))
+        order = (
+            DepartmentTask.confirmed_at.desc().nullslast()
+            if status == TaskStatus.CLOSED.value
+            else DepartmentTask.updated_at.desc()
+        )
         result = await self._session.execute(
-            stmt.order_by(
-                DepartmentTask.confirmed_at.desc().nullslast(),
-                DepartmentTask.id.desc(),
-            ).limit(limit),
+            stmt.order_by(order, DepartmentTask.id.desc()).limit(limit),
         )
         return list(result.scalars().all())
+
+    async def hard_delete(self, task: DepartmentTask) -> None:
+        await self._session.delete(task)
+        await self._session.flush()
 
     async def reorder_column(
         self,

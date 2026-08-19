@@ -126,7 +126,7 @@ async def task_board(
     created_by: Annotated[int | None, Query()] = None,
     q: Annotated[str | None, Query(max_length=200)] = None,
     status: Annotated[TaskStatus | None, Query()] = None,
-    include_closed: Annotated[bool, Query()] = True,
+    include_closed: Annotated[bool, Query()] = False,
 ) -> TaskBoardResponse:
     return await service.board(
         actor,
@@ -318,7 +318,8 @@ async def delete_task(
     actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    permanent: Annotated[bool, Query()] = False,
 ) -> dict[str, bool]:
-    await service.delete(actor, task_id)
+    await service.delete(actor, task_id, permanent=permanent)
     await db.commit()
-    return {"deleted": True}
+    return {"deleted": True, "permanent": permanent}
