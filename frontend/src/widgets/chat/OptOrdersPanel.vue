@@ -123,12 +123,6 @@ const paymentForm = ref({
   payment_type: 'wire' as 'card' | 'crypto' | 'wire' | 'cash',
   recipient: 'orange' as 'orange' | 'beneficiary',
 })
-const paymentForm = ref({
-  amount: null as number | null,
-  paid_at: Date.now(),
-  payment_type: 'wire' as 'card' | 'crypto' | 'wire' | 'cash',
-  recipient: 'orange' as 'orange' | 'beneficiary',
-})
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let tabVisible = typeof document !== 'undefined' ? !document.hidden : true
 let loadAbort: AbortController | null = null
