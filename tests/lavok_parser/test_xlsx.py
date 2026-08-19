@@ -4,6 +4,8 @@ from io import BytesIO
 
 from openpyxl import Workbook
 
+from app.modules.lavok_parser.schemas import LavokParserIngestJsonItem
+from app.modules.lavok_parser.service import rows_from_json_items
 from app.modules.lavok_parser.xlsx import parse_lavok_xlsx, parse_sheet_date
 
 
@@ -35,3 +37,22 @@ def test_parse_lavok_xlsx_upsert_keys() -> None:
     assert rows[0].fields["score"] == "100"
     assert rows[0].fields["summary"] == "Беру в работу"
     assert rows[0].fields["link"] == "https://t.me/c/1/2"
+
+
+def test_rows_from_json_items() -> None:
+    rows = rows_from_json_items(
+        [
+            LavokParserIngestJsonItem(
+                inn="9703252833",
+                sheet_date="19.08.2026",
+                name='ООО "ТЕСТ"',
+                price="80000",
+                summary="Беру в работу",
+            ),
+        ],
+    )
+    assert len(rows) == 1
+    assert rows[0].inn == "9703252833"
+    assert rows[0].sheet_date.isoformat() == "2026-08-19"
+    assert rows[0].fields["name"] == 'ООО "ТЕСТ"'
+    assert rows[0].fields["summary"] == "Беру в работу"

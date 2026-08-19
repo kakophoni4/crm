@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.user import User
 from app.modules.lavok_parser.schemas import (
+    LavokParserIngestJsonRequest,
     LavokParserIngestResponse,
     LavokParserListResponse,
     LavokParserLotOut,
@@ -60,6 +61,15 @@ async def ingest_lavok_xlsx(
     if not content:
         raise ValidationError(message="Пустой файл")
     return await service.ingest(content)
+
+
+@router.post("/ingest-json", response_model=LavokParserIngestResponse)
+async def ingest_lavok_json(
+    _actor: Annotated[User | None, Depends(_require_ingest_access)],
+    service: Annotated[LavokParserService, Depends(_service)],
+    body: LavokParserIngestJsonRequest,
+) -> LavokParserIngestResponse:
+    return await service.ingest_json(body)
 
 
 @router.get("", response_model=LavokParserListResponse)

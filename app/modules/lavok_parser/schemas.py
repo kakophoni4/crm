@@ -53,6 +53,36 @@ class LavokParserIngestResponse(BaseModel):
     updated: int
 
 
+class LavokParserIngestJsonItem(BaseModel):
+    inn: str
+    sheet_date: str
+    source: str | None = None
+    name: str | None = None
+    price: str | None = None
+    registered_at: str | None = None
+    tax: str | None = None
+    address_director: str | None = None
+    courts: str | None = None
+    debts: str | None = None
+    egrul_reliability: str | None = None
+    bankruptcy: str | None = None
+    turnover: str | None = None
+    reporting: str | None = None
+    leasing: str | None = None
+    zsk: str | None = None
+    summary: str | None = None
+    score: str | None = None
+    first_seen: str | None = None
+    seller: str | None = None
+    link: str | None = None
+    companium: str | None = None
+    egrul_status: str | None = None
+
+
+class LavokParserIngestJsonRequest(BaseModel):
+    items: list[LavokParserIngestJsonItem] = Field(min_length=1, max_length=80)
+
+
 class LavokParserLotPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

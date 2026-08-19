@@ -6,15 +6,48 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.lavok_parser.repository import LavokParserRepository
 from app.modules.lavok_parser.schemas import (
+    LavokParserIngestJsonItem,
+    LavokParserIngestJsonRequest,
     LavokParserIngestResponse,
     LavokParserListResponse,
     LavokParserLotOut,
     LavokParserLotPatchRequest,
 )
-from app.modules.lavok_parser.xlsx import parse_lavok_xlsx, parse_sheet_date
+from app.modules.lavok_parser.xlsx import (
+    SNAPSHOT_FIELDS,
+    ParsedLotRow,
+    parse_lavok_xlsx,
+    parse_sheet_date,
+    stringify_field,
+)
+from app.modules.leads.opt.contact_buyer import normalize_inn
 from app.shared.exceptions import NotFound, ValidationError
 
 ALLOWED_MARKS = frozenset({"new", "watching", "taking", "skip"})
+
+
+def _parse_item_sheet_date(raw: str) -> date:
+    text = (raw or "").strip()
+    parsed = parse_sheet_date(text)
+    if parsed is not None:
+        return parsed
+    try:
+        return date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValidationError(message=f"Некорректная дата листа: {raw}") from exc
+
+
+def rows_from_json_items(items: list[LavokParserIngestJsonItem]) -> list[ParsedLotRow]:
+    rows: list[ParsedLotRow] = []
+    for item in items:
+        inn = normalize_inn(item.inn)
+        if not inn:
+            raise ValidationError(message=f"Некорректный ИНН: {item.inn}")
+        fields = {key: stringify_field(getattr(item, key)) for key in SNAPSHOT_FIELDS}
+        rows.append(ParsedLotRow(inn=inn, sheet_date=_parse_item_sheet_date(item.sheet_date), fields=fields))
+    if not rows:
+        raise ValidationError(message="Нет строк для загрузки")
+    return rows
 
 
 class LavokParserService:
@@ -23,7 +56,14 @@ class LavokParserService:
         self._repo = LavokParserRepository(session)
 
     async def ingest(self, content: bytes) -> LavokParserIngestResponse:
-        parsed = parse_lavok_xlsx(content)
+        return await self.ingest_rows(parse_lavok_xlsx(content))
+
+    async def ingest_json(self, body: LavokParserIngestJsonRequest) -> LavokParserIngestResponse:
+        return await self.ingest_rows(rows_from_json_items(body.items))
+
+    async def ingest_rows(self, parsed: list[ParsedLotRow]) -> LavokParserIngestResponse:
+        if not parsed:
+            raise ValidationError(message="Нет строк для загрузки")
         sheet_dates = {row.sheet_date for row in parsed}
         created, updated = await self._repo.upsert_parsed(parsed)
         await self._session.commit()

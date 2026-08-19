@@ -97,6 +97,10 @@ def _cell_text(value: Any) -> str | None:
     return text or None
 
 
+def stringify_field(value: Any) -> str | None:
+    return _cell_text(value)
+
+
 def parse_sheet_date(title: str) -> date | None:
     match = _SHEET_DATE_RE.match((title or "").strip())
     if not match:
