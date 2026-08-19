@@ -31,6 +31,7 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     from app.workers.after_hours import after_hours_scan
     from app.workers.escalation import escalation_scan
     from app.workers.jobs.purge_leads import LEAD_PURGE_JOB_TYPE, purge_expired_leads
+    from app.workers.jobs.lavok_parser_pull import schedule_lavok_parser_pull_if_due
     from app.workers.jobs.sbis_norm_sync import schedule_sbis_norm_sync_if_due
     from app.workers.staff_notifications import staff_notifications_scan
     from app.workers.transfer_expire import transfer_expire_scan
@@ -51,6 +52,7 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     await task_due_reminders("task_due_reminders", {})
     await schedule_opt_submit_if_pending()
     await schedule_sbis_norm_sync_if_due()
+    await schedule_lavok_parser_pull_if_due()
     await backfill_group_chat_files_job("backfill_group_chat_files", {})
 
 

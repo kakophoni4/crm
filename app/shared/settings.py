@@ -121,8 +121,11 @@ class Settings(BaseSettings):
     # External service token for POST /accounting/requirements/ingest
     accounting_ingest_token: str = ""
 
-    # Lavok parser: POST /lavok-parser/ingest (xlsx from another server)
+    # Lavok parser: POST /lavok-parser/ingest (xlsx) or pull
     lavok_parser_ingest_token: str = ""
+    lavok_parser_pull_url: str = ""
+    lavok_parser_pull_interval_seconds: int = 300
+    lavok_parser_pull_timeout_seconds: float = 90.0
 
     # smertniki EGRUL monitor HTTP API (tickets / shops)
     smertniki_api_url: str = ""
