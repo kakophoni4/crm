@@ -5,6 +5,7 @@ import {
   NDataTable,
   NEmpty,
   NInput,
+  NModal,
   NSelect,
   NSpin,
   NTag,
@@ -12,7 +13,7 @@ import {
   useDialog,
   useMessage,
 } from 'naive-ui'
-import { FileSpreadsheet, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { ExternalLink, FileSpreadsheet, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { computed, h, onMounted, ref } from 'vue'
 
 import {
@@ -38,7 +39,7 @@ const total = ref(0)
 const sheetDates = ref<string[]>([])
 const sheetDate = ref<string | null>(null)
 const search = ref('')
-const expandedIds = ref<number[]>([])
+const selected = ref<LavokParserLot | null>(null)
 
 const dateOptions = computed<SelectOption[]>(() =>
   sheetDates.value.map((value) => ({ label: formatSheetDate(value), value })),
@@ -63,6 +64,38 @@ function markType(mark: string): 'default' | 'info' | 'success' | 'warning' {
   return 'default'
 }
 
+function formatPrice(value: string | null): string {
+  if (!value) return '—'
+  const num = Number(String(value).replace(/\s/g, '').replace(',', '.'))
+  if (!Number.isFinite(num)) return value
+  return `${new Intl.NumberFormat('ru-RU').format(num)} ₽`
+}
+
+const detailFields = computed(() => {
+  const row = selected.value
+  if (!row) return []
+  return [
+    { label: 'ИНН', value: row.inn },
+    { label: 'Цена', value: formatPrice(row.price) },
+    { label: 'Балл', value: row.score },
+    { label: 'Налог', value: row.tax },
+    { label: 'ЕГРЮЛ', value: row.egrul_status },
+    { label: 'Регистрация', value: row.registered_at },
+    { label: 'Источник', value: row.source },
+    { label: 'Продавец', value: row.seller },
+    { label: 'Адрес и директор', value: row.address_director },
+    { label: 'Суды', value: row.courts },
+    { label: 'Долги / ИЛ', value: row.debts },
+    { label: 'Достоверность ЕГРЮЛ', value: row.egrul_reliability },
+    { label: 'Банкротство', value: row.bankruptcy },
+    { label: 'Обороты', value: row.turnover },
+    { label: 'Отчётность', value: row.reporting },
+    { label: 'Лизинг / залоги', value: row.leasing },
+    { label: 'ЗСК', value: row.zsk },
+    { label: 'Первое появление', value: row.first_seen },
+  ].filter((item) => item.value && item.value !== '—')
+})
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -76,6 +109,9 @@ async function load(): Promise<void> {
     sheetDates.value = data.sheet_dates
     if (data.sheet_date && sheetDate.value == null) {
       sheetDate.value = data.sheet_date
+    }
+    if (selected.value) {
+      selected.value = rows.value.find((item) => item.id === selected.value?.id) ?? selected.value
     }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить парсер')
@@ -105,12 +141,24 @@ async function onIngest({ file, onFinish, onError }: UploadCustomRequestOptions)
   }
 }
 
+function replaceRow(updated: LavokParserLot): void {
+  rows.value = rows.value.map((item) => (item.id === updated.id ? updated : item))
+  if (selected.value?.id === updated.id) selected.value = updated
+}
+
 async function onMark(row: LavokParserLot, mark: string): Promise<void> {
   try {
-    const updated = await patchLavokLot(row.id, { mark })
-    rows.value = rows.value.map((item) => (item.id === row.id ? updated : item))
+    replaceRow(await patchLavokLot(row.id, { mark }))
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить отметку')
+  }
+}
+
+async function onNote(row: LavokParserLot, note: string): Promise<void> {
+  try {
+    replaceRow(await patchLavokLot(row.id, { note: note.trim() || null }))
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить заметку')
   }
 }
 
@@ -125,6 +173,7 @@ function onDelete(row: LavokParserLot): void {
         await deleteLavokLot(row.id)
         rows.value = rows.value.filter((item) => item.id !== row.id)
         total.value = Math.max(0, total.value - 1)
+        if (selected.value?.id === row.id) selected.value = null
         message.success('Удалено')
       } catch (err) {
         message.error(err instanceof AppError ? err.message : 'Не удалось удалить')
@@ -133,12 +182,18 @@ function onDelete(row: LavokParserLot): void {
   })
 }
 
-function toggleSummary(id: number): void {
-  if (expandedIds.value.includes(id)) {
-    expandedIds.value = expandedIds.value.filter((item) => item !== id)
-  } else {
-    expandedIds.value = [...expandedIds.value, id]
-  }
+const noteDraft = ref('')
+
+function openLot(row: LavokParserLot): void {
+  selected.value = row
+  noteDraft.value = row.note ?? ''
+}
+
+async function saveNote(): Promise<void> {
+  if (!selected.value) return
+  const next = noteDraft.value.trim() || null
+  if (next === (selected.value.note ?? null)) return
+  await onNote(selected.value, noteDraft.value)
 }
 
 const columns: DataTableColumns<LavokParserLot> = [
@@ -150,7 +205,7 @@ const columns: DataTableColumns<LavokParserLot> = [
     render: (row) => row.name || '—',
   },
   { title: 'ИНН', key: 'inn', width: 130 },
-  { title: 'Цена', key: 'price', width: 100, render: (row) => row.price || '—' },
+  { title: 'Цена', key: 'price', width: 110, render: (row) => formatPrice(row.price) },
   { title: 'Балл', key: 'score', width: 70, render: (row) => row.score || '—' },
   { title: 'Налог', key: 'tax', width: 90, ellipsis: { tooltip: true }, render: (row) => row.tax || '—' },
   {
@@ -161,17 +216,6 @@ const columns: DataTableColumns<LavokParserLot> = [
     render: (row) => row.egrul_status || '—',
   },
   {
-    title: 'Итог',
-    key: 'summary',
-    minWidth: 160,
-    render: (row) =>
-      h(
-        NButton,
-        { size: 'tiny', quaternary: true, onClick: () => toggleSummary(row.id) },
-        { default: () => (expandedIds.value.includes(row.id) ? 'Скрыть' : 'Открыть') },
-      ),
-  },
-  {
     title: 'Отметка',
     key: 'mark',
     width: 170,
@@ -180,6 +224,7 @@ const columns: DataTableColumns<LavokParserLot> = [
         value: row.mark,
         size: 'small',
         options: LAVOK_MARK_OPTIONS,
+        onClick: (event: MouseEvent) => event.stopPropagation(),
         onUpdateValue: (value: string) => onMark(row, value),
       }),
   },
@@ -190,7 +235,15 @@ const columns: DataTableColumns<LavokParserLot> = [
     render: (row) =>
       h(
         NButton,
-        { size: 'tiny', tertiary: true, type: 'error', onClick: () => onDelete(row) },
+        {
+          size: 'tiny',
+          tertiary: true,
+          type: 'error',
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation()
+            onDelete(row)
+          },
+        },
         {
           icon: () => h(Trash2, { size: 14 }),
           default: () => 'Удалить',
@@ -245,6 +298,7 @@ onMounted(() => {
         />
         <NButton @click="load">Найти</NButton>
         <NTag :bordered="false">{{ total }} строк</NTag>
+        <span class="parser-page__hint">Нажмите на строку, чтобы открыть итог</span>
       </div>
       <NSpin :show="loading && rows.length === 0">
         <NEmpty v-if="!loading && rows.length === 0" description="Нет строк парсера" />
@@ -256,26 +310,80 @@ onMounted(() => {
           :bordered="false"
           :single-line="false"
           size="small"
-          :scroll-x="1180"
+          :scroll-x="1100"
+          :row-props="(row: LavokParserLot) => ({
+            style: 'cursor: pointer',
+            onClick: () => openLot(row),
+          })"
         />
       </NSpin>
-      <div v-if="expandedIds.length" class="parser-page__summaries">
-        <article
-          v-for="row in rows.filter((item) => expandedIds.includes(item.id))"
-          :key="row.id"
-          class="parser-page__summary"
-        >
-          <header>
-            <strong>{{ row.name || row.inn }}</strong>
-            <NTag size="small" :type="markType(row.mark)" :bordered="false">
-              {{ markLabel(row.mark) }}
-            </NTag>
-            <a v-if="row.link" :href="row.link" target="_blank" rel="noreferrer">Пост</a>
-          </header>
-          <p>{{ row.summary || 'Нет текста «Итог»' }}</p>
-        </article>
-      </div>
     </AppCard>
+
+    <NModal
+      :show="selected != null"
+      preset="card"
+      :title="selected?.name || selected?.inn || 'Лот'"
+      style="width: min(760px, calc(100vw - 32px)); max-height: 88vh"
+      @update:show="(open: boolean) => { if (!open) selected = null }"
+    >
+      <div v-if="selected" class="lot-card">
+        <div class="lot-card__meta">
+          <NTag size="small" :type="markType(selected.mark)" :bordered="false">
+            {{ markLabel(selected.mark) }}
+          </NTag>
+          <span v-if="selected.score">Балл {{ selected.score }}</span>
+          <span>{{ formatPrice(selected.price) }}</span>
+          <span v-if="selected.inn">ИНН {{ selected.inn }}</span>
+        </div>
+
+        <section class="lot-card__summary">
+          <h3>Итог</h3>
+          <p>{{ selected.summary || 'Текста «Итог» нет' }}</p>
+        </section>
+
+        <dl class="lot-card__facts">
+          <div v-for="item in detailFields" :key="item.label">
+            <dt>{{ item.label }}</dt>
+            <dd>{{ item.value }}</dd>
+          </div>
+        </dl>
+
+        <section v-if="selected.companium" class="lot-card__block">
+          <h3>Companium</h3>
+          <p>{{ selected.companium }}</p>
+        </section>
+
+        <section class="lot-card__block">
+          <h3>Заметка</h3>
+          <NInput
+            v-model:value="noteDraft"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 6 }"
+            placeholder="Своя заметка по лоту"
+            @blur="saveNote"
+          />
+        </section>
+
+        <div class="lot-card__actions">
+          <NSelect
+            :value="selected.mark"
+            :options="LAVOK_MARK_OPTIONS"
+            style="width: 180px"
+            @update:value="(value: string) => onMark(selected!, value)"
+          />
+          <NButton
+            v-if="selected.link"
+            tag="a"
+            :href="selected.link"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <template #icon><ExternalLink :size="16" /></template>
+            Пост
+          </NButton>
+        </div>
+      </div>
+    </NModal>
   </div>
 </template>
 
@@ -315,31 +423,81 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
-.parser-page__summaries {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 16px;
+.parser-page__hint {
+  font-size: 0.85rem;
+  color: var(--app-text-muted);
 }
 
-.parser-page__summary {
-  padding: 12px 14px;
+.lot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  max-height: calc(88vh - 88px);
+  padding-right: 4px;
+}
+
+.lot-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--app-text-muted);
+  font-size: 0.9rem;
+}
+
+.lot-card__summary,
+.lot-card__block {
+  padding: 14px 16px;
   border: 1px solid var(--app-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--app-surface-muted, transparent);
 }
 
-.parser-page__summary header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
+.lot-card h3 {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--app-text-muted);
 }
 
-.parser-page__summary p {
+.lot-card__summary p,
+.lot-card__block p {
   margin: 0;
   white-space: pre-wrap;
-  line-height: 1.45;
+  line-height: 1.55;
+  font-size: 0.98rem;
+}
+
+.lot-card__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.lot-card__facts div {
+  min-width: 0;
+}
+
+.lot-card__facts dt {
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+  margin-bottom: 2px;
+}
+
+.lot-card__facts dd {
+  margin: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lot-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 </style>
