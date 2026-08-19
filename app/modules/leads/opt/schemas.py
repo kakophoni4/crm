@@ -224,6 +224,9 @@ class OptAttachmentProbeResponse(BaseModel):
     buyer_inn: str | None = None
     line_count: int | None = None
     existing_order: OptOrderExistingRef | None = None
+    inferred_period_code: str | None = None
+    vat_rate_percent: int | None = None
+    date_error: str | None = None
 
 
 class OptUploadFromAttachmentRequest(BaseModel):

@@ -68,13 +68,13 @@ from app.modules.leads.opt.periods import (
     normalize_period_code,
     period_code_to_mole_iso,
     read_lead_opt_period,
+    resolve_application_period,
 )
-from app.modules.leads.opt.vat import normalize_opt_vat_rate, split_vat_included
+from app.modules.leads.opt.vat import split_vat_included, vat_rate_for_period_code
 from app.modules.leads.repository import LeadRepository
 from app.modules.rbac.role_checks import is_admin
 from app.realtime.events import publish
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
-from app.shared.settings import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -974,10 +974,29 @@ class OptOrderService:
                 existing_order=_existing_order_ref(existing_fp),
             )
 
+        dates = [line.document_date for line in parsed.lines]
+        lead_period = read_lead_opt_period(lead.custom_fields)
+        inferred_period: str | None = None
+        vat_rate: int | None = None
+        date_error: str | None = None
+        try:
+            inferred_period = resolve_application_period(dates).period_code
+            vat_rate = int(vat_rate_for_period_code(inferred_period))
+        except ValidationError as exc:
+            date_error = exc.message
+        else:
+            try:
+                resolve_application_period(dates, requested_period=lead_period)
+            except ValidationError as exc:
+                date_error = exc.message
+
         return OptAttachmentProbeResponse(
             is_application=True,
             buyer_inn=parsed.buyer_inn,
             line_count=len(parsed.lines),
+            inferred_period_code=inferred_period,
+            vat_rate_percent=vat_rate,
+            date_error=date_error,
         )
 
     async def upload_from_chat_attachment(
@@ -1055,25 +1074,20 @@ class OptOrderService:
 
         from app.modules.leads.opt.period_access import normalize_requested_period
 
+        requested_period: str | None = None
         if period_code and str(period_code).strip():
-            period_code = normalize_requested_period(str(period_code))
+            requested_period = normalize_requested_period(str(period_code))
         else:
-            period_code = read_lead_opt_period(lead.custom_fields)
-        if period_code is None:
-            raise ValidationError(
-                message=(
-                    "Для ОПТ нужно выбрать период сделки "
-                    "(например 2/26 — второй квартал 2026) до загрузки заявки."
-                ),
-            )
+            requested_period = read_lead_opt_period(lead.custom_fields)
 
-        try:
-            if vat_rate_percent is None:
-                vat_rate = normalize_opt_vat_rate(get_settings().opt_vat_rate_percent)
-            else:
-                vat_rate = normalize_opt_vat_rate(vat_rate_percent)
-        except ValueError as exc:
-            raise ValidationError(message="НДС должен быть 20% или 22%") from exc
+        dates = [line.document_date for line in parsed.lines]
+        # Client-supplied VAT is ignored: the rate follows the inferred quarter.
+        _ = vat_rate_percent
+        period_code = resolve_application_period(
+            dates,
+            requested_period=requested_period,
+        ).period_code
+        vat_rate = vat_rate_for_period_code(period_code)
 
         order_crm_id = self._repo.new_crm_id("crm-order")
         line_payloads: list[dict[str, object]] = []
@@ -1437,11 +1451,25 @@ class OptOrderService:
         current = normalize_period_code(getattr(order, "period_code", None) or "")
         if current == new_code:
             return order.id, order.lead_id, new_code
+        dates = [line.document_date for line in order.lines if line.document_date is not None]
+        if dates:
+            resolve_application_period(dates, requested_period=new_code)
         await assert_supplier_inns_allowed_for_period(
             self._session,
             period_code=new_code,
             supplier_inns=[line.supplier_inn for line in order.lines],
         )
+        new_vat = vat_rate_for_period_code(new_code)
+        stored_vat = Decimal(str(getattr(order, "vat_rate_percent", None) or new_vat))
+        if stored_vat != new_vat:
+            for line in order.lines:
+                _total, vat, wo_vat = split_vat_included(
+                    Decimal(str(line.amount)),
+                    rate_percent=new_vat,
+                )
+                line.vat_amount = float(vat)
+                line.amount_without_vat = float(wo_vat)
+            order.vat_rate_percent = float(new_vat)
         order.period_code = new_code
         await self._session.flush()
         return order.id, order.lead_id, new_code

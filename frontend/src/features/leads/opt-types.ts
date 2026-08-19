@@ -64,6 +64,9 @@ export interface OptAttachmentProbeResult {
   buyer_inn?: string | null
   line_count?: number | null
   existing_order?: OptOrderExistingRef | null
+  inferred_period_code?: string | null
+  vat_rate_percent?: number | null
+  date_error?: string | null
 }
 
 export type OptVatRatePercent = 20 | 22

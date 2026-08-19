@@ -7,8 +7,13 @@ import {
   probeOptChatAttachment,
   uploadOptFromChatAttachment,
 } from '@/features/leads/opt-api'
-import type { OptAttachmentProbeResult, OptVatRatePercent } from '@/features/leads/opt-types'
-import { OPT_PERIOD_OPTIONS, readLeadDealFields } from '@/features/leads/order-fields'
+import type { OptAttachmentProbeResult } from '@/features/leads/opt-types'
+import {
+  OPT_PERIOD_OPTIONS,
+  formatOptPeriodLabel,
+  optVatRateForPeriod,
+  readLeadDealFields,
+} from '@/features/leads/order-fields'
 import { useChatsStore } from '@/features/chats/store'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import { AppError } from '@/shared/api/http'
@@ -26,12 +31,7 @@ const message = useMessage()
 const probing = ref(false)
 const submitting = ref(false)
 const probeResult = ref<OptAttachmentProbeResult | null>(null)
-const vatRatePercent = ref<OptVatRatePercent>(22)
 const periodCode = ref<string | null>(null)
-const vatRateOptions = [
-  { label: 'НДС 22%', value: 22 as OptVatRatePercent },
-  { label: 'НДС 20%', value: 20 as OptVatRatePercent },
-]
 const periodOptions = OPT_PERIOD_OPTIONS
 
 const attachmentRow = computed(() => props.attachment as Record<string, unknown>)
@@ -51,7 +51,15 @@ const canScan = computed(
 
 const existingOrder = computed(() => probeResult.value?.existing_order ?? null)
 const isApplication = computed(() => probeResult.value?.is_application === true)
-const canSubmit = computed(() => Boolean(periodCode.value) && !submitting.value)
+const dateError = computed(() => probeResult.value?.date_error?.trim() || null)
+const vatPercent = computed(
+  () =>
+    probeResult.value?.vat_rate_percent ??
+    optVatRateForPeriod(probeResult.value?.inferred_period_code || periodCode.value),
+)
+const canSubmit = computed(
+  () => isApplication.value && !dateError.value && !submitting.value,
+)
 
 async function loadLeadPeriod(): Promise<void> {
   if (leadId.value == null) {
@@ -75,11 +83,15 @@ async function runProbe(): Promise<void> {
   }
   probing.value = true
   try {
-    probeResult.value = await probeOptChatAttachment(leadId.value, {
+    const data = await probeOptChatAttachment(leadId.value, {
       chat_id: props.chatId,
       message_id: props.messageId,
       attachment_index: props.attachmentIndex,
     })
+    probeResult.value = data
+    if (!periodCode.value && data.inferred_period_code) {
+      periodCode.value = data.inferred_period_code
+    }
   } catch {
     probeResult.value = null
   } finally {
@@ -88,10 +100,9 @@ async function runProbe(): Promise<void> {
 }
 
 async function submitApplication(): Promise<void> {
-  if (!canScan.value || props.chatId == null || leadId.value == null || !periodCode.value) {
-    if (!periodCode.value) {
-      message.warning('Выберите период заявки')
-    }
+  if (!canScan.value || props.chatId == null || leadId.value == null) return
+  if (dateError.value) {
+    message.error(dateError.value)
     return
   }
   submitting.value = true
@@ -100,11 +111,10 @@ async function submitApplication(): Promise<void> {
       chat_id: props.chatId,
       message_id: props.messageId,
       attachment_index: props.attachmentIndex,
-      vat_rate_percent: vatRatePercent.value,
-      period_code: periodCode.value,
+      period_code: periodCode.value || undefined,
     })
     message.success(
-      `Заявка отправлена в обработку (НДС ${vatRatePercent.value}%, период ${periodCode.value})`,
+      `Заявка отправлена в обработку (НДС ${vatPercent.value}%, период ${formatOptPeriodLabel(periodCode.value || probeResult.value?.inferred_period_code)})`,
     )
     store.bumpOptOrdersRefresh()
     await runProbe()
@@ -118,9 +128,9 @@ async function submitApplication(): Promise<void> {
 
 watch(
   () => [canScan.value, props.messageId, props.attachmentIndex, leadId.value] as const,
-  () => {
-    void runProbe()
-    void loadLeadPeriod()
+  async () => {
+    await loadLeadPeriod()
+    await runProbe()
   },
   { immediate: true },
 )
@@ -140,7 +150,12 @@ watch(
         Распознана заявка: {{ probeResult.line_count }}
         {{ probeResult.line_count === 1 ? 'строка' : 'строк' }}
         <span v-if="probeResult.buyer_inn">, покупатель ИНН {{ probeResult.buyer_inn }}</span>
+        <span v-if="probeResult.inferred_period_code">
+          · {{ formatOptPeriodLabel(probeResult.inferred_period_code) }}
+          · НДС {{ vatPercent }}%
+        </span>
       </p>
+      <p v-if="dateError" class="opt-attachment-bar__error">{{ dateError }}</p>
       <div class="opt-attachment-bar__actions">
         <NSelect
           v-model:value="periodCode"
@@ -149,13 +164,6 @@ watch(
           placeholder="Период"
           :disabled="submitting"
           style="width: 168px"
-        />
-        <NSelect
-          v-model:value="vatRatePercent"
-          size="small"
-          :options="vatRateOptions"
-          :disabled="submitting"
-          style="width: 120px"
         />
         <NButton
           size="small"
@@ -181,7 +189,8 @@ watch(
 }
 
 .opt-attachment-bar__hint,
-.opt-attachment-bar__note {
+.opt-attachment-bar__note,
+.opt-attachment-bar__error {
   margin: 0;
   font-size: 0.78rem;
   line-height: 1.35;
@@ -191,8 +200,13 @@ watch(
   color: var(--app-text-muted, #6b7280);
 }
 
-.opt-attachment-bar__note {
+.opt-attachment-bar__note,
+.opt-attachment-bar__error {
   color: var(--n-warning-color, #c27803);
+}
+
+.opt-attachment-bar__error {
+  color: var(--n-error-color, #d03050);
 }
 
 .opt-attachment-bar__actions {

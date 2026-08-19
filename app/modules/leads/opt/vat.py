@@ -1,8 +1,24 @@
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
+
+from app.modules.leads.opt.periods import normalize_period_code
 
 ALLOWED_OPT_VAT_RATES = (Decimal("20"), Decimal("22"))
+VAT_RATE_BEFORE_2026 = Decimal("20")
+VAT_RATE_FROM_2026 = Decimal("22")
+
+
+def vat_rate_for_period_code(period_code: str | None) -> Decimal:
+    """20% through 2025, 22% from Q1 2026 onwards."""
+    normalized = normalize_period_code(period_code)
+    if normalized is None:
+        return VAT_RATE_FROM_2026
+    _quarter, yy = normalized.split("/", 1)
+    year = 2000 + int(yy)
+    if year < 2026:
+        return VAT_RATE_BEFORE_2026
+    return VAT_RATE_FROM_2026
 
 
 def normalize_opt_vat_rate(rate: Decimal | float | int | str | None) -> Decimal:

@@ -32,6 +32,13 @@ export const OPT_PERIOD_OPTIONS = [2025, 2026].flatMap((year) =>
   }),
 )
 
+/** 20% through 2025, 22% from Q1 2026. */
+export function optVatRateForPeriod(code: string | null | undefined): 20 | 22 {
+  const m = /^([1-4])\/(\d{2})$/.exec((code || '').trim())
+  if (!m) return 22
+  return 2000 + Number(m[2]) < 2026 ? 20 : 22
+}
+
 /** Human label for period code `2/26` → `2 кв. 2026`. */
 export function formatOptPeriodLabel(code: string | null | undefined): string {
   if (!code) return '—'

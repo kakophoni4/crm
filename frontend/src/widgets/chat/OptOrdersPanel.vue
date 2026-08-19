@@ -40,7 +40,7 @@ import {
   sendOptRegistryToClient,
   uploadOptApplication,
 } from '@/features/leads/opt-api'
-import { OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import { OPT_PERIOD_OPTIONS, optVatRateForPeriod } from '@/features/leads/order-fields'
 import {
   invalidateOrderDocsAvailability,
   loadOrderDocsAvailability,
@@ -52,7 +52,7 @@ import { peekOptOrders } from '@/features/chats/payments-cache'
 import { useChatsStore } from '@/features/chats/store'
 import { uploadFile } from '@/features/chats/api'
 import { validateOptPaymentDocuments } from '@/features/leads/opt-payment-validation'
-import type { OptOrder, OptOrderLine, OptVatRatePercent } from '@/features/leads/opt-types'
+import type { OptOrder, OptOrderLine } from '@/features/leads/opt-types'
 import {
   OPT_PAYMENT_RECIPIENT_OPTIONS,
   OPT_PAYMENT_TYPE_OPTIONS,
@@ -123,11 +123,12 @@ const paymentForm = ref({
   payment_type: 'wire' as 'card' | 'crypto' | 'wire' | 'cash',
   recipient: 'orange' as 'orange' | 'beneficiary',
 })
-const vatRatePercent = ref<OptVatRatePercent>(22)
-const vatRateOptions = [
-  { label: 'НДС 22%', value: 22 as OptVatRatePercent },
-  { label: 'НДС 20%', value: 20 as OptVatRatePercent },
-]
+const paymentForm = ref({
+  amount: null as number | null,
+  paid_at: Date.now(),
+  payment_type: 'wire' as 'card' | 'crypto' | 'wire' | 'cash',
+  recipient: 'orange' as 'orange' | 'beneficiary',
+})
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let tabVisible = typeof document !== 'undefined' ? !document.hidden : true
 let loadAbort: AbortController | null = null
@@ -541,14 +542,14 @@ async function onUpload(options: { file: UploadFileInfo }): Promise<void> {
   }
   uploading.value = true
   try {
-    const created = await uploadOptApplication(props.leadId, raw, vatRatePercent.value)
+    const created = await uploadOptApplication(props.leadId, raw)
     orders.value = [...orders.value.filter((row) => row.id !== created.id), created].sort(
       (a, b) => a.order_no - b.order_no,
     )
     selectedOrderId.value = created.id
     syncPolling()
     message.success(
-      `Заявка ${created.order_no} загружена (НДС ${vatRatePercent.value}%) — реестр формируется`,
+      `Заявка ${created.order_no} загружена (НДС ${created.vat_rate_percent ?? optVatRateForPeriod(created.period_code)}%) — реестр формируется`,
     )
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявку')
@@ -884,13 +885,6 @@ onUnmounted(() => {
       <p v-else-if="orders.length" class="opt-orders__count">Заявок: {{ orders.length }}</p>
       <div v-else />
       <div class="opt-orders__upload-row">
-        <NSelect
-          v-model:value="vatRatePercent"
-          size="small"
-          :options="vatRateOptions"
-          :disabled="!hasLead || uploading || hasPendingSubmission"
-          style="width: 120px"
-        />
         <NUpload
           :show-file-list="false"
           accept=".xlsx,.xls"
@@ -976,7 +970,7 @@ onUnmounted(() => {
             </div>
             <div>
               <dt>НДС</dt>
-              <dd>{{ selectedOrder.vat_rate_percent ?? 22 }}%</dd>
+              <dd>{{ selectedOrder.vat_rate_percent ?? optVatRateForPeriod(selectedOrder.period_code) }}%</dd>
             </div>
             <div>
               <dt>Период</dt>
