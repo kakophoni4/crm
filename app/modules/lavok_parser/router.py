@@ -63,6 +63,7 @@ async def ingest_lavok_xlsx(
     return await service.ingest(content)
 
 
+@router.post("/ingest/json", response_model=LavokParserIngestResponse)
 @router.post("/ingest-json", response_model=LavokParserIngestResponse)
 async def ingest_lavok_json(
     _actor: Annotated[User | None, Depends(_require_ingest_access)],
