@@ -12,6 +12,7 @@ import {
   NSpin,
   NTag,
   NUpload,
+  useDialog,
   useMessage,
 } from 'naive-ui'
 import type { UploadFileInfo } from 'naive-ui'
@@ -58,6 +59,7 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
+const dialog = useDialog()
 const auth = useAuthStore()
 const loading = ref(false)
 const detail = ref<TaskDetail | null>(null)
@@ -253,24 +255,32 @@ async function onAddComment(): Promise<void> {
 
 async function onComplete(): Promise<void> {
   if (props.taskId == null) return
-  completeBusy.value = true
-  try {
-    const fileIds = await uploadPending()
-    await completeTask(props.taskId, {
-      comment: commentBody.value.trim() || null,
-      file_ids: fileIds,
-    })
-    commentBody.value = ''
-    commentFiles.value = []
-    uploadKey.value += 1
-    message.success('Отмечено как выполненное — ждёт подтверждения')
-    await load(props.taskId)
-    emit('updated')
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось отметить выполнение')
-  } finally {
-    completeBusy.value = false
-  }
+  dialog.warning({
+    title: 'Отметить выполненной?',
+    content: 'Задача уйдёт на проверку старшему.',
+    positiveText: 'Выполнено',
+    negativeText: 'Отмена',
+    onPositiveClick: async () => {
+      completeBusy.value = true
+      try {
+        const fileIds = await uploadPending()
+        await completeTask(props.taskId!, {
+          comment: commentBody.value.trim() || null,
+          file_ids: fileIds,
+        })
+        commentBody.value = ''
+        commentFiles.value = []
+        uploadKey.value += 1
+        message.success('Отмечено как выполненное — ждёт подтверждения')
+        await load(props.taskId!)
+        emit('updated')
+      } catch (err) {
+        message.error(err instanceof AppError ? err.message : 'Не удалось отметить выполнение')
+      } finally {
+        completeBusy.value = false
+      }
+    },
+  })
 }
 
 async function onHandoff(): Promise<void> {

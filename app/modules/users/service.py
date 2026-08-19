@@ -242,10 +242,10 @@ class UserService:
                         details={"group_ids": senior_groups, "department_id": department_id},
                     )
             return senior_groups, department_id
-        if role in (UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT):
+        if role in (UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT, UserRole.LAWYER):
             if normalized or body.department_id is not None:
                 raise ValidationError(
-                    message="Accountant must not be assigned to a group or department",
+                    message="This role must not be assigned to a group or department",
                 )
             return [], None
         raise PermissionDenied()
@@ -365,6 +365,7 @@ class UserService:
                     UserRole.ADMIN,
                     UserRole.ACCOUNTANT,
                     UserRole.CHIEF_ACCOUNTANT,
+                    UserRole.LAWYER,
                 ):
                     target.group_id = None
                     target.department_id = None

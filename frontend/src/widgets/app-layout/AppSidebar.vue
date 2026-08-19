@@ -5,12 +5,14 @@ import {
   ClipboardList,
   FolderOpen,
   CheckSquare,
+  FileSpreadsheet,
   LayoutDashboard,
   MessageSquare,
   Phone,
   Settings,
   Shield,
   Tags,
+  Ticket,
   UserPlus,
   Users,
   UsersRound,
@@ -116,6 +118,34 @@ const menuOptions = computed(() => {
         icon: blinkIcon(CheckSquare, tasksBlink.value),
       },
     ]
+  }
+
+  if (auth.isLawyer) {
+    const lawyerItems: { label: string; key: string; icon: () => unknown }[] = [
+      {
+        label: 'Задачи',
+        key: 'tasks',
+        icon: blinkIcon(CheckSquare, tasksBlink.value),
+      },
+      {
+        label: 'Тикеты',
+        key: 'tickets',
+        icon: () => h(NIcon, null, { default: () => h(Ticket) }),
+      },
+      {
+        label: 'Парсер',
+        key: 'parser',
+        icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }),
+      },
+    ]
+    if (telephonyVisible.value) {
+      lawyerItems.push({
+        label: 'Телефония',
+        key: 'telephony',
+        icon: () => h(NIcon, null, { default: () => h(Phone) }),
+      })
+    }
+    return lawyerItems
   }
 
   const items = [
@@ -224,6 +254,22 @@ const menuOptions = computed(() => {
     })
   }
 
+  if (auth.canTickets) {
+    items.push({
+      label: 'Тикеты',
+      key: 'tickets',
+      icon: () => h(NIcon, null, { default: () => h(Ticket) }),
+    })
+  }
+
+  if (auth.canParser) {
+    items.push({
+      label: 'Парсер',
+      key: 'parser',
+      icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }),
+    })
+  }
+
   return items
 })
 
@@ -242,6 +288,8 @@ const activeKey = computed(() => {
   if (route.name === 'tasks') return 'tasks'
   if (route.name === 'notifications' || route.name === 'notification-history') return 'notifications'
   if (route.name === 'accounting') return 'accounting'
+  if (route.name === 'tickets') return 'tickets'
+  if (route.name === 'parser') return 'parser'
   if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
   if (route.name === 'group-escalation') return 'group-escalation'
@@ -288,6 +336,16 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'accounting') {
     void router.push({ name: 'accounting' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'tickets') {
+    void router.push({ name: 'tickets' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'parser') {
+    void router.push({ name: 'parser' })
     emit('closeDrawer')
     return
   }

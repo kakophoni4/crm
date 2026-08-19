@@ -120,7 +120,10 @@ const userOptions = computed<SelectOption[]>(() =>
   users.value
     .filter(
       (u) =>
-        u.status === 'active' && u.role !== 'accountant' && u.role !== 'chief_accountant',
+        u.status === 'active' &&
+        u.role !== 'accountant' &&
+        u.role !== 'chief_accountant' &&
+        u.role !== 'lawyer',
     )
     .map((u) => ({
       label: `${u.full_name} (@${u.username})`,

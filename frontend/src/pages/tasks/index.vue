@@ -359,13 +359,21 @@ async function onAcknowledge(task: DepartmentTask): Promise<void> {
 }
 
 async function onComplete(task: DepartmentTask): Promise<void> {
-  try {
-    await completeTask(task.id)
-    message.success('Отмечено как выполненное — ждёт подтверждения старшего')
-    await refresh()
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Ошибка')
-  }
+  dialog.warning({
+    title: 'Отметить выполненной?',
+    content: `Задача «${task.title}» уйдёт на проверку старшему.`,
+    positiveText: 'Выполнено',
+    negativeText: 'Отмена',
+    onPositiveClick: async () => {
+      try {
+        await completeTask(task.id)
+        message.success('Отмечено как выполненное — ждёт подтверждения старшего')
+        await refresh()
+      } catch (err) {
+        message.error(err instanceof AppError ? err.message : 'Ошибка')
+      }
+    },
+  })
 }
 
 async function onConfirm(task: DepartmentTask): Promise<void> {
@@ -736,6 +744,18 @@ onUnmounted(() => {
                         @click.stop="openReassign(task)"
                       >
                         Переназначить
+                      </NButton>
+                      <NButton
+                        v-if="
+                          (task.status === 'open' || task.status === 'new') &&
+                          isAssignedToMe(task)
+                        "
+                        size="tiny"
+                        type="primary"
+                        @click.stop="onComplete(task)"
+                      >
+                        <template #icon><Check :size="12" /></template>
+                        Выполнено
                       </NButton>
                       <NButton
                         v-if="task.status === 'done_pending'"

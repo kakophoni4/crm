@@ -138,6 +138,7 @@ const ROLE_SHORT_LABEL: Record<string, string> = {
   admin: 'админ',
   accountant: 'бухгалтер',
   chief_accountant: 'главбух',
+  lawyer: 'юрист',
 }
 
 export interface TaskAssigneeOption {

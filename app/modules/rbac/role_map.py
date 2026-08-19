@@ -118,6 +118,22 @@ _CHIEF_ACCOUNTANT_PERMISSIONS: frozenset[Permission] = _ACCOUNTANT_PERMISSIONS |
     }
 )
 
+_LAWYER_PERMISSIONS: frozenset[Permission] = frozenset(
+    {
+        Permission.PROFILE_PASSWORD_UPDATE,
+        Permission.PROFILE_FULL_NAME_UPDATE,
+        Permission.PROFILE_PRESENCE_UPDATE,
+        Permission.PROFILE_AVAILABILITY_UPDATE,
+        Permission.FILES_DOWNLOAD,
+        Permission.FILES_UPLOAD,
+        Permission.TASKS_READ,
+        Permission.TELEPHONY_READ,
+        Permission.TELEPHONY_CALL,
+        Permission.TICKETS_READ,
+        Permission.PARSER_READ,
+    }
+)
+
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.USER: _USER_PERMISSIONS,
     UserRole.SENIOR: _SENIOR_PERMISSIONS,
@@ -125,6 +141,7 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.ADMIN: _ADMIN_PERMISSIONS,
     UserRole.ACCOUNTANT: _ACCOUNTANT_PERMISSIONS,
     UserRole.CHIEF_ACCOUNTANT: _CHIEF_ACCOUNTANT_PERMISSIONS,
+    UserRole.LAWYER: _LAWYER_PERMISSIONS,
 }
 
 

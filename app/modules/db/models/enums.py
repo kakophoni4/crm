@@ -12,6 +12,7 @@ class UserRole(StrEnum):
     ADMIN = "admin"
     ACCOUNTANT = "accountant"
     CHIEF_ACCOUNTANT = "chief_accountant"
+    LAWYER = "lawyer"
 
 
 class UserStatus(StrEnum):

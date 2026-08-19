@@ -41,6 +41,7 @@ const routes: RouteRecordRaw[] = [
     redirect: () => {
       const auth = useAuthStore()
       if (auth.isAccountant) return '/accounting'
+      if (auth.isLawyer) return '/tickets'
       return '/chats'
     },
 
@@ -161,6 +162,30 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/pages/accounting/index.vue'),
 
         meta: { requiresAccounting: true },
+
+      },
+
+      {
+
+        path: 'tickets',
+
+        name: 'tickets',
+
+        component: () => import('@/pages/tickets/index.vue'),
+
+        meta: { requiresTickets: true },
+
+      },
+
+      {
+
+        path: 'parser',
+
+        name: 'parser',
+
+        component: () => import('@/pages/parser/index.vue'),
+
+        meta: { requiresParser: true },
 
       },
 
@@ -418,7 +443,11 @@ router.beforeEach(async (to) => {
       const auth = useAuthStore()
       await auth.hydrate()
       if (auth.isAuthenticated) {
-        const defaultRedirect = auth.isAccountant ? '/accounting' : '/chats'
+        const defaultRedirect = auth.isAccountant
+          ? '/accounting'
+          : auth.isLawyer
+            ? '/tickets'
+            : '/chats'
         const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : defaultRedirect
         return redirect
       }
@@ -433,6 +462,8 @@ router.beforeEach(async (to) => {
     to.matched.some((r) => r.meta.requiresAuth) ||
     to.matched.some((r) => r.meta.requiresSeniorOrAdmin) ||
     to.matched.some((r) => r.meta.requiresAccounting) ||
+    to.matched.some((r) => r.meta.requiresTickets) ||
+    to.matched.some((r) => r.meta.requiresParser) ||
     to.matched.some((r) => r.meta.requiresTelephonyCall) ||
     requiresAdminMeta(to.meta) ||
     to.matched.some((record) => requiresAdminMeta(record.meta))
@@ -452,11 +483,32 @@ router.beforeEach(async (to) => {
     return { name: 'contacts' }
   }
 
+  const needsTickets = to.matched.some((r) => r.meta.requiresTickets)
+  if (needsTickets && !auth.canTickets) {
+    return { name: 'contacts' }
+  }
+
+  const needsParser = to.matched.some((r) => r.meta.requiresParser)
+  if (needsParser && !auth.canParser) {
+    return { name: 'contacts' }
+  }
+
   // Бухгалтерам в меню есть «Задачи» — не выкидывать их обратно в кабинет.
   const accountantAllowed =
     needsAccounting || to.name === 'tasks' || to.name === 'accounting'
   if (auth.isAccountant && !accountantAllowed) {
     return { name: 'accounting' }
+  }
+
+  const lawyerAllowed =
+    needsTickets ||
+    needsParser ||
+    to.name === 'tasks' ||
+    to.name === 'tickets' ||
+    to.name === 'parser' ||
+    to.name === 'telephony'
+  if (auth.isLawyer && !lawyerAllowed) {
+    return { name: 'tickets' }
   }
 
   const needsTelephonyCall = to.matched.some((r) => r.meta.requiresTelephonyCall)

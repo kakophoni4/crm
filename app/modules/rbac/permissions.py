@@ -112,5 +112,9 @@ class Permission(StrEnum):
     ACCOUNTING_READ = "accounting.read"
     ACCOUNTING_MANAGE = "accounting.manage"
 
+    # Lawyer cabinet (smertniki tickets + lavok xlsx parser)
+    TICKETS_READ = "tickets.read"
+    PARSER_READ = "parser.read"
+
 
 ALL_PERMISSIONS: frozenset[Permission] = frozenset(Permission)

@@ -127,11 +127,40 @@ def test_role_permission_matrix(role: UserRole, permission: Permission, expected
     assert has_permission(role, permission) is expected
 
 
+_LAWYER_EXPECTED: frozenset[Permission] = frozenset(
+    {
+        Permission.PROFILE_PASSWORD_UPDATE,
+        Permission.PROFILE_FULL_NAME_UPDATE,
+        Permission.PROFILE_PRESENCE_UPDATE,
+        Permission.PROFILE_AVAILABILITY_UPDATE,
+        Permission.FILES_DOWNLOAD,
+        Permission.FILES_UPLOAD,
+        Permission.TASKS_READ,
+        Permission.TELEPHONY_READ,
+        Permission.TELEPHONY_CALL,
+        Permission.TICKETS_READ,
+        Permission.PARSER_READ,
+    }
+)
+
+
 def test_role_map_matches_expected_sets() -> None:
     assert ROLE_PERMISSIONS[UserRole.USER] == _USER_EXPECTED
     assert ROLE_PERMISSIONS[UserRole.SENIOR] == _SENIOR_EXPECTED
     assert ROLE_PERMISSIONS[UserRole.GROUP_SENIOR] == _GROUP_SENIOR_EXPECTED
     assert ROLE_PERMISSIONS[UserRole.ADMIN] == ALL_PERMISSIONS
+    assert ROLE_PERMISSIONS[UserRole.LAWYER] == _LAWYER_EXPECTED
+
+
+def test_lawyer_cabinet_permissions() -> None:
+    assert has_permission(UserRole.LAWYER, Permission.TICKETS_READ)
+    assert has_permission(UserRole.LAWYER, Permission.PARSER_READ)
+    assert has_permission(UserRole.LAWYER, Permission.TASKS_READ)
+    assert has_permission(UserRole.LAWYER, Permission.TELEPHONY_CALL)
+    assert not has_permission(UserRole.LAWYER, Permission.CHATS_READ_OWN)
+    assert not has_permission(UserRole.ACCOUNTANT, Permission.TICKETS_READ)
+    assert has_permission(UserRole.ADMIN, Permission.TICKETS_READ)
+    assert has_permission(UserRole.ADMIN, Permission.PARSER_READ)
 
 
 @pytest.mark.parametrize("permission", list(_ADMIN_ONLY))
