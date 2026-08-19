@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Recalculate VAT split on existing OPT order lines (e.g. 20% -> 22%).
+"""Recalculate VAT split on existing OPT order lines.
 
-Keeps gross amount unchanged; updates vat_amount and amount_without_vat.
+Default: 20% for periods through 2025, 22% from Q1 2026 (order.period_code).
+Keeps gross amount unchanged; updates vat_amount, amount_without_vat, vat_rate_percent.
 Also patches submission_request JSON for submitted orders (CRM audit/export consistency).
 
 Usage on VPS:
@@ -27,9 +28,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine  # noqa: E402
-from app.modules.leads.opt.vat import split_vat_included  # noqa: E402
+from app.modules.leads.opt.vat import split_vat_included, vat_rate_for_period_code  # noqa: E402
 from app.shared.db import get_session_factory  # noqa: E402
-from app.shared.settings import get_settings  # noqa: E402
 
 
 def _implied_rate_percent(line: LeadOptOrderLine) -> Decimal | None:
@@ -82,7 +82,7 @@ def _patch_submission_request(order: LeadOptOrder) -> int:
 async def _run(
     *,
     apply: bool,
-    rate: Decimal,
+    rate: Decimal | None,
     tolerance: Decimal,
     lead_id: int | None,
     order_id: int | None,
@@ -90,11 +90,13 @@ async def _run(
     session_factory = get_session_factory()
     lines_updated = 0
     orders_patched = 0
+    skipped_no_period = 0
 
     async with session_factory() as session:
         stmt = (
             select(LeadOptOrder)
             .options(selectinload(LeadOptOrder.lines))
+            .where(LeadOptOrder.deleted_at.is_(None))
             .order_by(LeadOptOrder.id)
         )
         if lead_id is not None:
@@ -103,15 +105,32 @@ async def _run(
             stmt = stmt.where(LeadOptOrder.id == order_id)
 
         orders = list((await session.execute(stmt)).scalars().unique().all())
-        print(f"Заявок: {len(orders)}, целевая ставка НДС: {rate}%")
+        if rate is None:
+            print(f"Заявок: {len(orders)}, ставка НДС: по периоду (до 2026 = 20%, с 1/26 = 22%)")
+        else:
+            print(f"Заявок: {len(orders)}, целевая ставка НДС: {rate}%")
 
         for order in orders:
+            target = rate if rate is not None else vat_rate_for_period_code(order.period_code)
+            if rate is None and not order.period_code:
+                skipped_no_period += 1
+                print(f"  skip order={order.id} lead={order.lead_id} no={order.order_no}: нет периода")
+                continue
             order_changed = False
+            stored_rate = Decimal(str(order.vat_rate_percent or 0)).quantize(Decimal("1"))
+            if stored_rate != target:
+                print(
+                    f"  order={order.id} lead={order.lead_id} no={order.order_no} "
+                    f"period={order.period_code or '—'} rate {stored_rate}%->{target}%",
+                )
+                if apply:
+                    order.vat_rate_percent = float(target)
+                order_changed = True
             for line in order.lines:
-                if not _needs_recalc(line, target_rate=rate, tolerance=tolerance):
+                if not _needs_recalc(line, target_rate=target, tolerance=tolerance):
                     continue
                 total = Decimal(str(line.amount))
-                _, new_vat, new_wo = split_vat_included(total, rate_percent=rate)
+                _, new_vat, new_wo = split_vat_included(total, rate_percent=target)
                 old_vat = Decimal(str(line.vat_amount))
                 old_wo = Decimal(str(line.amount_without_vat))
                 if new_vat == old_vat and new_wo == old_wo:
@@ -139,20 +158,22 @@ async def _run(
             await session.rollback()
 
     mode = "APPLY" if apply else "DRY-RUN"
-    print(f"{mode}: lines={lines_updated}, submission_requests={orders_patched}")
+    print(
+        f"{mode}: lines={lines_updated}, submission_requests={orders_patched}, "
+        f"skipped_no_period={skipped_no_period}",
+    )
     return 0
 
 
 def main() -> int:
-    settings = get_settings()
     parser = argparse.ArgumentParser(description="Recalculate VAT on OPT order lines")
     parser.add_argument("--apply", action="store_true", help="Persist changes (default: dry-run)")
     parser.add_argument("--dry-run", action="store_true", help="Explicit dry-run")
     parser.add_argument(
         "--rate",
         type=Decimal,
-        default=Decimal(str(settings.opt_vat_rate_percent)),
-        help="Target VAT percent (default: from OPT_VAT_RATE_PERCENT)",
+        default=None,
+        help="Force one VAT percent for all orders (default: 20%% until 2025, 22%% from 1/26)",
     )
     parser.add_argument(
         "--tolerance",
@@ -167,7 +188,7 @@ def main() -> int:
     return asyncio.run(
         _run(
             apply=apply,
-            rate=args.rate,
+            rate=args.rate if args.rate is not None else None,
             tolerance=args.tolerance,
             lead_id=args.lead_id,
             order_id=args.order_id,
