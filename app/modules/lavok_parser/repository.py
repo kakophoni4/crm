@@ -80,11 +80,24 @@ class LavokParserRepository:
         return result.scalar_one_or_none()
 
     async def upsert_parsed(self, parsed: list[ParsedLotRow]) -> tuple[int, int]:
+        inns = {row.inn for row in parsed}
+        dates = {row.sheet_date for row in parsed}
+        existing_rows = list(
+            (
+                await self._session.execute(
+                    select(LavokParserLot).where(
+                        LavokParserLot.inn.in_(inns),
+                        LavokParserLot.sheet_date.in_(dates),
+                    ),
+                )
+            ).scalars().all(),
+        )
+        by_key = {(row.inn, row.sheet_date): row for row in existing_rows}
         created = 0
         updated = 0
         now = datetime.now(UTC)
         for row in parsed:
-            existing = await self.get_by_inn_date(row.inn, row.sheet_date)
+            existing = by_key.get((row.inn, row.sheet_date))
             if existing is None:
                 lot = LavokParserLot(
                     inn=row.inn,
@@ -97,6 +110,7 @@ class LavokParserRepository:
                 for field in SNAPSHOT_FIELDS:
                     setattr(lot, field, row.fields.get(field))
                 self._session.add(lot)
+                by_key[(row.inn, row.sheet_date)] = lot
                 created += 1
                 continue
             for field in SNAPSHOT_FIELDS:
