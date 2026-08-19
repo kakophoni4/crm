@@ -677,12 +677,6 @@ onUnmounted(() => {
               @update:value="onBoardDepartmentChange"
             />
           </div>
-          <p class="kanban-hint">
-            Перетаскивайте карточки между колонками, чтобы менять статус.
-            <template v-if="isAdmin">
-              Колонка «Готово» открывается фильтром «Показать готовые». «Удалённые» видите только вы.
-            </template>
-          </p>
           <NSpin :show="boardLoading && !board">
             <div v-if="board" class="kanban" :style="kanbanGridStyle">
               <div
@@ -1003,12 +997,6 @@ onUnmounted(() => {
 .task-filters__summary {
   margin: 10px 0 0;
   font-size: 13px;
-  color: var(--app-text-muted);
-}
-
-.kanban-hint {
-  margin: 0 0 12px;
-  font-size: 12px;
   color: var(--app-text-muted);
 }
 

@@ -554,9 +554,6 @@ function openChild(id: number): void {
                   <span>{{ new Date(item.created_at).toLocaleString('ru-RU') }}</span>
                 </li>
               </ul>
-              <p v-else-if="!historyLoading" class="task-detail__hint">
-                Пока нет записей. История пишется с этого обновления: кто создал задачу, сменил исполнителя, статус или файлы.
-              </p>
             </NSpin>
           </section>
 
@@ -609,13 +606,6 @@ function openChild(id: number): void {
 
           <section v-if="canChangeAssignee" class="task-detail__handoff">
             <h4>{{ isWorkingOn ? 'Если свою часть сделали' : 'Сменить исполнителя' }}</h4>
-            <p class="task-detail__hint">
-              {{
-                isWorkingOn
-                  ? 'Можно добавить соисполнителя, передать задачу дальше или поставить связанную задачу. Комментарий и файлы сверху уйдут вместе с действием.'
-                  : 'Можно передать задачу другому сотруднику, добавить соисполнителя или поставить связанную задачу.'
-              }}
-            </p>
             <NRadioGroup v-model:value="handoffAction" name="handoff" style="margin-bottom: 8px">
               <NSpace>
                 <NRadio value="add">Добавить соисполнителя</NRadio>
@@ -741,11 +731,6 @@ function openChild(id: number): void {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.9rem;
-}
-.task-detail__hint {
-  margin: 0 0 8px;
-  font-size: 0.8rem;
-  color: var(--app-text-muted);
 }
 .task-detail__files,
 .task-detail__comments,
