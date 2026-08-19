@@ -7,8 +7,11 @@ import type {
   TaskComment,
   TaskCreateBody,
   TaskDetail,
+  TaskHistoryItem,
+  TaskListQuery,
   TaskStatus,
   TaskUpdateBody,
+  TaskWorkloadSummary,
 } from './types'
 
 export type {
@@ -18,14 +21,35 @@ export type {
   TaskComment,
   TaskCreateBody,
   TaskDetail,
+  TaskHistoryItem,
+  TaskListQuery,
   TaskStatus,
   TaskType,
   TaskUpdateBody,
+  TaskWorkloadSummary,
 } from './types'
 export { formatTaskAssigneeLabel } from './types'
 
-export async function listMyTasks(): Promise<{ items: DepartmentTask[]; total: number }> {
-  const { data } = await http.get<{ items: DepartmentTask[]; total: number }>('/tasks/mine')
+function toTaskQueryParams(query?: TaskListQuery): Record<string, string | number | boolean> {
+  const params: Record<string, string | number | boolean> = {}
+  if (!query) return params
+  if (query.assignee_id != null) params.assignee_id = query.assignee_id
+  if (query.created_by != null) params.created_by = query.created_by
+  if (query.q?.trim()) params.q = query.q.trim()
+  if (query.status) params.status = query.status
+  if (query.include_closed === true) params.include_closed = true
+  if (query.include_closed === false) params.include_closed = false
+  return params
+}
+
+export async function listMyTasks(
+  query?: TaskListQuery,
+): Promise<{ items: DepartmentTask[]; total: number; summary?: TaskWorkloadSummary }> {
+  const { data } = await http.get<{
+    items: DepartmentTask[]
+    total: number
+    summary?: TaskWorkloadSummary
+  }>('/tasks/mine', { params: toTaskQueryParams(query) })
   return data
 }
 
@@ -34,9 +58,12 @@ export async function listTaskAssignees(): Promise<TaskAssigneeOption[]> {
   return data.items ?? []
 }
 
-export async function getTaskBoard(departmentId?: number): Promise<TaskBoard> {
+export async function getTaskBoard(departmentId?: number, query?: TaskListQuery): Promise<TaskBoard> {
   const { data } = await http.get<TaskBoard>('/tasks/board', {
-    params: departmentId != null ? { department_id: departmentId } : undefined,
+    params: {
+      ...(departmentId != null ? { department_id: departmentId } : {}),
+      ...toTaskQueryParams(query),
+    },
   })
   return data
 }
@@ -107,6 +134,11 @@ export async function acknowledgeTask(taskId: number): Promise<DepartmentTask> {
 export async function getTask(taskId: number): Promise<TaskDetail> {
   const { data } = await http.get<TaskDetail>(`/tasks/${taskId}`)
   return data
+}
+
+export async function getTaskHistory(taskId: number): Promise<TaskHistoryItem[]> {
+  const { data } = await http.get<{ items: TaskHistoryItem[] }>(`/tasks/${taskId}/history`)
+  return data.items ?? []
 }
 
 export async function addTaskComment(

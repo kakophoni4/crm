@@ -38,7 +38,7 @@ from app.modules.accounting.schemas import (
     AccountingUnitPatchRequest,
     AccountingUnitResponse,
 )
-from app.modules.db.models.enums import UserRole
+from app.modules.db.models.enums import AuditAction, UserRole
 from app.modules.db.models.opt_requirement import OptRequirement
 from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.user import User
@@ -1275,9 +1275,21 @@ class AccountingService:
                 attached.append(fid_i)
         for fid in attached:
             self._session.add(DepartmentTaskFile(task_id=task.id, file_id=fid))
+        task_service = TaskService(self._session)
+        await task_service._write_history(
+            actor,
+            task,
+            AuditAction.TASK_CREATE,
+            {
+                "kind": "create",
+                "title": task.title,
+                "assignee_id": assignee.id,
+                "assignee_name": assignee.full_name,
+                "source": "fns_requirement",
+            },
+        )
         await self._session.commit()
         await self._session.refresh(task)
-        task_service = TaskService(self._session)
         response = (await task_service._build_responses([task]))[0]
         from app.realtime.events import publish
         from app.realtime.topics import TASK_CREATED

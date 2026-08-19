@@ -25,6 +25,7 @@ import {
   completeTask,
   formatTaskAssigneeLabel,
   getTask,
+  getTaskHistory,
   handoffTask,
   listTaskAssignees,
   notifyTaskAssignee,
@@ -32,6 +33,7 @@ import {
   type DepartmentTask,
   type TaskAssigneeOption,
   type TaskDetail,
+  type TaskHistoryItem,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS, type TaskFileBrief } from '@/features/tasks/types'
 import {
@@ -59,6 +61,8 @@ const message = useMessage()
 const auth = useAuthStore()
 const loading = ref(false)
 const detail = ref<TaskDetail | null>(null)
+const historyItems = ref<TaskHistoryItem[]>([])
+const historyLoading = ref(false)
 const commentBody = ref('')
 const commentLoading = ref(false)
 const notifyLoading = ref<string | null>(null)
@@ -157,9 +161,10 @@ watch(
   ([open, id]) => {
     if (!open || id == null) {
       detail.value = null
+      historyItems.value = []
       commentBody.value = ''
       commentFiles.value = []
-    uploadKey.value += 1
+      uploadKey.value += 1
       handoffUserId.value = null
       handoffAction.value = 'add'
       followTitle.value = ''
@@ -173,6 +178,17 @@ watch(
   },
 )
 
+async function loadHistory(id: number): Promise<void> {
+  historyLoading.value = true
+  try {
+    historyItems.value = await getTaskHistory(id)
+  } catch {
+    historyItems.value = []
+  } finally {
+    historyLoading.value = false
+  }
+}
+
 async function loadAssignees(): Promise<void> {
   try {
     assigneeUsers.value = await listTaskAssignees()
@@ -185,6 +201,7 @@ async function load(id: number): Promise<void> {
   loading.value = true
   try {
     detail.value = await getTask(id)
+    void loadHistory(id)
     const me = meId.value
     const working =
       me != null &&
@@ -527,6 +544,22 @@ function openChild(id: number): void {
           </section>
 
           <section>
+            <h4>История изменений</h4>
+            <NSpin :show="historyLoading" size="small">
+              <ul v-if="historyItems.length" class="task-detail__history">
+                <li v-for="item in historyItems" :key="item.id">
+                  <strong>{{ item.actor?.full_name || 'Система' }}</strong>
+                  <p>{{ item.summary }}</p>
+                  <span>{{ new Date(item.created_at).toLocaleString('ru-RU') }}</span>
+                </li>
+              </ul>
+              <p v-else-if="!historyLoading" class="task-detail__hint">
+                Пока нет записей. История пишется с этого обновления: кто создал задачу, сменил исполнителя, статус или файлы.
+              </p>
+            </NSpin>
+          </section>
+
+          <section>
             <h4>Комментарии</h4>
             <ul v-if="detail.comments.length" class="task-detail__comments">
               <li v-for="c in detail.comments" :key="c.id">
@@ -715,6 +748,7 @@ function openChild(id: number): void {
 }
 .task-detail__files,
 .task-detail__comments,
+.task-detail__history,
 .task-detail__children {
   list-style: none;
   margin: 0;
@@ -743,10 +777,19 @@ function openChild(id: number): void {
   font: inherit;
   text-align: left;
 }
+.task-detail__history li,
 .task-detail__comments li {
   padding: 8px 10px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--app-border) 30%, transparent);
+}
+.task-detail__history p {
+  margin: 4px 0;
+  font-size: 0.88rem;
+}
+.task-detail__history span {
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
 }
 .task-detail__comments p {
   margin: 4px 0;

@@ -9,6 +9,7 @@ import {
   NSelect,
   NSpace,
   NSpin,
+  NSwitch,
   NTabPane,
   NTabs,
   NTag,
@@ -37,8 +38,10 @@ import {
   type DepartmentTask,
   type TaskAssigneeOption,
   type TaskBoard,
+  type TaskListQuery,
   type TaskStatus,
   type TaskType,
+  type TaskWorkloadSummary,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS } from '@/features/tasks/types'
 import { uploadFile } from '@/features/chats/api'
@@ -70,6 +73,16 @@ const assigneeUsers = ref<TaskAssigneeOption[]>([])
 const departments = ref<Department[]>([])
 const selectedDeptId = ref<number | null>(null)
 
+const filterQuery = ref('')
+const filterQueryDebounced = ref('')
+const filterAssigneeId = ref<number | null>(null)
+const filterCreatedBy = ref<number | null>(null)
+const filterStatus = ref<TaskStatus | null>(null)
+const includeClosedMine = ref(false)
+const includeClosedBoard = ref(true)
+const mineSummary = ref<TaskWorkloadSummary | null>(null)
+let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 const draggingTask = ref<DepartmentTask | null>(null)
 const dragOverStatus = ref<string | null>(null)
 
@@ -99,6 +112,66 @@ const assigneeOptions = computed(() =>
     value: u.id,
   })),
 )
+
+const statusFilterOptions = [
+  { label: 'Новые', value: 'new' },
+  { label: 'В работе', value: 'open' },
+  { label: 'На проверке', value: 'done_pending' },
+  { label: 'Готово', value: 'closed' },
+]
+
+const hasTaskFilters = computed(
+  () =>
+    filterAssigneeId.value != null ||
+    filterCreatedBy.value != null ||
+    Boolean(filterQueryDebounced.value) ||
+    filterStatus.value != null,
+)
+
+const includeClosed = computed({
+  get: () => (activeTab.value === 'board' ? includeClosedBoard.value : includeClosedMine.value),
+  set: (value: boolean) => {
+    if (activeTab.value === 'board') includeClosedBoard.value = value
+    else includeClosedMine.value = value
+  },
+})
+
+function currentQuery(): TaskListQuery {
+  return {
+    assignee_id: filterAssigneeId.value,
+    created_by: filterCreatedBy.value,
+    q: filterQueryDebounced.value || null,
+    status: filterStatus.value,
+    include_closed: includeClosed.value,
+  }
+}
+
+function formatWorkload(summary: TaskWorkloadSummary | null | undefined): string {
+  if (!summary || summary.total <= 0) return ''
+  const parts: string[] = []
+  if (summary.new) parts.push(`новые ${summary.new}`)
+  if (summary.open) parts.push(`в работе ${summary.open}`)
+  if (summary.overdue) parts.push(`просрочено ${summary.overdue}`)
+  if (summary.pending_review) parts.push(`на проверке ${summary.pending_review}`)
+  if (summary.done) parts.push(`готово ${summary.done}`)
+  return `Всего ${summary.total}${parts.length ? `: ${parts.join(' · ')}` : ''}`
+}
+
+const currentSummaryText = computed(() =>
+  activeTab.value === 'board'
+    ? formatWorkload(board.value?.summary)
+    : formatWorkload(mineSummary.value),
+)
+
+function resetTaskFilters(): void {
+  filterQuery.value = ''
+  filterQueryDebounced.value = ''
+  filterAssigneeId.value = null
+  filterCreatedBy.value = null
+  filterStatus.value = null
+  includeClosedMine.value = false
+  includeClosedBoard.value = true
+}
 
 const reassignOpen = ref(false)
 const reassignLoading = ref(false)
@@ -157,9 +230,12 @@ async function loadMine(): Promise<void> {
   // Спиннер показываем только если совсем нет данных — иначе обновляем в фоне.
   if (!myTasks.value.length) mineLoading.value = true
   try {
-    const data = await listMyTasks()
+    const data = await listMyTasks(currentQuery())
     myTasks.value = data.items
-    setCached(MINE_CACHE_KEY, data.items)
+    mineSummary.value = data.summary ?? null
+    if (!hasTaskFilters.value && !includeClosedMine.value) {
+      setCached(MINE_CACHE_KEY, data.items)
+    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить задачи')
   } finally {
@@ -173,8 +249,11 @@ async function loadBoard(): Promise<void> {
   try {
     board.value = await getTaskBoard(
       isAdmin.value && selectedDeptId.value != null ? selectedDeptId.value : undefined,
+      currentQuery(),
     )
-    setCached(boardCacheKey.value, board.value)
+    if (!hasTaskFilters.value) {
+      setCached(boardCacheKey.value, board.value)
+    }
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить доску')
   } finally {
@@ -442,6 +521,34 @@ watch(activeTab, (tab) => {
   else void loadBoard()
 })
 
+watch(filterQuery, (value) => {
+  if (queryDebounceTimer) clearTimeout(queryDebounceTimer)
+  queryDebounceTimer = setTimeout(() => {
+    filterQueryDebounced.value = value.trim()
+  }, 300)
+})
+
+watch([filterAssigneeId, filterCreatedBy], ([assignee, creator]) => {
+  if (assignee != null || creator != null) {
+    includeClosedMine.value = true
+    includeClosedBoard.value = true
+  }
+})
+
+watch(
+  [
+    filterAssigneeId,
+    filterCreatedBy,
+    filterQueryDebounced,
+    filterStatus,
+    includeClosedMine,
+    includeClosedBoard,
+  ],
+  () => {
+    void refresh()
+  },
+)
+
 onMounted(async () => {
   const cachedMine = peekCached<DepartmentTask[]>(MINE_CACHE_KEY)
   if (cachedMine) myTasks.value = cachedMine
@@ -465,6 +572,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubTasks?.()
   if (wsRefreshTimer) clearTimeout(wsRefreshTimer)
+  if (queryDebounceTimer) clearTimeout(queryDebounceTimer)
 })
 </script>
 
@@ -478,6 +586,44 @@ onUnmounted(() => {
           Новая задача
         </NButton>
       </div>
+
+      <div class="task-filters">
+        <NInput
+          v-model:value="filterQuery"
+          clearable
+          placeholder="Поиск по названию или описанию"
+          style="min-width: 220px; flex: 1"
+        />
+        <NSelect
+          v-model:value="filterAssigneeId"
+          :options="assigneeOptions"
+          filterable
+          clearable
+          placeholder="Исполнитель"
+          style="min-width: 200px; flex: 1"
+        />
+        <NSelect
+          v-model:value="filterCreatedBy"
+          :options="assigneeOptions"
+          filterable
+          clearable
+          placeholder="Постановщик"
+          style="min-width: 200px; flex: 1"
+        />
+        <NSelect
+          v-model:value="filterStatus"
+          :options="statusFilterOptions"
+          clearable
+          placeholder="Статус"
+          style="min-width: 160px"
+        />
+        <label class="task-filters__closed">
+          <NSwitch v-model:value="includeClosed" size="small" />
+          Показать готовые
+        </label>
+        <NButton v-if="hasTaskFilters" quaternary @click="resetTaskFilters">Сбросить</NButton>
+      </div>
+      <p v-if="currentSummaryText" class="task-filters__summary">{{ currentSummaryText }}</p>
 
       <NTabs v-model:value="activeTab" type="line" style="margin-top: 16px">
         <NTabPane v-if="isManager" name="board" tab="Доска отдела">
@@ -538,6 +684,7 @@ onUnmounted(() => {
                       Отдел: {{ departmentMap[task.department_id] ?? task.department_id }}
                     </p>
                     <p class="task-card-meta">Исполнитель: {{ task.assignee?.full_name ?? '—' }}</p>
+                    <p class="task-card-meta">Поставил: {{ task.creator?.full_name ?? '—' }}</p>
                     <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
                     <NSpace size="small" class="task-card-actions">
                       <NButton
@@ -576,7 +723,9 @@ onUnmounted(() => {
                       </NButton>
                     </NSpace>
                   </div>
-                  <p v-if="!col.items.length" class="kanban-empty">Перетащите задачу сюда</p>
+                  <p v-if="!col.items.length" class="kanban-empty">
+                    {{ hasTaskFilters ? 'Нет задач по фильтру' : 'Перетащите задачу сюда' }}
+                  </p>
                 </div>
               </div>
             </div>
@@ -645,7 +794,9 @@ onUnmounted(() => {
                 </NButton>
               </div>
             </div>
-            <p v-else class="empty-hint">Нет активных задач</p>
+            <p v-else class="empty-hint">
+              {{ hasTaskFilters || includeClosedMine ? 'Нет задач по выбранным фильтрам' : 'Нет активных задач' }}
+            </p>
           </NSpin>
         </NTabPane>
       </NTabs>
@@ -758,6 +909,29 @@ onUnmounted(() => {
 
 .dept-filter {
   margin-bottom: 16px;
+}
+
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.task-filters__closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--app-text-muted);
+  white-space: nowrap;
+}
+
+.task-filters__summary {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--app-text-muted);
 }
 
 .kanban-hint {

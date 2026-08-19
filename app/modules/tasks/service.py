@@ -7,9 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.department_task import DepartmentTask
-from app.modules.db.models.enums import UserRole, UserStatus
+from app.modules.db.models.enums import AuditAction, UserRole, UserStatus
 from app.modules.db.models.user import User
 from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_department_ids, visible_user_ids
+from app.modules.tasks.history import format_task_history_summary
 from app.modules.tasks.repository import TaskRepository
 from app.modules.tasks.schemas import (
     ClientRequirementAccountantOption,
@@ -23,11 +24,14 @@ from app.modules.tasks.schemas import (
     TaskCreateRequest,
     TaskDetailResponse,
     TaskFileBrief,
+    TaskHistoryItem,
+    TaskHistoryResponse,
     TaskListResponse,
     TaskMoveRequest,
     TaskResponse,
     TaskUpdateRequest,
     TaskUserBrief,
+    TaskWorkloadSummary,
 )
 from app.modules.tasks.types import (
     ACTIVE_TASK_STATUSES,
@@ -464,16 +468,86 @@ class TaskService:
             for t in tasks
         ]
 
-    async def list_my_tasks(self, actor: User) -> TaskListResponse:
-        rows = self._repo.sort_tasks_for_assignee(await self._repo.list_for_assignee(actor.id))
+    async def _write_history(
+        self,
+        actor: User,
+        task: DepartmentTask,
+        action: AuditAction,
+        payload: dict | None = None,
+    ) -> None:
+        from app.modules.audit.service import AuditService
+
+        await AuditService(self._session).write(
+            actor_id=actor.id,
+            action=action,
+            entity_type="task",
+            entity_id=task.id,
+            payload=payload or {},
+        )
+
+    @staticmethod
+    def _iso(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC).isoformat()
+        return value.isoformat()
+
+    def _workload_summary(self, items: list[TaskResponse]) -> TaskWorkloadSummary:
+        return TaskWorkloadSummary(
+            total=len(items),
+            new=sum(1 for item in items if item.status == TaskStatus.NEW.value),
+            open=sum(1 for item in items if item.status == TaskStatus.OPEN.value),
+            overdue=sum(1 for item in items if item.is_overdue),
+            pending_review=sum(1 for item in items if item.status == TaskStatus.DONE_PENDING.value),
+            done=sum(1 for item in items if item.status == TaskStatus.CLOSED.value),
+        )
+
+    @staticmethod
+    def _filter_statuses(*, status: TaskStatus | None, include_closed: bool) -> list[str] | None:
+        if status is not None:
+            return [status.value]
+        if include_closed:
+            return None
+        return [item.value for item in ACTIVE_TASK_STATUSES]
+
+    async def list_my_tasks(
+        self,
+        actor: User,
+        *,
+        assignee_id: int | None = None,
+        created_by: int | None = None,
+        q: str | None = None,
+        status: TaskStatus | None = None,
+        include_closed: bool = False,
+    ) -> TaskListResponse:
+        needle = (q or "").strip() or None
+        has_filters = any([assignee_id, created_by, needle, status, include_closed])
+        if not has_filters:
+            rows = self._repo.sort_tasks_for_assignee(await self._repo.list_for_assignee(actor.id))
+        else:
+            rows = self._repo.sort_tasks_for_assignee(
+                await self._repo.list_filtered(
+                    related_user_id=actor.id,
+                    assignee_id=assignee_id,
+                    created_by=created_by,
+                    statuses=self._filter_statuses(status=status, include_closed=include_closed),
+                    q=needle,
+                ),
+            )
         items = await self._build_responses(rows)
-        return TaskListResponse(items=items, total=len(items))
+        return TaskListResponse(items=items, total=len(items), summary=self._workload_summary(items))
 
     async def board(
         self,
         actor: User,
         *,
         department_id: int | None = None,
+        assignee_id: int | None = None,
+        created_by: int | None = None,
+        q: str | None = None,
+        status: TaskStatus | None = None,
+        include_closed: bool = True,
     ) -> TaskBoardResponse:
         if not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Доска задач доступна старшему оператору")
@@ -498,9 +572,25 @@ class TaskService:
             await self._ensure_department_access(ctx, dept_id)
             dept_ids = [dept_id]
 
-        active_rows = await self._repo.list_for_departments(dept_ids)
-        closed_rows = await self._repo.list_closed_for_departments(dept_ids, limit=50)
-        responses = await self._build_responses([*active_rows, *closed_rows])
+        needle = (q or "").strip() or None
+        filtered = any([assignee_id, created_by, needle, status])
+        if filtered:
+            rows = await self._repo.list_filtered(
+                department_ids=dept_ids,
+                assignee_id=assignee_id,
+                created_by=created_by,
+                statuses=self._filter_statuses(status=status, include_closed=include_closed),
+                q=needle,
+            )
+        else:
+            active_rows = await self._repo.list_for_departments(dept_ids)
+            closed_rows = (
+                await self._repo.list_closed_for_departments(dept_ids, limit=50)
+                if include_closed
+                else []
+            )
+            rows = [*active_rows, *closed_rows]
+        responses = await self._build_responses(rows)
         by_status: dict[str, list[TaskResponse]] = {
             TaskStatus.NEW.value: [],
             TaskStatus.OPEN.value: [],
@@ -537,7 +627,11 @@ class TaskService:
             {"value": t.value, "label": TASK_TYPE_LABELS[t], "sort_order": TASK_TYPE_SORT_ORDER[t]}
             for t in TaskType
         ]
-        return TaskBoardResponse(columns=columns, task_types=task_types)
+        return TaskBoardResponse(
+            columns=columns,
+            task_types=task_types,
+            summary=self._workload_summary(responses),
+        )
 
     async def create(self, actor: User, body: TaskCreateRequest) -> TaskResponse:
         if not self._can_create_task(actor):
@@ -566,6 +660,17 @@ class TaskService:
         )
         row = await self._repo.create(row)
         await self._attach_files(row.id, body.file_ids)
+        await self._write_history(
+            actor,
+            row,
+            AuditAction.TASK_CREATE,
+            {
+                "kind": "create",
+                "title": row.title,
+                "assignee_id": assignee.id,
+                "assignee_name": assignee.full_name,
+            },
+        )
         response = (await self._build_responses([row]))[0]
         payload = self._event_payload(row)
         await publish(TASK_CREATED, payload, scope={"user_id": row.assignee_id})
@@ -580,23 +685,55 @@ class TaskService:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
 
+        changes: dict[str, dict[str, object | None]] = {}
+
         if body.title is not None:
-            task.title = body.title.strip()
+            title = body.title.strip()
+            if title != task.title:
+                changes["title"] = {"from": task.title, "to": title}
+            task.title = title
         if body.description is not None:
-            task.description = body.description.strip() or None
+            description = body.description.strip() or None
+            if description != task.description:
+                changes["description"] = {"from": task.description, "to": description}
+            task.description = description
         if body.task_type is not None:
-            task.task_type = body.task_type.value
+            next_type = body.task_type.value
+            if next_type != task.task_type:
+                changes["task_type"] = {"from": task.task_type, "to": next_type}
+            task.task_type = next_type
         if "due_at" in body.model_fields_set:
+            if self._iso(body.due_at) != self._iso(task.due_at):
+                changes["due_at"] = {"from": self._iso(task.due_at), "to": self._iso(body.due_at)}
             task.due_at = body.due_at
             task.due_reminder_sent_at = None
+        assignee_payload: dict[str, object] | None = None
         if body.assignee_id is not None:
             if not await self._can_change_assignee(actor, task):
                 raise PermissionDenied(message="Нельзя сменить исполнителя этой задачи")
             assignee = await self._ensure_active_assignee(body.assignee_id)
             await self._ensure_assignee_target_allowed(actor, task, assignee)
+            if assignee.id != task.assignee_id:
+                previous = await self._load_user(task.assignee_id)
+                assignee_payload = {
+                    "kind": "assignee",
+                    "from": previous.id,
+                    "from_name": previous.full_name,
+                    "to": assignee.id,
+                    "to_name": assignee.full_name,
+                }
             task.assignee_id = assignee.id
 
         task = await self._repo.save(task)
+        if assignee_payload is not None:
+            await self._write_history(actor, task, AuditAction.TASK_UPDATE, assignee_payload)
+        if changes:
+            await self._write_history(
+                actor,
+                task,
+                AuditAction.TASK_UPDATE,
+                {"kind": "fields", "changes": changes},
+            )
         response = (await self._build_responses([task]))[0]
         await publish(TASK_UPDATED, self._event_payload(task), scope={"user_id": task.assignee_id})
         await publish(
@@ -615,6 +752,7 @@ class TaskService:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
         now = datetime.now(UTC)
+        previous_status = task.status
 
         if target == TaskStatus.NEW:
             task.status = TaskStatus.NEW.value
@@ -647,6 +785,13 @@ class TaskService:
         if target != TaskStatus.CLOSED:
             await self._repo.reorder_column(task, status=task.status, position=body.position)
         task = await self._repo.save(task)
+        if previous_status != task.status:
+            await self._write_history(
+                actor,
+                task,
+                AuditAction.TASK_STATUS_UPDATE,
+                {"kind": "move", "from": previous_status, "to": task.status},
+            )
         response = (await self._build_responses([task]))[0]
         payload = self._event_payload(task)
         await publish(TASK_UPDATED, payload, scope={"user_id": task.assignee_id})
@@ -663,6 +808,12 @@ class TaskService:
                 raise PermissionDenied(message="Принять задачу может только исполнитель")
         task.status = TaskStatus.OPEN.value
         task = await self._repo.save(task)
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_STATUS_UPDATE,
+            {"kind": "acknowledge", "from": TaskStatus.NEW.value, "to": task.status},
+        )
         response = (await self._build_responses([task]))[0]
         await publish(TASK_UPDATED, self._event_payload(task), scope={"user_id": task.assignee_id})
         return response
@@ -680,12 +831,19 @@ class TaskService:
             raise NotFound(message="Задача не найдена")
         if not await self._is_working_on(actor, task) and not self._is_senior_or_admin(actor):
             raise PermissionDenied(message="Отметить выполнение может только исполнитель")
+        previous = task.status
         await self._add_comment_row(task, actor, comment or "", file_ids=file_ids)
         now = datetime.now(UTC)
         task.status = TaskStatus.DONE_PENDING.value
         task.completed_at = now
         task.completed_by = actor.id
         task = await self._repo.save(task)
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_STATUS_UPDATE,
+            {"kind": "complete", "from": previous, "to": task.status},
+        )
         response = (await self._build_responses([task]))[0]
         await publish(
             TASK_DONE_PENDING,
@@ -706,6 +864,12 @@ class TaskService:
         task.confirmed_at = now
         task.confirmed_by = actor.id
         task = await self._repo.save(task)
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_STATUS_UPDATE,
+            {"kind": "confirm", "from": TaskStatus.DONE_PENDING.value, "to": task.status},
+        )
         response = (await self._build_responses([task]))[0]
         await publish(
             TASK_CONFIRMED,
@@ -730,6 +894,12 @@ class TaskService:
         task.completed_at = None
         task.completed_by = None
         task = await self._repo.save(task)
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_STATUS_UPDATE,
+            {"kind": "reopen", "from": TaskStatus.DONE_PENDING.value, "to": task.status},
+        )
         response = (await self._build_responses([task]))[0]
         await publish(TASK_UPDATED, self._event_payload(task), scope={"user_id": task.assignee_id})
         await publish(
@@ -746,10 +916,17 @@ class TaskService:
         if task is None or task.status not in {s.value for s in ACTIVE_TASK_STATUSES}:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
+        previous_status = task.status
         task.status = TaskStatus.CLOSED.value
         task.confirmed_at = datetime.now(UTC)
         task.confirmed_by = actor.id
         await self._repo.save(task)
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_DELETE,
+            {"kind": "delete", "from": previous_status, "to": task.status},
+        )
         await publish(TASK_CONFIRMED, self._event_payload(task), scope={"user_id": task.assignee_id})
         await publish(
             TASK_CONFIRMED,
@@ -819,6 +996,39 @@ class TaskService:
             child_tasks=child_briefs,
         )
 
+    async def history(self, actor: User, task_id: int, *, limit: int = 100) -> TaskHistoryResponse:
+        from app.modules.audit.repository import AuditRepository
+
+        task = await self._repo.get_by_id(task_id)
+        if task is None:
+            raise NotFound(message="Задача не найдена")
+        await self._ensure_task_visible(actor, task)
+        rows = await AuditRepository(self._session).list_for_entity(
+            entity_type="task",
+            entity_id=task_id,
+            limit=max(1, min(limit, 200)),
+        )
+        actors = await self._users_map({row.actor_id for row in rows if row.actor_id is not None})
+        items = [
+            TaskHistoryItem(
+                id=row.id,
+                action=row.action.value if hasattr(row.action, "value") else str(row.action),
+                summary=format_task_history_summary(
+                    row.action.value if hasattr(row.action, "value") else str(row.action),
+                    dict(row.payload or {}),
+                ),
+                payload=dict(row.payload or {}),
+                created_at=row.created_at,
+                actor=(
+                    TaskUserBrief(id=actors[row.actor_id].id, full_name=actors[row.actor_id].full_name)
+                    if row.actor_id in actors
+                    else None
+                ),
+            )
+            for row in rows
+        ]
+        return TaskHistoryResponse(items=items)
+
     async def list_comments(self, actor: User, task_id: int) -> TaskCommentListResponse:
         detail = await self.get_task(actor, task_id)
         return TaskCommentListResponse(items=detail.comments)
@@ -865,6 +1075,12 @@ class TaskService:
         if task.status == TaskStatus.CLOSED.value:
             raise ValidationError(message="К закрытой задаче файлы не добавить")
         await self._attach_files(task.id, file_ids)
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_UPDATE,
+            {"kind": "files", "count": len(file_ids)},
+        )
         return (await self._build_responses([task]))[0]
 
     async def handoff(self, actor: User, task_id: int, body) -> TaskResponse:
@@ -904,6 +1120,16 @@ class TaskService:
             )
             if not comment:
                 await self._add_comment_row(task, actor, note)
+            await self._write_history(
+                actor,
+                task,
+                AuditAction.TASK_HANDOFF,
+                {
+                    "kind": "add",
+                    "user_id": next_user.id,
+                    "user_name": next_user.full_name,
+                },
+            )
             await publish(TASK_CREATED, self._event_payload(task), scope={"user_id": next_user.id})
             await publish(
                 TASK_UPDATED,
@@ -939,6 +1165,17 @@ class TaskService:
                     actor,
                     f"{actor.full_name} передал(а) задачу {next_user.full_name}",
                 )
+            await self._write_history(
+                actor,
+                task,
+                AuditAction.TASK_HANDOFF,
+                {
+                    "kind": "transfer",
+                    "user_id": next_user.id,
+                    "user_name": next_user.full_name,
+                    "from": previous_id,
+                },
+            )
             await publish(TASK_CREATED, self._event_payload(task), scope={"user_id": next_user.id})
             await publish(
                 TASK_UPDATED,
@@ -966,6 +1203,30 @@ class TaskService:
         )
         child = await self._repo.create(child)
         await self._attach_files(child.id, body.file_ids)
+        await self._write_history(
+            actor,
+            child,
+            AuditAction.TASK_CREATE,
+            {
+                "kind": "create",
+                "title": child.title,
+                "assignee_id": next_user.id,
+                "assignee_name": next_user.full_name,
+                "parent_task_id": task.id,
+            },
+        )
+        await self._write_history(
+            actor,
+            task,
+            AuditAction.TASK_HANDOFF,
+            {
+                "kind": "follow_up",
+                "user_id": next_user.id,
+                "user_name": next_user.full_name,
+                "child_title": child.title,
+                "child_id": child.id,
+            },
+        )
         if not comment:
             await self._add_comment_row(
                 task,
@@ -1171,6 +1432,18 @@ class TaskService:
         for fid in body.file_ids or []:
             self._session.add(DepartmentTaskFile(task_id=row.id, file_id=int(fid)))
         await self._session.flush()
+        await self._write_history(
+            actor,
+            row,
+            AuditAction.TASK_CREATE,
+            {
+                "kind": "create",
+                "title": row.title,
+                "assignee_id": assignee.id,
+                "assignee_name": assignee.full_name,
+                "source": "client_request",
+            },
+        )
         response = (await self._build_responses([row]))[0]
         payload = self._event_payload(row)
         await publish(TASK_CREATED, payload, scope={"user_id": row.assignee_id})

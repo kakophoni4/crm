@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.department_task import DepartmentTask
@@ -93,6 +93,67 @@ class TaskRepository:
         siblings.insert(index, moved)
         for pos, row in enumerate(siblings):
             row.position = pos
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    async def list_filtered(
+        self,
+        *,
+        department_ids: list[int] | None = None,
+        related_user_id: int | None = None,
+        assignee_id: int | None = None,
+        created_by: int | None = None,
+        statuses: list[str] | None = None,
+        q: str | None = None,
+        limit: int = 400,
+    ) -> list[DepartmentTask]:
+        if department_ids is not None and not department_ids:
+            return []
+        stmt = select(DepartmentTask)
+        if department_ids is not None:
+            stmt = stmt.where(DepartmentTask.department_id.in_(department_ids))
+        if related_user_id is not None:
+            collab_ids = select(DepartmentTaskCollaborator.task_id).where(
+                DepartmentTaskCollaborator.user_id == related_user_id,
+            )
+            stmt = stmt.where(
+                or_(
+                    DepartmentTask.assignee_id == related_user_id,
+                    DepartmentTask.created_by == related_user_id,
+                    DepartmentTask.id.in_(collab_ids),
+                ),
+            )
+        if assignee_id is not None:
+            assignee_collab_ids = select(DepartmentTaskCollaborator.task_id).where(
+                DepartmentTaskCollaborator.user_id == assignee_id,
+            )
+            stmt = stmt.where(
+                or_(
+                    DepartmentTask.assignee_id == assignee_id,
+                    DepartmentTask.id.in_(assignee_collab_ids),
+                ),
+            )
+        if created_by is not None:
+            stmt = stmt.where(DepartmentTask.created_by == created_by)
+        if statuses is not None:
+            if not statuses:
+                return []
+            stmt = stmt.where(DepartmentTask.status.in_(statuses))
+        needle = (q or "").strip()
+        if needle:
+            pattern = f"%{self._escape_like(needle)}%"
+            stmt = stmt.where(
+                or_(
+                    DepartmentTask.title.ilike(pattern, escape="\\"),
+                    DepartmentTask.description.ilike(pattern, escape="\\"),
+                ),
+            )
+        result = await self._session.execute(
+            stmt.order_by(DepartmentTask.updated_at.desc(), DepartmentTask.id.desc()).limit(limit),
+        )
+        return list(result.scalars().all())
 
     async def list_for_assignee(self, assignee_id: int) -> list[DepartmentTask]:
         collab_ids = select(DepartmentTaskCollaborator.task_id).where(

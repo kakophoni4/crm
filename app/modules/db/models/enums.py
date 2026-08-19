@@ -143,6 +143,11 @@ class AuditAction(StrEnum):
     LEAD_UPDATE = "lead.update"
     LEAD_CLOSE = "lead.close"
     LEAD_STATUS_UPDATE = "lead.status.update"
+    TASK_CREATE = "task.create"
+    TASK_UPDATE = "task.update"
+    TASK_HANDOFF = "task.handoff"
+    TASK_STATUS_UPDATE = "task.status.update"
+    TASK_DELETE = "task.delete"
 
 
 user_role_pg = ENUM(

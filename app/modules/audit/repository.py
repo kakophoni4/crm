@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.audit_log_entry import AuditLogEntry
@@ -35,3 +36,21 @@ class AuditRepository:
         self._session.add(entry)
         await self._session.flush()
         return entry
+
+    async def list_for_entity(
+        self,
+        *,
+        entity_type: str,
+        entity_id: int,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        result = await self._session.execute(
+            select(AuditLogEntry)
+            .where(
+                AuditLogEntry.entity_type == entity_type,
+                AuditLogEntry.entity_id == entity_id,
+            )
+            .order_by(AuditLogEntry.created_at.desc(), AuditLogEntry.id.desc())
+            .limit(limit),
+        )
+        return list(result.scalars().all())

@@ -73,9 +73,36 @@ export interface TaskBoardColumn {
   items: DepartmentTask[]
 }
 
+export interface TaskWorkloadSummary {
+  total: number
+  new: number
+  open: number
+  overdue: number
+  pending_review: number
+  done: number
+}
+
+export interface TaskHistoryItem {
+  id: number
+  action: string
+  summary: string
+  payload: Record<string, unknown>
+  created_at: string
+  actor: TaskUserBrief | null
+}
+
 export interface TaskBoard {
   columns: TaskBoardColumn[]
   task_types: { value: string; label: string; sort_order: number }[]
+  summary?: TaskWorkloadSummary
+}
+
+export interface TaskListQuery {
+  assignee_id?: number | null
+  created_by?: number | null
+  q?: string | null
+  status?: TaskStatus | null
+  include_closed?: boolean
 }
 
 export interface TaskCreateBody {

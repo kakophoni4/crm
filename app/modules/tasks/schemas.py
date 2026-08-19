@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -204,11 +205,35 @@ class TaskBoardColumn(BaseModel):
     items: list[TaskResponse]
 
 
+class TaskWorkloadSummary(BaseModel):
+    total: int = 0
+    new: int = 0
+    open: int = 0
+    overdue: int = 0
+    pending_review: int = 0
+    done: int = 0
+
+
 class TaskBoardResponse(BaseModel):
     columns: list[TaskBoardColumn]
     task_types: list[dict[str, str | int]]
+    summary: TaskWorkloadSummary = Field(default_factory=TaskWorkloadSummary)
 
 
 class TaskListResponse(BaseModel):
     items: list[TaskResponse]
     total: int
+    summary: TaskWorkloadSummary = Field(default_factory=TaskWorkloadSummary)
+
+
+class TaskHistoryItem(BaseModel):
+    id: int
+    action: str
+    summary: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    actor: TaskUserBrief | None = None
+
+
+class TaskHistoryResponse(BaseModel):
+    items: list[TaskHistoryItem]

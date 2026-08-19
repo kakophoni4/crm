@@ -21,6 +21,7 @@ from app.modules.tasks.schemas import (
     TaskDetailResponse,
     TaskHandoffRequest,
     TaskAttachFilesRequest,
+    TaskHistoryResponse,
     TaskListResponse,
     TaskMoveRequest,
     TaskNotifyRequest,
@@ -28,6 +29,7 @@ from app.modules.tasks.schemas import (
     TaskUpdateRequest,
 )
 from app.modules.tasks.service import TaskService
+from app.modules.tasks.types import TaskStatus
 from app.shared.db import get_db
 from app.shared.security.permissions import requires_permission
 
@@ -42,8 +44,20 @@ def _service(db: Annotated[AsyncSession, Depends(get_db)]) -> TaskService:
 async def list_my_tasks(
     actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
     service: Annotated[TaskService, Depends(_service)],
+    assignee_id: Annotated[int | None, Query()] = None,
+    created_by: Annotated[int | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=200)] = None,
+    status: Annotated[TaskStatus | None, Query()] = None,
+    include_closed: Annotated[bool, Query()] = False,
 ) -> TaskListResponse:
-    return await service.list_my_tasks(actor)
+    return await service.list_my_tasks(
+        actor,
+        assignee_id=assignee_id,
+        created_by=created_by,
+        q=q,
+        status=status,
+        include_closed=include_closed,
+    )
 
 
 @router.get("/alerts", response_model=TaskAlertsResponse)
@@ -108,8 +122,21 @@ async def task_board(
     actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
     service: Annotated[TaskService, Depends(_service)],
     department_id: Annotated[int | None, Query()] = None,
+    assignee_id: Annotated[int | None, Query()] = None,
+    created_by: Annotated[int | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=200)] = None,
+    status: Annotated[TaskStatus | None, Query()] = None,
+    include_closed: Annotated[bool, Query()] = True,
 ) -> TaskBoardResponse:
-    return await service.board(actor, department_id=department_id)
+    return await service.board(
+        actor,
+        department_id=department_id,
+        assignee_id=assignee_id,
+        created_by=created_by,
+        q=q,
+        status=status,
+        include_closed=include_closed,
+    )
 
 
 @router.post("", status_code=201, response_model=TaskResponse)
@@ -131,6 +158,16 @@ async def get_task(
     service: Annotated[TaskService, Depends(_service)],
 ) -> TaskDetailResponse:
     return await service.get_task(actor, task_id)
+
+
+@router.get("/{task_id}/history", response_model=TaskHistoryResponse)
+async def task_history(
+    task_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> TaskHistoryResponse:
+    return await service.history(actor, task_id, limit=limit)
 
 
 @router.get("/{task_id}/comments", response_model=TaskCommentListResponse)
