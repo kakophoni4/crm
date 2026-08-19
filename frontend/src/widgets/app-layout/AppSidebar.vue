@@ -19,7 +19,7 @@ import {
   Moon,
   Bell,
 } from 'lucide-vue-next'
-import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu } from 'naive-ui'
+import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu, type MenuOption } from 'naive-ui'
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -121,7 +121,7 @@ const menuOptions = computed(() => {
   }
 
   if (auth.isLawyer) {
-    const lawyerItems: { label: string; key: string; icon: () => unknown }[] = [
+    const lawyerItems: MenuOption[] = [
       {
         label: 'Задачи',
         key: 'tasks',
