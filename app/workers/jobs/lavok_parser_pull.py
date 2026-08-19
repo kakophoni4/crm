@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 import httpx
 import structlog
@@ -13,7 +14,7 @@ logger = structlog.get_logger(__name__)
 
 LAVOK_PARSER_PULL_JOB_TYPE = "lavok_parser_pull"
 _LOCK_KEY = "crm:lavok_parser:pull:lock"
-_LOCK_TTL_SECONDS = 240
+_LOCK_TTL_SECONDS = 600
 _SCHEDULE_KEY = "crm:lavok_parser:pull:scheduled"
 _ETAG_KEY = "crm:lavok_parser:pull:etag"
 _SHA_KEY = "crm:lavok_parser:pull:sha256"
@@ -21,7 +22,7 @@ _MAX_BYTES = 20 * 1024 * 1024
 
 
 async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
-    """GET export xlsx. Returns (content, etag, status) where status is ok|not_modified|empty|error."""
+    """GET export xlsx in small Range slices (path MTU / Windows LSO drops a 200KB body)."""
     settings = get_settings()
     url = (settings.lavok_parser_pull_url or "").strip()
     token = (settings.lavok_parser_ingest_token or "").strip()
@@ -33,37 +34,83 @@ async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
 
     redis = get_redis()
     previous = await redis.get(_ETAG_KEY)
-    headers = {"Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+    previous_etag = previous.decode() if isinstance(previous, bytes) else (str(previous) if previous else "")
+    headers = {
+        "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Connection": "close",
+    }
     if token:
         headers["X-Lavok-Ingest-Token"] = token
-    if previous:
-        headers["If-None-Match"] = previous.decode() if isinstance(previous, bytes) else str(previous)
+    if previous_etag:
+        headers["If-None-Match"] = previous_etag if previous_etag.startswith('"') else f'"{previous_etag}"'
 
-    timeout = httpx.Timeout(settings.lavok_parser_pull_timeout_seconds)
+    timeout = httpx.Timeout(20.0, connect=10.0)
+    chunk = 1024
+    pieces: list[bytes] = []
+    offset = 0
+    total: int | None = None
+    etag: str | None = None
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
+            while True:
+                if total is not None and offset >= total:
+                    break
+                if offset + chunk > _MAX_BYTES:
+                    logger.warning("lavok_parser_pull_too_large", size=offset)
+                    return None, None, "error"
+                last = offset + chunk - 1
+                req_headers = {**headers, "Range": f"bytes={offset}-{last}"}
+                if offset:
+                    req_headers.pop("If-None-Match", None)
+                async with client.stream("GET", url, headers=req_headers) as response:
+                    if response.status_code == 304:
+                        return None, None, "not_modified"
+                    if response.status_code >= 400:
+                        logger.warning(
+                            "lavok_parser_pull_http_error",
+                            status=response.status_code,
+                            url=url,
+                        )
+                        return None, None, "error"
+                    etag = (response.headers.get("etag") or etag or "").strip() or None
+                    if response.status_code == 200:
+                        content_length = int(response.headers.get("content-length") or 0)
+                        if content_length > chunk * 4:
+                            logger.warning(
+                                "lavok_parser_pull_full_body_ignored",
+                                content_length=content_length,
+                            )
+                            await response.aclose()
+                            return None, None, "error"
+                    payload = await response.aread()
+                    if response.status_code == 206:
+                        content_range = response.headers.get("content-range") or ""
+                        match = re.search(r"/(\d+)\s*$", content_range)
+                        if match:
+                            total = int(match.group(1))
+                        pieces.append(payload)
+                        offset += len(payload)
+                        if not payload:
+                            break
+                        continue
+                    if response.status_code == 200:
+                        if not payload:
+                            return None, None, "empty"
+                        if len(payload) > _MAX_BYTES:
+                            return None, None, "error"
+                        return payload, etag, "ok"
+                    logger.warning("lavok_parser_pull_unexpected_status", status=response.status_code)
+                    return None, None, "error"
     except httpx.RequestError:
         logger.exception("lavok_parser_pull_request_failed", url=url)
         return None, None, "error"
 
-    if response.status_code == 304:
-        return None, None, "not_modified"
-    if response.status_code >= 400:
-        logger.warning(
-            "lavok_parser_pull_http_error",
-            status=response.status_code,
-            url=url,
-        )
-        return None, None, "error"
-
-    data = response.content or b""
+    data = b"".join(pieces)
     if not data:
         return None, None, "empty"
-    if len(data) > _MAX_BYTES:
-        logger.warning("lavok_parser_pull_too_large", size=len(data))
+    if total is not None and len(data) != total:
+        logger.warning("lavok_parser_pull_incomplete", got=len(data), total=total)
         return None, None, "error"
-    etag = (response.headers.get("etag") or "").strip() or None
     return data, etag, "ok"
 
 
