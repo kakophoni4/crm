@@ -203,6 +203,12 @@ function canReassignTask(task: DepartmentTask): boolean {
   return isManager.value
 }
 
+function canReviewTask(task: DepartmentTask): boolean {
+  if (task.status !== 'done_pending') return false
+  if (isManager.value) return true
+  return auth.user?.id != null && task.created_by === auth.user.id
+}
+
 function openTaskDetail(task: DepartmentTask): void {
   detailTaskId.value = task.id
   detailOpen.value = true
@@ -361,13 +367,13 @@ async function onAcknowledge(task: DepartmentTask): Promise<void> {
 async function onComplete(task: DepartmentTask): Promise<void> {
   dialog.warning({
     title: 'Отметить выполненной?',
-    content: `Задача «${task.title}» уйдёт на проверку старшему.`,
+    content: `Задача «${task.title}» уйдёт на проверку постановщику.`,
     positiveText: 'Выполнено',
     negativeText: 'Отмена',
     onPositiveClick: async () => {
       try {
         await completeTask(task.id)
-        message.success('Отмечено как выполненное — ждёт подтверждения старшего')
+        message.success('Отмечено как выполненное — ждёт подтверждения постановщика')
         await refresh()
       } catch (err) {
         message.error(err instanceof AppError ? err.message : 'Ошибка')
@@ -758,7 +764,7 @@ onUnmounted(() => {
                         Выполнено
                       </NButton>
                       <NButton
-                        v-if="task.status === 'done_pending'"
+                        v-if="canReviewTask(task)"
                         size="tiny"
                         type="primary"
                         @click.stop="onConfirm(task)"
@@ -767,7 +773,7 @@ onUnmounted(() => {
                         Подтвердить
                       </NButton>
                       <NButton
-                        v-if="task.status === 'done_pending'"
+                        v-if="canReviewTask(task)"
                         size="tiny"
                         @click.stop="onReopen(task)"
                       >
@@ -877,6 +883,24 @@ onUnmounted(() => {
                 >
                   <template #icon><Check :size="14" /></template>
                   Выполнено
+                </NButton>
+                <NButton
+                  v-if="canReviewTask(task)"
+                  type="primary"
+                  size="small"
+                  style="margin-right: 8px"
+                  @click.stop="onConfirm(task)"
+                >
+                  <template #icon><Check :size="14" /></template>
+                  Подтвердить
+                </NButton>
+                <NButton
+                  v-if="canReviewTask(task)"
+                  size="small"
+                  @click.stop="onReopen(task)"
+                >
+                  <template #icon><RotateCcw :size="14" /></template>
+                  Вернуть
                 </NButton>
               </div>
             </div>

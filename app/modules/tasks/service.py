@@ -78,6 +78,11 @@ class TaskService:
             UserRole.CHIEF_ACCOUNTANT,
         )
 
+    def _can_review_completion(self, actor: User, task: DepartmentTask) -> bool:
+        if self._is_senior_or_admin(actor):
+            return True
+        return task.created_by == actor.id
+
     def _can_create_task(self, actor: User) -> bool:
         if self._is_senior_or_admin(actor):
             return True
@@ -906,20 +911,25 @@ class TaskService:
             {"kind": "complete", "from": previous, "to": task.status},
         )
         response = (await self._build_responses([task]))[0]
+        payload = self._event_payload(task)
         await publish(
             TASK_DONE_PENDING,
-            self._event_payload(task),
+            payload,
             scope={"department_id": task.department_id},
         )
+        if task.created_by and task.created_by != actor.id:
+            await publish(TASK_DONE_PENDING, payload, scope={"user_id": task.created_by})
         return response
 
     async def confirm(self, actor: User, task_id: int) -> TaskResponse:
-        if not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Подтверждать задачи может только старший оператор")
         task = await self._repo.get_by_id(task_id)
         if task is None or task.status != TaskStatus.DONE_PENDING.value:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
+        if not self._can_review_completion(actor, task):
+            raise PermissionDenied(
+                message="Подтвердить выполнение может постановщик или старший оператор",
+            )
         now = datetime.now(UTC)
         task.status = TaskStatus.CLOSED.value
         task.confirmed_at = now
@@ -945,12 +955,14 @@ class TaskService:
         return response
 
     async def reopen(self, actor: User, task_id: int) -> TaskResponse:
-        if not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Вернуть задачу может только старший оператор")
         task = await self._repo.get_by_id(task_id)
         if task is None or task.status != TaskStatus.DONE_PENDING.value:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
+        if not self._can_review_completion(actor, task):
+            raise PermissionDenied(
+                message="Вернуть задачу в работу может постановщик или старший оператор",
+            )
         task.status = TaskStatus.OPEN.value
         task.completed_at = None
         task.completed_by = None

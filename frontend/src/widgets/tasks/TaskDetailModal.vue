@@ -24,10 +24,12 @@ import {
   addTaskComment,
   attachTaskFiles,
   completeTask,
+  confirmTask,
   formatTaskAssigneeLabel,
   getTask,
   getTaskHistory,
   handoffTask,
+  reopenTask,
   listTaskAssignees,
   notifyTaskAssignee,
   notifyTaskCreator,
@@ -137,6 +139,12 @@ const canNotifyCreator = computed(() => {
   if (!task || meId.value == null) return false
   if (meId.value === task.created_by && !isManager.value) return false
   return isWorkingOn.value || isManager.value
+})
+
+const canReviewCompletion = computed(() => {
+  const task = detail.value
+  if (!task || task.status !== 'done_pending') return false
+  return isCreator.value || isManager.value
 })
 
 const assigneeOptions = computed(() =>
@@ -257,7 +265,7 @@ async function onComplete(): Promise<void> {
   if (props.taskId == null) return
   dialog.warning({
     title: 'Отметить выполненной?',
-    content: 'Задача уйдёт на проверку старшему.',
+    content: 'Задача уйдёт на проверку постановщику.',
     positiveText: 'Выполнено',
     negativeText: 'Отмена',
     onPositiveClick: async () => {
@@ -271,7 +279,7 @@ async function onComplete(): Promise<void> {
         commentBody.value = ''
         commentFiles.value = []
         uploadKey.value += 1
-        message.success('Отмечено как выполненное — ждёт подтверждения')
+        message.success('Отмечено как выполненное — ждёт подтверждения постановщика')
         await load(props.taskId!)
         emit('updated')
       } catch (err) {
@@ -281,6 +289,36 @@ async function onComplete(): Promise<void> {
       }
     },
   })
+}
+
+async function onConfirm(): Promise<void> {
+  if (props.taskId == null) return
+  actionBusy.value = true
+  try {
+    await confirmTask(props.taskId)
+    message.success('Задача подтверждена и закрыта')
+    await load(props.taskId)
+    emit('updated')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось подтвердить задачу')
+  } finally {
+    actionBusy.value = false
+  }
+}
+
+async function onReopen(): Promise<void> {
+  if (props.taskId == null) return
+  actionBusy.value = true
+  try {
+    await reopenTask(props.taskId)
+    message.info('Задача возвращена исполнителю')
+    await load(props.taskId)
+    emit('updated')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось вернуть задачу')
+  } finally {
+    actionBusy.value = false
+  }
 }
 
 async function onHandoff(): Promise<void> {
@@ -690,7 +728,24 @@ function openChild(id: number): void {
             Оповестить постановщика
           </NButton>
         </NSpace>
-        <NButton @click="emit('update:show', false)">Закрыть</NButton>
+        <NSpace>
+          <NButton
+            v-if="canReviewCompletion"
+            type="primary"
+            :loading="actionBusy"
+            @click="onConfirm"
+          >
+            Подтвердить
+          </NButton>
+          <NButton
+            v-if="canReviewCompletion"
+            :loading="actionBusy"
+            @click="onReopen"
+          >
+            Вернуть в работу
+          </NButton>
+          <NButton @click="emit('update:show', false)">Закрыть</NButton>
+        </NSpace>
       </NSpace>
     </template>
   </NModal>
