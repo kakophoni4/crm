@@ -45,6 +45,7 @@ from app.shared.exceptions import (
     ValidationError,
 )
 from app.modules.leads.service_types import DEFAULT_BOT_SERVICE_TYPES
+from app.modules.referrals.codes import normalize_bot_username
 from app.shared.settings import get_settings
 from app.workers.bots.queue import enqueue
 
@@ -79,6 +80,28 @@ def _bot_channel(bot: Bot) -> BotChannel:
         return BotChannel(raw)
     except ValueError:
         return BotChannel.TELEGRAM
+
+
+def _apply_referral_settings(
+    bot: Bot,
+    *,
+    channel: BotChannel,
+    referrals_enabled: bool | None,
+    telegram_username: str | None,
+) -> None:
+    if channel != BotChannel.TELEGRAM:
+        if referrals_enabled:
+            raise ValidationError(message="Рефералы доступны только для Telegram-ботов")
+        return
+    if telegram_username is not None:
+        try:
+            bot.telegram_username = normalize_bot_username(telegram_username)
+        except ValueError as exc:
+            raise ValidationError(message=str(exc)) from exc
+    if referrals_enabled is not None:
+        bot.referrals_enabled = referrals_enabled
+    if bot.referrals_enabled and not bot.telegram_username:
+        raise ValidationError(message="Укажите username Telegram-бота для реферальных ссылок")
 
 
 def _to_response(row: BotListRow) -> BotResponse:
@@ -117,6 +140,8 @@ def _to_response(row: BotListRow) -> BotResponse:
         service_types=list(bot.service_types or DEFAULT_BOT_SERVICE_TYPES),
         default_owner_user_id=bot.default_owner_user_id,
         default_owner_full_name=None,
+        referrals_enabled=bool(bot.referrals_enabled),
+        telegram_username=bot.telegram_username,
         last_seen_at=_iso(bot.last_seen_at),
         last_health_status=bot.last_health_status,
         last_health_checked_at=_iso(bot.last_health_checked_at),
@@ -221,7 +246,16 @@ class BotService:
             green_api_token_encrypted=green_token_enc,
             service_types=body.service_types,
             default_owner_user_id=body.default_owner_user_id,
+            referrals_enabled=False,
+            telegram_username=None,
         )
+        if body.channel == BotChannel.TELEGRAM:
+            _apply_referral_settings(
+                bot,
+                channel=body.channel,
+                referrals_enabled=body.referrals_enabled,
+                telegram_username=body.telegram_username,
+            )
         await self._session.commit()
 
         if body.channel == BotChannel.WHATSAPP:
@@ -293,6 +327,13 @@ class BotService:
                 raise ValidationError(message="default_owner_user_id not found")
             bot.default_owner_user_id = body.default_owner_user_id
             owner_just_set = body.default_owner_user_id
+        if body.referrals_enabled is not None or body.telegram_username is not None:
+            _apply_referral_settings(
+                bot,
+                channel=_bot_channel(bot),
+                referrals_enabled=body.referrals_enabled,
+                telegram_username=body.telegram_username,
+            )
 
         green_token_for_sync: str | None = None
         if _bot_channel(bot) == BotChannel.WHATSAPP:

@@ -265,6 +265,7 @@ def build_inbound_payload(
     external_id: str = "msg_bot_001",
     text: str = "Hello from bot",
     telegram_user_id: int = 999001,
+    ref_code: str | None = None,
 ) -> tuple[bytes, dict[str, str]]:
     message: dict[str, object] = {
         "external_id": external_id,
@@ -274,18 +275,21 @@ def build_inbound_payload(
     }
     if direction is not None:
         message["direction"] = direction
+    contact: dict[str, object] = {
+        "telegram_user_id": telegram_user_id,
+        "telegram_username": "bot_test_user",
+        "first_name": "Bot",
+        "last_name": "Tester",
+    }
+    if ref_code is not None:
+        contact["ref_code"] = ref_code
     envelope = {
         "event": "message.received",
         "event_id": event_id,
         "occurred_at": "2026-05-16T12:34:56Z",
         "bot_code": bot_code,
         "payload": {
-            "contact": {
-                "telegram_user_id": telegram_user_id,
-                "telegram_username": "bot_test_user",
-                "first_name": "Bot",
-                "last_name": "Tester",
-            },
+            "contact": contact,
             "message": message,
         },
     }

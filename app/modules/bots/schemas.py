@@ -26,6 +26,8 @@ class BotCreateRequest(BaseModel):
     green_api_token: str | None = Field(default=None, min_length=8)
     service_types: list[str] = Field(default_factory=lambda: list(DEFAULT_BOT_SERVICE_TYPES))
     default_owner_user_id: int | None = Field(default=None, gt=0)
+    referrals_enabled: bool = False
+    telegram_username: str | None = None
 
     @model_validator(mode="after")
     def _validate_service_types(self) -> BotCreateRequest:
@@ -70,6 +72,8 @@ class BotUpdateRequest(BaseModel):
     service_types: list[str] | None = None
     default_owner_user_id: int | None = Field(default=None, gt=0)
     clear_default_owner: bool | None = None
+    referrals_enabled: bool | None = None
+    telegram_username: str | None = None
 
     @model_validator(mode="after")
     def _validate_service_types(self) -> BotUpdateRequest:
@@ -120,6 +124,8 @@ class BotResponse(BaseModel):
     service_types: list[str] = Field(default_factory=lambda: list(ALL_SERVICE_TYPES))
     default_owner_user_id: int | None = None
     default_owner_full_name: str | None = None
+    referrals_enabled: bool = False
+    telegram_username: str | None = None
     last_seen_at: str | None
     last_health_status: str | None
     last_health_checked_at: str | None

@@ -17,6 +17,7 @@ from app.modules.chats.schemas import (
     ChatListResponse,
     ChatMarkReadRequest,
     ChatMarkReadResponse,
+    ChatReferralResponse,
     ChatMessageSearchResponse,
     ChatStatusIdPatchRequest,
     ChatStatusPatchRequest,
@@ -36,6 +37,7 @@ from app.modules.chats.search import ChatSearchService
 from app.modules.chats.search_scope import ChatSearchScope
 from app.modules.chats.serialization import to_message_response
 from app.modules.chats.service import ChatService
+from app.modules.referrals.service import ReferralService
 from app.modules.chats.takeovers import ChatTakeoversService
 from app.modules.db.models.enums import AuditAction, ChatStatus
 from app.modules.db.models.user import User
@@ -218,6 +220,25 @@ async def search_chats_messages(
         limit=limit,
         highlight=highlight,
     )
+
+
+@router.get("/{chat_id}/referral", response_model=ChatReferralResponse)
+async def get_chat_referral(
+    chat_id: int,
+    actor: Annotated[
+        User,
+        Depends(
+            requires_permission(
+                Permission.CHATS_READ_OWN,
+                Permission.CHATS_READ_GROUP,
+                Permission.CHATS_READ_DEPARTMENT,
+                Permission.CHATS_READ_ALL,
+            ),
+        ),
+    ],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ChatReferralResponse:
+    return await ReferralService(db).get_chat_referral(actor, chat_id)
 
 
 @router.get("/{chat_id}")

@@ -51,6 +51,7 @@ import { listBots } from '@/features/bots/api'
 import { ensureGroupDirectory, lookupGroupName } from '@/features/groups/directory'
 import { registerChatListSearchFocus } from '@/features/chats/chat-list-search-focus'
 import { formatChatMessagePreview } from '@/features/chats/message-preview'
+import { getChatReferral, type ChatReferralInfo } from '@/features/chats/api'
 import { useChatsStore } from '@/features/chats/store'
 import {
   chatListItemIsAnswered,
@@ -182,6 +183,44 @@ const canTransferCard = computed(() => {
   if (auth.canForceCardOwner) return true
   return chat.card_owner_user_id === me
 })
+
+const emptyReferral = (): ChatReferralInfo => ({
+  enabled: false,
+  url: null,
+  code: null,
+  count: 0,
+})
+const referral = ref<ChatReferralInfo>(emptyReferral())
+const referralBusy = ref(false)
+
+async function loadReferral(chatId: number | null): Promise<void> {
+  if (chatId == null) {
+    referral.value = emptyReferral()
+    return
+  }
+  try {
+    referral.value = await getChatReferral(chatId)
+  } catch {
+    referral.value = emptyReferral()
+  }
+}
+
+async function copyReferralLink(): Promise<void> {
+  const url = referral.value.url
+  if (!url) {
+    message.warning('У бота не указан username Telegram — ссылку нельзя собрать')
+    return
+  }
+  referralBusy.value = true
+  try {
+    await navigator.clipboard.writeText(url)
+    message.success('Реферальная ссылка скопирована')
+  } catch {
+    message.info(url)
+  } finally {
+    referralBusy.value = false
+  }
+}
 
 const transferGroupName = computed(() => {
   const chat = store.currentChat
@@ -432,6 +471,7 @@ watch(
   () => store.currentChatId,
   (chatId) => {
     replyToMessage.value = null
+    void loadReferral(chatId)
     if (chatId != null) {
       if (isNarrow.value) narrowPane.value = 'chat'
       rightPaneTab.value = 'deal'
@@ -741,7 +781,7 @@ onUnmounted(() => {
 
             </div>
 
-            <NSpace>
+            <NSpace vertical :size="6" align="end">
               <NButton
                 v-if="canTransferCard"
                 size="small"
@@ -749,6 +789,18 @@ onUnmounted(() => {
               >
                 Передать карточку
               </NButton>
+              <div v-if="referral.enabled" class="chats-page__referral">
+                <NButton
+                  size="small"
+                  :loading="referralBusy"
+                  @click="copyReferralLink"
+                >
+                  Скопировать реф. ссылку
+                </NButton>
+                <span class="chats-page__referral-count" :title="'Рефералов: ' + referral.count">
+                  {{ referral.count }}
+                </span>
+              </div>
             </NSpace>
 
             </div>
@@ -1371,6 +1423,20 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 12px;
   min-width: 0;
+}
+
+.chats-page__referral {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chats-page__referral-count {
+  min-width: 1.4rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--app-text-muted);
 }
 
 .chats-page__chat-identity {

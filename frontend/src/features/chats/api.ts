@@ -198,6 +198,18 @@ export async function releaseTakeover(chatId: number): Promise<unknown> {
   return data
 }
 
+export interface ChatReferralInfo {
+  enabled: boolean
+  url: string | null
+  code: string | null
+  count: number
+}
+
+export async function getChatReferral(chatId: number): Promise<ChatReferralInfo> {
+  const { data } = await http.get<ChatReferralInfo>(`/chats/${chatId}/referral`)
+  return data
+}
+
 export async function uploadFile(
   file: File,
 ): Promise<{ id: number; name?: string; mime?: string; size?: number }> {

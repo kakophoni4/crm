@@ -117,6 +117,7 @@ signature = "sha256=" + HMAC_SHA256(outbound_secret, canonical)
 - `payload.message.attachments` (опционально),
 - `payload.message.reply_to_external_id` (опционально),
 - `payload.message.direction` (опционально): `"inbound"` (по умолчанию) или `"outbound"`.
+- `payload.contact.ref_code` (опционально): реферальный код из `/start`. Пустое значение не считается. Если код никому не принадлежит (или рефералы у бота выключены в админке), приход не атрибуцируется. Также принимаются `payload.ref_code` и `/start <код>` в тексте сообщения.
 
 Эффект при `direction` = `"inbound"` или поле отсутствует:
 - upsert контакта,
@@ -341,7 +342,8 @@ X-Signature: sha256=<hex>
       "telegram_user_id": 123456789,
       "telegram_username": "ivan_xx",
       "first_name": "Иван",
-      "last_name": "Иванов"
+      "last_name": "Иванов",
+      "ref_code": "thshchbjvtsygivxy"
     },
     "message": {
       "external_id": "msg_001",

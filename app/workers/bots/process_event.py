@@ -37,6 +37,7 @@ from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
 from app.modules.leads.department_inbox import get_or_create_department_inbox_group
 from app.modules.leads.service import LeadService
+from app.modules.referrals.service import ReferralService
 from app.realtime.chat_scope import chat_event_scope
 from app.realtime.events import publish
 from app.shared.db import get_session_factory
@@ -286,6 +287,11 @@ async def _handle_message_received(
         first_name=contact_data.get("first_name"),
         last_name=contact_data.get("last_name"),
         created_by=created_by,
+    )
+    await ReferralService(session).maybe_attribute(
+        bot=bot,
+        referred_contact_id=contact_id,
+        inner=inner,
     )
     routing = await resolve_bot_routing(session, bot)
     chat_result = await upsert_chat_for_bot(

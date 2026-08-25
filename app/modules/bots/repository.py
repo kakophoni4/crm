@@ -135,6 +135,8 @@ class BotRepository:
         green_api_token_encrypted: bytes | None = None,
         service_types: list[str] | None = None,
         default_owner_user_id: int | None = None,
+        referrals_enabled: bool = False,
+        telegram_username: str | None = None,
     ) -> Bot:
         inbound_enc = await encrypt_secret(self._session, inbound_secret)
         outbound_enc = await encrypt_secret(self._session, outbound_secret)
@@ -156,6 +158,8 @@ class BotRepository:
             green_api_token_encrypted=green_api_token_encrypted,
             service_types=normalize_service_types(service_types),
             default_owner_user_id=default_owner_user_id,
+            referrals_enabled=referrals_enabled,
+            telegram_username=telegram_username,
         )
         self._session.add(bot)
         await self._session.flush()

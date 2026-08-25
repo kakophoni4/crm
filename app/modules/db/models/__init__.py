@@ -11,6 +11,8 @@ from app.modules.db.models.chat_read_state import ChatReadState
 from app.modules.db.models.chat_takeover import ChatTakeover
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.contact_field_change import ContactFieldChange
+from app.modules.db.models.contact_referral import ContactReferral
+from app.modules.db.models.contact_referral_code import ContactReferralCode
 from app.modules.db.models.file_share_link import FileShareLink
 from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
@@ -97,6 +99,8 @@ __all__ = [
     "ChatTakeover",
     "Contact",
     "ContactFieldChange",
+    "ContactReferral",
+    "ContactReferralCode",
     "FileShareLink",
     "FileVaultItem",
     "ContactGroupAssignment",

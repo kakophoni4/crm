@@ -255,6 +255,19 @@ async def _build_attachments(
     return attachments
 
 
+def _start_payload(text: str) -> str | None:
+    raw = (text or "").strip()
+    if not raw.lower().startswith("/start"):
+        return None
+    rest = raw[6:].strip()
+    if rest.startswith("@"):
+        parts = rest.split(None, 1)
+        rest = parts[1] if len(parts) > 1 else ""
+    token = rest.split()[0] if rest else ""
+    cleaned = "".join(ch for ch in token if ch.isalnum() or ch in "_-")
+    return cleaned or None
+
+
 def _message_text(tg_message: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
     text = (tg_message.get("text") or tg_message.get("caption") or "").strip()
     if text:
@@ -333,6 +346,9 @@ class Bridge:
             "first_name": user.get("first_name"),
             "last_name": user.get("last_name"),
         }
+        ref_code = _start_payload(text)
+        if ref_code:
+            contact_payload["ref_code"] = ref_code
         envelope = {
             "event": "message.received",
             "event_id": event_id,

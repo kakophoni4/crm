@@ -39,6 +39,13 @@ class WhatsappOutreachResponse(BaseModel):
     created_chat: bool
 
 
+class ChatReferralResponse(BaseModel):
+    enabled: bool
+    url: str | None = None
+    code: str | None = None
+    count: int = 0
+
+
 class ChatStatusPatchRequest(BaseModel):
     status: Literal["open", "in_progress", "closed", "archived"]
 

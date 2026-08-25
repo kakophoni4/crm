@@ -64,6 +64,8 @@ export interface BotItem {
   whatsapp_webhook_url?: string | null
   service_types?: string[]
   default_owner_user_id?: number | null
+  referrals_enabled?: boolean
+  telegram_username?: string | null
 }
 
 export interface BotCreateBody {
@@ -81,6 +83,8 @@ export interface BotCreateBody {
   green_api_token?: string | null
   service_types?: string[]
   default_owner_user_id?: number | null
+  referrals_enabled?: boolean
+  telegram_username?: string | null
 }
 
 export interface BotCreateResponse extends BotItem {
@@ -208,6 +212,8 @@ export async function updateBot(
     service_types?: string[]
     default_owner_user_id?: number | null
     clear_default_owner?: boolean
+    referrals_enabled?: boolean
+    telegram_username?: string | null
   },
 ): Promise<BotItem> {
   const { data } = await http.patch<BotItem>(`/bots/${id}`, body)

@@ -55,6 +55,8 @@ const form = ref({
   green_api_token: '',
   service_types: ['Деревья', 'ОПТ'] as string[],
   default_owner_user_id: null as number | null,
+  referrals_enabled: false,
+  telegram_username: '',
 })
 const editForm = ref({
   name: '',
@@ -67,6 +69,8 @@ const editForm = ref({
   service_types: ['Деревья', 'ОПТ'] as string[],
   assigned_group_ids: [] as number[],
   default_owner_user_id: null as number | null,
+  referrals_enabled: false,
+  telegram_username: '',
 })
 
 const isWhatsAppForm = computed(() => form.value.channel === 'whatsapp')
@@ -168,6 +172,12 @@ const columns = computed<DataTableColumns<BotItem>>(() => [
     render: (row) => (row.is_active ? 'да' : 'нет'),
   },
   {
+    title: 'Рефералы',
+    key: 'referrals_enabled',
+    width: 100,
+    render: (row) => (row.referrals_enabled ? 'да' : 'нет'),
+  },
+  {
     title: '',
     key: 'actions',
     width: 220,
@@ -208,6 +218,8 @@ function openCreate(): void {
     green_api_token: '',
     service_types: ['Деревья', 'ОПТ'],
     default_owner_user_id: null,
+    referrals_enabled: false,
+    telegram_username: '',
   }
   showModal.value = true
 }
@@ -230,6 +242,8 @@ function openEdit(row: BotItem): void {
     service_types: row.service_types?.length ? [...row.service_types] : ['Деревья', 'ОПТ'],
     assigned_group_ids: [...row.assigned_group_ids],
     default_owner_user_id: row.default_owner_user_id ?? null,
+    referrals_enabled: Boolean(row.referrals_enabled),
+    telegram_username: row.telegram_username ?? '',
   }
   showEditModal.value = true
 }
@@ -272,6 +286,10 @@ async function onSave(): Promise<void> {
       message.warning('Секреты должны быть не короче 16 символов')
       return
     }
+    if (form.value.referrals_enabled && !form.value.telegram_username.trim()) {
+      message.warning('Укажите username Telegram-бота для реферальных ссылок')
+      return
+    }
   } else if (!form.value.green_instance_id.trim() || !form.value.green_api_token.trim()) {
     message.warning('Укажите GREEN API idInstance и apiTokenInstance')
     return
@@ -298,6 +316,10 @@ async function onSave(): Promise<void> {
     }
     if (form.value.default_owner_user_id != null) {
       body.default_owner_user_id = form.value.default_owner_user_id
+    }
+    if (form.value.channel === 'telegram') {
+      body.referrals_enabled = form.value.referrals_enabled
+      body.telegram_username = form.value.telegram_username.trim() || null
     }
     const created = await createBot(body)
     showModal.value = false
@@ -327,6 +349,14 @@ async function onSaveEdit(): Promise<void> {
     message.warning('Выберите хотя бы одну услугу')
     return
   }
+  if (
+    bot.channel !== 'whatsapp' &&
+    editForm.value.referrals_enabled &&
+    !editForm.value.telegram_username.trim()
+  ) {
+    message.warning('Укажите username Telegram-бота для реферальных ссылок')
+    return
+  }
   try {
     const payload: Parameters<typeof updateBot>[1] = {
       name: editForm.value.name.trim(),
@@ -348,6 +378,10 @@ async function onSaveEdit(): Promise<void> {
       payload.default_owner_user_id = editForm.value.default_owner_user_id
     } else if (bot.default_owner_user_id != null) {
       payload.clear_default_owner = true
+    }
+    if (bot.channel !== 'whatsapp') {
+      payload.referrals_enabled = editForm.value.referrals_enabled
+      payload.telegram_username = editForm.value.telegram_username.trim() || null
     }
     await updateBot(bot.id, payload)
     const groupsChanged =
@@ -491,6 +525,16 @@ watch(
           </NFormItem>
         </template>
         <template v-else>
+          <NFormItem label="Реферальная система">
+            <NSwitch v-model:value="form.referrals_enabled" />
+          </NFormItem>
+          <NFormItem
+            v-if="form.referrals_enabled"
+            label="Username Telegram-бота"
+            extra="Без @. Нужен для ссылки вида t.me/bot?start=код"
+          >
+            <NInput v-model:value="form.telegram_username" placeholder="timeletterer_bot" />
+          </NFormItem>
           <NFormItem label="URL исходящих событий">
             <NInput v-model:value="form.outbound_url" />
           </NFormItem>
@@ -562,6 +606,21 @@ watch(
             placeholder="Не распределён (ящик отдела)"
           />
         </NFormItem>
+        <template v-if="!isWhatsAppEdit">
+          <NFormItem
+            label="Реферальная система"
+            extra="Менеджер сможет копировать ссылку с карточки. Приход по коду считается, только если код принадлежит контакту этого бота."
+          >
+            <NSwitch v-model:value="editForm.referrals_enabled" />
+          </NFormItem>
+          <NFormItem
+            v-if="editForm.referrals_enabled"
+            label="Username Telegram-бота"
+            extra="Без @. Пример ссылки: https://t.me/timeletterer_bot?start=код"
+          >
+            <NInput v-model:value="editForm.telegram_username" placeholder="timeletterer_bot" />
+          </NFormItem>
+        </template>
         <template v-if="isWhatsAppEdit">
           <p v-if="editingBot?.whatsapp_webhook_url" class="admin-page__wa-hint">
             Webhook: {{ editingBot.whatsapp_webhook_url }}
