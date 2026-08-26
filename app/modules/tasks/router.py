@@ -291,7 +291,7 @@ async def complete_task(
 @router.post("/{task_id}/confirm", response_model=TaskResponse)
 async def confirm_task(
     task_id: int,
-    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:
@@ -303,7 +303,7 @@ async def confirm_task(
 @router.post("/{task_id}/reopen", response_model=TaskResponse)
 async def reopen_task(
     task_id: int,
-    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:
