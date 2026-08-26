@@ -80,8 +80,8 @@ const filterQueryDebounced = ref('')
 const filterAssigneeId = ref<number | null>(null)
 const filterCreatedBy = ref<number | null>(null)
 const filterStatus = ref<TaskStatus | null>(null)
-const includeClosedMine = ref(false)
-const includeClosedBoard = ref(false)
+const includeClosedMine = ref(true)
+const includeClosedBoard = ref(true)
 const mineSummary = ref<TaskWorkloadSummary | null>(null)
 let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -120,9 +120,10 @@ const statusFilterOptions = computed(() => {
     { label: 'Новые', value: 'new' },
     { label: 'В работе', value: 'open' },
     { label: 'На проверке', value: 'done_pending' },
+    { label: 'Готово', value: 'closed' },
   ]
   if (isAdmin.value) {
-    options.push({ label: 'Готово', value: 'closed' }, { label: 'Удалённые', value: 'deleted' })
+    options.push({ label: 'Удалённые', value: 'deleted' })
   }
   return options
 })
@@ -177,8 +178,8 @@ function resetTaskFilters(): void {
   filterAssigneeId.value = null
   filterCreatedBy.value = null
   filterStatus.value = null
-  includeClosedMine.value = false
-  includeClosedBoard.value = false
+  includeClosedMine.value = true
+  includeClosedBoard.value = true
 }
 
 const reassignOpen = ref(false)
@@ -671,7 +672,7 @@ onUnmounted(() => {
           placeholder="Статус"
           style="min-width: 160px"
         />
-        <label v-if="isAdmin" class="task-filters__closed">
+        <label class="task-filters__closed">
           <NSwitch v-model:value="includeClosed" size="small" />
           Показать готовые
         </label>
@@ -840,6 +841,9 @@ onUnmounted(() => {
                   <NTag v-if="task.status === 'new'" type="warning" size="small">Новая</NTag>
                   <NTag v-if="task.status === 'done_pending'" type="info" size="small">
                     На проверке
+                  </NTag>
+                  <NTag v-if="task.status === 'closed'" type="success" size="small">
+                    Готово
                   </NTag>
                   <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
                   <NTag v-else-if="task.due_soon" type="warning" size="small">Скоро срок</NTag>

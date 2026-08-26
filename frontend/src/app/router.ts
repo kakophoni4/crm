@@ -506,7 +506,8 @@ router.beforeEach(async (to) => {
     to.name === 'tasks' ||
     to.name === 'tickets' ||
     to.name === 'parser' ||
-    to.name === 'telephony'
+    to.name === 'telephony' ||
+    to.name === 'storage'
   if (auth.isLawyer && !lawyerAllowed) {
     return { name: 'tickets' }
   }

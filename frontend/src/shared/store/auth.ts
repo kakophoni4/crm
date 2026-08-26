@@ -114,7 +114,10 @@ export const useAuthStore = defineStore('auth', () => {
       user.value?.permissions?.includes('tasks.manage') === true,
   )
   const canCreateTasks = computed(
-    () => canManageTasks.value || user.value?.role === 'user',
+    () =>
+      canManageTasks.value ||
+      user.value?.role === 'user' ||
+      user.value?.role === 'lawyer',
   )
   const canViewHistoryActor = computed(
     () => isAdmin.value || isSenior.value || isGroupSenior.value,

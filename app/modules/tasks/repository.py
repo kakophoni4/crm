@@ -174,14 +174,22 @@ class TaskRepository:
         )
         return list(result.scalars().all())
 
-    async def list_for_assignee(self, assignee_id: int) -> list[DepartmentTask]:
+    async def list_for_assignee(
+        self,
+        assignee_id: int,
+        *,
+        include_closed: bool = True,
+    ) -> list[DepartmentTask]:
+        statuses = [item.value for item in ACTIVE_TASK_STATUSES]
+        if include_closed:
+            statuses.append(TaskStatus.CLOSED.value)
         collab_ids = select(DepartmentTaskCollaborator.task_id).where(
             DepartmentTaskCollaborator.user_id == assignee_id,
         )
         result = await self._session.execute(
             select(DepartmentTask)
             .where(
-                self._active_filter(),
+                DepartmentTask.status.in_(statuses),
                 or_(
                     DepartmentTask.assignee_id == assignee_id,
                     DepartmentTask.created_by == assignee_id,

@@ -126,6 +126,7 @@ _LAWYER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.PROFILE_AVAILABILITY_UPDATE,
         Permission.FILES_DOWNLOAD,
         Permission.FILES_UPLOAD,
+        Permission.FILES_DELETE,
         Permission.TASKS_READ,
         Permission.TELEPHONY_READ,
         Permission.TELEPHONY_CALL,

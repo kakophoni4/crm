@@ -86,7 +86,7 @@ class TaskService:
     def _can_create_task(self, actor: User) -> bool:
         if self._is_senior_or_admin(actor):
             return True
-        return self._role(actor) == UserRole.USER
+        return self._role(actor) in {UserRole.USER, UserRole.LAWYER}
 
     async def _load_user(self, user_id: int) -> User:
         user = await self._session.get(User, user_id)
@@ -526,11 +526,9 @@ class TaskService:
         if status is not None:
             if status == TaskStatus.DELETED and not is_admin:
                 return []
-            if status == TaskStatus.CLOSED and not is_admin:
-                return []
             return [status.value]
         statuses = [item.value for item in ACTIVE_TASK_STATUSES]
-        if include_closed and is_admin:
+        if include_closed:
             statuses.append(TaskStatus.CLOSED.value)
         if include_deleted and is_admin:
             statuses.append(TaskStatus.DELETED.value)
@@ -547,9 +545,11 @@ class TaskService:
         include_closed: bool = False,
     ) -> TaskListResponse:
         needle = (q or "").strip() or None
-        has_filters = any([assignee_id, created_by, needle, status, include_closed])
+        has_filters = any([assignee_id, created_by, needle, status])
         if not has_filters:
-            rows = self._repo.sort_tasks_for_assignee(await self._repo.list_for_assignee(actor.id))
+            rows = self._repo.sort_tasks_for_assignee(
+                await self._repo.list_for_assignee(actor.id, include_closed=include_closed),
+            )
         else:
             rows = self._repo.sort_tasks_for_assignee(
                 await self._repo.list_filtered(
@@ -604,7 +604,7 @@ class TaskService:
         needle = (q or "").strip() or None
         filtered = any([assignee_id, created_by, needle, status])
         is_admin = self._is_admin(actor)
-        show_closed = bool(include_closed and is_admin)
+        show_closed = bool(include_closed)
         if filtered:
             rows = await self._repo.list_filtered(
                 department_ids=dept_ids,
@@ -1581,8 +1581,8 @@ class TaskService:
         role = self._role(actor)
         due_soon = overdue = unacked_fns = client_due = 0
 
-        if role in {UserRole.USER, UserRole.GROUP_SENIOR, UserRole.SENIOR}:
-            mine = await self._repo.list_for_assignee(actor.id)
+        if role in {UserRole.USER, UserRole.GROUP_SENIOR, UserRole.SENIOR, UserRole.LAWYER}:
+            mine = await self._repo.list_for_assignee(actor.id, include_closed=False)
             for task in mine:
                 is_overdue, is_due_soon = self._task_flags(task, now)
                 if is_overdue:
@@ -1597,7 +1597,7 @@ class TaskService:
 
         if role in {UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT, UserRole.ADMIN}:
             if role == UserRole.ACCOUNTANT:
-                rows = await self._repo.list_for_assignee(actor.id)
+                rows = await self._repo.list_for_assignee(actor.id, include_closed=False)
             else:
                 # chief/admin: all active client_request + own
                 result = await self._session.execute(

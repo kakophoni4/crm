@@ -123,6 +123,11 @@ const menuOptions = computed(() => {
   if (auth.isLawyer) {
     const lawyerItems: MenuOption[] = [
       {
+        label: 'Хранилище',
+        key: 'storage',
+        icon: () => h(NIcon, null, { default: () => h(FolderOpen) }),
+      },
+      {
         label: 'Задачи',
         key: 'tasks',
         icon: blinkIcon(CheckSquare, tasksBlink.value),
