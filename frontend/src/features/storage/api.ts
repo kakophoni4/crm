@@ -110,7 +110,9 @@ export async function createVaultShareLink(
   fileId: number,
   body: ShareLinkCreateBody,
 ): Promise<ShareLink> {
-  const { data } = await http.post<ShareLink>(`/storage/vault/${fileId}/shares`, body)
+  const { data } = await http.post<ShareLink>(`/storage/vault/${fileId}/shares`, body, {
+    timeout: 30_000,
+  })
   return data
 }
 
@@ -196,14 +198,18 @@ export async function initAdminLargeShare(body: {
   size_bytes: number
   parent_id?: number | null
 }): Promise<LargeShareInit> {
-  const { data } = await http.post<LargeShareInit>('/storage/admin/large-share/init', {
-    original_name: body.original_name,
-    mime_type: body.mime_type || 'application/octet-stream',
-    size_bytes: body.size_bytes,
-    parent_id: body.parent_id ?? null,
-    expires_in_hours: 72,
-    max_downloads: 1,
-  })
+  const { data } = await http.post<LargeShareInit>(
+    '/storage/admin/large-share/init',
+    {
+      original_name: body.original_name,
+      mime_type: body.mime_type || 'application/octet-stream',
+      size_bytes: body.size_bytes,
+      parent_id: body.parent_id ?? null,
+      expires_in_hours: 72,
+      max_downloads: 1,
+    },
+    { timeout: 60_000 },
+  )
   return data
 }
 
@@ -212,13 +218,14 @@ export async function uploadAdminLargeSharePart(
   partNumber: number,
   blob: Blob,
 ): Promise<{ part_number: number; uploaded_bytes: number }> {
-  const { data } = await http.put<{ part_number: number; uploaded_bytes: number }>(
+  const form = new FormData()
+  form.append('file', blob, `part-${partNumber}`)
+  const { data } = await http.post<{ part_number: number; uploaded_bytes: number }>(
     `/storage/admin/large-share/${uploadId}/parts/${partNumber}`,
-    blob,
+    form,
     {
-      headers: { 'Content-Type': 'application/octet-stream' },
+      headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300_000,
-      transformRequest: [(value) => value],
     },
   )
   return data
@@ -228,7 +235,7 @@ export async function completeAdminLargeShare(uploadId: number): Promise<LargeSh
   const { data } = await http.post<LargeShareComplete>(
     `/storage/admin/large-share/${uploadId}/complete`,
     {},
-    { timeout: 180_000 },
+    { timeout: 300_000 },
   )
   return data
 }

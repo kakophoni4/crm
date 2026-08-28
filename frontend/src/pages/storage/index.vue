@@ -589,6 +589,7 @@ async function runLargeShareUpload(file: File): Promise<void> {
   largeShareBusy.value = true
   largeShareAbort = false
   largeShareUploadId.value = null
+  let finishing = false
   try {
     const session = await initAdminLargeShare({
       original_name: file.name,
@@ -615,6 +616,7 @@ async function runLargeShareUpload(file: File): Promise<void> {
       largeShareUploadId.value = null
       return
     }
+    finishing = true
     const done = await completeAdminLargeShare(session.id)
     largeShareUrl.value = done.share.url
     largeShareUploadId.value = null
@@ -626,7 +628,7 @@ async function runLargeShareUpload(file: File): Promise<void> {
     message.success('Одноразовая ссылка создана и скопирована')
     await loadVault()
   } catch (err) {
-    if (largeShareUploadId.value != null) {
+    if (largeShareUploadId.value != null && !finishing) {
       try {
         await abortAdminLargeShare(largeShareUploadId.value)
       } catch {

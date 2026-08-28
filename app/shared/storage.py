@@ -13,6 +13,7 @@ import httpx
 from app.shared.settings import Settings, get_settings
 
 _EMPTY_PAYLOAD_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
 _UPLOAD_ID_RE = re.compile(r"<UploadId>([^<]+)</UploadId>")
 
 
@@ -147,6 +148,43 @@ class FileStorage:
             response.raise_for_status()
         return url
 
+    async def _request(
+        self,
+        method: str,
+        key: str,
+        *,
+        query: Mapping[str, str] | None = None,
+        content: bytes = b"",
+        content_type: str | None = None,
+        unsigned: bool = False,
+        timeout: httpx.Timeout | None = None,
+    ) -> httpx.Response:
+        settings = get_settings()
+        if unsigned:
+            payload_hash = _UNSIGNED_PAYLOAD
+        elif content:
+            payload_hash = hashlib.sha256(content).hexdigest()
+        else:
+            payload_hash = _EMPTY_PAYLOAD_HASH
+        headers = self._auth_headers(
+            method=method,
+            key=key,
+            payload_hash=payload_hash,
+            content_type=content_type,
+            query=query,
+        )
+        url = _object_url(settings, key)
+        async with httpx.AsyncClient(timeout=timeout or _s3_timeout()) as client:
+            response = await client.request(
+                method,
+                url,
+                params=dict(query or {}),
+                content=content,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response
+
     async def get_bytes(self, key: str) -> tuple[bytes, str]:
         settings = get_settings()
         headers = self._auth_headers(
@@ -196,22 +234,18 @@ class FileStorage:
                 response.raise_for_status()
 
     async def initiate_multipart(self, key: str, content_type: str) -> str:
-        settings = get_settings()
-        query = {"uploads": ""}
-        headers = self._auth_headers(
-            method="POST",
-            key=key,
-            payload_hash=_EMPTY_PAYLOAD_HASH,
-            content_type=content_type,
-            query=query,
+        del content_type
+        response = await self._request(
+            "POST",
+            key,
+            query={"uploads": ""},
+            timeout=_s3_timeout(read=25.0, write=25.0),
         )
-        url = _object_url(settings, key, query)
-        async with httpx.AsyncClient(timeout=_s3_timeout()) as client:
-            response = await client.post(url, content=b"", headers=headers)
-            response.raise_for_status()
         match = _UPLOAD_ID_RE.search(response.text)
         if match is None:
-            raise RuntimeError("S3 initiate multipart did not return UploadId")
+            raise RuntimeError(
+                f"S3 initiate multipart did not return UploadId: {response.text[:300]}"
+            )
         return match.group(1)
 
     async def upload_part(
@@ -221,20 +255,14 @@ class FileStorage:
         part_number: int,
         data: bytes,
     ) -> str:
-        settings = get_settings()
-        query = {"partNumber": str(part_number), "uploadId": upload_id}
-        payload_hash = hashlib.sha256(data).hexdigest()
-        headers = self._auth_headers(
-            method="PUT",
-            key=key,
-            payload_hash=payload_hash,
-            content_type="application/octet-stream",
-            query=query,
+        response = await self._request(
+            "PUT",
+            key,
+            query={"partNumber": str(part_number), "uploadId": upload_id},
+            content=data,
+            unsigned=True,
+            timeout=_s3_timeout(read=180.0, write=180.0),
         )
-        url = _object_url(settings, key, query)
-        async with httpx.AsyncClient(timeout=_s3_timeout(read=180.0, write=180.0)) as client:
-            response = await client.put(url, content=data, headers=headers)
-            response.raise_for_status()
         etag = response.headers.get("etag") or response.headers.get("ETag")
         if not etag:
             raise RuntimeError(f"S3 part {part_number} did not return ETag")
@@ -246,37 +274,27 @@ class FileStorage:
         upload_id: str,
         parts: list[tuple[int, str]],
     ) -> None:
-        settings = get_settings()
-        query = {"uploadId": upload_id}
         xml = complete_multipart_xml(parts)
-        body = xml.encode("utf-8")
-        payload_hash = hashlib.sha256(body).hexdigest()
-        headers = self._auth_headers(
-            method="POST",
-            key=key,
-            payload_hash=payload_hash,
+        await self._request(
+            "POST",
+            key,
+            query={"uploadId": upload_id},
+            content=xml.encode("utf-8"),
             content_type="application/xml",
-            query=query,
+            timeout=_s3_timeout(read=180.0, write=180.0),
         )
-        url = _object_url(settings, key, query)
-        async with httpx.AsyncClient(timeout=_s3_timeout(read=180.0, write=180.0)) as client:
-            response = await client.post(url, content=body, headers=headers)
-            response.raise_for_status()
 
     async def abort_multipart(self, key: str, upload_id: str) -> None:
-        settings = get_settings()
-        query = {"uploadId": upload_id}
-        headers = self._auth_headers(
-            method="DELETE",
-            key=key,
-            payload_hash=_EMPTY_PAYLOAD_HASH,
-            query=query,
-        )
-        url = _object_url(settings, key, query)
-        async with httpx.AsyncClient(timeout=_s3_timeout()) as client:
-            response = await client.delete(url, headers=headers)
-            if response.status_code not in (200, 204, 404):
-                response.raise_for_status()
+        try:
+            await self._request(
+                "DELETE",
+                key,
+                query={"uploadId": upload_id},
+                unsigned=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in (200, 204, 404):
+                raise
 
 
 _storage: FileStorage | None = None

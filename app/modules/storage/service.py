@@ -7,6 +7,7 @@ from uuid import uuid4
 import httpx
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -501,9 +502,11 @@ class StorageService:
         storage = get_file_storage()
         try:
             s3_upload_id = await storage.initiate_multipart(key, mime)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RuntimeError, TimeoutError) as exc:
             logger.warning("large_share_initiate_failed", error=str(exc))
-            raise ValidationError(message="Не удалось начать загрузку в хранилище") from exc
+            raise ValidationError(
+                message="Не удалось начать загрузку в хранилище. Проверьте MinIO и повторите.",
+            ) from exc
         row = LargeShareUpload(
             owner_user_id=actor.id,
             storage_key=key,
@@ -519,6 +522,12 @@ class StorageService:
         )
         try:
             await self._repo.add_large_share_upload(row)
+        except SQLAlchemyError:
+            await storage.abort_multipart(key, s3_upload_id)
+            logger.warning("large_share_session_insert_failed", exc_info=True)
+            raise ValidationError(
+                message="Не удалось создать сессию загрузки. На сервере не применена миграция 0107.",
+            ) from None
         except Exception:
             await storage.abort_multipart(key, s3_upload_id)
             raise
@@ -552,7 +561,7 @@ class StorageService:
                 part_number,
                 data,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RuntimeError, TimeoutError) as exc:
             logger.warning("large_share_part_failed", upload_id=upload_id, error=str(exc))
             raise ValidationError(message="Не удалось загрузить часть файла") from exc
         etags = dict(row.part_etags or {})
@@ -598,7 +607,7 @@ class StorageService:
                 row.s3_upload_id,
                 [(number, etag) for number, etag, _size in parts],
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RuntimeError, TimeoutError) as exc:
             logger.warning("large_share_complete_failed", upload_id=upload_id, error=str(exc))
             raise ValidationError(message="Не удалось собрать файл в хранилище") from exc
 

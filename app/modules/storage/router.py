@@ -128,16 +128,15 @@ async def init_admin_large_share(
     return result
 
 
-@router.put("/admin/large-share/{upload_id}/parts/{part_number}")
-async def upload_admin_large_share_part(
+async def _store_large_share_part(
+    *,
     upload_id: int,
     part_number: int,
-    request: Request,
-    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
-    service: Annotated[StorageService, Depends(_service)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    data: bytes,
+    actor: User,
+    service: StorageService,
+    db: AsyncSession,
 ) -> dict[str, int]:
-    data = await request.body()
     result = await service.upload_admin_large_share_part(
         actor,
         upload_id,
@@ -146,6 +145,46 @@ async def upload_admin_large_share_part(
     )
     await db.commit()
     return result
+
+
+@router.put("/admin/large-share/{upload_id}/parts/{part_number}")
+async def upload_admin_large_share_part_raw(
+    upload_id: int,
+    part_number: int,
+    request: Request,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, int]:
+    data = await request.body()
+    return await _store_large_share_part(
+        upload_id=upload_id,
+        part_number=part_number,
+        data=data,
+        actor=actor,
+        service=service,
+        db=db,
+    )
+
+
+@router.post("/admin/large-share/{upload_id}/parts/{part_number}")
+async def upload_admin_large_share_part_form(
+    upload_id: int,
+    part_number: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[UploadFile, File()],
+) -> dict[str, int]:
+    data = await file.read()
+    return await _store_large_share_part(
+        upload_id=upload_id,
+        part_number=part_number,
+        data=data,
+        actor=actor,
+        service=service,
+        db=db,
+    )
 
 
 @router.post(
