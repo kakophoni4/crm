@@ -15,6 +15,7 @@ from app.modules.db.models.contact_referral import ContactReferral
 from app.modules.db.models.contact_referral_code import ContactReferralCode
 from app.modules.db.models.file_share_link import FileShareLink
 from app.modules.db.models.file_vault_item import FileVaultItem
+from app.modules.db.models.large_share_upload import LargeShareUpload
 from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
 from app.modules.db.models.department_task import DepartmentTask
 from app.modules.db.models.contact_group_transfer import ContactGroupTransfer
@@ -103,6 +104,7 @@ __all__ = [
     "ContactReferralCode",
     "FileShareLink",
     "FileVaultItem",
+    "LargeShareUpload",
     "ContactGroupAssignment",
     "DepartmentTask",
     "DepartmentTaskCollaborator",

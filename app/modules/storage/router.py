@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,9 @@ from app.modules.rbac.permissions import Permission
 from app.modules.storage.schemas import (
     GroupChatFileGroupsResponse,
     GroupChatFileListResponse,
+    LargeShareCompleteResponse,
+    LargeShareInitRequest,
+    LargeShareInitResponse,
     ShareLinkCreateRequest,
     ShareLinkResponse,
     StorageReceiptTreeResponse,
@@ -99,6 +102,77 @@ async def upload_vault_file(
     )
     await db.commit()
     return result
+
+
+@router.post(
+    "/admin/large-share/init",
+    status_code=201,
+    response_model=LargeShareInitResponse,
+)
+async def init_admin_large_share(
+    body: LargeShareInitRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LargeShareInitResponse:
+    result = await service.init_admin_large_share(
+        actor,
+        original_name=body.original_name,
+        mime_type=body.mime_type,
+        size_bytes=body.size_bytes,
+        parent_id=body.parent_id,
+        expires_in_hours=body.expires_in_hours,
+        max_downloads=body.max_downloads,
+    )
+    await db.commit()
+    return result
+
+
+@router.put("/admin/large-share/{upload_id}/parts/{part_number}")
+async def upload_admin_large_share_part(
+    upload_id: int,
+    part_number: int,
+    request: Request,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, int]:
+    data = await request.body()
+    result = await service.upload_admin_large_share_part(
+        actor,
+        upload_id,
+        part_number,
+        data,
+    )
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/admin/large-share/{upload_id}/complete",
+    response_model=LargeShareCompleteResponse,
+)
+async def complete_admin_large_share(
+    upload_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LargeShareCompleteResponse:
+    result = await service.complete_admin_large_share(actor, upload_id)
+    await db.commit()
+    return result
+
+
+@router.post("/admin/large-share/{upload_id}/abort")
+async def abort_admin_large_share(
+    upload_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, bool]:
+    await service.abort_admin_large_share(actor, upload_id)
+    await db.commit()
+    return {"aborted": True}
 
 
 @router.get("/vault/{vault_id}/download")

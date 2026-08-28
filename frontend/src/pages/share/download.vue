@@ -4,7 +4,7 @@ import { Download, Lock } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { downloadPublicShare, getPublicShareInfo, type PublicShareInfo } from '@/features/storage/api'
+import { downloadPublicShare, getPublicShareInfo, publicShareFileUrl, type PublicShareInfo } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
 import { formatFileSize } from '@/shared/config/uploads'
 import AppCard from '@/shared/ui/AppCard.vue'
@@ -32,6 +32,18 @@ async function loadInfo(): Promise<void> {
 
 async function download(): Promise<void> {
   if (!info.value) return
+  if (!info.value.has_password) {
+    const link = document.createElement('a')
+    link.href = publicShareFileUrl(token.value)
+    link.rel = 'noopener'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => {
+      void loadInfo()
+    }, 1500)
+    return
+  }
   downloading.value = true
   try {
     const blob = await downloadPublicShare(token.value, password.value || null)

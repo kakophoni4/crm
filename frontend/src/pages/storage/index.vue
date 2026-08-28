@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { DataTableColumns, UploadFileInfo } from 'naive-ui'
 import {
+  NAlert,
   NButton,
   NDataTable,
   NInput,
   NInputNumber,
   NModal,
+  NProgress,
   NSpace,
   NSpin,
   NTabPane,
@@ -17,6 +19,8 @@ import { ArrowLeft, Copy, Download, Eye, Folder, Link2, Pencil, Trash2, Upload }
 import { computed, h, onMounted, ref, watch } from 'vue'
 
 import {
+  abortAdminLargeShare,
+  completeAdminLargeShare,
   createVaultFolder,
   createVaultShareLink,
   deleteVaultFile,
@@ -25,12 +29,14 @@ import {
   downloadStorageSalesBook,
   downloadVaultFile,
   getVaultFileContent,
+  initAdminLargeShare,
   listGroupFileGroups,
   listGroupFiles,
   listVaultFiles,
   renameVaultFile,
   revokeShareLink,
   updateVaultFileContent,
+  uploadAdminLargeSharePart,
   uploadVaultFile,
   type GroupChatFile,
   type StorageReceiptItem,
@@ -40,8 +46,9 @@ import {
   type VaultFile,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
-import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
+import { formatFileSize, MAX_UPLOAD_FILE_BYTES, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
+import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
 import {
   VIRTUAL_DATA_TABLE_MAX_HEIGHT,
@@ -59,7 +66,12 @@ interface ReceiptUnitFolder {
   items: StorageReceiptItem[]
 }
 
+const LARGE_SHARE_MAX_BYTES = 32 * 1024 * 1024 * 1024
+const BLOB_DOWNLOAD_MAX_BYTES = 80 * 1024 * 1024
+
 const message = useMessage()
+const auth = useAuthStore()
+const isAdmin = computed(() => auth.isAdmin)
 const activeTab = ref('vault')
 const vaultLoading = ref(false)
 const receiptsLoading = ref(false)
@@ -102,6 +114,16 @@ const shareExpiresHours = ref<number | null>(168)
 const shareMaxDownloads = ref<number | null>(null)
 const sharePassword = ref('')
 const shareLoading = ref(false)
+
+const largeFileInput = ref<HTMLInputElement | null>(null)
+const largeShareOpen = ref(false)
+const largeShareBusy = ref(false)
+const largeShareName = ref('')
+const largeShareSize = ref(0)
+const largeShareUploaded = ref(0)
+const largeShareUrl = ref('')
+const largeShareUploadId = ref<number | null>(null)
+let largeShareAbort = false
 
 const previewBlobUrl = ref<string | null>(null)
 const previewBlob = ref<Blob | null>(null)
@@ -536,6 +558,109 @@ async function onVaultUpload(data: { file: UploadFileInfo }): Promise<boolean> {
   return false
 }
 
+function openLargeSharePicker(): void {
+  largeShareUrl.value = ''
+  largeFileInput.value?.click()
+}
+
+const largeSharePercent = computed(() => {
+  if (!largeShareSize.value) return 0
+  return Math.min(100, Math.round((largeShareUploaded.value / largeShareSize.value) * 100))
+})
+
+async function onLargeFilePicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (file.size > LARGE_SHARE_MAX_BYTES) {
+    message.error(`Максимум для исключения — ${formatFileSize(LARGE_SHARE_MAX_BYTES)}`)
+    return
+  }
+  largeShareName.value = file.name
+  largeShareSize.value = file.size
+  largeShareUploaded.value = 0
+  largeShareUrl.value = ''
+  largeShareOpen.value = true
+  await runLargeShareUpload(file)
+}
+
+async function runLargeShareUpload(file: File): Promise<void> {
+  largeShareBusy.value = true
+  largeShareAbort = false
+  largeShareUploadId.value = null
+  try {
+    const session = await initAdminLargeShare({
+      original_name: file.name,
+      mime_type: file.type || 'application/octet-stream',
+      size_bytes: file.size,
+      parent_id: vaultParentId.value,
+    })
+    largeShareUploadId.value = session.id
+    const partSize = session.part_size_bytes || 8 * 1024 * 1024
+    let part = 1
+    for (let offset = 0; offset < file.size; offset += partSize) {
+      if (largeShareAbort) {
+        await abortAdminLargeShare(session.id)
+        largeShareUploadId.value = null
+        return
+      }
+      const chunk = file.slice(offset, Math.min(offset + partSize, file.size))
+      const result = await uploadAdminLargeSharePart(session.id, part, chunk)
+      largeShareUploaded.value = result.uploaded_bytes
+      part += 1
+    }
+    if (largeShareAbort) {
+      await abortAdminLargeShare(session.id)
+      largeShareUploadId.value = null
+      return
+    }
+    const done = await completeAdminLargeShare(session.id)
+    largeShareUrl.value = done.share.url
+    largeShareUploadId.value = null
+    try {
+      await navigator.clipboard.writeText(done.share.url)
+    } catch {
+      /* ignore */
+    }
+    message.success('Одноразовая ссылка создана и скопирована')
+    await loadVault()
+  } catch (err) {
+    if (largeShareUploadId.value != null) {
+      try {
+        await abortAdminLargeShare(largeShareUploadId.value)
+      } catch {
+        /* ignore */
+      }
+      largeShareUploadId.value = null
+    }
+    if (!largeShareAbort) {
+      message.error(err instanceof AppError ? err.message : 'Не удалось загрузить большой файл')
+    }
+  } finally {
+    largeShareBusy.value = false
+  }
+}
+
+function onLargeShareVisible(show: boolean): void {
+  if (show) return
+  if (largeShareBusy.value) {
+    largeShareAbort = true
+    const id = largeShareUploadId.value
+    if (id != null) {
+      void abortAdminLargeShare(id)
+      largeShareUploadId.value = null
+    }
+  }
+  largeShareOpen.value = false
+}
+
+async function copyLargeShareUrl(): Promise<void> {
+  if (!largeShareUrl.value) return
+  await navigator.clipboard.writeText(largeShareUrl.value)
+  message.success('Ссылка скопирована')
+}
+
 async function onDeleteVault(row: VaultFile): Promise<void> {
   try {
     await deleteVaultFile(row.id)
@@ -558,6 +683,12 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
 }
 
 async function onDownloadVault(row: VaultFile): Promise<void> {
+  if (row.size_bytes > BLOB_DOWNLOAD_MAX_BYTES) {
+    message.warning(
+      'Файл слишком большой, чтобы скачать его из таблицы. Откройте ссылку шаринга — браузер сохранит его напрямую.',
+    )
+    return
+  }
   try {
     const blob = await downloadVaultFile(row.id)
     triggerBlobDownload(blob, row.original_name)
@@ -923,6 +1054,7 @@ onMounted(() => {
             <p class="hint">
               Личные файлы для отправки в чаты. Чтобы передать файл по ссылке без входа — откройте
               <a href="/share" target="_blank" rel="noopener">/share</a>.
+              Обычный лимит загрузки — {{ formatFileSize(MAX_UPLOAD_FILE_BYTES) }}.
             </p>
             <div v-if="vaultPath.length" class="explorer-nav">
               <NButton size="tiny" quaternary @click="vaultBack">
@@ -957,6 +1089,15 @@ onMounted(() => {
                   Загрузить файл
                 </NButton>
               </NUpload>
+              <NButton v-if="isAdmin" secondary @click="openLargeSharePicker">
+                Исключение: большой файл
+              </NButton>
+              <input
+                ref="largeFileInput"
+                type="file"
+                class="hidden-file"
+                @change="onLargeFilePicked"
+              />
             </NSpace>
             <NSpin :show="vaultLoading && vaultFiles.length === 0">
               <ul v-if="vaultFolderItems.length" class="explorer-list">
@@ -1389,6 +1530,36 @@ onMounted(() => {
       </template>
     </NModal>
 
+    <NModal
+      :show="largeShareOpen"
+      preset="card"
+      title="Исключение: большой файл"
+      style="width: 480px; max-width: 94vw"
+      :mask-closable="!largeShareBusy"
+      :closable="!largeShareBusy"
+      @update:show="onLargeShareVisible"
+    >
+      <NSpace vertical>
+        <NAlert type="warning" :bordered="false">
+          Только для админа. Обычный лимит 50 МБ не меняется. Ссылка одноразовая, живёт 72 часа.
+          После скачивания удалите файл из хранилища.
+        </NAlert>
+        <p class="file-name">{{ largeShareName }}</p>
+        <p class="hint">{{ formatFileSize(largeShareUploaded) }} / {{ formatFileSize(largeShareSize) }}</p>
+        <NProgress
+          type="line"
+          :percentage="largeSharePercent"
+          :processing="largeShareBusy && !largeShareUrl"
+        />
+        <div v-if="largeShareUrl" class="share-row">
+          <span class="share-url">{{ largeShareUrl }}</span>
+          <NButton size="tiny" quaternary @click="copyLargeShareUrl">
+            <Copy :size="12" />
+          </NButton>
+        </div>
+      </NSpace>
+    </NModal>
+
     <NModal v-model:show="shareModalOpen" preset="card" title="Ссылка на файл" style="width: 420px">
       <NSpace vertical>
         <p>{{ shareTarget?.original_name }}</p>
@@ -1515,6 +1686,16 @@ onMounted(() => {
 .empty-hint {
   color: var(--app-text-muted);
   font-size: 0.8125rem;
+}
+
+.hidden-file {
+  display: none;
+}
+
+.file-name {
+  font-weight: 600;
+  margin: 0;
+  word-break: break-word;
 }
 
 .editor-textarea :deep(textarea) {

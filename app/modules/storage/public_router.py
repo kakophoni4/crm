@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from typing import Annotated
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.storage.schemas import (
@@ -13,6 +12,7 @@ from app.modules.storage.schemas import (
     PublicShareInfoResponse,
 )
 from app.modules.storage.service import StorageService
+from app.modules.storage.streaming import stream_stored_file
 from app.shared.db import get_db
 from app.shared.exceptions import AppError
 from app.shared.settings import get_settings
@@ -39,6 +39,22 @@ def _check_upload_size(content: bytes, mime: str) -> None:
             status=413,
             details={"max_bytes": max_bytes},
         )
+
+
+def _stream_share(
+    storage_key: str,
+    content_type: str,
+    filename: str,
+    size_bytes: int,
+    share_id: int,
+) -> StreamingResponse:
+    return stream_stored_file(
+        storage_key=storage_key,
+        filename=filename,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        share_id=share_id,
+    )
 
 
 @router.post("/share", status_code=201, response_model=AnonymousShareResponse)
@@ -73,22 +89,26 @@ async def get_public_share_info(
     return await service.get_public_share_info(token)
 
 
+@router.get("/shares/{token}/file")
+async def download_public_share_file(
+    token: str,
+    service: Annotated[StorageService, Depends(_service)],
+) -> StreamingResponse:
+    storage_key, content_type, filename, size_bytes, share_id = await service.download_public_share(
+        token,
+        password=None,
+    )
+    return _stream_share(storage_key, content_type, filename, size_bytes, share_id)
+
+
 @router.post("/shares/{token}/download")
 async def download_public_share(
     token: str,
     body: PublicShareDownloadRequest,
     service: Annotated[StorageService, Depends(_service)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> Response:
-    data, content_type, filename = await service.download_public_share(
+) -> StreamingResponse:
+    storage_key, content_type, filename, size_bytes, share_id = await service.download_public_share(
         token,
         password=body.password,
     )
-    await db.commit()
-    ascii_name = filename.encode("ascii", "ignore").decode() or "file"
-    headers = {
-        "Content-Disposition": (
-            f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
-        ),
-    }
-    return Response(content=data, media_type=content_type, headers=headers)
+    return _stream_share(storage_key, content_type, filename, size_bytes, share_id)

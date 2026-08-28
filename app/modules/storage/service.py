@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.modules.contacts.scope_loader import ScopeLoader
 from app.modules.db.models.chat import Chat
@@ -17,9 +19,11 @@ from app.modules.db.models.enums import MessageDirection, UserRole
 from app.modules.db.models.file_share_link import FileShareLink
 from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.group_chat_file import GroupChatFile
+from app.modules.db.models.large_share_upload import LargeShareUpload
 from app.modules.db.models.uploaded_file import UploadedFile
 from app.modules.db.models.user import User
 from app.modules.files.service import FilesService
+from app.modules.rbac.role_checks import is_admin
 from app.modules.storage.repository import StorageRepository
 from app.modules.storage.schemas import (
     AnonymousShareResponse,
@@ -27,6 +31,8 @@ from app.modules.storage.schemas import (
     GroupChatFileGroupsResponse,
     GroupChatFileListResponse,
     GroupChatFileResponse,
+    LargeShareCompleteResponse,
+    LargeShareInitResponse,
     PublicShareInfoResponse,
     ShareLinkCreateRequest,
     ShareLinkResponse,
@@ -53,6 +59,8 @@ _EDITABLE_TEXT_EXTENSIONS = frozenset(
 )
 
 _MAX_EDITABLE_BYTES = 1_000_000
+ADMIN_LARGE_SHARE_PART_BYTES = 8 * 1024 * 1024
+ADMIN_LARGE_SHARE_PART_MAX_BYTES = 16 * 1024 * 1024
 
 
 def _is_editable_text_file(*, original_name: str, mime_type: str, size_bytes: int) -> bool:
@@ -451,16 +459,234 @@ class StorageService:
         token: str,
         *,
         password: str | None,
-    ) -> tuple[bytes, str, str]:
+    ) -> tuple[str, str, str, int, int]:
+        """Return storage key, mime, filename, size, share_id. Count is incremented after a full stream."""
         share, uploaded = await self._resolve_share(token, check_password=True, password=password)
         now = datetime.now(UTC)
         if share.expires_at is not None and share.expires_at < now:
             raise ValidationError(message="Ссылка истекла")
         if share.max_downloads is not None and share.download_count >= share.max_downloads:
             raise ValidationError(message="Лимит скачиваний исчерпан")
-        data, content_type = await get_file_storage().get_bytes(uploaded.storage_key)
-        await self._repo.increment_share_download(share.id)
-        return data, content_type, uploaded.original_name
+        return (
+            uploaded.storage_key,
+            uploaded.mime_type or "application/octet-stream",
+            uploaded.original_name,
+            int(uploaded.size_bytes),
+            int(share.id),
+        )
+
+    async def init_admin_large_share(
+        self,
+        actor: User,
+        *,
+        original_name: str,
+        mime_type: str,
+        size_bytes: int,
+        parent_id: int | None,
+        expires_in_hours: int,
+        max_downloads: int,
+    ) -> LargeShareInitResponse:
+        self._require_admin(actor)
+        settings = get_settings()
+        cap = int(settings.max_admin_large_share_bytes)
+        if size_bytes > cap:
+            raise ValidationError(
+                message="Файл слишком большой для исключения",
+                details={"max_bytes": cap},
+            )
+        await self._assert_vault_parent(actor, parent_id)
+        name = original_name.strip() or "file"
+        mime = (mime_type or "application/octet-stream").strip() or "application/octet-stream"
+        key = f"operator/{actor.id}/large/{uuid4().hex}"
+        storage = get_file_storage()
+        try:
+            s3_upload_id = await storage.initiate_multipart(key, mime)
+        except httpx.HTTPError as exc:
+            logger.warning("large_share_initiate_failed", error=str(exc))
+            raise ValidationError(message="Не удалось начать загрузку в хранилище") from exc
+        row = LargeShareUpload(
+            owner_user_id=actor.id,
+            storage_key=key,
+            s3_upload_id=s3_upload_id,
+            original_name=name[:512],
+            mime_type=mime[:255],
+            expected_size_bytes=size_bytes,
+            parent_id=parent_id,
+            status="uploading",
+            part_etags={},
+            expires_in_hours=expires_in_hours,
+            max_downloads=max_downloads,
+        )
+        try:
+            await self._repo.add_large_share_upload(row)
+        except Exception:
+            await storage.abort_multipart(key, s3_upload_id)
+            raise
+        return LargeShareInitResponse(
+            id=row.id,
+            part_size_bytes=ADMIN_LARGE_SHARE_PART_BYTES,
+            max_size_bytes=cap,
+        )
+
+    async def upload_admin_large_share_part(
+        self,
+        actor: User,
+        upload_id: int,
+        part_number: int,
+        data: bytes,
+    ) -> dict[str, int]:
+        row = await self._owned_large_share(actor, upload_id)
+        if row.status != "uploading":
+            raise ValidationError(message="Эта загрузка уже завершена")
+        if part_number < 1 or part_number > 10_000:
+            raise ValidationError(message="Некорректный номер части")
+        if not data or len(data) > ADMIN_LARGE_SHARE_PART_MAX_BYTES:
+            raise ValidationError(
+                message="Размер части не подходит",
+                details={"max_bytes": ADMIN_LARGE_SHARE_PART_MAX_BYTES},
+            )
+        try:
+            etag = await get_file_storage().upload_part(
+                row.storage_key,
+                row.s3_upload_id,
+                part_number,
+                data,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("large_share_part_failed", upload_id=upload_id, error=str(exc))
+            raise ValidationError(message="Не удалось загрузить часть файла") from exc
+        etags = dict(row.part_etags or {})
+        etags[str(part_number)] = {"etag": etag, "size": len(data)}
+        row.part_etags = etags
+        flag_modified(row, "part_etags")
+        await self._session.flush()
+        uploaded = sum(int(item.get("size") or 0) for item in etags.values())
+        return {"part_number": part_number, "uploaded_bytes": uploaded}
+
+    async def complete_admin_large_share(
+        self,
+        actor: User,
+        upload_id: int,
+    ) -> LargeShareCompleteResponse:
+        row = await self._owned_large_share(actor, upload_id)
+        if row.status == "completed" and row.file_id is not None:
+            vault = await self._repo.get_vault_item(row.vault_item_id) if row.vault_item_id else None
+            uploaded = await self._repo.get_uploaded_file(row.file_id)
+            share = await self._session.get(FileShareLink, row.share_id) if row.share_id else None
+            if vault is not None and uploaded is not None and share is not None:
+                return LargeShareCompleteResponse(
+                    vault=self._vault_item_response(
+                        vault,
+                        uploaded,
+                        share_links=[self._to_share_response(share)],
+                    ),
+                    share=self._to_share_response(share),
+                )
+        if row.status != "uploading":
+            raise ValidationError(message="Эта загрузка уже завершена")
+        parts = self._ordered_large_share_parts(row)
+        total = sum(size for _num, _etag, size in parts)
+        if total != int(row.expected_size_bytes):
+            raise ValidationError(
+                message="Загружены не все части файла",
+                details={"uploaded_bytes": total, "expected_bytes": row.expected_size_bytes},
+            )
+        storage = get_file_storage()
+        try:
+            await storage.complete_multipart(
+                row.storage_key,
+                row.s3_upload_id,
+                [(number, etag) for number, etag, _size in parts],
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("large_share_complete_failed", upload_id=upload_id, error=str(exc))
+            raise ValidationError(message="Не удалось собрать файл в хранилище") from exc
+
+        uploaded = UploadedFile(
+            storage_key=row.storage_key,
+            original_name=row.original_name,
+            mime_type=row.mime_type,
+            size_bytes=row.expected_size_bytes,
+            uploaded_by=actor.id,
+        )
+        self._session.add(uploaded)
+        await self._session.flush()
+        await self._session.refresh(uploaded)
+        vault_item = await self._repo.add_vault_item(
+            file_id=uploaded.id,
+            owner_user_id=actor.id,
+            parent_id=row.parent_id,
+            is_folder=False,
+        )
+        share = await self._repo.create_share_link(
+            file_id=uploaded.id,
+            created_by=actor.id,
+            is_anonymous=False,
+            password_hash=None,
+            expires_at=StorageRepository.expires_at_from_hours(int(row.expires_in_hours)),
+            max_downloads=int(row.max_downloads),
+        )
+        row.status = "completed"
+        row.file_id = uploaded.id
+        row.vault_item_id = vault_item.id
+        row.share_id = share.id
+        row.completed_at = datetime.now(UTC)
+        await self._session.flush()
+        return LargeShareCompleteResponse(
+            vault=self._vault_item_response(
+                vault_item,
+                uploaded,
+                share_links=[self._to_share_response(share)],
+            ),
+            share=self._to_share_response(share),
+        )
+
+    async def abort_admin_large_share(self, actor: User, upload_id: int) -> None:
+        row = await self._owned_large_share(actor, upload_id)
+        if row.status == "completed":
+            raise ValidationError(message="Готовую загрузку нельзя отменить — удалите файл из хранилища")
+        if row.status == "uploading":
+            try:
+                await get_file_storage().abort_multipart(row.storage_key, row.s3_upload_id)
+            except Exception:
+                logger.warning("large_share_abort_s3_failed", upload_id=upload_id, exc_info=True)
+        row.status = "aborted"
+        await self._session.flush()
+
+    def _require_admin(self, actor: User) -> None:
+        if not is_admin(actor.role):
+            raise PermissionDenied(message="Только администратор")
+
+    async def _owned_large_share(self, actor: User, upload_id: int) -> LargeShareUpload:
+        self._require_admin(actor)
+        row = await self._repo.get_large_share_upload(upload_id)
+        if row is None or row.owner_user_id != actor.id:
+            raise NotFound(message="Загрузка не найдена")
+        return row
+
+    @staticmethod
+    def _ordered_large_share_parts(row: LargeShareUpload) -> list[tuple[int, str, int]]:
+        raw = row.part_etags or {}
+        if not raw:
+            raise ValidationError(message="Нет загруженных частей")
+        items: list[tuple[int, str, int]] = []
+        for key, value in raw.items():
+            try:
+                number = int(key)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(message="Некорректный список частей") from exc
+            if not isinstance(value, dict):
+                raise ValidationError(message="Некорректный список частей")
+            etag = str(value.get("etag") or "").strip()
+            size = int(value.get("size") or 0)
+            if not etag or size <= 0:
+                raise ValidationError(message="Некорректный список частей")
+            items.append((number, etag, size))
+        items.sort(key=lambda item: item[0])
+        expected = list(range(1, len(items) + 1))
+        if [item[0] for item in items] != expected:
+            raise ValidationError(message="Пропущены части файла")
+        return items
 
     async def _resolve_share(
         self,

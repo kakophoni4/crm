@@ -63,6 +63,8 @@ class Settings(BaseSettings):
 
     max_upload_photo_bytes: int = 10 * 1024 * 1024
     max_upload_file_bytes: int = 50 * 1024 * 1024
+    # Admin-only exception path (multipart). Regular uploads stay on max_upload_file_bytes.
+    max_admin_large_share_bytes: int = 32 * 1024 * 1024 * 1024
     login_rate_limit_per_minute: int = 10
     login_rate_limit_use_redis: bool = True
     bot_job_reclaim_idle_ms: int = 300_000

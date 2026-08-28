@@ -112,6 +112,28 @@ class PublicShareDownloadRequest(BaseModel):
     password: str | None = Field(default=None, max_length=128)
 
 
+class LargeShareInitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    original_name: str = Field(min_length=1, max_length=512)
+    mime_type: str = Field(default="application/octet-stream", max_length=255)
+    size_bytes: int = Field(ge=1)
+    parent_id: int | None = None
+    expires_in_hours: int = Field(default=72, ge=1, le=168)
+    max_downloads: int = Field(default=1, ge=1, le=20)
+
+
+class LargeShareInitResponse(BaseModel):
+    id: int
+    part_size_bytes: int
+    max_size_bytes: int
+
+
+class LargeShareCompleteResponse(BaseModel):
+    vault: VaultFileResponse
+    share: ShareLinkResponse
+
+
 class GroupChatFileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

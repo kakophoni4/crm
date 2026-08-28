@@ -12,6 +12,7 @@ from app.modules.db.models.file_share_link import FileShareLink
 from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.group import Group
 from app.modules.db.models.group_chat_file import GroupChatFile
+from app.modules.db.models.large_share_upload import LargeShareUpload
 from app.modules.db.models.uploaded_file import UploadedFile
 
 
@@ -157,6 +158,15 @@ class StorageRepository:
             .values(download_count=FileShareLink.download_count + 1),
         )
 
+    async def add_large_share_upload(self, row: LargeShareUpload) -> LargeShareUpload:
+        self._session.add(row)
+        await self._session.flush()
+        await self._session.refresh(row)
+        return row
+
+    async def get_large_share_upload(self, upload_id: int) -> LargeShareUpload | None:
+        return await self._session.get(LargeShareUpload, upload_id)
+
     async def upsert_group_chat_file(
         self,
         *,
@@ -296,6 +306,19 @@ class StorageRepository:
             .values(revoked_at=now),
         )
         return file_ids
+
+
+async def increment_share_download_standalone(share_id: int) -> None:
+    from app.shared.db import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            update(FileShareLink)
+            .where(FileShareLink.id == share_id)
+            .values(download_count=FileShareLink.download_count + 1),
+        )
+        await session.commit()
 
     @staticmethod
     def expires_at_from_hours(hours: int | None) -> datetime | None:

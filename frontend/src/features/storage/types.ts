@@ -95,3 +95,14 @@ export interface PublicShareInfo {
   is_expired: boolean
   is_exhausted: boolean
 }
+
+export interface LargeShareInit {
+  id: number
+  part_size_bytes: number
+  max_size_bytes: number
+}
+
+export interface LargeShareComplete {
+  vault: VaultFile
+  share: ShareLink
+}

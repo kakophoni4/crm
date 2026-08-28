@@ -1,9 +1,12 @@
+import { env } from '@/shared/config/env'
 import { http } from '@/shared/api/http'
 
 import type {
   AnonymousShareResult,
   GroupChatFileGroupSummary,
   GroupChatFileList,
+  LargeShareComplete,
+  LargeShareInit,
   PublicShareInfo,
   ShareLink,
   ShareLinkCreateBody,
@@ -17,6 +20,8 @@ export type {
   GroupChatFile,
   GroupChatFileGroupSummary,
   GroupChatFileList,
+  LargeShareComplete,
+  LargeShareInit,
   PublicShareInfo,
   ShareLink,
   ShareLinkCreateBody,
@@ -178,6 +183,58 @@ export async function downloadPublicShare(
     { responseType: 'blob' },
   )
   return data
+}
+
+export function publicShareFileUrl(token: string): string {
+  const base = String(env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+  return `${base}/public/storage/shares/${token}/file`
+}
+
+export async function initAdminLargeShare(body: {
+  original_name: string
+  mime_type: string
+  size_bytes: number
+  parent_id?: number | null
+}): Promise<LargeShareInit> {
+  const { data } = await http.post<LargeShareInit>('/storage/admin/large-share/init', {
+    original_name: body.original_name,
+    mime_type: body.mime_type || 'application/octet-stream',
+    size_bytes: body.size_bytes,
+    parent_id: body.parent_id ?? null,
+    expires_in_hours: 72,
+    max_downloads: 1,
+  })
+  return data
+}
+
+export async function uploadAdminLargeSharePart(
+  uploadId: number,
+  partNumber: number,
+  blob: Blob,
+): Promise<{ part_number: number; uploaded_bytes: number }> {
+  const { data } = await http.put<{ part_number: number; uploaded_bytes: number }>(
+    `/storage/admin/large-share/${uploadId}/parts/${partNumber}`,
+    blob,
+    {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      timeout: 300_000,
+      transformRequest: [(value) => value],
+    },
+  )
+  return data
+}
+
+export async function completeAdminLargeShare(uploadId: number): Promise<LargeShareComplete> {
+  const { data } = await http.post<LargeShareComplete>(
+    `/storage/admin/large-share/${uploadId}/complete`,
+    {},
+    { timeout: 180_000 },
+  )
+  return data
+}
+
+export async function abortAdminLargeShare(uploadId: number): Promise<void> {
+  await http.post(`/storage/admin/large-share/${uploadId}/abort`)
 }
 
 export interface StorageReceiptItem {
