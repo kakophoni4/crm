@@ -1,0 +1,10 @@
+# Insert on the CRM API reverse_proxy (upstream :19001), not on /green/*.
+# Streaming 15GB downloads must not be buffered in Caddy.
+#
+# reverse_proxy host.docker.internal:19001 {
+#     flush_interval -1
+#     transport http {
+#         read_timeout 24h
+#         write_timeout 24h
+#     }
+# }
