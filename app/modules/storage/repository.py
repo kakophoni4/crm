@@ -307,6 +307,12 @@ class StorageRepository:
         )
         return file_ids
 
+    @staticmethod
+    def expires_at_from_hours(hours: int | None) -> datetime | None:
+        if hours is None:
+            return None
+        return datetime.now(UTC) + timedelta(hours=hours)
+
 
 async def increment_share_download_standalone(share_id: int) -> None:
     from app.shared.db import get_session_factory
@@ -319,9 +325,3 @@ async def increment_share_download_standalone(share_id: int) -> None:
             .values(download_count=FileShareLink.download_count + 1),
         )
         await session.commit()
-
-    @staticmethod
-    def expires_at_from_hours(hours: int | None) -> datetime | None:
-        if hours is None:
-            return None
-        return datetime.now(UTC) + timedelta(hours=hours)
