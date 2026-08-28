@@ -15,7 +15,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
-COPY app ./app
+# Stub package so pip can install deps without copying all of app/ (keeps this layer cached).
+RUN mkdir -p app && touch app/__init__.py
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip \
