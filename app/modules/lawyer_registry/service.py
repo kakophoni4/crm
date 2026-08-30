@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from time import monotonic
 from typing import Any
 
 import structlog
@@ -29,10 +30,17 @@ from app.modules.lawyer_registry.schemas import (
     LawyerShopOut,
     LawyerShopPatchRequest,
 )
+from app.modules.lawyer_registry.tickets_map import (
+    merge_unreliable,
+    payload_items,
+    status_from_company,
+)
 from app.modules.lawyer_registry.xlsx import director_name_key, normalize_inn, parse_svodnaya
 from app.shared.exceptions import NotFound, ValidationError
 
 logger = structlog.get_logger(__name__)
+_TICKETS_SYNC_COOLDOWN_SEC = 60.0
+_last_tickets_sync_at = 0.0
 
 
 def _money(value: Any) -> float | None:
@@ -159,6 +167,10 @@ class LawyerRegistryService:
         dirovod: str | None = None,
         include_shops: bool = False,
     ) -> LawyerDirectorListResponse:
+        try:
+            await self.sync_from_tickets()
+        except Exception:
+            logger.warning("lawyer_registry_tickets_sync_failed", exc_info=True)
         filtered = any(
             [q, kind, company_status, unreliable, zsk, ecsp_status, manager, dirovod],
         )
@@ -499,6 +511,83 @@ class LawyerRegistryService:
             payments=payments_created,
             updated=shops_updated,
         )
+
+    async def sync_from_tickets(self) -> int:
+        global _last_tickets_sync_at
+        now = monotonic()
+        if now - _last_tickets_sync_at < _TICKETS_SYNC_COOLDOWN_SEC:
+            return 0
+        from app.modules.tickets.client import SmertnikiUnavailable, smertniki_request
+
+        try:
+            companies_payload = await smertniki_request("GET", "/api/v1/companies")
+            tickets_payload = await smertniki_request(
+                "GET",
+                "/api/v1/tickets",
+                params={"status": "in_progress"},
+            )
+        except SmertnikiUnavailable:
+            return 0
+        _last_tickets_sync_at = now
+
+        companies = payload_items(companies_payload)
+        tickets = payload_items(tickets_payload)
+        inns = [normalize_inn(row.get("inn")) for row in companies]
+        inns = [inn for inn in inns if inn]
+        if not inns:
+            return 0
+        shops = await self._repo.shops_by_inns(inns)
+        titles_by_inn: dict[str, list[str]] = {}
+        for ticket in tickets:
+            inn = normalize_inn(ticket.get("company_inn") or ticket.get("inn"))
+            title = str(ticket.get("title") or "").strip()
+            if inn and title:
+                titles_by_inn.setdefault(inn, []).append(title)
+
+        alerts = 0
+        for company in companies:
+            inn = normalize_inn(company.get("inn"))
+            if not inn:
+                continue
+            shop = shops.get(inn)
+            if shop is None:
+                continue
+            changes: list[str] = []
+            next_unreliable = merge_unreliable(
+                shop.unreliable,
+                address=bool(company.get("unreliable_address")),
+                director=bool(company.get("unreliable_director")),
+                founder=bool(company.get("unreliable_founder")),
+            )
+            if (shop.unreliable or "").strip() != (next_unreliable or "").strip():
+                changes.append(f"недостоверка: {shop.unreliable or '—'} → {next_unreliable or '—'}")
+                shop.unreliable = next_unreliable
+            next_status = status_from_company(company, shop.company_status)
+            if (shop.company_status or "").strip() != (next_status or "").strip():
+                changes.append(f"статус: {shop.company_status or '—'} → {next_status or '—'}")
+                shop.company_status = next_status
+            titles = titles_by_inn.get(inn) or []
+            if titles:
+                treatment = "; ".join(titles)[:500]
+                if (shop.treatment_status or "").strip() != treatment:
+                    changes.append("лечение из тикетов")
+                    shop.treatment_status = treatment
+            incoming_name = str(company.get("short_name") or company.get("name") or "").strip()
+            if incoming_name and not (shop.name or "").strip():
+                shop.name = incoming_name
+                changes.append(f"название: {incoming_name}")
+            if changes:
+                self._repo.touch(shop)
+                await self._repo.add(
+                    LawyerParserAlert(
+                        shop_id=shop.id,
+                        inn=inn,
+                        title=f"Тикеты обновили {shop.name}",
+                        details="; ".join(changes)[:2000],
+                    ),
+                )
+                alerts += 1
+        return alerts
 
     async def sync_from_parser(self, lots: list[Any]) -> int:
         inns = [normalize_inn(getattr(lot, "inn", None)) for lot in lots]
