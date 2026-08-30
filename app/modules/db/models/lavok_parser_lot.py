@@ -45,6 +45,7 @@ class LavokParserLot(Base):
     egrul_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     mark: Mapped[str] = mapped_column(Text, nullable=False, server_default="new")
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -27,6 +27,7 @@ export interface LavokParserLot {
   egrul_status: string | null
   mark: LavokParserMark | string
   note: string | null
+  is_favorite?: boolean
   is_deleted: boolean
   created_at: string
   updated_at: string
@@ -51,4 +52,10 @@ export const LAVOK_MARK_OPTIONS = [
   { label: 'Смотрю', value: 'watching' },
   { label: 'Беру', value: 'taking' },
   { label: 'Пропуск', value: 'skip' },
+]
+
+export const LAVOK_FAVORITE_STATUS_OPTIONS = [
+  { label: 'Новая', value: 'new' },
+  { label: 'Смотрю', value: 'watching' },
+  { label: 'Беру', value: 'taking' },
 ]

@@ -9,10 +9,21 @@ import type {
 export async function listLavokLots(params: {
   sheet_date?: string | null
   q?: string
+  mark?: string | null
+  favorite?: boolean
   limit?: number
   offset?: number
 }): Promise<LavokParserListResponse> {
-  const { data } = await http.get<LavokParserListResponse>('/lavok-parser', { params })
+  const { data } = await http.get<LavokParserListResponse>('/lavok-parser', {
+    params: {
+      sheet_date: params.sheet_date ?? undefined,
+      q: params.q,
+      mark: params.mark || undefined,
+      favorite: params.favorite || undefined,
+      limit: params.limit,
+      offset: params.offset,
+    },
+  })
   return data
 }
 
@@ -28,7 +39,7 @@ export async function ingestLavokXlsx(file: File): Promise<LavokParserIngestResp
 
 export async function patchLavokLot(
   lotId: number,
-  body: { mark?: string; note?: string | null },
+  body: { mark?: string; note?: string | null; is_favorite?: boolean },
 ): Promise<LavokParserLot> {
   const { data } = await http.patch<LavokParserLot>(`/lavok-parser/${lotId}`, body)
   return data

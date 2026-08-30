@@ -91,15 +91,32 @@ class LavokParserService:
         sheet_date: date | None,
         q: str | None,
         include_deleted: bool,
+        mark: str | None = None,
+        favorite_only: bool = False,
         limit: int,
         offset: int,
     ) -> LavokParserListResponse:
         dates = await self._repo.list_sheet_dates()
+        if favorite_only:
+            rows, total = await self._repo.list_latest_favorites(
+                q=q,
+                mark=mark,
+                limit=limit,
+                offset=offset,
+            )
+            return LavokParserListResponse(
+                items=[LavokParserLotOut.model_validate(row) for row in rows],
+                total=total,
+                sheet_dates=dates,
+                sheet_date=None,
+            )
         effective = sheet_date or (dates[0] if dates else None)
         rows, total = await self._repo.list_lots(
             sheet_date=effective,
             q=q,
             include_deleted=include_deleted,
+            mark=mark,
+            favorite_only=False,
             limit=limit,
             offset=offset,
         )
@@ -122,6 +139,15 @@ class LavokParserService:
         if body.note is not None:
             note = body.note.strip()
             lot.note = note or None
+        if body.is_favorite is not None:
+            lot.is_favorite = body.is_favorite
+            if body.is_favorite and body.mark is None and lot.mark == "skip":
+                lot.mark = "new"
+        await self._repo.apply_inn_flags(
+            lot.inn,
+            mark=lot.mark if body.mark is not None or body.is_favorite is not None else None,
+            is_favorite=lot.is_favorite if body.is_favorite is not None else None,
+        )
         lot.updated_at = datetime.now(UTC)
         await self._session.commit()
         await self._session.refresh(lot)

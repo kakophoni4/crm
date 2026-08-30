@@ -8,12 +8,14 @@ import {
   NModal,
   NSelect,
   NSpin,
+  NTabPane,
+  NTabs,
   NTag,
   NUpload,
   useDialog,
   useMessage,
 } from 'naive-ui'
-import { ExternalLink, FileSpreadsheet, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { ExternalLink, FileSpreadsheet, RefreshCw, Star, Trash2 } from 'lucide-vue-next'
 import { computed, h, onMounted, ref } from 'vue'
 
 import {
@@ -23,6 +25,7 @@ import {
   patchLavokLot,
 } from '@/features/lavok-parser/api'
 import {
+  LAVOK_FAVORITE_STATUS_OPTIONS,
   LAVOK_MARK_OPTIONS,
   type LavokParserLot,
 } from '@/features/lavok-parser/types'
@@ -40,6 +43,8 @@ const sheetDates = ref<string[]>([])
 const sheetDate = ref<string | null>(null)
 const search = ref('')
 const selected = ref<LavokParserLot | null>(null)
+const activeTab = ref<'all' | 'favorites'>('all')
+const statusFilter = ref<string | null>(null)
 
 const dateOptions = computed<SelectOption[]>(() =>
   sheetDates.value.map((value) => ({ label: formatSheetDate(value), value })),
@@ -100,8 +105,10 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     const data = await listLavokLots({
-      sheet_date: sheetDate.value,
+      sheet_date: activeTab.value === 'favorites' ? undefined : sheetDate.value,
       q: search.value.trim() || undefined,
+      mark: activeTab.value === 'favorites' ? statusFilter.value : undefined,
+      favorite: activeTab.value === 'favorites',
       limit: 500,
     })
     rows.value = data.items
@@ -150,7 +157,27 @@ async function onMark(row: LavokParserLot, mark: string): Promise<void> {
   try {
     replaceRow(await patchLavokLot(row.id, { mark }))
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить отметку')
+    message.error(err instanceof AppError ? err.message : 'Не удалось сохранить статус')
+  }
+}
+
+async function onToggleFavorite(row: LavokParserLot): Promise<void> {
+  try {
+    const next = !row.is_favorite
+    const updated = await patchLavokLot(row.id, {
+      is_favorite: next,
+      mark: next && (row.mark === 'skip' || !row.mark) ? 'new' : undefined,
+    })
+    if (activeTab.value === 'favorites' && !updated.is_favorite) {
+      rows.value = rows.value.filter((item) => item.id !== row.id)
+      total.value = Math.max(0, total.value - 1)
+      if (selected.value?.id === row.id) selected.value = null
+    } else {
+      replaceRow(updated)
+    }
+    message.success(next ? 'Перенесено в избранное' : 'Убрано из избранного')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось обновить избранное')
   }
 }
 
@@ -196,7 +223,7 @@ async function saveNote(): Promise<void> {
   await onNote(selected.value, noteDraft.value)
 }
 
-const columns: DataTableColumns<LavokParserLot> = [
+const columns = computed<DataTableColumns<LavokParserLot>>(() => [
   {
     title: 'Название',
     key: 'name',
@@ -215,42 +242,64 @@ const columns: DataTableColumns<LavokParserLot> = [
     ellipsis: { tooltip: true },
     render: (row) => row.egrul_status || '—',
   },
-  {
-    title: 'Отметка',
-    key: 'mark',
-    width: 170,
-    render: (row) =>
-      h(NSelect, {
-        value: row.mark,
-        size: 'small',
-        options: LAVOK_MARK_OPTIONS,
-        onClick: (event: MouseEvent) => event.stopPropagation(),
-        onUpdateValue: (value: string) => onMark(row, value),
-      }),
-  },
+  ...(activeTab.value === 'favorites'
+    ? [
+        {
+          title: 'Статус',
+          key: 'mark',
+          width: 160,
+          render: (row: LavokParserLot) =>
+            h(NSelect, {
+              value: row.mark === 'skip' ? 'new' : row.mark,
+              size: 'small',
+              options: LAVOK_FAVORITE_STATUS_OPTIONS,
+              onClick: (event: MouseEvent) => event.stopPropagation(),
+              onUpdateValue: (value: string) => onMark(row, value),
+            }),
+        },
+      ]
+    : []),
   {
     title: '',
     key: 'actions',
-    width: 90,
+    width: activeTab.value === 'favorites' ? 160 : 200,
     render: (row) =>
-      h(
-        NButton,
-        {
-          size: 'tiny',
-          tertiary: true,
-          type: 'error',
-          onClick: (event: MouseEvent) => {
-            event.stopPropagation()
-            onDelete(row)
+      h('div', { style: 'display:flex;gap:6px' }, [
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            tertiary: true,
+            type: row.is_favorite ? 'warning' : 'default',
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation()
+              void onToggleFavorite(row)
+            },
           },
-        },
-        {
-          icon: () => h(Trash2, { size: 14 }),
-          default: () => 'Удалить',
-        },
-      ),
+          {
+            icon: () => h(Star, { size: 14 }),
+            default: () => (row.is_favorite ? 'Убрать' : 'В избранное'),
+          },
+        ),
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            tertiary: true,
+            type: 'error',
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation()
+              onDelete(row)
+            },
+          },
+          {
+            icon: () => h(Trash2, { size: 14 }),
+            default: () => 'Удалить',
+          },
+        ),
+      ]),
   },
-]
+])
 
 onMounted(() => {
   void load()
@@ -281,12 +330,26 @@ onMounted(() => {
     </header>
 
     <AppCard>
+      <NTabs v-model:value="activeTab" type="line" @update:value="load">
+        <NTabPane name="all" tab="Все лавки" />
+        <NTabPane name="favorites" tab="Избранное" />
+      </NTabs>
       <div class="parser-page__filters">
         <NSelect
+          v-if="activeTab === 'all'"
           v-model:value="sheetDate"
           :options="dateOptions"
           placeholder="Дата листа"
           style="min-width: 180px"
+          @update:value="load"
+        />
+        <NSelect
+          v-if="activeTab === 'favorites'"
+          v-model:value="statusFilter"
+          :options="LAVOK_FAVORITE_STATUS_OPTIONS"
+          clearable
+          placeholder="Статус"
+          style="min-width: 160px"
           @update:value="load"
         />
         <NInput
@@ -298,7 +361,13 @@ onMounted(() => {
         />
         <NButton @click="load">Найти</NButton>
         <NTag :bordered="false">{{ total }} строк</NTag>
-        <span class="parser-page__hint">Нажмите на строку, чтобы открыть итог</span>
+        <span class="parser-page__hint">
+          {{
+            activeTab === 'favorites'
+              ? 'Статусы: новая, смотрю, беру. Можно отфильтровать сверху.'
+              : 'Перенесите лавку в избранное, чтобы вести её отдельно.'
+          }}
+        </span>
       </div>
       <NSpin :show="loading && rows.length === 0">
         <NEmpty v-if="!loading && rows.length === 0" description="Нет строк парсера" />
@@ -365,9 +434,17 @@ onMounted(() => {
         </section>
 
         <div class="lot-card__actions">
+          <NButton
+            :type="selected.is_favorite ? 'warning' : 'default'"
+            @click="onToggleFavorite(selected)"
+          >
+            <template #icon><Star :size="16" /></template>
+            {{ selected.is_favorite ? 'Убрать из избранного' : 'В избранное' }}
+          </NButton>
           <NSelect
-            :value="selected.mark"
-            :options="LAVOK_MARK_OPTIONS"
+            v-if="selected.is_favorite"
+            :value="selected.mark === 'skip' ? 'new' : selected.mark"
+            :options="LAVOK_FAVORITE_STATUS_OPTIONS"
             style="width: 180px"
             @update:value="(value: string) => onMark(selected!, value)"
           />

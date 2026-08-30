@@ -34,6 +34,7 @@ class LavokParserLotOut(BaseModel):
     egrul_status: str | None = None
     mark: str
     note: str | None = None
+    is_favorite: bool = False
     is_deleted: bool
     created_at: datetime
     updated_at: datetime
@@ -88,3 +89,4 @@ class LavokParserLotPatchRequest(BaseModel):
 
     mark: str | None = Field(default=None, max_length=32)
     note: str | None = Field(default=None, max_length=4000)
+    is_favorite: bool | None = None

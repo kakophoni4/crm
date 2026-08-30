@@ -80,6 +80,8 @@ async def list_lavok_lots(
     sheet_date: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
     include_deleted: Annotated[bool, Query()] = False,
+    mark: Annotated[str | None, Query(max_length=32)] = None,
+    favorite: Annotated[bool, Query()] = False,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> LavokParserListResponse:
@@ -87,6 +89,8 @@ async def list_lavok_lots(
         sheet_date=parse_query_sheet_date(sheet_date),
         q=q,
         include_deleted=include_deleted,
+        mark=mark,
+        favorite_only=favorite,
         limit=limit,
         offset=offset,
     )
