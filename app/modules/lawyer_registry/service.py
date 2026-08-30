@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.lawyer_director import (
@@ -122,20 +123,27 @@ class LawyerRegistryService:
             return None
         key = director_name_key(cleaned)
         row = await self._repo.get_director_by_key(key)
-        if row is not None:
-            if extra:
-                for field, value in extra.items():
-                    if value not in (None, "") and getattr(row, field, None) in (None, ""):
-                        setattr(row, field, value)
-                self._repo.touch(row)
-            return row
-        row = LawyerDirector(
-            full_name=cleaned,
-            name_key=key,
-            created_by=actor_id,
-            **(extra or {}),
-        )
-        await self._repo.add(row)
+        if row is None:
+            row = LawyerDirector(
+                full_name=cleaned,
+                name_key=key,
+                created_by=actor_id,
+                **{k: v for k, v in (extra or {}).items() if v not in (None, "")},
+            )
+            try:
+                async with self._session.begin_nested():
+                    await self._repo.add(row)
+            except IntegrityError:
+                row = await self._repo.get_director_by_key(key)
+                if row is None:
+                    raise ValidationError(
+                        message=f"Директор уже есть в реестре: {cleaned}",
+                    ) from None
+        if extra:
+            for field, value in extra.items():
+                if value not in (None, "") and getattr(row, field, None) in (None, ""):
+                    setattr(row, field, value)
+            self._repo.touch(row)
         return row
 
     async def list_tree(

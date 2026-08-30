@@ -24,7 +24,8 @@ MONTH_RU = {
 
 
 def director_name_key(name: str) -> str:
-    return " ".join(str(name).split()).casefold()
+    text = " ".join(str(name).split()).casefold().replace("ё", "е")
+    return text
 
 
 def normalize_inn(value: Any) -> str | None:

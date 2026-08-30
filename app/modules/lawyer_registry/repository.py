@@ -21,6 +21,9 @@ class LawyerRegistryRepository:
         return await self._session.get(LawyerDirector, director_id)
 
     async def get_director_by_key(self, name_key: str) -> LawyerDirector | None:
+        for obj in (*self._session.new, *self._session.identity_map.values()):
+            if isinstance(obj, LawyerDirector) and obj.name_key == name_key:
+                return obj
         result = await self._session.execute(
             select(LawyerDirector).where(LawyerDirector.name_key == name_key),
         )
