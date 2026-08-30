@@ -65,6 +65,15 @@ const ecsp = ref<string | null>(null)
 const manager = ref('')
 const dirovod = ref('')
 const showHidden = ref(false)
+const appliedShopFilters = ref({
+  q: '',
+  kind: null as string | null,
+  companyStatus: null as string | null,
+  unreliable: null as string | null,
+  zsk: null as string | null,
+  ecsp: null as string | null,
+  manager: '',
+})
 
 const shopOpen = ref(false)
 const directorOpen = ref(false)
@@ -104,11 +113,54 @@ function fromIsoDate(value: string | null | undefined): number | null {
   return Number.isNaN(parsed) ? null : parsed
 }
 
-function shopsOf(director: LawyerDirector): LawyerShop[] {
-  const shops = director.shops ?? []
-  if (showHidden.value) return shops
-  return shops.filter((shop) => !shop.hidden_at)
+function snapshotShopFilters(): void {
+  appliedShopFilters.value = {
+    q: q.value,
+    kind: kind.value,
+    companyStatus: companyStatus.value,
+    unreliable: unreliable.value,
+    zsk: zsk.value,
+    ecsp: ecsp.value,
+    manager: manager.value,
+  }
 }
+
+function shopMatchesFilters(shop: LawyerShop): boolean {
+  const filters = appliedShopFilters.value
+  if (filters.kind && shop.kind !== filters.kind) return false
+  if (filters.companyStatus && shop.company_status !== filters.companyStatus) return false
+  if (filters.zsk && shop.zsk !== filters.zsk) return false
+  if (filters.ecsp && shop.ecsp_status !== filters.ecsp) return false
+  if (
+    filters.unreliable
+    && !(shop.unreliable || '').toLowerCase().includes(filters.unreliable.toLowerCase())
+  ) {
+    return false
+  }
+  if (
+    filters.manager.trim()
+    && !(shop.manager || '').toLowerCase().includes(filters.manager.trim().toLowerCase())
+  ) {
+    return false
+  }
+  const needle = filters.q.trim().toLowerCase()
+  if (needle) {
+    const hay = [shop.inn, shop.name, shop.manager, shop.banks, shop.treatment_status]
+      .map((value) => (value || '').toLowerCase())
+    if (!hay.some((value) => value.includes(needle))) return false
+  }
+  return true
+}
+
+function shopsOf(director: LawyerDirector): LawyerShop[] {
+  let shops = (director.shops ?? []).filter(shopMatchesFilters)
+  if (!showHidden.value) {
+    shops = shops.filter((shop) => !shop.hidden_at)
+  }
+  return shops
+}
+
+const visiblePinned = computed(() => pinned.value.filter(shopMatchesFilters))
 
 function kindLabel(value: string): string {
   return SHOP_KIND_OPTIONS.find((item) => item.value === value)?.label ?? value
@@ -177,6 +229,7 @@ async function loadTree(): Promise<void> {
     pinned.value = data.pinned_shops
     totalShops.value = data.total_shops
     unread.value = data.unread_alerts
+    snapshotShopFilters()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить реестр')
   } finally {
@@ -374,10 +427,10 @@ onMounted(async () => {
             {{ showHidden ? 'Скрытые показаны' : 'Показать скрытые' }}
           </NButton>
         </div>
-        <div v-if="pinned.length" class="pinned">
+        <div v-if="visiblePinned.length" class="pinned">
           <p class="section-title">Закреплённые лавки</p>
           <button
-            v-for="shop in pinned"
+            v-for="shop in visiblePinned"
             :key="`pin-${shop.id}`"
             type="button"
             class="pin-chip"
