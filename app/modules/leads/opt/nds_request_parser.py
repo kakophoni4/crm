@@ -154,6 +154,10 @@ def _header_map(row_values: list[object]) -> dict[str, int]:
             mapping["buyer_name"] = idx
         elif "наименование продавца" in text or "наименование организации" in text:
             mapping["supplier_name"] = idx
+        elif text == "кпп" or text.startswith("кпп покупател"):
+            mapping.setdefault("buyer_kpp", idx)
+        elif text.startswith("кпп продав") or text.startswith("кпп организац"):
+            mapping.setdefault("supplier_kpp", idx)
     return mapping
 
 
@@ -229,6 +233,13 @@ def _cell(sheet: _SheetMatrix, row_idx: int, col_idx: int) -> object:
     if col_idx > len(row):
         return None
     return row[col_idx - 1]
+
+
+def _cell_display(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _sheet_looks_like_partner(
@@ -407,12 +418,34 @@ def _parse_sheet(
 ) -> NdsRequestParseResult:
     lines: list[ParsedApplicationLine] = []
     buyer_inn: str | None = None
+    buyer_name: str | None = None
+    buyer_kpp: str | None = None
     max_row = len(sheet.rows)
     for row_idx in range(header_row + 1, max_row + 1):
         supplier_inn = normalize_inn(_cell(sheet, row_idx, cols["supplier_inn"]))
         row_buyer = normalize_inn(_cell(sheet, row_idx, cols["buyer_inn"]))
         document_date = parse_excel_date(_cell(sheet, row_idx, cols["document_date"]))
         amount = parse_decimal(_cell(sheet, row_idx, cols["amount"]))
+        row_buyer_name = (
+            _cell_display(_cell(sheet, row_idx, cols["buyer_name"]))
+            if "buyer_name" in cols
+            else None
+        )
+        row_buyer_kpp = (
+            _cell_display(_cell(sheet, row_idx, cols["buyer_kpp"]))
+            if "buyer_kpp" in cols
+            else None
+        )
+        supplier_name = (
+            _cell_display(_cell(sheet, row_idx, cols["supplier_name"]))
+            if "supplier_name" in cols
+            else None
+        )
+        supplier_kpp = (
+            _cell_display(_cell(sheet, row_idx, cols["supplier_kpp"]))
+            if "supplier_kpp" in cols
+            else None
+        )
 
         if supplier_inn is None and row_buyer is None and amount is None:
             if lines:
@@ -428,6 +461,10 @@ def _parse_sheet(
             continue
         if row_buyer:
             buyer_inn = row_buyer
+        if row_buyer_name:
+            buyer_name = row_buyer_name
+        if row_buyer_kpp:
+            buyer_kpp = row_buyer_kpp
         if buyer_inn is None:
             continue
         lines.append(
@@ -436,6 +473,8 @@ def _parse_sheet(
                 buyer_inn=buyer_inn,
                 document_date=document_date,
                 amount=amount,
+                supplier_name=supplier_name,
+                supplier_kpp=supplier_kpp,
             ),
         )
 
@@ -450,7 +489,12 @@ def _parse_sheet(
     return NdsRequestParseResult(
         matched=True,
         sheet_name=sheet.title,
-        application=ParsedApplication(buyer_inn=buyer_inn, lines=lines),
+        application=ParsedApplication(
+            buyer_inn=buyer_inn,
+            lines=lines,
+            buyer_name=buyer_name,
+            buyer_kpp=buyer_kpp,
+        ),
         form_kind=form_kind,
     )
 

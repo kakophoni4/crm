@@ -27,7 +27,8 @@ from app.modules.leads.opt.mole_client import (
 )
 from app.modules.leads.opt.requisites import ensure_unit_requisites, resolve_buyer_requisites
 from app.modules.leads.opt.fingerprint import compute_application_fingerprint
-from app.modules.leads.opt.parser import parse_application_workbook
+from app.modules.leads.opt.nds_request_parser import parse_nds_request_workbook
+from app.modules.leads.opt.parser import ParsedApplication, parse_application_workbook
 from app.modules.leads.opt.queue import dequeue_opt_submit, enqueue_opt_submit
 from app.modules.leads.opt.registry_export import build_registry_workbook
 from app.modules.leads.opt.repository import OptOrderRepository
@@ -107,6 +108,22 @@ def _existing_order_ref(order: LeadOptOrder) -> OptOrderExistingRef:
     )
 
 
+def _order_kind_of(order: LeadOptOrder) -> str:
+    return getattr(order, "order_kind", None) or "standard"
+
+
+def _normalize_list_kind(kind: str | None) -> str:
+    return "benik" if (kind or "").strip().lower() == "benik" else "standard"
+
+
+def _parse_opt_or_benik(content: bytes) -> tuple[ParsedApplication, str]:
+    """Prefer «Заявка на НДС» as benik; otherwise the regular OPT workbook."""
+    nds = parse_nds_request_workbook(content)
+    if nds.matched and nds.application is not None and nds.form_kind == "nds_request":
+        return nds.application, "benik"
+    return parse_application_workbook(content), "standard"
+
+
 def duplicate_order_message(order: LeadOptOrder) -> str:
     return (
         f"Такая заявка уже существует по сделке №{order.lead_id}, "
@@ -149,7 +166,8 @@ class OptOrderService:
         if commission_base == 0 and commission_due:
             commission_base = round_rubles(commission_due - commission_adjustment)
         amount_paid = Decimal(str(order.amount_paid or 0))
-        status = calc_payment_status(amount_paid, commission_due)
+        kind = _order_kind_of(order)
+        status = calc_payment_status(amount_paid, commission_due, order_kind=kind)
         remaining = (
             Decimal("0")
             if status == "paid"
@@ -173,6 +191,7 @@ class OptOrderService:
             lead_id=order.lead_id,
             order_no=order.order_no,
             crm_id=order.crm_id,
+            order_kind=kind,
             status=order.status,
             payment_status=status,
             vat_rate_percent=Decimal(str(getattr(order, "vat_rate_percent", None) or 22)),
@@ -454,6 +473,7 @@ class OptOrderService:
         manager_user_id: int | None = None,
         q: str | None = None,
         open_only: bool = False,
+        kind: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> OptOrderRegistryListResponse:
@@ -522,6 +542,7 @@ class OptOrderService:
             filters.append(Lead.closed_at.is_(None))
 
         filters.append(LeadOptOrder.deleted_at.is_(None))
+        filters.append(LeadOptOrder.order_kind == _normalize_list_kind(kind))
 
         manager_join = (
             ContactGroupAssignment,
@@ -600,7 +621,11 @@ class OptOrderService:
         ) in result.all():
             commission_due = round_rubles(order.commission_due or 0)
             amount_paid = Decimal(str(order.amount_paid or 0))
-            pay_status = calc_payment_status(amount_paid, commission_due)
+            pay_status = calc_payment_status(
+                amount_paid,
+                commission_due,
+                order_kind=_order_kind_of(order),
+            )
             remaining = (
                 Decimal("0")
                 if pay_status == "paid"
@@ -620,6 +645,7 @@ class OptOrderService:
                     department_name=dept_name,
                     manager_user_id=manager_id,
                     manager_name=manager_name,
+                    order_kind=_order_kind_of(order),
                     status=order.status,
                     payment_status=pay_status,
                     period_code=getattr(order, "period_code", None),
@@ -653,6 +679,7 @@ class OptOrderService:
         department_id: int | None = None,
         group_id: int | None = None,
         period_code: str | None = None,
+        kind: str | None = None,
     ) -> OptRegistryManagersResponse:
         """Distinct card owners that appear on at least one OPT order in scope."""
         from sqlalchemy import select
@@ -679,6 +706,7 @@ class OptOrderService:
             filters.append(Lead.group_id == group_id)
         if period_code:
             filters.append(LeadOptOrder.period_code == period_code.strip())
+        filters.append(LeadOptOrder.order_kind == _normalize_list_kind(kind))
 
         stmt = (
             select(User.id, User.full_name)
@@ -715,6 +743,7 @@ class OptOrderService:
         period_code: str | None = None,
         manager_user_id: int | None = None,
         q: str | None = None,
+        kind: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> OptPaymentLedgerListResponse:
@@ -768,6 +797,7 @@ class OptOrderService:
             filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
 
         filters.append(LeadOptOrder.deleted_at.is_(None))
+        filters.append(LeadOptOrder.order_kind == _normalize_list_kind(kind))
 
         manager_join = (
             ContactGroupAssignment,
@@ -954,13 +984,14 @@ class OptOrderService:
             return OptAttachmentProbeResponse(
                 is_application=True,
                 existing_order=_existing_order_ref(existing),
+                order_kind=_order_kind_of(existing),
             )
 
         if not _looks_like_spreadsheet(filename, None):
             return OptAttachmentProbeResponse(is_application=False)
 
         try:
-            parsed = parse_application_workbook(content)
+            parsed, order_kind = _parse_opt_or_benik(content)
         except ValidationError:
             return OptAttachmentProbeResponse(is_application=False)
 
@@ -972,6 +1003,7 @@ class OptOrderService:
                 buyer_inn=parsed.buyer_inn,
                 line_count=len(parsed.lines),
                 existing_order=_existing_order_ref(existing_fp),
+                order_kind=_order_kind_of(existing_fp),
             )
 
         dates = [line.document_date for line in parsed.lines]
@@ -997,6 +1029,7 @@ class OptOrderService:
             inferred_period_code=inferred_period,
             vat_rate_percent=vat_rate,
             date_error=date_error,
+            order_kind=order_kind,
         )
 
     async def upload_from_chat_attachment(
@@ -1055,7 +1088,9 @@ class OptOrderService:
             if existing is not None:
                 raise ValidationError(message=duplicate_order_message(existing))
 
-        if await self._repo.lead_has_pending_submission(lead.id):
+        parsed, order_kind = _parse_opt_or_benik(content)
+
+        if order_kind != "benik" and await self._repo.lead_has_pending_submission(lead.id):
             raise ValidationError(
                 message=(
                     "По сделке уже есть незавершённая заявка. "
@@ -1063,7 +1098,6 @@ class OptOrderService:
                 ),
             )
 
-        parsed = parse_application_workbook(content)
         content_fingerprint = compute_application_fingerprint(parsed)
         existing_fp = await self._repo.get_order_by_content_fingerprint(content_fingerprint)
         if existing_fp is not None:
@@ -1071,6 +1105,10 @@ class OptOrderService:
 
         buyer_inn = parsed.buyer_inn
         buyer_kpp, buyer_name = await resolve_buyer_requisites(self._repo, buyer_inn)
+        if parsed.buyer_name:
+            buyer_name = parsed.buyer_name
+        if parsed.buyer_kpp:
+            buyer_kpp = parsed.buyer_kpp
 
         from app.modules.leads.opt.period_access import normalize_requested_period
 
@@ -1095,23 +1133,27 @@ class OptOrderService:
         period_blocked: list[str] = []
 
         for parsed_line in parsed.lines:
-            unit = await self._repo.get_unit_by_inn_for_period(
-                parsed_line.supplier_inn,
-                period_code,
-            )
-            if unit is None:
-                # Distinguish: exists but wrong period vs missing entirely.
-                any_unit = await self._repo.get_unit_by_inn(parsed_line.supplier_inn)
-                if any_unit is None:
-                    missing_suppliers.append(parsed_line.supplier_inn)
-                else:
-                    period_blocked.append(parsed_line.supplier_inn)
-                supplier_kpp = None
-                supplier_name = None
+            if order_kind == "benik":
+                supplier_kpp = parsed_line.supplier_kpp
+                supplier_name = parsed_line.supplier_name
             else:
-                unit = await ensure_unit_requisites(self._repo, unit)
-                supplier_kpp = unit.kpp
-                supplier_name = unit.name
+                unit = await self._repo.get_unit_by_inn_for_period(
+                    parsed_line.supplier_inn,
+                    period_code,
+                )
+                if unit is None:
+                    # Distinguish: exists but wrong period vs missing entirely.
+                    any_unit = await self._repo.get_unit_by_inn(parsed_line.supplier_inn)
+                    if any_unit is None:
+                        missing_suppliers.append(parsed_line.supplier_inn)
+                    else:
+                        period_blocked.append(parsed_line.supplier_inn)
+                    supplier_kpp = None
+                    supplier_name = None
+                else:
+                    unit = await ensure_unit_requisites(self._repo, unit)
+                    supplier_kpp = unit.kpp
+                    supplier_name = unit.name
 
             total, vat, wo_vat = split_vat_included(parsed_line.amount, rate_percent=vat_rate)
             line_payloads.append(
@@ -1127,53 +1169,54 @@ class OptOrderService:
                 },
             )
 
-        if missing_suppliers:
-            raise ValidationError(
-                message=(
-                    "Не найдены лавки (opt_units) для ИНН: "
-                    + ", ".join(sorted(set(missing_suppliers)))
-                ),
-            )
-        if period_blocked:
-            raise ValidationError(
-                message=(
-                    f"Лавки не доступны для периода {period_code}: "
-                    + ", ".join(sorted(set(period_blocked)))
-                ),
-            )
-
-        # Volume limits per lavka (accountant-configured).
-        incoming_by_inn: dict[str, Decimal] = {}
-        for row in line_payloads:
-            inn = str(row["supplier_inn"])
-            incoming_by_inn[inn] = incoming_by_inn.get(inn, Decimal("0")) + Decimal(
-                str(row["amount"]),
-            )
-        for inn, incoming in incoming_by_inn.items():
-            unit = await self._repo.get_unit_by_inn(inn)
-            if unit is None or unit.volume_limit is None:
-                continue
-            limit = Decimal(str(unit.volume_limit)).quantize(Decimal("0.01"))
-            used = await self._repo.sum_supplier_volume_for_period(
-                supplier_inn=inn,
-                period_code=period_code,
-            )
-            projected = (used + incoming).quantize(Decimal("0.01"))
-            if projected > limit:
+        if order_kind != "benik":
+            if missing_suppliers:
                 raise ValidationError(
                     message=(
-                        f"Превышен лимит объёма по лавке {unit.name or inn} "
-                        f"за период {period_code}: уже {used} ₽, в файле {incoming} ₽, "
-                        f"лимит {limit} ₽. Заявка не принята."
+                        "Не найдены лавки (opt_units) для ИНН: "
+                        + ", ".join(sorted(set(missing_suppliers)))
                     ),
-                    details={
-                        "supplier_inn": inn,
-                        "period_code": period_code,
-                        "volume_used": str(used),
-                        "volume_incoming": str(incoming),
-                        "volume_limit": str(limit),
-                    },
                 )
+            if period_blocked:
+                raise ValidationError(
+                    message=(
+                        f"Лавки не доступны для периода {period_code}: "
+                        + ", ".join(sorted(set(period_blocked)))
+                    ),
+                )
+
+            # Volume limits per lavka (accountant-configured).
+            incoming_by_inn: dict[str, Decimal] = {}
+            for row in line_payloads:
+                inn = str(row["supplier_inn"])
+                incoming_by_inn[inn] = incoming_by_inn.get(inn, Decimal("0")) + Decimal(
+                    str(row["amount"]),
+                )
+            for inn, incoming in incoming_by_inn.items():
+                unit = await self._repo.get_unit_by_inn(inn)
+                if unit is None or unit.volume_limit is None:
+                    continue
+                limit = Decimal(str(unit.volume_limit)).quantize(Decimal("0.01"))
+                used = await self._repo.sum_supplier_volume_for_period(
+                    supplier_inn=inn,
+                    period_code=period_code,
+                )
+                projected = (used + incoming).quantize(Decimal("0.01"))
+                if projected > limit:
+                    raise ValidationError(
+                        message=(
+                            f"Превышен лимит объёма по лавке {unit.name or inn} "
+                            f"за период {period_code}: уже {used} ₽, в файле {incoming} ₽, "
+                            f"лимит {limit} ₽. Заявка не принята."
+                        ),
+                        details={
+                            "supplier_inn": inn,
+                            "period_code": period_code,
+                            "volume_used": str(used),
+                            "volume_incoming": str(incoming),
+                            "volume_limit": str(limit),
+                        },
+                    )
 
         try:
             order = await self._repo.create_order(
@@ -1190,6 +1233,7 @@ class OptOrderService:
                 content_fingerprint=content_fingerprint,
                 vat_rate_percent=float(vat_rate),
                 period_code=period_code,
+                order_kind=order_kind,
             )
         except IntegrityError:
             await self._session.rollback()
@@ -1207,7 +1251,8 @@ class OptOrderService:
             ) from None
         await self._ensure_lead_service_opt(lead, period_code=period_code)
         await self._session.commit()
-        await enqueue_opt_submit(order.id)
+        if order_kind != "benik":
+            await enqueue_opt_submit(order.id)
         refreshed = await self._repo.get_order(order.id)
         assert refreshed is not None
         return self._to_response(refreshed)

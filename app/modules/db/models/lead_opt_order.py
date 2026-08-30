@@ -22,6 +22,7 @@ class LeadOptOrder(Base):
     __tablename__ = "lead_opt_orders"
     __table_args__ = (
         Index("idx_lead_opt_orders_lead_id", "lead_id"),
+        Index("idx_lead_opt_orders_order_kind", "order_kind"),
         Index(
             "uq_lead_opt_orders_lead_order_no",
             "lead_id",
@@ -48,6 +49,7 @@ class LeadOptOrder(Base):
         server_default="22",
     )
     period_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="standard")
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_message_id: Mapped[int | None] = mapped_column(

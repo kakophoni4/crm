@@ -59,6 +59,8 @@ export interface OptOrderExistingRef {
   order_no: number
 }
 
+export type OptOrderKind = 'standard' | 'benik'
+
 export interface OptAttachmentProbeResult {
   is_application: boolean
   buyer_inn?: string | null
@@ -67,6 +69,7 @@ export interface OptAttachmentProbeResult {
   inferred_period_code?: string | null
   vat_rate_percent?: number | null
   date_error?: string | null
+  order_kind?: OptOrderKind | string | null
 }
 
 export type OptVatRatePercent = 20 | 22
@@ -76,7 +79,8 @@ export interface OptOrder {
   lead_id: number
   order_no: number
   crm_id: string
-  status: 'queued' | 'submitting' | 'submitted' | 'failed' | string
+  order_kind?: OptOrderKind | string
+  status: 'queued' | 'submitting' | 'submitted' | 'failed' | 'ready' | string
   payment_status: 'unpaid' | 'partial' | 'paid' | string
   /** VAT rate used when splitting line amounts (20 or 22). */
   vat_rate_percent?: number
@@ -117,6 +121,7 @@ export interface OptOrderRegistryItem {
   department_name?: string | null
   manager_user_id?: number | null
   manager_name?: string | null
+  order_kind?: OptOrderKind | string
   status: string
   payment_status: string
   period_code?: string | null

@@ -113,9 +113,16 @@ async function submitApplication(): Promise<void> {
       attachment_index: props.attachmentIndex,
       period_code: periodCode.value || undefined,
     })
-    message.success(
-      `Заявка отправлена в обработку (НДС ${vatPercent.value}%, период ${formatOptPeriodLabel(periodCode.value || probeResult.value?.inferred_period_code)})`,
+    const periodLabel = formatOptPeriodLabel(
+      periodCode.value || probeResult.value?.inferred_period_code,
     )
+    if (probeResult.value?.order_kind === 'benik') {
+      message.success(`Заявка Беника добавлена (период ${periodLabel})`)
+    } else {
+      message.success(
+        `Заявка отправлена в обработку (НДС ${vatPercent.value}%, период ${periodLabel})`,
+      )
+    }
     store.bumpOptOrdersRefresh()
     await runProbe()
   } catch (err) {
@@ -147,7 +154,9 @@ watch(
     </template>
     <template v-else-if="isApplication">
       <p v-if="probeResult?.line_count" class="opt-attachment-bar__hint">
-        Распознана заявка: {{ probeResult.line_count }}
+        <template v-if="probeResult.order_kind === 'benik'">Распознана заявка Беника: </template>
+        <template v-else>Распознана заявка: </template>
+        {{ probeResult.line_count }}
         {{ probeResult.line_count === 1 ? 'строка' : 'строк' }}
         <span v-if="probeResult.buyer_inn">, покупатель ИНН {{ probeResult.buyer_inn }}</span>
         <span v-if="probeResult.inferred_period_code">
@@ -172,7 +181,7 @@ watch(
           :disabled="!canSubmit"
           @click="submitApplication"
         >
-          Отправить заявку
+          {{ probeResult?.order_kind === 'benik' ? 'Добавить заявку Беника' : 'Отправить заявку' }}
         </NButton>
       </div>
     </template>

@@ -38,6 +38,10 @@ def test_payment_status_partial_and_paid() -> None:
     assert payment_status(Decimal("0"), Decimal("100")) == "unpaid"
     assert payment_status(Decimal("40"), Decimal("100")) == "partial"
     assert payment_status(Decimal("100"), Decimal("100")) == "paid"
+    assert payment_status(Decimal("0"), Decimal("0")) == "paid"
+    assert payment_status(Decimal("0"), Decimal("0"), order_kind="benik") == "unpaid"
+    assert payment_status(Decimal("50"), Decimal("100"), order_kind="benik") == "partial"
+    assert payment_status(Decimal("100"), Decimal("100"), order_kind="benik") == "paid"
 
 
 def test_payment_status_kopeck_tail_is_paid() -> None:

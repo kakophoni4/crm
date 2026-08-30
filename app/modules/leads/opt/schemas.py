@@ -81,6 +81,7 @@ class OptOrderResponse(BaseModel):
     lead_id: int
     order_no: int
     crm_id: str
+    order_kind: str = "standard"
     status: str
     payment_status: str
     vat_rate_percent: Decimal = Decimal("22")
@@ -136,6 +137,7 @@ class OptOrderRegistryItem(BaseModel):
     department_name: str | None = None
     manager_user_id: int | None = None
     manager_name: str | None = None
+    order_kind: str = "standard"
     status: str
     payment_status: str
     period_code: str | None = None
@@ -227,6 +229,7 @@ class OptAttachmentProbeResponse(BaseModel):
     inferred_period_code: str | None = None
     vat_rate_percent: int | None = None
     date_error: str | None = None
+    order_kind: str | None = None
 
 
 class OptUploadFromAttachmentRequest(BaseModel):

@@ -171,6 +171,16 @@ function canAdjustCommission(order: OptOrder): boolean {
   return order.payment_status !== 'paid'
 }
 
+function isBenik(order: OptOrder): boolean {
+  return order.order_kind === 'benik'
+}
+
+function canRecordPayment(order: OptOrder): boolean {
+  if (order.payment_status === 'paid') return false
+  if (isBenik(order) && Number(order.commission_due) <= 0) return false
+  return true
+}
+
 function commissionBase(order: OptOrder): number {
   if (order.commission_base != null) return order.commission_base
   const adjustment = order.commission_adjustment ?? 0
@@ -395,6 +405,7 @@ function statusLabel(order: OptOrder | string): string {
   if (typeof order !== 'string') {
     if (order.payment_status === 'paid') return 'оплачена'
     if (order.payment_status === 'partial') return 'частично'
+    if (isBenik(order)) return 'Беник'
     if (order.receipts_sent_at && order.status === 'submitted') return 'сбор оплат'
   }
   const status = typeof order === 'string' ? order : order.status
@@ -402,13 +413,18 @@ function statusLabel(order: OptOrder | string): string {
   if (status === 'failed') return 'ошибка'
   if (status === 'submitting') return 'в 1С'
   if (status === 'queued') return 'в очереди'
+  if (status === 'ready') return 'Беник'
   return 'черновик'
 }
 
 function statusHint(order: OptOrder | string): string {
   if (typeof order !== 'string') {
+    if (isBenik(order) && Number(order.commission_due) <= 0) {
+      return 'Заявка без 1С и реестра — укажите сумму к оплате'
+    }
     if (order.payment_status === 'paid') return 'Комиссия по заявке полностью оплачена'
     if (order.payment_status === 'partial') return 'Частичная оплата — остаток ещё не закрыт'
+    if (isBenik(order)) return 'Заявка без 1С и реестра'
     if (order.receipts_sent_at && order.status === 'submitted') {
       return 'Квитанции отправлены клиенту — ожидаем сбор оплат'
     }
@@ -437,7 +453,7 @@ function formatRubles(value: number): string {
 }
 
 function orderLabel(order: OptOrder): string {
-  return `Заявка ${order.order_no}`
+  return isBenik(order) ? `Беник ${order.order_no}` : `Заявка ${order.order_no}`
 }
 
 function clientMessagePreview(order: OptOrder): string {
@@ -1028,7 +1044,10 @@ onUnmounted(() => {
             </div>
           </dl>
 
-          <div v-if="volumeRows(selectedOrder).length" class="opt-orders__volume">
+          <div
+            v-if="!isBenik(selectedOrder) && volumeRows(selectedOrder).length"
+            class="opt-orders__volume"
+          >
             <h4 class="opt-orders__subheading">Разбивка по категориям лавок</h4>
             <table class="opt-orders__volume-table">
               <thead>
@@ -1125,7 +1144,7 @@ onUnmounted(() => {
 
           <div class="opt-orders__actions">
             <NButton
-              v-if="selectedOrder.payment_status !== 'paid'"
+              v-if="canRecordPayment(selectedOrder)"
               size="small"
               type="primary"
               secondary

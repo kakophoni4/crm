@@ -19,12 +19,16 @@ class ParsedApplicationLine:
     buyer_inn: str
     document_date: date
     amount: Decimal
+    supplier_name: str | None = None
+    supplier_kpp: str | None = None
 
 
 @dataclass(frozen=True)
 class ParsedApplication:
     buyer_inn: str
     lines: list[ParsedApplicationLine]
+    buyer_name: str | None = None
+    buyer_kpp: str | None = None
 
 
 def _cell_text(value: Any) -> str:

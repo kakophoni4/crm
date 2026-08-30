@@ -232,6 +232,19 @@ class OptOrderRepository:
         return {unit.inn: unit for unit in result.scalars().all()}
 
     async def apply_pricing_snapshot(self, order: LeadOptOrder) -> None:
+        kind = getattr(order, "order_kind", None) or "standard"
+        if kind == "benik":
+            total_volume = sum(Decimal(str(line.amount or 0)) for line in order.lines)
+            order.total_volume = float(total_volume)
+            order.amount_paid = float(order.amount_paid or 0)
+            if not isinstance(order.volume_by_category, dict):
+                order.volume_by_category = {}
+            order.payment_status = payment_status(
+                Decimal(str(order.amount_paid)),
+                Decimal(str(order.commission_due or 0)),
+                order_kind="benik",
+            )
+            return
         inns = [line.supplier_inn for line in order.lines]
         units = await self.get_units_by_inns(inns)
         total_volume, base_commission, breakdown = compute_order_pricing(order.lines, units)
@@ -268,7 +281,11 @@ class OptOrderRepository:
         amount_paid = Decimal(str(order.amount_paid or 0))
         order.commission_adjustment = float(new_adjustment)
         order.commission_due = float(new_due)
-        order.payment_status = payment_status(amount_paid, new_due)
+        order.payment_status = payment_status(
+            amount_paid,
+            new_due,
+            order_kind=getattr(order, "order_kind", None),
+        )
         history = LeadOptOrderCommissionHistory(
             old_commission_due=float(old_due),
             new_commission_due=float(new_due),
@@ -312,7 +329,11 @@ class OptOrderRepository:
         await self._session.flush()
         paid_total = round_rubles(Decimal(str(order.amount_paid or 0)) + amount)
         order.amount_paid = float(paid_total)
-        order.payment_status = payment_status(paid_total, Decimal(str(order.commission_due)))
+        order.payment_status = payment_status(
+            paid_total,
+            Decimal(str(order.commission_due)),
+            order_kind=getattr(order, "order_kind", None),
+        )
         return payment
 
     async def get_uploaded_file(self, file_id: int) -> UploadedFile | None:
@@ -537,7 +558,9 @@ class OptOrderRepository:
         content_fingerprint: str | None = None,
         vat_rate_percent: float = 22.0,
         period_code: str | None = None,
+        order_kind: str = "standard",
     ) -> LeadOptOrder:
+        kind = order_kind if order_kind == "benik" else "standard"
         order_no = await self.next_order_no(lead_id)
         order = LeadOptOrder(
             lead_id=lead_id,
@@ -548,7 +571,8 @@ class OptOrderRepository:
             buyer_name=buyer_name,
             vat_rate_percent=vat_rate_percent,
             period_code=period_code,
-            status="queued",
+            order_kind=kind,
+            status="ready" if kind == "benik" else "queued",
             source_filename=source_filename,
             source_message_id=source_message_id,
             source_attachment_index=source_attachment_index,

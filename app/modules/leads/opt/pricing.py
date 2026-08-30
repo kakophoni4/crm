@@ -69,12 +69,21 @@ def compute_order_pricing(
     return total_volume, round_rubles(total_commission), breakdown
 
 
-def payment_status(amount_paid: Decimal, commission_due: Decimal) -> str:
-    """Paid when remainder is under 1 ₽ (kopeck tails count as paid)."""
+def payment_status(
+    amount_paid: Decimal,
+    commission_due: Decimal,
+    *,
+    order_kind: str | None = None,
+) -> str:
+    """Paid when remainder is under 1 ₽ (kopeck tails count as paid).
+
+    Benik starts at commission_due=0 (manager fills it later) — that is unpaid,
+    not paid.
+    """
     due = Decimal(str(commission_due or 0))
     paid = Decimal(str(amount_paid or 0))
     if due <= 0:
-        return "paid"
+        return "unpaid" if (order_kind or "") == "benik" else "paid"
     if paid <= 0:
         return "unpaid"
     if paid + Decimal("0.999") >= due:

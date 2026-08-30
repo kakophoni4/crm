@@ -74,6 +74,7 @@ async def list_opt_orders_registry(
     manager_user_id: int | None = None,
     q: str | None = None,
     open_only: bool = False,
+    kind: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> OptOrderRegistryListResponse:
@@ -88,6 +89,7 @@ async def list_opt_orders_registry(
         manager_user_id=manager_user_id,
         q=(q or "").strip() or None,
         open_only=open_only,
+        kind=kind,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
     )
@@ -100,12 +102,14 @@ async def list_opt_orders_managers(
     department_id: int | None = None,
     group_id: int | None = None,
     period_code: str | None = None,
+    kind: str | None = None,
 ) -> OptRegistryManagersResponse:
     return await service.list_registry_managers(
         actor,
         department_id=department_id,
         group_id=group_id,
         period_code=(period_code or "").strip() or None,
+        kind=kind,
     )
 
 
@@ -154,6 +158,7 @@ async def list_opt_payments_ledger(
     period_code: str | None = None,
     manager_user_id: int | None = None,
     q: str | None = None,
+    kind: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> OptPaymentLedgerListResponse:
@@ -167,6 +172,7 @@ async def list_opt_payments_ledger(
         period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id,
         q=(q or "").strip() or None,
+        kind=kind,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
     )

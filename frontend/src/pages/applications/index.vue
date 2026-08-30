@@ -55,7 +55,7 @@ const OptOrdersPanel = defineAsyncComponent(
   () => import('@/widgets/chat/OptOrdersPanel.vue'),
 )
 
-type TabName = 'orders' | 'payments'
+type TabName = 'orders' | 'payments' | 'benik'
 
 const message = useMessage()
 const router = useRouter()
@@ -141,6 +141,12 @@ const paymentStatusOptions = computed(() => {
     { label: 'Оплаченные', value: 'paid' },
   ]
 })
+
+function registryKind(): 'standard' | 'benik' {
+  return activeTab.value === 'benik' ? 'benik' : 'standard'
+}
+
+const isOrdersLikeTab = computed(() => activeTab.value === 'orders' || activeTab.value === 'benik')
 
 const managerOptions = computed<SelectOption[]>(() =>
   managers.value.map((row) => ({
@@ -474,6 +480,7 @@ async function loadManagers(): Promise<void> {
     managers.value = await listOptOrderManagers({
       group_id: groupFilterId(),
       period_code: periodFilter.value || undefined,
+      kind: registryKind(),
     })
     if (
       managerFilter.value != null &&
@@ -521,6 +528,7 @@ async function load(): Promise<void> {
       const data = await listOptPaymentsLedger({
         ...common,
         payment_status: resolvedLedgerPaymentStatus(),
+        kind: 'standard',
       })
       paymentItems.value = data.items
       items.value = []
@@ -532,6 +540,7 @@ async function load(): Promise<void> {
       const data = await listOptOrdersRegistry({
         ...common,
         payment_status: resolvedOrdersPaymentStatus(),
+        kind: registryKind(),
       })
       items.value = data.items
       paymentItems.value = []
@@ -546,7 +555,9 @@ async function load(): Promise<void> {
         ? err.message
         : activeTab.value === 'payments'
           ? 'Не удалось загрузить оплаты'
-          : 'Не удалось загрузить заявки',
+          : activeTab.value === 'benik'
+            ? 'Не удалось загрузить заявки Беника'
+            : 'Не удалось загрузить заявки',
     )
     if (!hasRows) {
       items.value = []
@@ -620,7 +631,9 @@ function applyBuyerSearch(): void {
 }
 
 function onTabChange(name: string | number): void {
-  activeTab.value = name === 'payments' ? 'payments' : 'orders'
+  if (name === 'payments') activeTab.value = 'payments'
+  else if (name === 'benik') activeTab.value = 'benik'
+  else activeTab.value = 'orders'
   if (activeTab.value === 'payments' && paymentStatusFilter.value === 'unpaid') {
     paymentStatusFilter.value = null
   }
@@ -651,6 +664,12 @@ watch(selectedGroupKey, () => {
 
 watch(periodFilter, () => {
   void loadManagers()
+})
+
+watch(activeTab, () => {
+  if (activeTab.value !== 'payments') {
+    void loadManagers()
+  }
 })
 
 onMounted(() => {
@@ -736,11 +755,12 @@ onMounted(() => {
 
     <NTabs :value="activeTab" type="line" @update:value="onTabChange">
       <NTabPane name="orders" tab="Заявки" />
+      <NTabPane name="benik" tab="Бенефициар" />
       <NTabPane name="payments" tab="Все оплаты" />
     </NTabs>
 
     <div
-      v-if="activeTab === 'orders' && (items.length > 0 || total > 0)"
+      v-if="isOrdersLikeTab && (items.length > 0 || total > 0)"
       class="applications-page__totals"
     >
       <span class="applications-page__totals-label">
@@ -761,8 +781,11 @@ onMounted(() => {
     </div>
 
     <NSpin :show="loading && items.length === 0 && paymentItems.length === 0">
-      <template v-if="activeTab === 'orders'">
-        <NEmpty v-if="!items.length && !loading" description="Заявок пока нет" />
+      <template v-if="isOrdersLikeTab">
+        <NEmpty
+          v-if="!items.length && !loading"
+          :description="activeTab === 'benik' ? 'Заявок Беника пока нет' : 'Заявок пока нет'"
+        />
         <AppCard v-else class="applications-page__card">
           <NDataTable
             size="small"
@@ -810,7 +833,13 @@ onMounted(() => {
     <NModal
       v-model:show="detailOpen"
       preset="card"
-      :title="selected ? `Сделка №${selected.lead_id} · заявка №${selected.order_no}` : 'Заявка'"
+      :title="
+        selected
+          ? selected.order_kind === 'benik'
+            ? `Сделка №${selected.lead_id} · Беник №${selected.order_no}`
+            : `Сделка №${selected.lead_id} · заявка №${selected.order_no}`
+          : 'Заявка'
+      "
       class="applications-page__modal"
       :style="{ width: 'min(1120px, 96vw)' }"
       :segmented="{ content: true, footer: 'soft' }"

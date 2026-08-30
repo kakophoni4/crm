@@ -30,6 +30,7 @@ export async function listOptOrdersRegistry(params?: {
   manager_user_id?: number
   q?: string
   open_only?: boolean
+  kind?: string
   offset?: number
   limit?: number
 }): Promise<OptOrderRegistryListResponse> {
@@ -41,6 +42,7 @@ export async function listOptOrderManagers(params?: {
   department_id?: number
   group_id?: number
   period_code?: string
+  kind?: string
 }): Promise<OptRegistryManagerItem[]> {
   const { data } = await http.get<OptRegistryManagersResponse>('/opt-orders/managers', { params })
   return data.items
@@ -78,6 +80,7 @@ export async function listOptPaymentsLedger(params?: {
   period_code?: string
   manager_user_id?: number
   q?: string
+  kind?: string
   offset?: number
   limit?: number
 }): Promise<OptPaymentLedgerListResponse> {
