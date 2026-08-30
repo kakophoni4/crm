@@ -180,7 +180,7 @@ class LawyerRegistryService:
             directors = [row for row in directors if row.id in keep_ids]
             include_shops = True
         director_ids = [row.id for row in directors]
-        counts = await self._repo.shop_counts(director_ids if not filtered else [row.id for row in by_id])
+        counts = await self._repo.shop_counts(director_ids)
         last_paid = await self._repo.last_paid_periods(director_ids)
         shops_by_dir: dict[int, list[LawyerShop]] = {}
         orphans: list[LawyerShop] = []
