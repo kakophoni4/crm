@@ -417,9 +417,17 @@ onMounted(async () => {
                     v-for="shop in details[director.id].shops"
                     :key="shop.id"
                     :name="`s-${shop.id}`"
-                    :title="`${shop.name} · ${shop.inn}`"
+                    :title="`${shop.name} · ${kindLabel(shop.kind)} · ${shop.inn}`"
                   >
                     <div class="grid">
+                      <label>Тип
+                        <NSelect
+                          :value="shop.kind"
+                          :options="SHOP_KIND_OPTIONS"
+                          size="small"
+                          @update:value="(v: string) => saveShop(shop.id, { kind: v }, director.id)"
+                        />
+                      </label>
                       <label>Статус
                         <NInput
                           :value="shop.company_status ?? ''"
@@ -487,7 +495,7 @@ onMounted(async () => {
                     >
                       {{ shop.pinned_at ? 'Открепить лавку' : 'Закрепить лавку сверху' }}
                     </NButton>
-                    <p class="hint">{{ kindLabel(shop.kind) }} · ИНН {{ shop.inn }}</p>
+                    <p class="hint">ИНН {{ shop.inn }}</p>
                   </NCollapseItem>
                 </NCollapse>
               </div>
