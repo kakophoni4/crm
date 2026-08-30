@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   Bot,
+  Building2,
   Calculator,
   ClipboardList,
   FolderOpen,
@@ -138,6 +139,11 @@ const menuOptions = computed(() => {
         icon: () => h(NIcon, null, { default: () => h(Ticket) }),
       },
       {
+        label: 'Лавки и диры',
+        key: 'lawyer-registry',
+        icon: () => h(NIcon, null, { default: () => h(Building2) }),
+      },
+      {
         label: 'Парсер',
         key: 'parser',
         icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }),
@@ -269,6 +275,11 @@ const menuOptions = computed(() => {
 
   if (auth.canParser) {
     items.push({
+      label: 'Лавки и диры',
+      key: 'lawyer-registry',
+      icon: () => h(NIcon, null, { default: () => h(Building2) }),
+    })
+    items.push({
       label: 'Парсер',
       key: 'parser',
       icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }),
@@ -295,6 +306,7 @@ const activeKey = computed(() => {
   if (route.name === 'accounting') return 'accounting'
   if (route.name === 'tickets') return 'tickets'
   if (route.name === 'parser') return 'parser'
+  if (route.name === 'lawyer-registry') return 'lawyer-registry'
   if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
   if (route.name === 'group-escalation') return 'group-escalation'
@@ -346,6 +358,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'tickets') {
     void router.push({ name: 'tickets' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'lawyer-registry') {
+    void router.push({ name: 'lawyer-registry' })
     emit('closeDrawer')
     return
   }

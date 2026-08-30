@@ -82,6 +82,12 @@ from app.modules.db.models.telephony_extension import TelephonyExtension
 from app.modules.db.models.uploaded_file import UploadedFile
 from app.modules.db.models.user import User
 from app.modules.db.models.lavok_parser_lot import LavokParserLot
+from app.modules.db.models.lawyer_director import (
+    LawyerDirector,
+    LawyerDirectorPayment,
+    LawyerParserAlert,
+    LawyerShop,
+)
 from app.modules.db.models.user_group_membership import UserGroupMembership
 
 __all__ = [
@@ -120,6 +126,10 @@ __all__ = [
     "GroupEscalationSettings",
     "IdleBannerSettings",
     "LavokParserLot",
+    "LawyerDirector",
+    "LawyerDirectorPayment",
+    "LawyerParserAlert",
+    "LawyerShop",
     "Lead",
     "LeadComment",
     "LeadOptOrder",

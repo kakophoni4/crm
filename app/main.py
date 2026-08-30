@@ -30,6 +30,7 @@ from app.modules.tasks.router import router as tasks_router
 from app.modules.telephony.router import router as telephony_router
 from app.modules.tickets.router import router as tickets_router
 from app.modules.lavok_parser.router import router as lavok_parser_router
+from app.modules.lawyer_registry.router import router as lawyer_registry_router
 from app.modules.users.router import router as users_router
 from app.modules.users.user_deletion_router import router as user_deletion_requests_router
 from app.modules.notifications.router import router as notifications_router
@@ -132,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(accounting_router)
     app.include_router(tickets_router)
     app.include_router(lavok_parser_router)
+    app.include_router(lawyer_registry_router)
     app.include_router(notifications_router)
     app.include_router(notification_bot_webhook_router)
     app.include_router(idle_banner_router)

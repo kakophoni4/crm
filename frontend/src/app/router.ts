@@ -191,6 +191,18 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'registry',
+
+        name: 'lawyer-registry',
+
+        component: () => import('@/pages/lawyer-registry/index.vue'),
+
+        meta: { requiresParser: true },
+
+      },
+
+      {
+
         path: 'telephony',
 
         name: 'telephony',
@@ -506,6 +518,7 @@ router.beforeEach(async (to) => {
     to.name === 'tasks' ||
     to.name === 'tickets' ||
     to.name === 'parser' ||
+    to.name === 'lawyer-registry' ||
     to.name === 'telephony' ||
     to.name === 'storage'
   if (auth.isLawyer && !lawyerAllowed) {

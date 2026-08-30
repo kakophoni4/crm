@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = structlog.get_logger(__name__)
 
 from app.modules.lavok_parser.repository import LavokParserRepository
 from app.modules.lavok_parser.schemas import (
@@ -66,6 +69,14 @@ class LavokParserService:
             raise ValidationError(message="Нет строк для загрузки")
         sheet_dates = {row.sheet_date for row in parsed}
         created, updated = await self._repo.upsert_parsed(parsed)
+        try:
+            from app.modules.lawyer_registry.service import LawyerRegistryService
+
+            alerts = await LawyerRegistryService(self._session).sync_from_parser(parsed)
+            if alerts:
+                logger.info("lawyer_registry_parser_alerts", alerts=alerts)
+        except Exception:
+            logger.warning("lawyer_registry_parser_sync_failed", exc_info=True)
         await self._session.commit()
         return LavokParserIngestResponse(
             sheets=len(sheet_dates),
