@@ -25,6 +25,7 @@ export interface RegistryFilters {
   ecsp_status?: string | null
   manager?: string
   dirovod?: string
+  include_hidden?: boolean
 }
 
 export async function listLawyerRegistry(filters?: RegistryFilters): Promise<LawyerRegistryTree> {
@@ -38,6 +39,7 @@ export async function listLawyerRegistry(filters?: RegistryFilters): Promise<Law
       ecsp_status: filters?.ecsp_status || undefined,
       manager: filters?.manager || undefined,
       dirovod: filters?.dirovod || undefined,
+      include_hidden: filters?.include_hidden || undefined,
     },
   })
   return data

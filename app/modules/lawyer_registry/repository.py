@@ -58,6 +58,8 @@ class LawyerRegistryRepository:
         manager: str | None = None,
         dirovod: str | None = None,
         pinned_only: bool = False,
+        include_hidden: bool = False,
+        hidden_only: bool = False,
     ) -> list[LawyerShop]:
         stmt = select(LawyerShop)
         if director_id is not None:
@@ -76,6 +78,10 @@ class LawyerRegistryRepository:
             stmt = stmt.where(LawyerShop.manager.ilike(f"%{manager}%"))
         if pinned_only:
             stmt = stmt.where(LawyerShop.pinned_at.is_not(None))
+        if hidden_only:
+            stmt = stmt.where(LawyerShop.hidden_at.is_not(None))
+        elif not include_hidden:
+            stmt = stmt.where(LawyerShop.hidden_at.is_(None))
         if dirovod:
             stmt = stmt.join(LawyerDirector, LawyerDirector.id == LawyerShop.director_id, isouter=True)
             stmt = stmt.where(LawyerDirector.dirovod.ilike(f"%{dirovod}%"))
@@ -114,14 +120,22 @@ class LawyerRegistryRepository:
         )
         return {int(row[0]): str(row[1]) for row in result.all() if row[1]}
 
-    async def shop_counts(self, director_ids: list[int]) -> dict[int, int]:
+    async def shop_counts(
+        self,
+        director_ids: list[int],
+        *,
+        include_hidden: bool = False,
+    ) -> dict[int, int]:
         if not director_ids:
             return {}
-        result = await self._session.execute(
+        stmt = (
             select(LawyerShop.director_id, func.count(LawyerShop.id))
             .where(LawyerShop.director_id.in_(director_ids))
-            .group_by(LawyerShop.director_id),
+            .group_by(LawyerShop.director_id)
         )
+        if not include_hidden:
+            stmt = stmt.where(LawyerShop.hidden_at.is_(None))
+        result = await self._session.execute(stmt)
         return {int(row[0]): int(row[1]) for row in result.all() if row[0] is not None}
 
     async def add(self, row: object) -> object:

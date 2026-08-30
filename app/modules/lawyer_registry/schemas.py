@@ -40,6 +40,7 @@ class LawyerShopOut(BaseModel):
     source: str
     last_parser_at: datetime | None = None
     pinned_at: datetime | None = None
+    hidden_at: datetime | None = None
     created_at: datetime
 
 
@@ -144,6 +145,7 @@ class LawyerShopPatchRequest(BaseModel):
     accountant: str | None = None
     comment: str | None = None
     pinned: bool | None = None
+    hidden: bool | None = None
 
 
 class LawyerDirectorCreateRequest(BaseModel):

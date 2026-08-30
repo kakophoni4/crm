@@ -45,6 +45,7 @@ async def list_registry(
     ecsp_status: Annotated[str | None, Query(max_length=64)] = None,
     manager: Annotated[str | None, Query(max_length=128)] = None,
     dirovod: Annotated[str | None, Query(max_length=128)] = None,
+    include_hidden: bool = False,
 ) -> LawyerDirectorListResponse:
     _ = actor
     return await service.list_tree(
@@ -56,6 +57,7 @@ async def list_registry(
         ecsp_status=ecsp_status,
         manager=manager,
         dirovod=dirovod,
+        include_hidden=include_hidden,
     )
 
 

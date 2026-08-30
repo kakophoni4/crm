@@ -80,6 +80,7 @@ class LawyerShop(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     last_parser_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),

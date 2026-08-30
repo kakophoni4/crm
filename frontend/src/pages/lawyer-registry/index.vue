@@ -63,6 +63,7 @@ const zsk = ref<string | null>(null)
 const ecsp = ref<string | null>(null)
 const manager = ref('')
 const dirovod = ref('')
+const showHidden = ref(false)
 
 const shopOpen = ref(false)
 const directorOpen = ref(false)
@@ -102,6 +103,12 @@ function fromIsoDate(value: string | null | undefined): number | null {
   return Number.isNaN(parsed) ? null : parsed
 }
 
+function shopsOf(director: LawyerDirector): LawyerShop[] {
+  const shops = director.shops ?? []
+  if (showHidden.value) return shops
+  return shops.filter((shop) => !shop.hidden_at)
+}
+
 function kindLabel(value: string): string {
   return SHOP_KIND_OPTIONS.find((item) => item.value === value)?.label ?? value
 }
@@ -121,6 +128,11 @@ function periodLabel(value: string): string {
   return `${names[idx] ?? month} ${year}`
 }
 
+async function toggleHidden(): Promise<void> {
+  showHidden.value = !showHidden.value
+  await loadTree()
+}
+
 async function loadTree(): Promise<void> {
   loading.value = true
   try {
@@ -133,6 +145,7 @@ async function loadTree(): Promise<void> {
       ecsp_status: ecsp.value,
       manager: manager.value,
       dirovod: dirovod.value,
+      include_hidden: showHidden.value,
     })
     directors.value = data.items
     orphans.value = data.orphan_shops
@@ -185,6 +198,8 @@ async function saveShop(id: number, patch: Record<string, unknown>, directorId?:
     await patchLawyerShop(id, patch)
     if (directorId) details.value[directorId] = await getLawyerDirector(directorId)
     await loadTree()
+    if (patch.hidden === true) message.success('Лавка скрыта. Вернуть можно через «Показать скрытые»')
+    else if (patch.hidden === false) message.success('Лавка снова в списке')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить лавку')
   }
@@ -330,6 +345,9 @@ onMounted(async () => {
           <NInput v-model:value="manager" clearable placeholder="Менеджер" />
           <NInput v-model:value="dirovod" clearable placeholder="Дировод" />
           <NButton @click="loadTree">Найти</NButton>
+          <NButton :type="showHidden ? 'warning' : 'default'" @click="toggleHidden">
+            {{ showHidden ? 'Скрытые показаны' : 'Показать скрытые' }}
+          </NButton>
         </div>
         <div v-if="pinned.length" class="pinned">
           <p class="section-title">Закреплённые лавки</p>
@@ -437,10 +455,10 @@ onMounted(async () => {
                 </div>
                 <NCollapse>
                   <NCollapseItem
-                    v-for="shop in details[director.id].shops"
+                    v-for="shop in shopsOf(details[director.id])"
                     :key="shop.id"
                     :name="`s-${shop.id}`"
-                    :title="`${shop.name} · ${kindLabel(shop.kind)} · ${shop.inn}`"
+                    :title="`${shop.hidden_at ? 'Скрыта · ' : ''}${shop.name} · ${kindLabel(shop.kind)} · ${shop.inn}`"
                   >
                     <div class="grid">
                       <label>Тип
@@ -516,14 +534,22 @@ onMounted(async () => {
                         />
                       </label>
                     </div>
-                    <NButton
-                      size="tiny"
-                      quaternary
-                      style="margin-top: 8px"
-                      @click="saveShop(shop.id, { pinned: !shop.pinned_at }, director.id)"
-                    >
-                      {{ shop.pinned_at ? 'Открепить лавку' : 'Закрепить лавку сверху' }}
-                    </NButton>
+                    <NSpace style="margin-top: 8px">
+                      <NButton
+                        size="tiny"
+                        quaternary
+                        @click="saveShop(shop.id, { pinned: !shop.pinned_at }, director.id)"
+                      >
+                        {{ shop.pinned_at ? 'Открепить лавку' : 'Закрепить лавку сверху' }}
+                      </NButton>
+                      <NButton
+                        size="tiny"
+                        quaternary
+                        @click="saveShop(shop.id, { hidden: !shop.hidden_at }, director.id)"
+                      >
+                        {{ shop.hidden_at ? 'Вернуть в список' : 'Скрыть лавку' }}
+                      </NButton>
+                    </NSpace>
                     <p class="hint">ИНН {{ shop.inn }}</p>
                   </NCollapseItem>
                 </NCollapse>

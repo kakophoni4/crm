@@ -26,6 +26,7 @@ export interface LawyerShop {
   source: string
   last_parser_at: string | null
   pinned_at: string | null
+  hidden_at: string | null
   created_at: string
 }
 

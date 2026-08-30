@@ -81,6 +81,7 @@ class LawyerRegistryService:
             source=shop.source,
             last_parser_at=shop.last_parser_at,
             pinned_at=shop.pinned_at,
+            hidden_at=shop.hidden_at,
             created_at=shop.created_at,
         )
 
@@ -166,6 +167,7 @@ class LawyerRegistryService:
         manager: str | None = None,
         dirovod: str | None = None,
         include_shops: bool = False,
+        include_hidden: bool = False,
     ) -> LawyerDirectorListResponse:
         try:
             await self.sync_from_tickets()
@@ -183,6 +185,7 @@ class LawyerRegistryService:
             ecsp_status=ecsp_status,
             manager=manager,
             dirovod=dirovod,
+            include_hidden=include_hidden,
         )
         directors = await self._repo.list_directors()
         by_id = {row.id: row for row in directors}
@@ -192,18 +195,26 @@ class LawyerRegistryService:
             directors = [row for row in directors if row.id in keep_ids]
             include_shops = True
         director_ids = [row.id for row in directors]
-        counts = await self._repo.shop_counts(director_ids)
+        counts = await self._repo.shop_counts(director_ids, include_hidden=include_hidden)
+        if not include_hidden and not filtered:
+            all_counts = await self._repo.shop_counts(director_ids, include_hidden=True)
+            directors = [
+                row
+                for row in directors
+                if counts.get(row.id, 0) > 0 or all_counts.get(row.id, 0) == 0
+            ]
+            director_ids = [row.id for row in directors]
         last_paid = await self._repo.last_paid_periods(director_ids)
         shops_by_dir: dict[int, list[LawyerShop]] = {}
         orphans: list[LawyerShop] = []
         if include_shops or filtered:
-            source = shops if filtered else await self._repo.list_shops()
+            source = shops if filtered else await self._repo.list_shops(include_hidden=include_hidden)
             for shop in source:
                 if shop.director_id is None:
                     orphans.append(shop)
                 else:
                     shops_by_dir.setdefault(shop.director_id, []).append(shop)
-        pinned = await self._repo.list_shops(pinned_only=True)
+        pinned = await self._repo.list_shops(pinned_only=True, include_hidden=include_hidden)
         items = [
             self._director_out(
                 director,
@@ -233,7 +244,7 @@ class LawyerRegistryService:
         director = await self._repo.get_director(director_id)
         if director is None:
             raise NotFound(message="Директор не найден")
-        shops = await self._repo.list_shops(director_id=director_id)
+        shops = await self._repo.list_shops(director_id=director_id, include_hidden=True)
         payments = await self._repo.list_payments(director_id)
         shop_names = {shop.id: shop.name for shop in shops}
         return self._director_out(
@@ -327,6 +338,7 @@ class LawyerRegistryService:
             raise NotFound(message="Лавка не найдена")
         data = body.model_dump(exclude_unset=True)
         pinned = data.pop("pinned", None)
+        hidden = data.pop("hidden", None)
         director_name = data.pop("director_name", None)
         if director_name:
             director = await self._ensure_director(director_name, actor_id=actor.id)
@@ -339,6 +351,10 @@ class LawyerRegistryService:
             shop.pinned_at = datetime.now(UTC)
         elif pinned is False:
             shop.pinned_at = None
+        if hidden is True:
+            shop.hidden_at = datetime.now(UTC)
+        elif hidden is False:
+            shop.hidden_at = None
         self._repo.touch(shop)
         await self._session.flush()
         director = await self._repo.get_director(shop.director_id) if shop.director_id else None
