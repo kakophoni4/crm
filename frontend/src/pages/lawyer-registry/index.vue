@@ -5,6 +5,7 @@ import {
   NButton,
   NCollapse,
   NCollapseItem,
+  NDatePicker,
   NInput,
   NInputNumber,
   NModal,
@@ -66,7 +67,13 @@ const dirovod = ref('')
 const shopOpen = ref(false)
 const directorOpen = ref(false)
 const payOpen = ref(false)
-const shopForm = ref({ inn: '', name: '', director_name: '', kind: 'new' })
+const shopForm = ref({
+  inn: '',
+  name: '',
+  director_name: '',
+  kind: 'new',
+  registered_at: null as number | null,
+})
 const directorForm = ref({ full_name: '', salary_plan: null as number | null, dirovod: '' })
 const payForm = ref({
   director_id: 0,
@@ -78,6 +85,21 @@ const payForm = ref({
 function currentPeriod(): string {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function toIsoDate(value: number | null | undefined): string | null {
+  if (value == null) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function fromIsoDate(value: string | null | undefined): number | null {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
 }
 
 function kindLabel(value: string): string {
@@ -175,10 +197,11 @@ async function submitShop(): Promise<void> {
       name: shopForm.value.name.trim(),
       director_name: shopForm.value.director_name.trim() || null,
       kind: shopForm.value.kind,
+      registered_at: toIsoDate(shopForm.value.registered_at),
     })
     message.success('Лавка добавлена и отправлена в парсер ЕГРЮЛ')
     shopOpen.value = false
-    shopForm.value = { inn: '', name: '', director_name: '', kind: 'new' }
+    shopForm.value = { inn: '', name: '', director_name: '', kind: 'new', registered_at: null }
     await loadTree()
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось добавить лавку')
@@ -477,7 +500,13 @@ onMounted(async () => {
                         />
                       </label>
                       <label>Регистрация
-                        <NInput :value="shop.registered_at ?? ''" disabled />
+                        <NDatePicker
+                          :value="fromIsoDate(shop.registered_at)"
+                          type="date"
+                          clearable
+                          style="width: 100%"
+                          @update:value="(v: number | null) => saveShop(shop.id, { registered_at: toIsoDate(v) }, director.id)"
+                        />
                       </label>
                       <label>Плановая выплата
                         <NInputNumber
@@ -517,6 +546,13 @@ onMounted(async () => {
         <NInput v-model:value="shopForm.name" placeholder="Название" />
         <NInput v-model:value="shopForm.director_name" placeholder="ФИО директора" />
         <NSelect v-model:value="shopForm.kind" :options="SHOP_KIND_OPTIONS" />
+        <NDatePicker
+          v-model:value="shopForm.registered_at"
+          type="date"
+          clearable
+          placeholder="Дата регистрации"
+          style="width: 100%"
+        />
         <NButton type="primary" block @click="submitShop">Добавить в реестр и парсер</NButton>
       </NSpace>
     </NModal>
