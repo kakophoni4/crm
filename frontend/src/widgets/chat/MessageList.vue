@@ -7,6 +7,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ChatMessage } from '@/entities/chat/types'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
+import { usePhoneViewport } from '@/shared/lib/phone-mode'
 import { useAuthStore } from '@/shared/store/auth'
 import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
 import OptAttachmentBar from '@/widgets/chat/OptAttachmentBar.vue'
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
+const phoneChatsOnly = usePhoneViewport()
 const viewportRef = ref<HTMLElement | null>(null)
 const itemsRef = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
@@ -952,7 +954,7 @@ watch(
                       :eager="(item.msgIndex ?? 0) >= sorted.length - 8"
                     />
                     <OptAttachmentBar
-                      v-if="item.msg!.direction === 'inbound'"
+                      v-if="!phoneChatsOnly && item.msg!.direction === 'inbound'"
                       :chat-id="chatId"
                       :message-id="item.msg!.id"
                       :attachment-index="i"

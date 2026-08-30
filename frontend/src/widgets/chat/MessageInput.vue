@@ -14,6 +14,7 @@ import {
 } from '@/features/chats/api'
 import type { ChatMessage } from '@/entities/chat/types'
 import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
+import { usePhoneViewport } from '@/shared/lib/phone-mode'
 import { isMessageSendShortcut } from '@/widgets/chat/message-input-hotkeys'
 import EmojiPicker from '@/widgets/chat/EmojiPicker.vue'
 import VaultFilePickerModal from '@/widgets/chat/VaultFilePickerModal.vue'
@@ -50,6 +51,7 @@ const creatingQuickReply = ref(false)
 const newQuickReplyTitle = ref('')
 const newQuickReplyBody = ref('')
 const vaultPickerOpen = ref(false)
+const phoneChatsOnly = usePhoneViewport()
 let quickReplySearchTimer: number | null = null
 
 const quickReplyQuery = computed(() => text.value.trim())
@@ -477,7 +479,7 @@ watch(
             </NButton>
           </NUpload>
         </div>
-        <div class="message-input__tool-cell">
+        <div v-if="!phoneChatsOnly" class="message-input__tool-cell">
           <NButton
             class="message-input__tool"
             quaternary
@@ -516,6 +518,7 @@ watch(
       </NButton>
     </div>
     <VaultFilePickerModal
+      v-if="!phoneChatsOnly"
       v-model:show="vaultPickerOpen"
       :chat-id="chatId ?? null"
       @select="onVaultFileSelect"

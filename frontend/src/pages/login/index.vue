@@ -14,6 +14,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { AppError } from '@/shared/api/http'
+import { isPhoneChatsOnly } from '@/shared/lib/phone-mode'
 import { useAuthStore } from '@/shared/store/auth'
 
 const router = useRouter()
@@ -55,6 +56,10 @@ async function onSubmit(): Promise<void> {
   loading.value = true
   try {
     await auth.login(model.value.username.trim(), model.value.password)
+    if (isPhoneChatsOnly(auth)) {
+      await router.replace('/chats')
+      return
+    }
     const defaultRedirect = auth.isAccountant
       ? '/accounting'
       : auth.isLawyer

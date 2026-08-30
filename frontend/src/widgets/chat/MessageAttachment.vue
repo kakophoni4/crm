@@ -12,6 +12,7 @@ import {
   attachmentPreviewSupported,
   resolveAttachmentPreviewKind,
 } from '@/shared/lib/attachment-preview-kind'
+import { usePhoneViewport } from '@/shared/lib/phone-mode'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const props = withDefaults(
@@ -31,6 +32,8 @@ const failed = ref(false)
 const visible = ref(props.eager)
 const previewOpen = ref(false)
 const previewLoading = ref(false)
+const isPhone = usePhoneViewport()
+const allowDownload = computed(() => !isPhone.value)
 let loadToken = 0
 
 const row = computed(() => props.att as Record<string, unknown>)
@@ -135,6 +138,10 @@ async function openPreview(): Promise<void> {
 }
 
 async function downloadFile(): Promise<void> {
+  if (!allowDownload.value) {
+    if (canPreview.value) await openPreview()
+    return
+  }
   if (!blobUrl.value) {
     previewLoading.value = true
     try {
@@ -149,12 +156,16 @@ async function downloadFile(): Promise<void> {
 }
 
 function triggerDownload(): void {
-  if (!blobUrl.value) return
+  if (!allowDownload.value || !blobUrl.value) return
   const anchor = document.createElement('a')
   anchor.href = blobUrl.value
   anchor.download = label.value
   anchor.rel = 'noopener'
   anchor.click()
+}
+
+function onImageContextMenu(event: Event): void {
+  if (!allowDownload.value) event.preventDefault()
 }
 
 watch(
@@ -187,8 +198,10 @@ onUnmounted(() => {
       :alt="label"
       role="button"
       tabindex="0"
+      draggable="false"
       title="Открыть изображение"
       @click="openPreview"
+      @contextmenu="onImageContextMenu"
       @keydown.enter.prevent="openPreview"
       @keydown.space.prevent="openPreview"
     />
@@ -197,7 +210,7 @@ onUnmounted(() => {
         type="button"
         class="message-attachment__doc-main"
         :disabled="previewLoading || loading"
-        @click="canPreview ? openPreview() : downloadFile()"
+        @click="canPreview || !allowDownload ? openPreview() : downloadFile()"
       >
         <component :is="docIcon" :size="18" class="message-attachment__doc-icon" />
         <span class="message-attachment__doc-name" :title="label">{{ label }}</span>
@@ -217,6 +230,7 @@ onUnmounted(() => {
           </template>
         </NButton>
         <NButton
+          v-if="allowDownload"
           size="tiny"
           quaternary
           :loading="(loading || previewLoading) && !blobUrl"
@@ -243,6 +257,7 @@ onUnmounted(() => {
     :blob-url="blobUrl"
     :blob="blob"
     :preview-kind="canPreview ? previewKind : 'unsupported'"
+    :allow-download="allowDownload"
     @close="previewOpen = false"
   />
 </template>
@@ -277,6 +292,8 @@ onUnmounted(() => {
   object-fit: cover;
   border-radius: 8px;
   cursor: zoom-in;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .message-attachment__doc {

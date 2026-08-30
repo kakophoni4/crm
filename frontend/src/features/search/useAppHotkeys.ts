@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { focusChatListSearch } from '@/features/chats/chat-list-search-focus'
+import { usePhoneChatsOnly } from '@/shared/lib/phone-mode'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!target || !(target instanceof HTMLElement)) return false
@@ -12,9 +13,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export function useAppHotkeys(globalSearchOpen: Ref<boolean>): void {
   const route = useRoute()
+  const phoneChatsOnly = usePhoneChatsOnly()
 
   function onKeydown(event: KeyboardEvent): void {
     const key = event.key.toLowerCase()
+    if (phoneChatsOnly.value) return
 
     if ((event.ctrlKey || event.metaKey) && key === 'k') {
       event.preventDefault()

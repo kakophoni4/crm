@@ -7,6 +7,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AppLayout from '@/widgets/app-layout/AppLayout.vue'
 
 import { requiresAdminMeta } from '@/shared/lib/admin-routes'
+import { isPhoneChatsAllowedRoute, isPhoneChatsOnly } from '@/shared/lib/phone-mode'
 
 import { useAuthStore } from '@/shared/store/auth'
 
@@ -455,6 +456,7 @@ router.beforeEach(async (to) => {
       const auth = useAuthStore()
       await auth.hydrate()
       if (auth.isAuthenticated) {
+        if (isPhoneChatsOnly(auth)) return '/chats'
         const defaultRedirect = auth.isAccountant
           ? '/accounting'
           : auth.isLawyer
@@ -482,6 +484,10 @@ router.beforeEach(async (to) => {
 
   if (needsAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (auth.isAuthenticated && isPhoneChatsOnly(auth) && !isPhoneChatsAllowedRoute(to.name)) {
+    return { name: 'chats' }
   }
 
   const needsSeniorOrAdmin = to.matched.some((r) => r.meta.requiresSeniorOrAdmin)

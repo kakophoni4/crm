@@ -8,11 +8,13 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import AppLayout from '@/widgets/app-layout/AppLayout.vue'
 import { useThemeStore } from '@/shared/store/theme'
 
+const windowWidth = ref(1200)
+
 vi.mock('@vueuse/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vueuse/core')>()
   return {
     ...actual,
-    useWindowSize: () => ({ width: ref(1200) }),
+    useWindowSize: () => ({ width: windowWidth }),
   }
 })
 
@@ -24,6 +26,7 @@ function mountAppLayout() {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'dashboard', component: { template: '<div />' } },
+      { path: '/chats', name: 'chats', component: { template: '<div />' } },
     ],
   })
   const Host = defineComponent({
@@ -46,6 +49,7 @@ function mountAppLayout() {
 describe('AppLayout', () => {
   beforeEach(() => {
     document.documentElement.classList.remove('dark')
+    windowWidth.value = 1200
   })
 
   it('mounts layout shell', () => {
@@ -67,6 +71,15 @@ describe('AppLayout', () => {
     expect(themeStore.isDark).toBe(true)
     expect(document.documentElement.classList.contains('dark')).toBe(true)
 
+    layout.unmount()
+  })
+
+  it('hides sidebar on a phone for managers', () => {
+    windowWidth.value = 390
+    const layout = mountAppLayout()
+    expect(layout.find('.app-layout--phone-chats').exists()).toBe(true)
+    expect(layout.find('.app-sidebar').exists()).toBe(false)
+    expect(layout.find('.app-topbar').exists()).toBe(true)
     layout.unmount()
   })
 })

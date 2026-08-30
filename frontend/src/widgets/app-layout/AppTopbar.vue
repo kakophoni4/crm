@@ -12,8 +12,9 @@ withDefaults(
   defineProps<{
     /** Hamburger only needed on mobile drawer. */
     showMenuButton?: boolean
+    phoneChats?: boolean
   }>(),
-  { showMenuButton: false },
+  { showMenuButton: false, phoneChats: false },
 )
 
 defineEmits<{
@@ -55,12 +56,20 @@ async function onUserMenuSelect(key: string): Promise<void> {
           <NIcon><Menu /></NIcon>
         </template>
       </NButton>
-      <slot name="left" />
+      <slot name="left">
+        <span v-if="phoneChats" class="app-topbar__title">Чаты</span>
+      </slot>
     </div>
     <div class="app-topbar__right">
       <slot name="right">
         <NSpace align="center" :size="8">
-          <NButton quaternary circle aria-label="Переключить тему" @click="themeStore.toggle()">
+          <NButton
+            v-if="!phoneChats"
+            quaternary
+            circle
+            aria-label="Переключить тему"
+            @click="themeStore.toggle()"
+          >
             <template #icon>
               <NIcon :component="themeIcon" />
             </template>
@@ -95,6 +104,11 @@ async function onUserMenuSelect(key: string): Promise<void> {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.app-topbar__title {
+  font-weight: 600;
+  font-size: 1rem;
 }
 
 </style>

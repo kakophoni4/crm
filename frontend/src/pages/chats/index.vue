@@ -71,6 +71,7 @@ import { useChatNotificationsStore } from '@/features/chats/notifications-store'
 import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
 
 import { AppError } from '@/shared/api/http'
+import { usePhoneChatsOnly } from '@/shared/lib/phone-mode'
 import { useAuthStore } from '@/shared/store/auth'
 import ContactAvatar from '@/shared/ui/ContactAvatar.vue'
 
@@ -118,7 +119,8 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const { width } = useWindowSize()
-const isNarrow = computed(() => width.value < CHATS_NARROW_BREAKPOINT)
+const phoneChatsOnly = usePhoneChatsOnly()
+const isNarrow = computed(() => phoneChatsOnly.value || width.value < CHATS_NARROW_BREAKPOINT)
 const narrowPane = ref<'list' | 'chat'>('list')
 
 const message = useMessage()
@@ -169,6 +171,7 @@ const listTabsForPane: { name: ChatListTab; label: string }[] = [
 ]
 
 function goToContact(): void {
+  if (phoneChatsOnly.value) return
   const contactId = store.currentChat?.contact_id
   if (contactId == null) return
   void router.push({ name: 'contact-detail', params: { id: contactId } })
@@ -564,7 +567,7 @@ onUnmounted(() => {
             <NTab v-for="tab in listTabsForPane" :key="tab.name" :name="tab.name" :tab="tab.label" />
           </NTabs>
 
-          <div class="chats-page__list-actions">
+          <div v-if="!phoneChatsOnly" class="chats-page__list-actions">
             <NButton
               type="primary"
               size="small"
@@ -600,6 +603,7 @@ onUnmounted(() => {
           />
 
           <NSelect
+            v-if="!phoneChatsOnly"
             v-model:value="store.filters.botId"
             :options="botOptions"
             :loading="botsLoading"
@@ -613,13 +617,14 @@ onUnmounted(() => {
           </label>
 
           <NSelect
+            v-if="!phoneChatsOnly"
             v-model:value="store.filters.leadStatusId"
             :options="leadStatusOptions"
             placeholder="Статус сделки"
             clearable
           />
 
-          <label class="chats-page__unread-toggle">
+          <label v-if="!phoneChatsOnly" class="chats-page__unread-toggle">
             <span>Только с открытой сделкой</span>
             <NSwitch v-model:value="store.filters.leadOpenOnly" size="small" />
           </label>
@@ -733,6 +738,7 @@ onUnmounted(() => {
               </NButton>
 
               <button
+                v-if="!phoneChatsOnly"
                 type="button"
                 class="chats-page__contact-link"
                 @click="goToContact"
@@ -743,12 +749,26 @@ onUnmounted(() => {
                   :size="40"
                 />
               </button>
+              <ContactAvatar
+                v-else
+                :contact-id="store.currentChat.contact_id"
+                :full-name="store.currentChat.contact_name"
+                :size="40"
+              />
 
               <div class="chats-page__chat-identity">
 
-                <button type="button" class="chats-page__contact-name" @click="goToContact">
+                <button
+                  v-if="!phoneChatsOnly"
+                  type="button"
+                  class="chats-page__contact-name"
+                  @click="goToContact"
+                >
                   <h2>{{ store.currentChat.contact_name }}</h2>
                 </button>
+                <h2 v-else class="chats-page__contact-name chats-page__contact-name--static">
+                  {{ store.currentChat.contact_name }}
+                </h2>
 
                 <div v-if="store.currentChat" class="chats-page__chat-meta">
                   <ContactOwnerBadge
@@ -781,7 +801,7 @@ onUnmounted(() => {
 
             </div>
 
-            <NSpace vertical :size="6" align="end">
+            <NSpace v-if="!phoneChatsOnly" vertical :size="6" align="end">
               <NButton
                 v-if="canTransferCard"
                 size="small"
@@ -914,7 +934,7 @@ onUnmounted(() => {
     </div>
 
     <div
-      v-if="isNarrow && transferInboxOpen"
+      v-if="isNarrow && transferInboxOpen && !phoneChatsOnly"
       class="chats-page__inbox-drawer"
       role="dialog"
       aria-label="Уведомления"
@@ -938,12 +958,14 @@ onUnmounted(() => {
 
 
     <NewWhatsappChatDialog
+      v-if="!phoneChatsOnly"
       v-model:show="newWhatsappChatVisible"
       :bots="bots"
       @started="onWhatsappChatStarted"
     />
 
     <TransferCardDialog
+      v-if="!phoneChatsOnly"
 
       v-model:show="transferCardVisible"
 
@@ -1082,6 +1104,14 @@ onUnmounted(() => {
 .chats-page__contact-link:hover,
 .chats-page__contact-name:hover {
   opacity: 0.85;
+}
+
+.chats-page__contact-name--static {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: default;
 }
 
 .chats-page__list-pane {
@@ -1646,6 +1676,12 @@ onUnmounted(() => {
 }
 
 
+
+@media (max-width: 768px) {
+  .chats-page {
+    min-height: 0;
+  }
+}
 
 @media (max-width: 1023px) {
   .chats-page__split {

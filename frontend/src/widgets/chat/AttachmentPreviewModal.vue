@@ -6,14 +6,18 @@ import { computed, ref, watch } from 'vue'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import { renderAttachmentPreviewHtml } from '@/shared/lib/attachment-preview-render'
 
-const props = defineProps<{
-  open: boolean
-  loading?: boolean
-  label: string
-  blobUrl: string | null
-  blob: Blob | null
-  previewKind: AttachmentPreviewKind
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    loading?: boolean
+    label: string
+    blobUrl: string | null
+    blob: Blob | null
+    previewKind: AttachmentPreviewKind
+    allowDownload?: boolean
+  }>(),
+  { allowDownload: true },
+)
 
 const emit = defineEmits<{
   close: []
@@ -39,7 +43,9 @@ const stageStyle = computed(() => ({
 
 const pdfSrc = computed(() => {
   if (!props.blobUrl || props.previewKind !== 'pdf') return null
-  return `${props.blobUrl}#view=FitH&toolbar=1`
+  return props.allowDownload
+    ? `${props.blobUrl}#view=FitH&toolbar=1`
+    : `${props.blobUrl}#view=FitH&toolbar=0&navpanes=0`
 })
 
 const htmlStageStyle = computed(() => ({
@@ -89,8 +95,12 @@ function resetZoom(): void {
   previewZoom.value = 1
 }
 
+function onImageContextMenu(event: Event): void {
+  if (!props.allowDownload) event.preventDefault()
+}
+
 function download(): void {
-  if (!props.blobUrl) return
+  if (!props.allowDownload || !props.blobUrl) return
   const anchor = document.createElement('a')
   anchor.href = props.blobUrl
   anchor.download = props.label
@@ -130,6 +140,7 @@ function download(): void {
             </template>
           </NButton>
           <NButton
+            v-if="allowDownload"
             quaternary
             circle
             size="large"
@@ -160,6 +171,8 @@ function download(): void {
           :src="blobUrl"
           :alt="label"
           :style="stageStyle"
+          draggable="false"
+          @contextmenu="onImageContextMenu"
         />
         <div
           v-else-if="previewKind === 'pdf'"
@@ -171,7 +184,7 @@ function download(): void {
         <NSpin v-else-if="htmlLoading" size="large" />
         <div v-else-if="htmlError" class="attachment-preview__fallback">
           <p>Не удалось построить предпросмотр.</p>
-          <NButton type="primary" @click="download">Скачать файл</NButton>
+          <NButton v-if="allowDownload" type="primary" @click="download">Скачать файл</NButton>
         </div>
         <div
           v-else-if="htmlPreview"
@@ -181,7 +194,7 @@ function download(): void {
         />
         <div v-else class="attachment-preview__fallback">
           <p>Предпросмотр для этого типа файла недоступен.</p>
-          <NButton type="primary" @click="download">Скачать файл</NButton>
+          <NButton v-if="allowDownload" type="primary" @click="download">Скачать файл</NButton>
         </div>
       </div>
     </div>
@@ -244,6 +257,8 @@ function download(): void {
   transform-origin: center center;
   transition: transform 120ms ease;
   box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .attachment-preview__pdf-wrap {
