@@ -35,6 +35,7 @@ import {
   type LawyerShop,
 } from '@/features/lawyer-registry/api'
 import {
+  ACCOUNT_STATUS_OPTIONS,
   COMPANY_STATUS_OPTIONS,
   ECSP_OPTIONS,
   SHOP_KIND_OPTIONS,
@@ -111,6 +112,30 @@ function shopsOf(director: LawyerDirector): LawyerShop[] {
 
 function kindLabel(value: string): string {
   return SHOP_KIND_OPTIONS.find((item) => item.value === value)?.label ?? value
+}
+
+const UNRELIABLE_ALIASES: Record<string, string> = {
+  налог: 'Налог',
+  адрес: 'Адрес',
+  'должност.лицо': 'Должност.лицо',
+  'должност. лицо': 'Должност.лицо',
+  'должностное лицо': 'Должност.лицо',
+}
+
+function csvValues(value: string | null | undefined): string[] {
+  if (!value) return []
+  return value
+    .split(/[,;]/)
+    .map((part) => {
+      const trimmed = part.trim()
+      return UNRELIABLE_ALIASES[trimmed.toLowerCase()] ?? trimmed
+    })
+    .filter(Boolean)
+}
+
+function csvJoin(values: string[] | null): string | null {
+  if (!values?.length) return null
+  return values.join(', ')
 }
 
 function money(value: number | null | undefined): string {
@@ -397,21 +422,30 @@ onMounted(async () => {
                     />
                   </label>
                   <label>Статус компании дира
-                    <NInput
-                      :value="details[director.id].company_status ?? ''"
-                      @blur="(e) => saveDirector(director.id, { company_status: (e.target as HTMLInputElement).value || null })"
+                    <NSelect
+                      :value="details[director.id].company_status"
+                      :options="COMPANY_STATUS_OPTIONS"
+                      clearable
+                      placeholder="Выбрать"
+                      @update:value="(v: string | null) => saveDirector(director.id, { company_status: v })"
                     />
                   </label>
                   <label>Статус компаний
-                    <NInput
-                      :value="details[director.id].companies_status ?? ''"
-                      @blur="(e) => saveDirector(director.id, { companies_status: (e.target as HTMLInputElement).value || null })"
+                    <NSelect
+                      :value="details[director.id].companies_status"
+                      :options="COMPANY_STATUS_OPTIONS"
+                      clearable
+                      placeholder="Выбрать"
+                      @update:value="(v: string | null) => saveDirector(director.id, { companies_status: v })"
                     />
                   </label>
                   <label>ЭЦП
-                    <NInput
-                      :value="details[director.id].ecsp_status ?? ''"
-                      @blur="(e) => saveDirector(director.id, { ecsp_status: (e.target as HTMLInputElement).value || null })"
+                    <NSelect
+                      :value="details[director.id].ecsp_status"
+                      :options="ECSP_OPTIONS"
+                      clearable
+                      placeholder="Выбрать"
+                      @update:value="(v: string | null) => saveDirector(director.id, { ecsp_status: v })"
                     />
                   </label>
                   <label>Банки
@@ -421,9 +455,12 @@ onMounted(async () => {
                     />
                   </label>
                   <label>Счета
-                    <NInput
-                      :value="details[director.id].accounts_status ?? ''"
-                      @blur="(e) => saveDirector(director.id, { accounts_status: (e.target as HTMLInputElement).value || null })"
+                    <NSelect
+                      :value="details[director.id].accounts_status"
+                      :options="ACCOUNT_STATUS_OPTIONS"
+                      clearable
+                      placeholder="Выбрать"
+                      @update:value="(v: string | null) => saveDirector(director.id, { accounts_status: v })"
                     />
                   </label>
                   <label>Телефон
@@ -470,9 +507,13 @@ onMounted(async () => {
                         />
                       </label>
                       <label>Статус
-                        <NInput
-                          :value="shop.company_status ?? ''"
-                          @blur="(e) => saveShop(shop.id, { company_status: (e.target as HTMLInputElement).value || null }, director.id)"
+                        <NSelect
+                          :value="shop.company_status"
+                          :options="COMPANY_STATUS_OPTIONS"
+                          size="small"
+                          clearable
+                          placeholder="Выбрать"
+                          @update:value="(v: string | null) => saveShop(shop.id, { company_status: v }, director.id)"
                         />
                       </label>
                       <label>Лечение / проблема
@@ -482,21 +523,34 @@ onMounted(async () => {
                         />
                       </label>
                       <label>Недостоверка
-                        <NInput
-                          :value="shop.unreliable ?? ''"
-                          @blur="(e) => saveShop(shop.id, { unreliable: (e.target as HTMLInputElement).value || null }, director.id)"
+                        <NSelect
+                          :value="csvValues(shop.unreliable)"
+                          :options="UNRELIABLE_OPTIONS"
+                          size="small"
+                          multiple
+                          clearable
+                          placeholder="Выбрать"
+                          @update:value="(v: string[]) => saveShop(shop.id, { unreliable: csvJoin(v) }, director.id)"
                         />
                       </label>
                       <label>ЗСК
-                        <NInput
-                          :value="shop.zsk ?? ''"
-                          @blur="(e) => saveShop(shop.id, { zsk: (e.target as HTMLInputElement).value || null }, director.id)"
+                        <NSelect
+                          :value="shop.zsk"
+                          :options="ZSK_OPTIONS"
+                          size="small"
+                          clearable
+                          placeholder="Выбрать"
+                          @update:value="(v: string | null) => saveShop(shop.id, { zsk: v }, director.id)"
                         />
                       </label>
                       <label>ЭЦП
-                        <NInput
-                          :value="shop.ecsp_status ?? ''"
-                          @blur="(e) => saveShop(shop.id, { ecsp_status: (e.target as HTMLInputElement).value || null }, director.id)"
+                        <NSelect
+                          :value="shop.ecsp_status"
+                          :options="ECSP_OPTIONS"
+                          size="small"
+                          clearable
+                          placeholder="Выбрать"
+                          @update:value="(v: string | null) => saveShop(shop.id, { ecsp_status: v }, director.id)"
                         />
                       </label>
                       <label>Банки
@@ -506,9 +560,13 @@ onMounted(async () => {
                         />
                       </label>
                       <label>Счета
-                        <NInput
-                          :value="shop.accounts_status ?? ''"
-                          @blur="(e) => saveShop(shop.id, { accounts_status: (e.target as HTMLInputElement).value || null }, director.id)"
+                        <NSelect
+                          :value="shop.accounts_status"
+                          :options="ACCOUNT_STATUS_OPTIONS"
+                          size="small"
+                          clearable
+                          placeholder="Выбрать"
+                          @update:value="(v: string | null) => saveShop(shop.id, { accounts_status: v }, director.id)"
                         />
                       </label>
                       <label>Менеджер
@@ -651,6 +709,12 @@ onMounted(async () => {
   gap: 4px;
   font-size: 0.75rem;
   color: var(--app-text-muted);
+}
+.grid :deep(.n-select),
+.grid :deep(.n-input),
+.grid :deep(.n-input-number),
+.grid :deep(.n-date-picker) {
+  width: 100%;
 }
 .pays {
   display: flex;

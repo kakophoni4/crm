@@ -121,3 +121,11 @@ export const UNRELIABLE_OPTIONS = [
   'Адрес',
   'Должност.лицо',
 ].map((value) => ({ label: value, value }))
+
+export const ACCOUNT_STATUS_OPTIONS = [
+  'Открыты',
+  'Закрыты',
+  'Заблокированы',
+  'Частично открыты',
+  'Нет счетов',
+].map((value) => ({ label: value, value }))
