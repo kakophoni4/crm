@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -16,8 +16,9 @@ from app.modules.db.models.chat import Chat
 from app.modules.db.models.chat_message import ChatMessage
 from app.modules.db.models.contact import Contact
 from app.modules.db.models.group import Group
-from app.modules.db.models.enums import MessageDirection, UserRole
+from app.modules.db.models.enums import MessageDirection, UserRole, UserStatus
 from app.modules.db.models.file_share_link import FileShareLink
+from app.modules.db.models.file_vault_folder_share import FileVaultFolderShare
 from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.group_chat_file import GroupChatFile
 from app.modules.db.models.large_share_upload import LargeShareUpload
@@ -40,6 +41,10 @@ from app.modules.storage.schemas import (
     VaultFileContentResponse,
     VaultFileListResponse,
     VaultFileResponse,
+    VaultFolderUserShareListResponse,
+    VaultFolderUserShareResponse,
+    VaultShareUserListResponse,
+    VaultShareUserOption,
 )
 from app.modules.users.memberships import list_user_group_ids
 from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
@@ -129,13 +134,59 @@ class StorageService:
         if parent is None or parent.owner_user_id != actor.id or not parent.is_folder:
             raise ValidationError(message="Папка не найдена")
 
+    async def _can_read_vault_item(self, actor: User, item: FileVaultItem) -> bool:
+        if item.owner_user_id == actor.id:
+            return True
+        current: FileVaultItem | None = item
+        seen: set[int] = set()
+        while current is not None and current.id not in seen:
+            seen.add(current.id)
+            if current.is_folder:
+                share = await self._repo.get_folder_share(current.id, actor.id)
+                if share is not None:
+                    return True
+            if current.parent_id is None:
+                return False
+            current = await self._repo.get_vault_item(current.parent_id)
+        return False
+
+    async def _folder_share_responses(
+        self,
+        shares: list[FileVaultFolderShare],
+    ) -> list[VaultFolderUserShareResponse]:
+        user_ids = {share.user_id for share in shares}
+        user_ids.update(share.shared_by for share in shares if share.shared_by is not None)
+        names = await self._load_user_names(user_ids)
+        return [
+            VaultFolderUserShareResponse(
+                id=share.id,
+                folder_id=share.folder_id,
+                user_id=share.user_id,
+                user_name=names.get(share.user_id) or f"user #{share.user_id}",
+                shared_by=share.shared_by,
+                shared_by_name=(
+                    names.get(share.shared_by) if share.shared_by is not None else None
+                ),
+                created_at=share.created_at,
+            )
+            for share in shares
+        ]
+
     def _vault_item_response(
         self,
         item: FileVaultItem,
         uploaded: UploadedFile | None = None,
         *,
         share_links: list[ShareLinkResponse] | None = None,
+        access: str = "owned",
+        shared_by_name: str | None = None,
+        folder_shares: list[VaultFolderUserShareResponse] | None = None,
     ) -> VaultFileResponse:
+        extras = {
+            "access": access,
+            "shared_by_name": shared_by_name,
+            "folder_shares": folder_shares or [],
+        }
         if item.is_folder:
             return VaultFileResponse(
                 id=item.id,
@@ -147,6 +198,7 @@ class StorageService:
                 parent_id=item.parent_id,
                 created_at=item.created_at,
                 share_links=[],
+                **extras,
             )
         if uploaded is None:
             raise NotFound(message="File not found")
@@ -160,6 +212,7 @@ class StorageService:
             parent_id=item.parent_id,
             created_at=item.created_at,
             share_links=share_links or [],
+            **extras,
         )
 
     async def list_vault(
@@ -170,24 +223,174 @@ class StorageService:
         offset: int = 0,
         limit: int = 50,
     ) -> VaultFileListResponse:
-        await self._assert_vault_parent(actor, parent_id)
+        can_write = True
+        owner_filter: int | None = actor.id
+        access = "owned"
+        if parent_id is not None:
+            parent = await self._repo.get_vault_item(parent_id)
+            if parent is None or not parent.is_folder:
+                raise ValidationError(message="Папка не найдена")
+            if parent.owner_user_id == actor.id:
+                can_write = True
+            elif await self._can_read_vault_item(actor, parent):
+                can_write = False
+                owner_filter = None
+                access = "shared"
+            else:
+                raise ValidationError(message="Папка не найдена")
         items, total = await self._repo.list_vault_items(
-            actor.id,
+            owner_filter,
             parent_id=parent_id,
             offset=offset,
             limit=limit,
         )
+        return await self._vault_list_response(items, total, access=access, can_write=can_write)
+
+    async def list_shared_folders(self, actor: User) -> VaultFileListResponse:
+        shares = await self._repo.list_shares_for_user(actor.id)
+        if not shares:
+            return VaultFileListResponse(items=[], total=0, can_write=False)
+        share_responses = await self._folder_share_responses(shares)
+        share_by_folder = {row.folder_id: row for row in share_responses}
+        loaded = await self._repo.get_vault_items([share.folder_id for share in shares])
+        folders = [folder for folder in loaded if folder.is_folder]
+        responses = [
+            self._vault_item_response(
+                folder,
+                access="shared",
+                shared_by_name=share_by_folder.get(folder.id).shared_by_name
+                if share_by_folder.get(folder.id)
+                else None,
+                folder_shares=[share_by_folder[folder.id]] if folder.id in share_by_folder else [],
+            )
+            for folder in folders
+        ]
+        return VaultFileListResponse(items=responses, total=len(responses), can_write=False)
+
+    async def list_share_users(
+        self,
+        actor: User,
+        *,
+        q: str | None = None,
+    ) -> VaultShareUserListResponse:
+        filters = [
+            User.status == UserStatus.ACTIVE,
+            User.id != actor.id,
+        ]
+        needle = (q or "").strip()
+        if needle:
+            like = f"%{needle}%"
+            filters.append(
+                or_(
+                    User.full_name.ilike(like),
+                    User.username.ilike(like),
+                    User.email.ilike(like),
+                ),
+            )
+        result = await self._session.execute(
+            select(User).where(*filters).order_by(User.full_name).limit(50),
+        )
+        users = list(result.scalars().all())
+        return VaultShareUserListResponse(
+            items=[
+                VaultShareUserOption(
+                    id=user.id,
+                    full_name=user.full_name or f"user #{user.id}",
+                    username=user.username,
+                )
+                for user in users
+            ],
+        )
+
+    async def share_vault_folder(
+        self,
+        actor: User,
+        folder_id: int,
+        user_id: int,
+    ) -> VaultFolderUserShareResponse:
+        folder = await self._repo.get_vault_item(folder_id)
+        if folder is None or not folder.is_folder or folder.owner_user_id != actor.id:
+            raise NotFound(message="Папка не найдена")
+        if user_id == actor.id:
+            raise ValidationError(message="Нельзя поделиться папкой с собой")
+        target = await self._session.get(User, user_id)
+        if target is None:
+            raise ValidationError(message="Пользователь не найден")
+        status = (
+            target.status
+            if isinstance(target.status, UserStatus)
+            else UserStatus(str(target.status))
+        )
+        if status != UserStatus.ACTIVE:
+            raise ValidationError(message="Пользователь неактивен")
+        existing = await self._repo.get_folder_share(folder_id, user_id)
+        if existing is not None:
+            rows = await self._folder_share_responses([existing])
+            return rows[0]
+        share = await self._repo.add_folder_share(
+            folder_id=folder_id,
+            user_id=user_id,
+            shared_by=actor.id,
+        )
+        rows = await self._folder_share_responses([share])
+        return rows[0]
+
+    async def list_folder_user_shares(
+        self,
+        actor: User,
+        folder_id: int,
+    ) -> VaultFolderUserShareListResponse:
+        folder = await self._repo.get_vault_item(folder_id)
+        if folder is None or not folder.is_folder or folder.owner_user_id != actor.id:
+            raise NotFound(message="Папка не найдена")
+        shares = await self._repo.list_shares_for_folder(folder_id)
+        return VaultFolderUserShareListResponse(items=await self._folder_share_responses(shares))
+
+    async def revoke_folder_user_share(self, actor: User, share_id: int) -> None:
+        share = await self._repo.get_folder_share_by_id(share_id)
+        if share is None:
+            raise NotFound(message="Доступ не найден")
+        folder = await self._repo.get_vault_item(share.folder_id)
+        is_owner = folder is not None and folder.owner_user_id == actor.id
+        is_recipient = share.user_id == actor.id
+        if not is_owner and not is_recipient:
+            raise NotFound(message="Доступ не найден")
+        await self._repo.delete_folder_share(share_id)
+
+    async def _vault_list_response(
+        self,
+        items: list[FileVaultItem],
+        total: int,
+        *,
+        access: str,
+        can_write: bool,
+    ) -> VaultFileListResponse:
         files_map = await self._load_vault_files_map(items)
-        file_ids = [item.file_id for item in items if item.file_id is not None]
-        shares = await self._repo.list_share_links_for_files(file_ids)
         shares_by_file: dict[int, list[ShareLinkResponse]] = {}
-        for share in shares:
-            shares_by_file.setdefault(share.file_id, []).append(self._to_share_response(share))
+        if can_write:
+            file_ids = [item.file_id for item in items if item.file_id is not None]
+            shares = await self._repo.list_share_links_for_files(file_ids)
+            for share in shares:
+                shares_by_file.setdefault(share.file_id, []).append(self._to_share_response(share))
+        folder_ids = [item.id for item in items if item.is_folder]
+        folder_share_rows = (
+            await self._repo.list_shares_for_folders(folder_ids) if can_write else []
+        )
+        folder_share_responses = await self._folder_share_responses(folder_share_rows)
+        shares_by_folder: dict[int, list[VaultFolderUserShareResponse]] = {}
+        for row in folder_share_responses:
+            shares_by_folder.setdefault(row.folder_id, []).append(row)
 
         responses: list[VaultFileResponse] = []
         for item in items:
             if item.is_folder:
-                responses.append(self._vault_item_response(item))
+                responses.append(
+                    self._vault_item_response(
+                        item,
+                        access=access,
+                        folder_shares=shares_by_folder.get(item.id, []),
+                    ),
+                )
                 continue
             if item.file_id is None:
                 continue
@@ -199,9 +402,10 @@ class StorageService:
                     item,
                     uploaded,
                     share_links=shares_by_file.get(uploaded.id, []),
+                    access=access,
                 ),
             )
-        return VaultFileListResponse(items=responses, total=total)
+        return VaultFileListResponse(items=responses, total=total, can_write=can_write)
 
     async def create_vault_folder(
         self,
@@ -286,6 +490,21 @@ class StorageService:
             raise NotFound(message="File not found")
         return item, uploaded
 
+    async def _accessible_vault_upload(
+        self,
+        actor: User,
+        vault_id: int,
+    ) -> tuple[FileVaultItem, UploadedFile]:
+        item = await self._repo.get_vault_item(vault_id)
+        if item is None or not await self._can_read_vault_item(actor, item):
+            raise NotFound(message="File not found")
+        if item.is_folder or item.file_id is None:
+            raise ValidationError(message="Это папка, не файл")
+        uploaded = await self._repo.get_uploaded_file(item.file_id)
+        if uploaded is None:
+            raise NotFound(message="File not found")
+        return item, uploaded
+
     def _vault_response(self, item: FileVaultItem, uploaded: UploadedFile) -> VaultFileResponse:
         return self._vault_item_response(item, uploaded)
 
@@ -294,7 +513,7 @@ class StorageService:
         actor: User,
         vault_id: int,
     ) -> tuple[bytes, str, str]:
-        _item, uploaded = await self._owned_vault_upload(actor, vault_id)
+        _item, uploaded = await self._accessible_vault_upload(actor, vault_id)
         data, content_type = await get_file_storage().get_bytes(uploaded.storage_key)
         return data, content_type, uploaded.original_name
 
@@ -303,8 +522,8 @@ class StorageService:
         actor: User,
         vault_id: int,
     ) -> VaultFileContentResponse:
-        item, uploaded = await self._owned_vault_upload(actor, vault_id)
-        editable = _is_editable_text_file(
+        item, uploaded = await self._accessible_vault_upload(actor, vault_id)
+        editable = item.owner_user_id == actor.id and _is_editable_text_file(
             original_name=uploaded.original_name,
             mime_type=uploaded.mime_type,
             size_bytes=uploaded.size_bytes,

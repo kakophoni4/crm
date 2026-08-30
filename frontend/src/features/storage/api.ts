@@ -13,6 +13,8 @@ import type {
   VaultFile,
   VaultFileContent,
   VaultFileList,
+  VaultFolderUserShare,
+  VaultShareUser,
 } from './types'
 
 export type {
@@ -28,6 +30,8 @@ export type {
   VaultFile,
   VaultFileContent,
   VaultFileList,
+  VaultFolderUserShare,
+  VaultShareUser,
 } from './types'
 
 export async function listVaultFiles(params?: {
@@ -43,6 +47,39 @@ export async function listVaultFiles(params?: {
     },
   })
   return data
+}
+
+export async function listSharedVaultFolders(): Promise<VaultFileList> {
+  const { data } = await http.get<VaultFileList>('/storage/vault/shared')
+  return data
+}
+
+export async function listVaultShareUsers(q?: string): Promise<VaultShareUser[]> {
+  const { data } = await http.get<{ items: VaultShareUser[] }>('/storage/vault/share-users', {
+    params: q?.trim() ? { q: q.trim() } : undefined,
+  })
+  return data.items
+}
+
+export async function listVaultFolderUserShares(folderId: number): Promise<VaultFolderUserShare[]> {
+  const { data } = await http.get<{ items: VaultFolderUserShare[] }>(
+    `/storage/vault/${folderId}/user-shares`,
+  )
+  return data.items
+}
+
+export async function shareVaultFolder(
+  folderId: number,
+  userId: number,
+): Promise<VaultFolderUserShare> {
+  const { data } = await http.post<VaultFolderUserShare>(`/storage/vault/${folderId}/user-shares`, {
+    user_id: userId,
+  })
+  return data
+}
+
+export async function revokeVaultFolderUserShare(shareId: number): Promise<void> {
+  await http.delete(`/storage/vault/user-shares/${shareId}`)
 }
 
 export async function createVaultFolder(body: {

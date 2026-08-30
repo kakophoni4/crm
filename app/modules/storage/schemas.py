@@ -5,6 +5,16 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class VaultFolderUserShareResponse(BaseModel):
+    id: int
+    folder_id: int
+    user_id: int
+    user_name: str
+    shared_by: int | None = None
+    shared_by_name: str | None = None
+    created_at: datetime
+
+
 class VaultFileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -17,11 +27,35 @@ class VaultFileResponse(BaseModel):
     parent_id: int | None = None
     created_at: datetime
     share_links: list["ShareLinkResponse"] = Field(default_factory=list)
+    access: str = "owned"
+    shared_by_name: str | None = None
+    folder_shares: list[VaultFolderUserShareResponse] = Field(default_factory=list)
 
 
 class VaultFileListResponse(BaseModel):
     items: list[VaultFileResponse]
     total: int
+    can_write: bool = True
+
+
+class VaultShareUserOption(BaseModel):
+    id: int
+    full_name: str
+    username: str
+
+
+class VaultShareUserListResponse(BaseModel):
+    items: list[VaultShareUserOption]
+
+
+class VaultFolderUserShareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: int = Field(ge=1)
+
+
+class VaultFolderUserShareListResponse(BaseModel):
+    items: list[VaultFolderUserShareResponse]
 
 
 class VaultFolderCreateRequest(BaseModel):

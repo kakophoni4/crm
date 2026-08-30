@@ -10,6 +10,22 @@ export interface ShareLink {
   created_at: string
 }
 
+export interface VaultFolderUserShare {
+  id: number
+  folder_id: number
+  user_id: number
+  user_name: string
+  shared_by: number | null
+  shared_by_name: string | null
+  created_at: string
+}
+
+export interface VaultShareUser {
+  id: number
+  full_name: string
+  username: string
+}
+
 export interface VaultFile {
   id: number
   file_id: number | null
@@ -20,11 +36,15 @@ export interface VaultFile {
   parent_id?: number | null
   created_at: string
   share_links: ShareLink[]
+  access?: 'owned' | 'shared' | string
+  shared_by_name?: string | null
+  folder_shares?: VaultFolderUserShare[]
 }
 
 export interface VaultFileList {
   items: VaultFile[]
   total: number
+  can_write?: boolean
 }
 
 export interface VaultFileContent {

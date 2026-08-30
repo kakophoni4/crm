@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chats.timeutil import to_naive_utc
 from app.modules.db.models.file_share_link import FileShareLink
+from app.modules.db.models.file_vault_folder_share import FileVaultFolderShare
 from app.modules.db.models.file_vault_item import FileVaultItem
 from app.modules.db.models.group import Group
 from app.modules.db.models.group_chat_file import GroupChatFile
@@ -44,6 +45,15 @@ class StorageRepository:
     async def get_vault_item(self, vault_id: int) -> FileVaultItem | None:
         return await self._session.get(FileVaultItem, vault_id)
 
+    async def get_vault_items(self, vault_ids: list[int]) -> list[FileVaultItem]:
+        if not vault_ids:
+            return []
+        result = await self._session.execute(
+            select(FileVaultItem).where(FileVaultItem.id.in_(vault_ids)),
+        )
+        by_id = {row.id: row for row in result.scalars().all()}
+        return [by_id[item_id] for item_id in vault_ids if item_id in by_id]
+
     async def get_vault_item_by_file(self, file_id: int) -> FileVaultItem | None:
         result = await self._session.execute(
             select(FileVaultItem).where(FileVaultItem.file_id == file_id),
@@ -52,13 +62,15 @@ class StorageRepository:
 
     async def list_vault_items(
         self,
-        owner_user_id: int,
+        owner_user_id: int | None,
         *,
         parent_id: int | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[FileVaultItem], int]:
-        base = select(FileVaultItem).where(FileVaultItem.owner_user_id == owner_user_id)
+        base = select(FileVaultItem)
+        if owner_user_id is not None:
+            base = base.where(FileVaultItem.owner_user_id == owner_user_id)
         if parent_id is None:
             base = base.where(FileVaultItem.parent_id.is_(None))
         else:
@@ -157,6 +169,71 @@ class StorageRepository:
             .where(FileShareLink.id == share_id)
             .values(download_count=FileShareLink.download_count + 1),
         )
+
+    async def add_folder_share(
+        self,
+        *,
+        folder_id: int,
+        user_id: int,
+        shared_by: int,
+    ) -> FileVaultFolderShare:
+        row = FileVaultFolderShare(
+            folder_id=folder_id,
+            user_id=user_id,
+            shared_by=shared_by,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        await self._session.refresh(row)
+        return row
+
+    async def get_folder_share(
+        self,
+        folder_id: int,
+        user_id: int,
+    ) -> FileVaultFolderShare | None:
+        result = await self._session.execute(
+            select(FileVaultFolderShare).where(
+                FileVaultFolderShare.folder_id == folder_id,
+                FileVaultFolderShare.user_id == user_id,
+            ),
+        )
+        return result.scalar_one_or_none()
+
+    async def get_folder_share_by_id(self, share_id: int) -> FileVaultFolderShare | None:
+        return await self._session.get(FileVaultFolderShare, share_id)
+
+    async def list_shares_for_folder(self, folder_id: int) -> list[FileVaultFolderShare]:
+        result = await self._session.execute(
+            select(FileVaultFolderShare)
+            .where(FileVaultFolderShare.folder_id == folder_id)
+            .order_by(FileVaultFolderShare.created_at.desc()),
+        )
+        return list(result.scalars().all())
+
+    async def list_shares_for_folders(self, folder_ids: list[int]) -> list[FileVaultFolderShare]:
+        if not folder_ids:
+            return []
+        result = await self._session.execute(
+            select(FileVaultFolderShare)
+            .where(FileVaultFolderShare.folder_id.in_(folder_ids))
+            .order_by(FileVaultFolderShare.created_at.desc()),
+        )
+        return list(result.scalars().all())
+
+    async def list_shares_for_user(self, user_id: int) -> list[FileVaultFolderShare]:
+        result = await self._session.execute(
+            select(FileVaultFolderShare)
+            .where(FileVaultFolderShare.user_id == user_id)
+            .order_by(FileVaultFolderShare.created_at.desc()),
+        )
+        return list(result.scalars().all())
+
+    async def delete_folder_share(self, share_id: int) -> bool:
+        result = await self._session.execute(
+            delete(FileVaultFolderShare).where(FileVaultFolderShare.id == share_id),
+        )
+        return result.rowcount > 0
 
     async def add_large_share_upload(self, row: LargeShareUpload) -> LargeShareUpload:
         self._session.add(row)

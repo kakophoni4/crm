@@ -22,8 +22,12 @@ from app.modules.storage.schemas import (
     VaultFileContentUpdateRequest,
     VaultFileListResponse,
     VaultFolderCreateRequest,
+    VaultFolderUserShareListResponse,
+    VaultFolderUserShareRequest,
+    VaultFolderUserShareResponse,
     VaultFileRenameRequest,
     VaultFileResponse,
+    VaultShareUserListResponse,
 )
 from app.modules.storage.service import StorageService
 from app.shared.db import get_db
@@ -64,6 +68,64 @@ async def list_vault_files(
     limit: int = Query(50, ge=1, le=100),
 ) -> VaultFileListResponse:
     return await service.list_vault(actor, parent_id=parent_id, offset=offset, limit=limit)
+
+
+@router.get("/vault/shared", response_model=VaultFileListResponse)
+async def list_shared_vault_folders(
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> VaultFileListResponse:
+    return await service.list_shared_folders(actor)
+
+
+@router.get("/vault/share-users", response_model=VaultShareUserListResponse)
+async def list_vault_share_users(
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    q: Annotated[str | None, Query(max_length=120)] = None,
+) -> VaultShareUserListResponse:
+    return await service.list_share_users(actor, q=q)
+
+
+@router.get(
+    "/vault/{folder_id}/user-shares",
+    response_model=VaultFolderUserShareListResponse,
+)
+async def list_vault_folder_user_shares(
+    folder_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+) -> VaultFolderUserShareListResponse:
+    return await service.list_folder_user_shares(actor, folder_id)
+
+
+@router.post(
+    "/vault/{folder_id}/user-shares",
+    status_code=201,
+    response_model=VaultFolderUserShareResponse,
+)
+async def share_vault_folder(
+    folder_id: int,
+    body: VaultFolderUserShareRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_UPLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VaultFolderUserShareResponse:
+    result = await service.share_vault_folder(actor, folder_id, body.user_id)
+    await db.commit()
+    return result
+
+
+@router.delete("/vault/user-shares/{share_id}")
+async def revoke_vault_folder_user_share(
+    share_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.FILES_DOWNLOAD))],
+    service: Annotated[StorageService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, bool]:
+    await service.revoke_folder_user_share(actor, share_id)
+    await db.commit()
+    return {"revoked": True}
 
 
 @router.post("/vault/folders", status_code=201, response_model=VaultFileResponse)

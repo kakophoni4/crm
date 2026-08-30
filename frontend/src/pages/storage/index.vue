@@ -8,6 +8,7 @@ import {
   NInputNumber,
   NModal,
   NProgress,
+  NSelect,
   NSpace,
   NSpin,
   NTabPane,
@@ -15,7 +16,7 @@ import {
   NUpload,
   useMessage,
 } from 'naive-ui'
-import { ArrowLeft, Copy, Download, Eye, Folder, Link2, Pencil, Trash2, Upload } from 'lucide-vue-next'
+import { ArrowLeft, Copy, Download, Eye, Folder, Link2, Pencil, Share2, Trash2, Upload } from 'lucide-vue-next'
 import { computed, h, onMounted, ref, watch } from 'vue'
 
 import {
@@ -32,9 +33,14 @@ import {
   initAdminLargeShare,
   listGroupFileGroups,
   listGroupFiles,
+  listSharedVaultFolders,
   listVaultFiles,
+  listVaultFolderUserShares,
+  listVaultShareUsers,
   renameVaultFile,
   revokeShareLink,
+  revokeVaultFolderUserShare,
+  shareVaultFolder,
   updateVaultFileContent,
   uploadAdminLargeSharePart,
   uploadVaultFile,
@@ -44,6 +50,8 @@ import {
   type StorageSalesBookItem,
   type StorageSalesBookUnitGroup,
   type VaultFile,
+  type VaultFolderUserShare,
+  type VaultShareUser,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
 import { formatFileSize, MAX_UPLOAD_FILE_BYTES, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
@@ -81,6 +89,8 @@ const receiptsLoaded = ref(false)
 const groupsLoaded = ref(false)
 
 const vaultFiles = ref<VaultFile[]>([])
+const sharedFolders = ref<VaultFile[]>([])
+const vaultCanWrite = ref(true)
 const vaultParentId = ref<number | null>(null)
 const vaultPath = ref<{ id: number; name: string }[]>([])
 const createFolderOpen = ref(false)
@@ -110,6 +120,13 @@ const downloadingSalesBookId = ref<number | null>(null)
 
 const shareModalOpen = ref(false)
 const shareTarget = ref<VaultFile | null>(null)
+const folderShareOpen = ref(false)
+const folderShareTarget = ref<VaultFile | null>(null)
+const folderShareUserId = ref<number | null>(null)
+const folderShareUsers = ref<VaultShareUser[]>([])
+const folderShareList = ref<VaultFolderUserShare[]>([])
+const folderShareLoading = ref(false)
+const folderShareUsersLoading = ref(false)
 const shareExpiresHours = ref<number | null>(168)
 const shareMaxDownloads = ref<number | null>(null)
 const sharePassword = ref('')
@@ -161,6 +178,17 @@ async function loadVault(): Promise<void> {
       limit: 100,
     })
     vaultFiles.value = data.items
+    vaultCanWrite.value = data.can_write !== false
+    if (vaultParentId.value == null) {
+      try {
+        const shared = await listSharedVaultFolders()
+        sharedFolders.value = shared.items
+      } catch {
+        sharedFolders.value = []
+      }
+    } else {
+      sharedFolders.value = []
+    }
     vaultLoaded.value = true
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить файлы')
@@ -828,6 +856,88 @@ async function onRevokeShare(shareId: number): Promise<void> {
   }
 }
 
+const folderShareUserOptions = computed(() => {
+  const taken = new Set(folderShareList.value.map((row) => row.user_id))
+  return folderShareUsers.value
+    .filter((user) => !taken.has(user.id))
+    .map((user) => ({
+      label: user.username ? `${user.full_name} (@${user.username})` : user.full_name,
+      value: user.id,
+    }))
+})
+
+async function loadFolderShareUsers(q?: string): Promise<void> {
+  folderShareUsersLoading.value = true
+  try {
+    folderShareUsers.value = await listVaultShareUsers(q)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить сотрудников')
+  } finally {
+    folderShareUsersLoading.value = false
+  }
+}
+
+async function refreshFolderShares(folderId: number): Promise<void> {
+  try {
+    folderShareList.value = await listVaultFolderUserShares(folderId)
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить доступы')
+  }
+}
+
+function openFolderShareModal(folder: VaultFile): void {
+  folderShareTarget.value = folder
+  folderShareUserId.value = null
+  folderShareList.value = folder.folder_shares ?? []
+  folderShareOpen.value = true
+  void loadFolderShareUsers()
+  void refreshFolderShares(folder.id)
+}
+
+async function submitFolderShare(): Promise<void> {
+  if (!folderShareTarget.value || folderShareUserId.value == null) {
+    message.warning('Выберите сотрудника')
+    return
+  }
+  folderShareLoading.value = true
+  try {
+    await shareVaultFolder(folderShareTarget.value.id, folderShareUserId.value)
+    message.success('Папка открыта выбранному сотруднику')
+    folderShareUserId.value = null
+    await refreshFolderShares(folderShareTarget.value.id)
+    await loadVault()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось поделиться папкой')
+  } finally {
+    folderShareLoading.value = false
+  }
+}
+
+async function revokeFolderShare(shareId: number): Promise<void> {
+  try {
+    await revokeVaultFolderUserShare(shareId)
+    message.success('Доступ закрыт')
+    if (folderShareTarget.value) {
+      await refreshFolderShares(folderShareTarget.value.id)
+    }
+    await loadVault()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось закрыть доступ')
+  }
+}
+
+async function leaveSharedFolder(folder: VaultFile): Promise<void> {
+  const shareId = folder.folder_shares?.[0]?.id
+  if (shareId == null) return
+  try {
+    await revokeVaultFolderUserShare(shareId)
+    message.success('Папка больше не отображается')
+    await loadVault()
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось отказаться')
+  }
+}
+
 function copyText(text: string): void {
   void navigator.clipboard.writeText(text)
   message.success('Скопировано')
@@ -925,7 +1035,7 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
           },
           { icon: () => h(Download, { size: 14 }) },
         ),
-        ...(isEditable(row)
+        ...(vaultCanWrite.value && isEditable(row)
           ? [
               h(
                 NButton,
@@ -939,21 +1049,25 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
               ),
             ]
           : []),
-        h(
-          NButton,
-          { size: 'small', quaternary: true, title: 'Переименовать', onClick: () => openRenameModal(row) },
-          { default: () => 'Имя' },
-        ),
-        h(
-          NButton,
-          { size: 'small', quaternary: true, onClick: () => openShareModal(row) },
-          { icon: () => h(Link2, { size: 14 }), default: () => 'Ссылка' },
-        ),
-        h(
-          NButton,
-          { size: 'small', quaternary: true, type: 'error', title: 'Удалить', onClick: () => onDeleteVault(row) },
-          { icon: () => h(Trash2, { size: 14 }) },
-        ),
+        ...(vaultCanWrite.value
+          ? [
+              h(
+                NButton,
+                { size: 'small', quaternary: true, title: 'Переименовать', onClick: () => openRenameModal(row) },
+                { default: () => 'Имя' },
+              ),
+              h(
+                NButton,
+                { size: 'small', quaternary: true, onClick: () => openShareModal(row) },
+                { icon: () => h(Link2, { size: 14 }), default: () => 'Ссылка' },
+              ),
+              h(
+                NButton,
+                { size: 'small', quaternary: true, type: 'error', title: 'Удалить', onClick: () => onDeleteVault(row) },
+                { icon: () => h(Trash2, { size: 14 }) },
+              ),
+            ]
+          : []),
       ]),
   },
 ])
@@ -1054,7 +1168,9 @@ onMounted(() => {
         <NTabPane name="vault" tab="Мои файлы">
           <NSpace vertical :size="16">
             <p class="hint">
-              Личные файлы для отправки в чаты. Чтобы передать файл по ссылке без входа — откройте
+              Личные файлы для отправки в чаты. Папку можно открыть выбранному сотруднику — он увидит
+              всё содержимое, в том числе файлы, которые вы добавите позже. Чтобы передать файл по
+              ссылке без входа — откройте
               <a href="/share" target="_blank" rel="noopener">/share</a>.
               Обычный лимит загрузки — {{ formatFileSize(MAX_UPLOAD_FILE_BYTES) }}.
             </p>
@@ -1080,7 +1196,7 @@ onMounted(() => {
                 </template>
               </div>
             </div>
-            <NSpace>
+            <NSpace v-if="vaultCanWrite">
               <NButton secondary @click="openCreateFolder">
                 <template #icon><Folder :size="16" /></template>
                 Создать папку
@@ -1101,7 +1217,37 @@ onMounted(() => {
                 @change="onLargeFilePicked"
               />
             </NSpace>
-            <NSpin :show="vaultLoading && vaultFiles.length === 0">
+            <p v-else class="hint">Просмотр общей папки: можно открывать и скачивать файлы.</p>
+            <NSpin :show="vaultLoading && vaultFiles.length === 0 && !sharedFolders.length">
+              <template v-if="!vaultPath.length && sharedFolders.length">
+                <p class="section-title">Поделились со мной</p>
+                <ul class="explorer-list">
+                  <li
+                    v-for="folder in sharedFolders"
+                    :key="`shared-${folder.id}`"
+                    class="explorer-item"
+                    @click="openVaultFolder(folder)"
+                  >
+                    <Folder :size="18" class="explorer-icon" />
+                    <span class="explorer-name">{{ folder.original_name }}</span>
+                    <span class="explorer-badge">
+                      от {{ folder.shared_by_name || 'сотрудника' }}
+                    </span>
+                    <div class="explorer-actions">
+                      <NButton
+                        size="tiny"
+                        quaternary
+                        @click.stop="leaveSharedFolder(folder)"
+                      >
+                        Отказаться
+                      </NButton>
+                    </div>
+                  </li>
+                </ul>
+              </template>
+              <p v-if="vaultFolderItems.length" class="section-title">
+                {{ vaultPath.length ? 'Папки' : 'Мои папки' }}
+              </p>
               <ul v-if="vaultFolderItems.length" class="explorer-list">
                 <li
                   v-for="folder in vaultFolderItems"
@@ -1111,18 +1257,34 @@ onMounted(() => {
                 >
                   <Folder :size="18" class="explorer-icon" />
                   <span class="explorer-name">{{ folder.original_name }}</span>
-                  <NButton
-                    size="tiny"
-                    quaternary
-                    type="error"
-                    @click.stop="onDeleteVault(folder)"
+                  <span
+                    v-if="vaultCanWrite && folder.folder_shares?.length"
+                    class="explorer-badge"
                   >
-                    <Trash2 :size="14" />
-                  </NButton>
+                    {{ folder.folder_shares.length }} чел.
+                  </span>
+                  <div v-if="vaultCanWrite" class="explorer-actions">
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      title="Поделиться папкой"
+                      @click.stop="openFolderShareModal(folder)"
+                    >
+                      <Share2 :size="14" />
+                    </NButton>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      type="error"
+                      @click.stop="onDeleteVault(folder)"
+                    >
+                      <Trash2 :size="14" />
+                    </NButton>
+                  </div>
                 </li>
               </ul>
               <NDataTable
-                v-if="vaultFileItems.length || !vaultFolderItems.length"
+                v-if="vaultFileItems.length || (!vaultFolderItems.length && !sharedFolders.length)"
                 :columns="vaultColumns"
                 :data="vaultFileItems"
                 :bordered="false"
@@ -1131,24 +1293,26 @@ onMounted(() => {
                 :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
               />
               <p
-                v-if="!vaultLoading && !vaultFolderItems.length && !vaultFileItems.length"
+                v-if="!vaultLoading && !vaultFolderItems.length && !vaultFileItems.length && !sharedFolders.length"
                 class="empty-hint"
               >
                 В этой папке пусто
               </p>
             </NSpin>
-            <div v-for="file in vaultFileItems" :key="file.id" class="share-list">
-              <template v-for="link in file.share_links" :key="link.id">
-                <div class="share-row">
-                  <span class="share-url">{{ link.url }}</span>
-                  <NButton size="tiny" quaternary @click="copyText(link.url)">
-                    <Copy :size="12" />
-                  </NButton>
-                  <NButton size="tiny" quaternary type="error" @click="onRevokeShare(link.id)">
-                    Отозвать
-                  </NButton>
-                </div>
-              </template>
+            <div v-if="vaultCanWrite">
+              <div v-for="file in vaultFileItems" :key="file.id" class="share-list">
+                <template v-for="link in file.share_links" :key="link.id">
+                  <div class="share-row">
+                    <span class="share-url">{{ link.url }}</span>
+                    <NButton size="tiny" quaternary @click="copyText(link.url)">
+                      <Copy :size="12" />
+                    </NButton>
+                    <NButton size="tiny" quaternary type="error" @click="onRevokeShare(link.id)">
+                      Отозвать
+                    </NButton>
+                  </div>
+                </template>
+              </div>
             </div>
           </NSpace>
         </NTabPane>
@@ -1562,6 +1726,47 @@ onMounted(() => {
       </NSpace>
     </NModal>
 
+    <NModal
+      v-model:show="folderShareOpen"
+      preset="card"
+      :title="`Поделиться папкой: ${folderShareTarget?.original_name ?? ''}`"
+      style="width: 460px; max-width: 94vw"
+    >
+      <NSpace vertical>
+        <p class="hint">
+          Сотрудник увидит эту папку и всё, что в ней лежит сейчас и появится позже.
+          Редактировать и удалять сможет только владелец.
+        </p>
+        <NSelect
+          v-model:value="folderShareUserId"
+          :options="folderShareUserOptions"
+          :loading="folderShareUsersLoading"
+          filterable
+          clearable
+          placeholder="Выберите сотрудника"
+          @search="loadFolderShareUsers"
+        />
+        <NButton
+          type="primary"
+          :loading="folderShareLoading"
+          :disabled="folderShareUserId == null"
+          block
+          @click="submitFolderShare"
+        >
+          Поделиться
+        </NButton>
+        <div v-if="folderShareList.length" class="folder-share-list">
+          <p class="section-title">Уже открыто</p>
+          <div v-for="share in folderShareList" :key="share.id" class="share-row">
+            <span class="share-url">{{ share.user_name }}</span>
+            <NButton size="tiny" quaternary type="error" @click="revokeFolderShare(share.id)">
+              Закрыть
+            </NButton>
+          </div>
+        </div>
+      </NSpace>
+    </NModal>
+
     <NModal v-model:show="shareModalOpen" preset="card" title="Ссылка на файл" style="width: 420px">
       <NSpace vertical>
         <p>{{ shareTarget?.original_name }}</p>
@@ -1786,9 +1991,35 @@ onMounted(() => {
 .explorer-name {
   font-weight: 560;
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.explorer-badge {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+}
+
+.explorer-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.section-title {
+  margin: 12px 0 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--app-text-muted);
+}
+
+.folder-share-list {
+  margin-top: 8px;
 }
 
 .receipts-list {
