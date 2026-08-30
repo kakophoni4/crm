@@ -134,6 +134,20 @@ class StorageService:
         if parent is None or parent.owner_user_id != actor.id or not parent.is_folder:
             raise ValidationError(message="Папка не найдена")
 
+    async def _resolve_writable_parent(
+        self,
+        actor: User,
+        parent_id: int | None,
+    ) -> FileVaultItem | None:
+        if parent_id is None:
+            return None
+        parent = await self._repo.get_vault_item(parent_id)
+        if parent is None or not parent.is_folder:
+            raise ValidationError(message="Папка не найдена")
+        if parent.owner_user_id == actor.id or await self._can_read_vault_item(actor, parent):
+            return parent
+        raise ValidationError(message="Папка не найдена")
+
     async def _can_read_vault_item(self, actor: User, item: FileVaultItem) -> bool:
         if item.owner_user_id == actor.id:
             return True
@@ -224,6 +238,7 @@ class StorageService:
         limit: int = 50,
     ) -> VaultFileListResponse:
         can_write = True
+        can_manage = True
         owner_filter: int | None = actor.id
         access = "owned"
         if parent_id is not None:
@@ -232,8 +247,10 @@ class StorageService:
                 raise ValidationError(message="Папка не найдена")
             if parent.owner_user_id == actor.id:
                 can_write = True
+                can_manage = True
             elif await self._can_read_vault_item(actor, parent):
-                can_write = False
+                can_write = True
+                can_manage = False
                 owner_filter = None
                 access = "shared"
             else:
@@ -244,12 +261,18 @@ class StorageService:
             offset=offset,
             limit=limit,
         )
-        return await self._vault_list_response(items, total, access=access, can_write=can_write)
+        return await self._vault_list_response(
+            items,
+            total,
+            access=access,
+            can_write=can_write,
+            can_manage=can_manage,
+        )
 
     async def list_shared_folders(self, actor: User) -> VaultFileListResponse:
         shares = await self._repo.list_shares_for_user(actor.id)
         if not shares:
-            return VaultFileListResponse(items=[], total=0, can_write=False)
+            return VaultFileListResponse(items=[], total=0, can_write=False, can_manage=False)
         share_responses = await self._folder_share_responses(shares)
         share_by_folder = {row.folder_id: row for row in share_responses}
         loaded = await self._repo.get_vault_items([share.folder_id for share in shares])
@@ -265,7 +288,7 @@ class StorageService:
             )
             for folder in folders
         ]
-        return VaultFileListResponse(items=responses, total=len(responses), can_write=False)
+        return VaultFileListResponse(items=responses, total=len(responses), can_write=False, can_manage=False)
 
     async def list_share_users(
         self,
@@ -364,17 +387,18 @@ class StorageService:
         *,
         access: str,
         can_write: bool,
+        can_manage: bool,
     ) -> VaultFileListResponse:
         files_map = await self._load_vault_files_map(items)
         shares_by_file: dict[int, list[ShareLinkResponse]] = {}
-        if can_write:
+        if can_manage:
             file_ids = [item.file_id for item in items if item.file_id is not None]
             shares = await self._repo.list_share_links_for_files(file_ids)
             for share in shares:
                 shares_by_file.setdefault(share.file_id, []).append(self._to_share_response(share))
         folder_ids = [item.id for item in items if item.is_folder]
         folder_share_rows = (
-            await self._repo.list_shares_for_folders(folder_ids) if can_write else []
+            await self._repo.list_shares_for_folders(folder_ids) if can_manage else []
         )
         folder_share_responses = await self._folder_share_responses(folder_share_rows)
         shares_by_folder: dict[int, list[VaultFolderUserShareResponse]] = {}
@@ -405,7 +429,12 @@ class StorageService:
                     access=access,
                 ),
             )
-        return VaultFileListResponse(items=responses, total=total, can_write=can_write)
+        return VaultFileListResponse(
+            items=responses,
+            total=total,
+            can_write=can_write,
+            can_manage=can_manage,
+        )
 
     async def create_vault_folder(
         self,
@@ -417,10 +446,11 @@ class StorageService:
         cleaned = name.strip()
         if not cleaned:
             raise ValidationError(message="Имя папки не может быть пустым")
-        await self._assert_vault_parent(actor, parent_id)
+        parent = await self._resolve_writable_parent(actor, parent_id)
+        owner_id = parent.owner_user_id if parent is not None else actor.id
         row = await self._repo.add_vault_item(
             file_id=None,
-            owner_user_id=actor.id,
+            owner_user_id=owner_id,
             parent_id=parent_id,
             is_folder=True,
             name=cleaned[:255],
@@ -436,7 +466,8 @@ class StorageService:
         mime_type: str,
         parent_id: int | None = None,
     ) -> VaultFileResponse:
-        await self._assert_vault_parent(actor, parent_id)
+        parent = await self._resolve_writable_parent(actor, parent_id)
+        owner_id = parent.owner_user_id if parent is not None else actor.id
         uploaded = await self._files.create_upload(
             uploaded_by=actor.id,
             data=data,
@@ -445,7 +476,7 @@ class StorageService:
         )
         vault_item = await self._repo.add_vault_item(
             file_id=uploaded.id,
-            owner_user_id=actor.id,
+            owner_user_id=owner_id,
             parent_id=parent_id,
             is_folder=False,
         )

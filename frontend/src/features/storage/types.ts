@@ -45,6 +45,7 @@ export interface VaultFileList {
   items: VaultFile[]
   total: number
   can_write?: boolean
+  can_manage?: boolean
 }
 
 export interface VaultFileContent {

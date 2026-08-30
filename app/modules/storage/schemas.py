@@ -36,6 +36,7 @@ class VaultFileListResponse(BaseModel):
     items: list[VaultFileResponse]
     total: int
     can_write: bool = True
+    can_manage: bool = True
 
 
 class VaultShareUserOption(BaseModel):

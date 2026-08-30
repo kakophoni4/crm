@@ -91,6 +91,7 @@ const groupsLoaded = ref(false)
 const vaultFiles = ref<VaultFile[]>([])
 const sharedFolders = ref<VaultFile[]>([])
 const vaultCanWrite = ref(true)
+const vaultCanManage = ref(true)
 const vaultParentId = ref<number | null>(null)
 const vaultPath = ref<{ id: number; name: string }[]>([])
 const createFolderOpen = ref(false)
@@ -179,6 +180,7 @@ async function loadVault(): Promise<void> {
     })
     vaultFiles.value = data.items
     vaultCanWrite.value = data.can_write !== false
+    vaultCanManage.value = data.can_manage !== false
     if (vaultParentId.value == null) {
       try {
         const shared = await listSharedVaultFolders()
@@ -1035,7 +1037,7 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
           },
           { icon: () => h(Download, { size: 14 }) },
         ),
-        ...(vaultCanWrite.value && isEditable(row)
+        ...(vaultCanManage.value && isEditable(row)
           ? [
               h(
                 NButton,
@@ -1049,7 +1051,7 @@ const vaultColumns = computed<DataTableColumns<VaultFile>>(() => [
               ),
             ]
           : []),
-        ...(vaultCanWrite.value
+        ...(vaultCanManage.value
           ? [
               h(
                 NButton,
@@ -1169,7 +1171,7 @@ onMounted(() => {
           <NSpace vertical :size="16">
             <p class="hint">
               Личные файлы для отправки в чаты. Папку можно открыть выбранному сотруднику — он увидит
-              всё содержимое, в том числе файлы, которые вы добавите позже. Чтобы передать файл по
+              всё содержимое и сможет загружать туда файлы. Чтобы передать файл по
               ссылке без входа — откройте
               <a href="/share" target="_blank" rel="noopener">/share</a>.
               Обычный лимит загрузки — {{ formatFileSize(MAX_UPLOAD_FILE_BYTES) }}.
@@ -1207,7 +1209,7 @@ onMounted(() => {
                   Загрузить файл
                 </NButton>
               </NUpload>
-              <NButton v-if="isAdmin" secondary @click="openLargeSharePicker">
+              <NButton v-if="isAdmin && vaultCanManage" secondary @click="openLargeSharePicker">
                 Исключение: большой файл
               </NButton>
               <input
@@ -1217,7 +1219,9 @@ onMounted(() => {
                 @change="onLargeFilePicked"
               />
             </NSpace>
-            <p v-else class="hint">Просмотр общей папки: можно открывать и скачивать файлы.</p>
+            <p v-if="vaultCanWrite && !vaultCanManage" class="hint">
+              Общая папка: можно загружать файлы. Удалять и менять доступы может только владелец.
+            </p>
             <NSpin :show="vaultLoading && vaultFiles.length === 0 && !sharedFolders.length">
               <template v-if="!vaultPath.length && sharedFolders.length">
                 <p class="section-title">Поделились со мной</p>
@@ -1258,12 +1262,12 @@ onMounted(() => {
                   <Folder :size="18" class="explorer-icon" />
                   <span class="explorer-name">{{ folder.original_name }}</span>
                   <span
-                    v-if="vaultCanWrite && folder.folder_shares?.length"
+                    v-if="vaultCanManage && folder.folder_shares?.length"
                     class="explorer-badge"
                   >
                     {{ folder.folder_shares.length }} чел.
                   </span>
-                  <div v-if="vaultCanWrite" class="explorer-actions">
+                  <div v-if="vaultCanManage" class="explorer-actions">
                     <NButton
                       size="tiny"
                       quaternary
@@ -1299,7 +1303,7 @@ onMounted(() => {
                 В этой папке пусто
               </p>
             </NSpin>
-            <div v-if="vaultCanWrite">
+            <div v-if="vaultCanManage">
               <div v-for="file in vaultFileItems" :key="file.id" class="share-list">
                 <template v-for="link in file.share_links" :key="link.id">
                   <div class="share-row">
@@ -1734,8 +1738,8 @@ onMounted(() => {
     >
       <NSpace vertical>
         <p class="hint">
-          Сотрудник увидит эту папку и всё, что в ней лежит сейчас и появится позже.
-          Редактировать и удалять сможет только владелец.
+          Сотрудник увидит эту папку, всё содержимое и сможет загружать туда файлы.
+          Удалять и менять доступы сможет только владелец.
         </p>
         <NSelect
           v-model:value="folderShareUserId"
