@@ -993,7 +993,7 @@ onUnmounted(() => {
                   placeholder="Указать период"
                   :disabled="disabled"
                   :loading="savingPeriodId === selectedOrder.id"
-                  style="min-width: 180px"
+                  class="opt-orders__period-select"
                   @update:value="(value) => onPeriodChange(value as string | null)"
                 />
               </dd>
@@ -1623,6 +1623,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+}
+
+.opt-orders :deep(.n-spin-container),
+.opt-orders :deep(.n-spin-content) {
+  width: 100%;
+  display: block;
 }
 
 .opt-orders--wide {
@@ -1722,25 +1729,35 @@ onUnmounted(() => {
 }
 
 .opt-orders__picker {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.opt-orders--wide .opt-orders__picker {
+  max-height: 7.25rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .opt-orders__tab {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  width: 100%;
+  gap: 6px;
+  width: auto;
+  max-width: 100%;
+  flex: 0 0 auto;
   min-width: 0;
-  min-height: 36px;
-  padding: 6px 10px;
+  min-height: 28px;
+  padding: 3px 8px;
   border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--app-surface, transparent);
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   text-align: left;
   box-sizing: border-box;
 }
@@ -1761,7 +1778,7 @@ onUnmounted(() => {
 
 .opt-orders__tab :deep(.n-tag) {
   flex: 0 0 auto;
-  max-width: 52%;
+  max-width: none;
   justify-content: center;
 }
 
@@ -1779,7 +1796,6 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  overflow: hidden;
 }
 
 .opt-orders__detail-head {
@@ -1826,6 +1842,19 @@ onUnmounted(() => {
 
 .opt-orders__facts dd {
   margin: 2px 0 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.opt-orders__period-select {
+  width: 100%;
+}
+
+.opt-orders__facts dd :deep(.n-tag) {
+  width: fit-content;
+  max-width: 100%;
 }
 
 .opt-orders__table :deep(.n-data-table-th) {
@@ -1880,7 +1909,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 420px) {
-  .opt-orders__picker,
   .opt-orders__actions {
     grid-template-columns: 1fr;
   }

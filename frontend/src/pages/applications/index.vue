@@ -840,8 +840,8 @@ onMounted(() => {
             : `Сделка №${selected.lead_id} · заявка №${selected.order_no}`
           : 'Заявка'
       "
-      class="applications-page__modal"
-      :style="{ width: 'min(1120px, 96vw)' }"
+      class="applications-page__modal applications-page__modal--order"
+      :style="{ width: 'min(1120px, 96vw)', maxHeight: 'calc(100dvh - 24px)' }"
       :segmented="{ content: true, footer: 'soft' }"
     >
       <template v-if="selected">
@@ -1141,7 +1141,10 @@ onMounted(() => {
 .applications-page__panel {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .applications-page__header {
@@ -1188,6 +1191,7 @@ onMounted(() => {
   border-bottom: 1px solid var(--n-border-color);
   font-size: 0.82rem;
   color: var(--app-text-muted);
+  flex-shrink: 0;
 }
 
 .applications-page__meta-sep {
@@ -1309,7 +1313,7 @@ onMounted(() => {
 
 <style>
 .applications-page__modal.n-card {
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1320,11 +1324,19 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.applications-page__modal.n-card > .n-card__content {
+.applications-page__modal.n-card > .n-card__content,
+.applications-page__modal .n-card__content {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.applications-page__modal--order.n-card > .n-card__content,
+.applications-page__modal--order .n-card__content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .applications-page__pill.n-tag {
