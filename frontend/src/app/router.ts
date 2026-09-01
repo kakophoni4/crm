@@ -156,6 +156,21 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'applications/:leadId/:orderId',
+
+        name: 'application-detail',
+
+        component: () => import('@/pages/applications/detail.vue'),
+
+        props: (route) => ({
+          leadId: Number(route.params.leadId),
+          orderId: Number(route.params.orderId),
+        }),
+
+      },
+
+      {
+
         path: 'accounting',
 
         name: 'accounting',

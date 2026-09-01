@@ -16,8 +16,8 @@ import {
 } from 'naive-ui'
 import { ClipboardList, MessageSquare } from 'lucide-vue-next'
 import { watchDebounced } from '@vueuse/core'
-import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, h, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { listGroups, type Group } from '@/features/admin/api'
 import {
@@ -41,24 +41,16 @@ import {
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
-import {
-  VIRTUAL_DATA_TABLE_MAX_HEIGHT,
-  VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
-} from '@/shared/ui/virtual-data-table'
+import { VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
 import { AppError } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
-import AppCard from '@/shared/ui/AppCard.vue'
 import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
-
-/** Heavy order detail panel — load on first open, not with /applications TTI. */
-const OptOrdersPanel = defineAsyncComponent(
-  () => import('@/widgets/chat/OptOrdersPanel.vue'),
-)
 
 type TabName = 'orders' | 'payments' | 'benik'
 
 const message = useMessage()
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 
 const activeTab = ref<TabName>('orders')
@@ -98,9 +90,6 @@ const canFilterGroup = computed(
 )
 const canFilterManager = computed(() => auth.isAdmin || auth.isSenior)
 const canSync1c = computed(() => auth.isAdmin)
-
-const detailOpen = ref(false)
-const selected = ref<OptOrderRegistryItem | null>(null)
 
 const paymentDetailOpen = ref(false)
 const selectedPayment = ref<OptPaymentLedgerItem | null>(null)
@@ -164,9 +153,6 @@ async function onOrderPeriodChange(
   try {
     const updated = await patchOptOrderPeriod(row.id, value)
     row.period_code = updated.period_code
-    if (selected.value?.id === row.id) {
-      selected.value.period_code = updated.period_code
-    }
     message.success('Период сохранён')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить период')
@@ -437,8 +423,14 @@ function paymentRowProps(row: OptPaymentLedgerItem) {
 }
 
 function openDetail(row: OptOrderRegistryItem): void {
-  selected.value = row
-  detailOpen.value = true
+  void router.push({
+    name: 'application-detail',
+    params: { leadId: String(row.lead_id), orderId: String(row.id) },
+    query: {
+      ...(row.chat_id != null ? { chat: String(row.chat_id) } : {}),
+      ...(activeTab.value === 'benik' ? { tab: 'benik' } : {}),
+    },
+  })
 }
 
 async function openPaymentDetail(row: OptPaymentLedgerItem): Promise<void> {
@@ -598,19 +590,6 @@ async function onSyncWith1c(): Promise<void> {
   }
 }
 
-function onDetailPaymentsChanged(): void {
-  void load()
-}
-
-function goToChatFromOrder(): void {
-  const chatId = selected.value?.chat_id
-  if (chatId == null) {
-    message.warning('У заявки нет связанного чата')
-    return
-  }
-  void router.push({ name: 'chats', query: { chatId: String(chatId) } })
-}
-
 function goToChatFromPayment(): void {
   const chatId = selectedPayment.value?.chat_id
   if (chatId == null) {
@@ -673,6 +652,8 @@ watch(activeTab, () => {
 })
 
 onMounted(() => {
+  const tab = route.query.tab
+  if (tab === 'benik' || tab === 'payments') activeTab.value = tab
   void loadGroups()
   void loadManagers()
   void load()
@@ -694,13 +675,25 @@ onMounted(() => {
           <template v-else>Только ваши заявки</template>
         </p>
       </div>
-      <div class="applications-page__filters">
+      <NButton
+        v-if="canSync1c && activeTab === 'orders'"
+        size="small"
+        type="primary"
+        secondary
+        :loading="syncing1c"
+        :disabled="syncing1c"
+        @click="onSyncWith1c"
+      >
+        Синхронизировать с 1С
+      </NButton>
+    </header>
+
+    <div class="applications-page__filters">
         <NInput
           v-model:value="buyerSearch"
           clearable
           size="small"
           placeholder="Покупатель / ИНН"
-          style="width: 220px"
           @keyup.enter="applyBuyerSearch"
         />
         <NSelect
@@ -708,7 +701,6 @@ onMounted(() => {
           v-model:value="selectedGroupKey"
           :options="groupFilterOptions"
           placeholder="Группа"
-          style="width: 220px"
           size="small"
           filterable
         />
@@ -717,7 +709,6 @@ onMounted(() => {
           v-model:value="managerFilter"
           :options="managerOptions"
           placeholder="Менеджер"
-          style="width: 220px"
           size="small"
           clearable
           filterable
@@ -726,7 +717,6 @@ onMounted(() => {
           v-model:value="periodFilter"
           :options="periodOptions"
           placeholder="Период"
-          style="width: 200px"
           size="small"
           clearable
           filterable
@@ -735,25 +725,12 @@ onMounted(() => {
           v-model:value="paymentStatusFilter"
           :options="paymentStatusOptions"
           :placeholder="activeTab === 'payments' ? 'Статус заявки' : 'Статус оплаты'"
-          style="width: 200px"
           size="small"
           clearable
         />
-        <NButton
-          v-if="canSync1c && activeTab === 'orders'"
-          size="small"
-          type="primary"
-          secondary
-          :loading="syncing1c"
-          :disabled="syncing1c"
-          @click="onSyncWith1c"
-        >
-          Синхронизировать с 1С
-        </NButton>
-      </div>
-    </header>
+    </div>
 
-    <NTabs :value="activeTab" type="line" @update:value="onTabChange">
+    <NTabs class="applications-page__tabs" :value="activeTab" type="line" @update:value="onTabChange">
       <NTabPane name="orders" tab="Заявки" />
       <NTabPane name="benik" tab="Бенефициар" />
       <NTabPane name="payments" tab="Все оплаты" />
@@ -780,27 +757,27 @@ onMounted(() => {
       </span>
     </div>
 
-    <NSpin :show="loading && items.length === 0 && paymentItems.length === 0">
+    <NSpin class="applications-page__spin" :show="loading && items.length === 0 && paymentItems.length === 0">
       <template v-if="isOrdersLikeTab">
         <NEmpty
           v-if="!items.length && !loading"
           :description="activeTab === 'benik' ? 'Заявок Беника пока нет' : 'Заявок пока нет'"
         />
-        <AppCard v-else class="applications-page__card">
+        <div v-else class="applications-page__table">
           <NDataTable
             size="small"
+            flex-height
             :columns="columns"
             :data="items"
             :row-key="rowKey"
             :row-props="rowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="1300"
+            :scroll-x="1200"
             virtual-scroll
-            :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
             :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
-        </AppCard>
+        </div>
       </template>
 
       <template v-else>
@@ -808,75 +785,27 @@ onMounted(() => {
           v-if="!paymentItems.length && !loading"
           description="Проведённых оплат пока нет"
         />
-        <AppCard v-else class="applications-page__card">
+        <div v-else class="applications-page__table">
           <NDataTable
             size="small"
+            flex-height
             :columns="paymentColumns"
             :data="paymentItems"
             :row-key="paymentRowKey"
             :row-props="paymentRowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="1280"
+            :scroll-x="1200"
             virtual-scroll
-            :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
             :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
-        </AppCard>
+        </div>
       </template>
     </NSpin>
 
     <div v-if="total > pageSize" class="applications-page__pager">
       <NPagination v-model:page="page" :page-size="pageSize" :item-count="total" />
     </div>
-
-    <NModal
-      v-model:show="detailOpen"
-      preset="card"
-      :title="
-        selected
-          ? selected.order_kind === 'benik'
-            ? `Сделка №${selected.lead_id} · Беник №${selected.order_no}`
-            : `Сделка №${selected.lead_id} · заявка №${selected.order_no}`
-          : 'Заявка'
-      "
-      class="applications-page__modal applications-page__modal--order"
-      :style="{ width: 'min(1120px, 96vw)', maxHeight: 'calc(100dvh - 24px)' }"
-      :segmented="{ content: true, footer: 'soft' }"
-    >
-      <template v-if="selected">
-        <div class="applications-page__meta">
-          <span>{{ selected.contact_name || '—' }}</span>
-          <span class="applications-page__meta-sep">·</span>
-          <span>{{ selected.manager_name || 'менеджер не назначен' }}</span>
-          <span class="applications-page__meta-sep">·</span>
-          <span>{{ selected.group_name || `Группа #${selected.group_id}` }}</span>
-          <span class="applications-page__meta-sep">·</span>
-          <span class="applications-page__meta-buyer">
-            {{ selected.buyer.name || `ИНН ${selected.buyer.inn}` }}
-          </span>
-        </div>
-
-        <div class="applications-page__panel">
-          <OptOrdersPanel
-            layout="wide"
-            :lead-id="selected.lead_id"
-            :initial-order-id="selected.id"
-            @payments-changed="onDetailPaymentsChanged"
-          />
-        </div>
-      </template>
-
-      <template #footer>
-        <div class="applications-page__footer">
-          <NButton @click="detailOpen = false">Закрыть</NButton>
-          <NButton type="primary" :disabled="!selected?.chat_id" @click="goToChatFromOrder">
-            <template #icon><MessageSquare :size="16" /></template>
-            Перейти в чат
-          </NButton>
-        </div>
-      </template>
-    </NModal>
 
     <NModal
       v-model:show="paymentDetailOpen"
@@ -1089,17 +1018,53 @@ onMounted(() => {
 .applications-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 16px 20px 24px;
+  gap: 12px;
+  height: 100%;
   min-height: 0;
   min-width: 0;
   width: 100%;
+  padding: 16px 20px 12px;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
-.applications-page__card {
-  min-width: 0;
+.applications-page__pager {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.applications-page__table {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
   overflow: hidden;
+  background: var(--app-surface);
+}
+
+.applications-page__table :deep(.n-data-table),
+.applications-page__table :deep(.n-data-table-wrapper) {
+  height: 100%;
+}
+
+.applications-page__spin {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.applications-page :deep(.applications-page__spin.n-spin-container) {
+  display: flex;
+  flex-direction: column;
+}
+
+.applications-page :deep(.applications-page__spin .n-spin-content) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
 
 .applications-page__totals {
@@ -1114,6 +1079,7 @@ onMounted(() => {
   background: color-mix(in srgb, var(--n-color) 92%, var(--app-text-muted));
   font-size: 0.88rem;
   color: var(--app-text);
+  flex-shrink: 0;
 }
 
 .applications-page__totals-label {
@@ -1138,21 +1104,13 @@ onMounted(() => {
   font-weight: 700;
 }
 
-.applications-page__panel {
-  min-width: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
 .applications-page__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .applications-page__title {
@@ -1171,36 +1129,30 @@ onMounted(() => {
 }
 
 .applications-page__filters {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-surface);
 }
 
-.applications-page__pager {
-  display: flex;
-  justify-content: flex-end;
+.applications-page__filters :deep(.n-input),
+.applications-page__filters :deep(.n-select) {
+  width: 100%;
 }
 
-.applications-page__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 6px;
-  margin: 0 0 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--n-border-color);
-  font-size: 0.82rem;
-  color: var(--app-text-muted);
+.applications-page__tabs {
   flex-shrink: 0;
 }
 
-.applications-page__meta-sep {
-  opacity: 0.5;
-}
-
-.applications-page__meta-buyer {
-  color: var(--app-text);
-  font-weight: 600;
+.applications-page__spin :deep(.n-empty) {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .applications-page__facts {
@@ -1330,13 +1282,6 @@ onMounted(() => {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-}
-
-.applications-page__modal--order.n-card > .n-card__content,
-.applications-page__modal--order .n-card__content {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .applications-page__pill.n-tag {

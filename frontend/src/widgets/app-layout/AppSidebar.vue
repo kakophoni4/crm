@@ -299,7 +299,7 @@ watch(
 const activeKey = computed(() => {
   if (route.name === 'chats') return 'chats'
   if (route.name === 'contacts' || route.name === 'contact-detail') return 'contacts'
-  if (route.name === 'applications') return 'applications'
+  if (route.name === 'applications' || route.name === 'application-detail') return 'applications'
   if (route.name === 'storage') return 'storage'
   if (route.name === 'tasks') return 'tasks'
   if (route.name === 'notifications' || route.name === 'notification-history') return 'notifications'

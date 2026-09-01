@@ -68,14 +68,16 @@ const props = defineProps<{
   disabled?: boolean
   /** Prefer selecting this order after load (e.g. from applications list). */
   initialOrderId?: number | null
-  /** side = chat pane; wide = applications / full modal */
-  layout?: 'side' | 'wide'
+  /** side = chat pane; wide = compact modal; page = full applications screen */
+  layout?: 'side' | 'wide' | 'page'
 }>()
 
-const isWide = computed(() => props.layout === 'wide')
+const isPage = computed(() => props.layout === 'page')
+const isWide = computed(() => props.layout === 'wide' || isPage.value)
 
 const emit = defineEmits<{
   paymentsChanged: []
+  select: [order: OptOrder]
 }>()
 
 const message = useMessage()
@@ -857,8 +859,10 @@ watch(
   },
 )
 
-watch(selectedOrderId, () => {
+watch(selectedOrderId, (id) => {
   void refreshReceiptsAvailability()
+  const order = orders.value.find((row) => row.id === id)
+  if (order) emit('select', order)
 })
 
 // Same selected id, but status became submitted (poll) — show docs buttons.
@@ -883,7 +887,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="opt-orders" :class="{ 'opt-orders--wide': isWide }">
+  <section
+    class="opt-orders"
+    :class="{ 'opt-orders--wide': isWide, 'opt-orders--page': isPage }"
+  >
     <header class="opt-orders__header">
       <div v-if="!isWide">
         <h3 class="opt-orders__title">
@@ -913,13 +920,14 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <NSpin :show="loading && orders.length === 0">
+    <NSpin class="opt-orders__spin" :show="loading && orders.length === 0">
       <p v-if="disabled && hasLead" class="opt-orders__hint">
         Сначала выберите период сделки ОПТ — без него заявку загрузить нельзя.
       </p>
       <NEmpty v-if="!orders.length" description="Заявок пока нет" />
 
       <template v-else>
+        <div class="opt-orders__workspace">
         <div
           class="opt-orders__picker"
           role="tablist"
@@ -1133,7 +1141,7 @@ onUnmounted(() => {
             :data="selectedOrder.lines"
             :bordered="false"
             :pagination="false"
-            :max-height="isWide ? 240 : 200"
+            :max-height="isPage ? undefined : isWide ? 280 : 200"
             :scroll-x="720"
             class="opt-orders__table"
           />
@@ -1237,6 +1245,7 @@ onUnmounted(() => {
             </NButton>
           </div>
         </article>
+        </div>
       </template>
     </NSpin>
 
@@ -1646,18 +1655,110 @@ onUnmounted(() => {
   gap: 8px 12px;
 }
 
-.opt-orders--wide .opt-orders__actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-  margin-top: 6px;
-  margin-left: -12px;
-  margin-right: -12px;
-  margin-bottom: -10px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--app-border);
+.opt-orders__workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.opt-orders--page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.opt-orders--page :deep(.opt-orders__spin.n-spin-container) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.opt-orders--page :deep(.opt-orders__spin .n-spin-content) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.opt-orders--page .opt-orders__workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.opt-orders--page .opt-orders__picker {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-content: stretch;
+  max-height: none;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface-elevated, transparent);
+}
+
+.opt-orders--page .opt-orders__tab {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.opt-orders--page .opt-orders__header {
+  flex-shrink: 0;
+}
+
+.opt-orders--page .opt-orders__detail {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px 18px;
   background: var(--app-surface);
-  box-shadow: 0 -8px 16px color-mix(in srgb, #000 25%, transparent);
+  border-radius: 12px;
+}
+
+.opt-orders--page .opt-orders__actions {
+  position: static;
+  margin: 0;
+  box-shadow: none;
+  border-top: 1px solid var(--app-border);
+  padding-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.opt-orders--page .opt-orders__actions :deep(.n-button:last-child:nth-child(odd)) {
+  grid-column: auto;
+}
+
+@media (max-width: 900px) {
+  .opt-orders--page .opt-orders__workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(96px, 30vh) minmax(0, 1fr);
+  }
+
+  .opt-orders--page .opt-orders__picker {
+    flex-direction: row;
+    flex-wrap: wrap;
+    height: auto;
+    max-height: 30vh;
+  }
+
+  .opt-orders--page .opt-orders__tab {
+    width: auto;
+  }
+
+  .opt-orders--wide .opt-orders__facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .opt-orders__pill {
@@ -1693,12 +1794,6 @@ onUnmounted(() => {
   --n-color: transparent !important;
   --n-text-color: #fff !important;
   border: 0 !important;
-}
-
-@media (max-width: 900px) {
-  .opt-orders--wide .opt-orders__facts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 .opt-orders__header {

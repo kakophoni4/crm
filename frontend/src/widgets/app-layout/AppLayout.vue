@@ -25,6 +25,13 @@ const route = useRoute()
 const router = useRouter()
 const sidebarCollapsed = ref(false)
 const drawerVisible = ref(false)
+const fillViewport = computed(
+  () => route.name === 'applications' || route.name === 'application-detail',
+)
+const contentStyle = computed(() => {
+  if (phoneChatsOnly.value || fillViewport.value) return 'padding: 0'
+  return 'padding: var(--app-content-padding)'
+})
 
 watch(
   [phoneChatsOnly, () => route.name],
@@ -76,7 +83,8 @@ function toggleSidebar(): void {
       </AppTopbar>
       <NLayoutContent
         class="app-layout__content"
-        :content-style="phoneChatsOnly ? 'padding: 0' : 'padding: var(--app-content-padding)'"
+        :class="{ 'app-layout__content--fill': fillViewport }"
+        :content-style="contentStyle"
       >
         <RouterView />
       </NLayoutContent>
@@ -124,8 +132,17 @@ function toggleSidebar(): void {
   overscroll-behavior: contain;
 }
 
-.app-layout--phone-chats .app-layout__content :deep(.n-layout-scroll-container) {
+.app-layout--phone-chats .app-layout__content :deep(.n-layout-scroll-container),
+.app-layout__content--fill :deep(.n-layout-scroll-container) {
   overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-layout__content--fill :deep(.n-layout-scroll-container) > * {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .app-layout__phone-title {
