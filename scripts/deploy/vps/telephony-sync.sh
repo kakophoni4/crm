@@ -157,6 +157,9 @@ while IFS=$'\x1f' read -r account_id sip_host sip_port sip_transport sip_usernam
     printf 'contact_user=%s\n' "$sip_username"
     printf 'retry_interval=60\n'
     printf 'forbidden_retry_interval=600\n'
+    printf 'fatal_retry_interval=300\n'
+    printf 'auth_rejection_permanent=no\n'
+    printf 'max_retries=10000\n'
     printf 'expiration=3600\n'
     printf '\n'
   } >> "$tmp_pjsip"
