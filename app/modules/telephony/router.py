@@ -12,6 +12,7 @@ from app.modules.telephony.schemas import (
     TelephonyAccountListResponse,
     TelephonyAccountResponse,
     TelephonyAccountUpdateRequest,
+    TelephonyCallClearResponse,
     TelephonyCallCreateRequest,
     TelephonyCallListResponse,
     TelephonyCallResponse,
@@ -112,3 +113,11 @@ async def update_call(
     service: Annotated[TelephonyService, Depends(_service)],
 ) -> TelephonyCallResponse:
     return await service.update_call(call_id, actor, body)
+
+
+@router.delete("/calls", response_model=TelephonyCallClearResponse)
+async def clear_calls(
+    actor: Annotated[User, Depends(requires_permission(Permission.TELEPHONY_CALL))],
+    service: Annotated[TelephonyService, Depends(_service)],
+) -> TelephonyCallClearResponse:
+    return await service.clear_calls(actor)

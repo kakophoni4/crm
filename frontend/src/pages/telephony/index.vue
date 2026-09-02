@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, UserPlus, Volume2, Wifi } from 'lucide-vue-next'
-import { NButton, NIcon, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NIcon, NPopconfirm, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import type { Contact } from '@/entities/contact/types'
 import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
 import {
+  clearTelephonyCalls,
   createTelephonyCall,
   getTelephonyWebrtcConfig,
   listTelephonyAccounts,
@@ -21,12 +22,15 @@ import {
 import { CrmSoftphone, mapMediaError, type SoftphoneStatus } from '@/features/telephony/softphone'
 import { AppError } from '@/shared/api/http'
 import { normalizeRussianPhone } from '@/shared/lib/phone'
+import { useAuthStore } from '@/shared/store/auth'
 
 const message = useMessage()
 const router = useRouter()
+const auth = useAuthStore()
 
 const loading = ref(false)
 const historyLoading = ref(false)
+const clearingHistory = ref(false)
 const connecting = ref(false)
 const calling = ref(false)
 const autoConnectAttempted = ref(false)
@@ -89,6 +93,7 @@ const connectionTagType = computed(() =>
   status.value === 'registered' || status.value === 'in-call' ? 'success' : 'default',
 )
 const hasHistory = computed(() => callHistory.value.length > 0)
+const canClearHistory = computed(() => auth.isAdmin)
 const activeCall = computed(
   () => callHistory.value.find((item) => item.id === activeCallId.value) ?? null,
 )
@@ -254,6 +259,20 @@ async function refreshHistory(): Promise<void> {
     message.error(err instanceof AppError ? err.message : 'Не удалось обновить историю')
   } finally {
     historyLoading.value = false
+  }
+}
+
+async function clearHistory(): Promise<void> {
+  if (!canClearHistory.value || callPanelVisible.value) return
+  clearingHistory.value = true
+  try {
+    const deleted = await clearTelephonyCalls()
+    callHistory.value = []
+    message.success(deleted > 0 ? `Удалено записей: ${deleted}` : 'История уже пуста')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось очистить историю')
+  } finally {
+    clearingHistory.value = false
   }
 }
 
@@ -713,11 +732,35 @@ watch(status, (value) => {
             <div>
               <h2>История вызовов</h2>
             </div>
-            <NButton circle quaternary :loading="historyLoading" aria-label="Обновить" @click="refreshHistory">
-              <template #icon>
-                <NIcon :size="22"><History /></NIcon>
-              </template>
-            </NButton>
+            <div class="telephony-history__actions">
+              <NPopconfirm
+                v-if="canClearHistory"
+                positive-text="Очистить"
+                negative-text="Отмена"
+                @positive-click="clearHistory"
+              >
+                <template #trigger>
+                  <NButton
+                    size="small"
+                    type="error"
+                    secondary
+                    :loading="clearingHistory"
+                    :disabled="callPanelVisible || !hasHistory"
+                  >
+                    <template #icon>
+                      <NIcon><Delete /></NIcon>
+                    </template>
+                    Очистить
+                  </NButton>
+                </template>
+                Удалить всю историю звонков у всех операторов?
+              </NPopconfirm>
+              <NButton circle quaternary :loading="historyLoading" aria-label="Обновить" @click="refreshHistory">
+                <template #icon>
+                  <NIcon :size="22"><History /></NIcon>
+                </template>
+              </NButton>
+            </div>
           </header>
 
           <div v-if="hasHistory" class="telephony-history__list">
@@ -962,6 +1005,13 @@ watch(status, (value) => {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.telephony-history__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .telephony-history__header h2 {

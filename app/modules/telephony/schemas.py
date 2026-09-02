@@ -107,3 +107,7 @@ class TelephonyCallResponse(BaseModel):
 
 class TelephonyCallListResponse(BaseModel):
     items: list[TelephonyCallResponse]
+
+
+class TelephonyCallClearResponse(BaseModel):
+    deleted: int

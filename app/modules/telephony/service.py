@@ -11,6 +11,7 @@ from app.modules.db.models.department import Department
 from app.modules.db.models.enums import UserRole
 from app.modules.db.models.group import Group
 from app.modules.db.models.user import User
+from app.modules.rbac.role_checks import is_admin
 from app.modules.rbac.scope import SCOPE_ALL, visible_department_ids, visible_group_ids
 from app.modules.telephony.repository import TelephonyAccountRepository, TelephonyAccountRow
 from app.modules.telephony.schemas import (
@@ -18,6 +19,7 @@ from app.modules.telephony.schemas import (
     TelephonyAccountListResponse,
     TelephonyAccountResponse,
     TelephonyAccountUpdateRequest,
+    TelephonyCallClearResponse,
     TelephonyCallCreateRequest,
     TelephonyCallListResponse,
     TelephonyCallResponse,
@@ -453,6 +455,13 @@ class TelephonyService:
                     ended_at=call_row.call.ended_at,
                 )
         raise NotFound(message="Telephony call not found")
+
+    async def clear_calls(self, actor: User) -> TelephonyCallClearResponse:
+        if not is_admin(actor.role):
+            raise PermissionDenied(message="Insufficient permissions")
+        deleted = await self._repo.delete_all_calls()
+        await self._session.commit()
+        return TelephonyCallClearResponse(deleted=deleted)
 
     async def _next_extension(
         self,

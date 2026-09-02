@@ -392,3 +392,19 @@ async def test_telephony_call_history_is_scoped_by_role(
     assert admin_history.status_code == 200, admin_history.text
     admin_numbers = {item["phone_number"] for item in admin_history.json()["items"]}
     assert {"+79001112233", "+79009998877"}.issubset(admin_numbers)
+
+    forbidden = await client.delete("/api/v1/telephony/calls", headers=operator_headers)
+    assert forbidden.status_code == 403, forbidden.text
+    senior_forbidden = await client.delete("/api/v1/telephony/calls", headers=senior_headers)
+    assert senior_forbidden.status_code == 403, senior_forbidden.text
+    still_there = await client.get("/api/v1/telephony/calls", headers=admin_headers)
+    assert {"+79001112233", "+79009998877"}.issubset(
+        {item["phone_number"] for item in still_there.json()["items"]}
+    )
+
+    cleared = await client.delete("/api/v1/telephony/calls", headers=admin_headers)
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["deleted"] >= 2
+    empty = await client.get("/api/v1/telephony/calls", headers=admin_headers)
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["items"] == []

@@ -128,6 +128,11 @@ export async function updateTelephonyCall(
   return data
 }
 
+export async function clearTelephonyCalls(): Promise<number> {
+  const { data } = await http.delete<{ deleted: number }>('/telephony/calls')
+  return data.deleted
+}
+
 export async function updateTelephonyAccount(
   id: number,
   body: TelephonyAccountUpdateBody,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bots.crypto import decrypt_secret, encrypt_secret
@@ -315,3 +315,8 @@ class TelephonyAccountRepository:
                 )
             )
         return rows
+
+    async def delete_all_calls(self) -> int:
+        result = await self._session.execute(delete(TelephonyCall))
+        await self._session.flush()
+        return int(result.rowcount or 0)
