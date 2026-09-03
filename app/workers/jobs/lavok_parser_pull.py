@@ -19,10 +19,35 @@ _SCHEDULE_KEY = "crm:lavok_parser:pull:scheduled"
 _ETAG_KEY = "crm:lavok_parser:pull:etag"
 _SHA_KEY = "crm:lavok_parser:pull:sha256"
 _MAX_BYTES = 20 * 1024 * 1024
+# Stay well under ~200KB: Windows NIC LSO used to drop a full-file 200.
+_RANGE_CHUNK = 16 * 1024
+_RANGE_RETRIES = 3
+_RANGE_READ_TIMEOUT = 30.0
+
+
+async def _get_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+) -> httpx.Response:
+    last_error: httpx.RequestError | None = None
+    for attempt in range(1, _RANGE_RETRIES + 1):
+        try:
+            return await client.get(url, headers=headers)
+        except httpx.RequestError as exc:
+            last_error = exc
+            logger.warning(
+                "lavok_parser_pull_range_retry",
+                attempt=attempt,
+                retries=_RANGE_RETRIES,
+                error=str(exc),
+            )
+    assert last_error is not None
+    raise last_error
 
 
 async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
-    """GET export xlsx in small Range slices (path MTU / Windows LSO drops a 200KB body)."""
+    """GET export xlsx in Range slices (Windows parser LSO drops a large 200 body)."""
     settings = get_settings()
     url = (settings.lavok_parser_pull_url or "").strip()
     token = (settings.lavok_parser_ingest_token or "").strip()
@@ -37,15 +62,14 @@ async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
     previous_etag = previous.decode() if isinstance(previous, bytes) else (str(previous) if previous else "")
     headers = {
         "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Connection": "close",
     }
     if token:
         headers["X-Lavok-Ingest-Token"] = token
     if previous_etag:
         headers["If-None-Match"] = previous_etag if previous_etag.startswith('"') else f'"{previous_etag}"'
 
-    timeout = httpx.Timeout(20.0, connect=10.0)
-    chunk = 1024
+    timeout = httpx.Timeout(_RANGE_READ_TIMEOUT, connect=10.0)
+    chunk = _RANGE_CHUNK
     pieces: list[bytes] = []
     offset = 0
     total: int | None = None
@@ -62,7 +86,8 @@ async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
                 req_headers = {**headers, "Range": f"bytes={offset}-{last}"}
                 if offset:
                     req_headers.pop("If-None-Match", None)
-                async with client.stream("GET", url, headers=req_headers) as response:
+                response = await _get_with_retry(client, url, req_headers)
+                try:
                     if response.status_code == 304:
                         return None, None, "not_modified"
                     if response.status_code >= 400:
@@ -80,9 +105,8 @@ async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
                                 "lavok_parser_pull_full_body_ignored",
                                 content_length=content_length,
                             )
-                            await response.aclose()
                             return None, None, "error"
-                    payload = await response.aread()
+                    payload = response.content
                     if response.status_code == 206:
                         content_range = response.headers.get("content-range") or ""
                         match = re.search(r"/(\d+)\s*$", content_range)
@@ -101,6 +125,8 @@ async def fetch_parser_xlsx() -> tuple[bytes | None, str | None, str]:
                         return payload, etag, "ok"
                     logger.warning("lavok_parser_pull_unexpected_status", status=response.status_code)
                     return None, None, "error"
+                finally:
+                    await response.aclose()
     except httpx.RequestError:
         logger.exception("lavok_parser_pull_request_failed", url=url)
         return None, None, "error"
