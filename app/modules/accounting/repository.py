@@ -169,6 +169,7 @@ class AccountingRepository:
         stmt = (
             self._order_lines_query(**filters)
             .with_only_columns(LeadOptOrderLine.supplier_inn, maintain_column_froms=True)
+            .order_by(None)
             .distinct()
         )
         result = await self._session.execute(stmt)
