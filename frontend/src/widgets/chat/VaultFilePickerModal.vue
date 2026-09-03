@@ -381,21 +381,49 @@ async function submitCreateFolder(): Promise<void> {
   }
 }
 
+const vaultUploadQueue: File[] = []
+let vaultUploadFlushTimer: ReturnType<typeof setTimeout> | null = null
+const vaultUploading = ref(false)
+
 async function onVaultUpload(data: { file: UploadFileInfo }): Promise<boolean> {
   const file = data.file.file
   if (!file) return false
-  if (file.size > maxUploadBytesFor(file)) {
-    message.error(`Файл слишком большой (макс. ${uploadLimitLabel(file)})`)
-    return false
-  }
-  try {
-    await uploadVaultFile(file, { parent_id: vaultParentId.value })
-    message.success('Файл добавлен в хранилище')
-    await loadVault()
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Ошибка загрузки')
-  }
+  vaultUploadQueue.push(file)
+  if (vaultUploadFlushTimer) clearTimeout(vaultUploadFlushTimer)
+  vaultUploadFlushTimer = setTimeout(() => {
+    void flushVaultUploads()
+  }, 40)
   return false
+}
+
+async function flushVaultUploads(): Promise<void> {
+  if (vaultUploading.value) return
+  const files = vaultUploadQueue.splice(0)
+  if (!files.length) return
+  vaultUploading.value = true
+  let ok = 0
+  try {
+    for (const file of files) {
+      if (file.size > maxUploadBytesFor(file)) {
+        message.error(`${file.name}: слишком большой (макс. ${uploadLimitLabel(file)})`)
+        continue
+      }
+      try {
+        await uploadVaultFile(file, { parent_id: vaultParentId.value })
+        ok += 1
+      } catch (err) {
+        message.error(
+          err instanceof AppError ? `${file.name}: ${err.message}` : `${file.name}: ошибка загрузки`,
+        )
+      }
+    }
+    if (ok === 1) message.success('Файл добавлен в хранилище')
+    else if (ok > 1) message.success(`Загружено файлов: ${ok}`)
+    if (ok > 0) await loadVault()
+  } finally {
+    vaultUploading.value = false
+    if (vaultUploadQueue.length) void flushVaultUploads()
+  }
 }
 
 async function loadDialog(): Promise<void> {
@@ -793,8 +821,8 @@ onUnmounted(() => {
             <template #icon><FolderPlus :size="14" /></template>
             Создать папку
           </NButton>
-          <NUpload :show-file-list="false" @before-upload="onVaultUpload">
-            <NButton size="small" type="primary">
+          <NUpload multiple :show-file-list="false" @before-upload="onVaultUpload">
+            <NButton size="small" type="primary" :loading="vaultUploading">
               <template #icon><Upload :size="14" /></template>
               Загрузить
             </NButton>

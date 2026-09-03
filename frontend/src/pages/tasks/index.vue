@@ -82,6 +82,8 @@ const filterCreatedBy = ref<number | null>(null)
 const filterStatus = ref<TaskStatus | null>(null)
 const includeClosedMine = ref(true)
 const includeClosedBoard = ref(true)
+type MineBucket = 'active' | 'review' | 'done'
+const mineBucket = ref<MineBucket>('active')
 const mineSummary = ref<TaskWorkloadSummary | null>(null)
 let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -171,6 +173,27 @@ const currentSummaryText = computed(() =>
     ? formatWorkload(board.value?.summary)
     : formatWorkload(mineSummary.value),
 )
+
+const mineActiveTasks = computed(() =>
+  myTasks.value.filter((task) => task.status === 'new' || task.status === 'open'),
+)
+const mineReviewTasks = computed(() =>
+  myTasks.value.filter((task) => task.status === 'done_pending'),
+)
+const mineDoneTasks = computed(() =>
+  myTasks.value.filter((task) => task.status === 'closed' || task.status === 'deleted'),
+)
+const visibleMineTasks = computed(() => {
+  if (mineBucket.value === 'review') return mineReviewTasks.value
+  if (mineBucket.value === 'done') return mineDoneTasks.value
+  return mineActiveTasks.value
+})
+const mineEmptyHint = computed(() => {
+  if (hasTaskFilters.value) return 'Нет задач по выбранным фильтрам'
+  if (mineBucket.value === 'review') return 'Нет задач на проверке'
+  if (mineBucket.value === 'done') return 'Нет выполненных задач'
+  return 'Нет активных задач'
+})
 
 function resetTaskFilters(): void {
   filterQuery.value = ''
@@ -576,6 +599,18 @@ watch(activeTab, (tab) => {
   else void loadBoard()
 })
 
+watch(mineBucket, (bucket) => {
+  if (bucket === 'done' && !includeClosedMine.value) {
+    includeClosedMine.value = true
+  }
+})
+
+watch(filterStatus, (status) => {
+  if (status === 'done_pending') mineBucket.value = 'review'
+  else if (status === 'closed' || status === 'deleted') mineBucket.value = 'done'
+  else if (status === 'new' || status === 'open') mineBucket.value = 'active'
+})
+
 watch(filterQuery, (value) => {
   if (queryDebounceTimer) clearTimeout(queryDebounceTimer)
   queryDebounceTimer = setTimeout(() => {
@@ -672,7 +707,7 @@ onUnmounted(() => {
           placeholder="Статус"
           style="min-width: 160px"
         />
-        <label class="task-filters__closed">
+        <label v-if="activeTab === 'board'" class="task-filters__closed">
           <NSwitch v-model:value="includeClosed" size="small" />
           Показать готовые
         </label>
@@ -826,12 +861,18 @@ onUnmounted(() => {
         </NTabPane>
 
         <NTabPane name="mine" tab="Мои задачи">
+          <NTabs v-model:value="mineBucket" type="segment" size="small" class="mine-buckets">
+            <NTabPane name="active" :tab="`Активные · ${mineActiveTasks.length}`" />
+            <NTabPane name="review" :tab="`На проверке · ${mineReviewTasks.length}`" />
+            <NTabPane name="done" :tab="`Готово · ${mineDoneTasks.length}`" />
+          </NTabs>
           <NSpin :show="mineLoading && myTasks.length === 0">
-            <div v-if="myTasks.length" class="task-list">
+            <div v-if="visibleMineTasks.length" class="task-list">
               <div
-                v-for="task in myTasks"
+                v-for="task in visibleMineTasks"
                 :key="task.id"
                 class="task-card task-card--clickable"
+                :class="`task-card--${task.status}`"
                 @click="openTaskDetail(task)"
               >
                 <div class="task-card-head">
@@ -839,10 +880,11 @@ onUnmounted(() => {
                     {{ task.task_type_label }}
                   </NTag>
                   <NTag v-if="task.status === 'new'" type="warning" size="small">Новая</NTag>
-                  <NTag v-if="task.status === 'done_pending'" type="info" size="small">
+                  <NTag v-else-if="task.status === 'open'" size="small">В работе</NTag>
+                  <NTag v-else-if="task.status === 'done_pending'" type="info" size="small">
                     На проверке
                   </NTag>
-                  <NTag v-if="task.status === 'closed'" type="success" size="small">
+                  <NTag v-else-if="task.status === 'closed'" type="success" size="small">
                     Готово
                   </NTag>
                   <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
@@ -908,9 +950,7 @@ onUnmounted(() => {
                 </NButton>
               </div>
             </div>
-            <p v-else class="empty-hint">
-              {{ hasTaskFilters || includeClosedMine ? 'Нет задач по выбранным фильтрам' : 'Нет активных задач' }}
-            </p>
+            <p v-else class="empty-hint">{{ mineEmptyHint }}</p>
           </NSpin>
         </NTabPane>
       </NTabs>
@@ -1137,6 +1177,11 @@ onUnmounted(() => {
   border-radius: var(--app-control-radius);
 }
 
+.mine-buckets {
+  margin: 4px 0 16px;
+  max-width: 640px;
+}
+
 .task-list {
   display: flex;
   flex-direction: column;
@@ -1146,9 +1191,30 @@ onUnmounted(() => {
 
 .task-card {
   border: 1px solid var(--app-border);
+  border-left-width: 3px;
   border-radius: var(--app-control-radius);
   padding: 12px;
   background: var(--app-surface);
+}
+
+.task-card--new {
+  border-left-color: var(--app-warning);
+}
+
+.task-card--open {
+  border-left-color: var(--app-accent);
+}
+
+.task-card--done_pending {
+  border-left-color: var(--app-warning);
+}
+
+.task-card--closed {
+  border-left-color: var(--app-success);
+}
+
+.task-card--deleted {
+  border-left-color: var(--app-danger);
 }
 
 .task-card--clickable {

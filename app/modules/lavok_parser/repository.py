@@ -49,6 +49,12 @@ class LavokParserRepository:
                     LavokParserLot.name.ilike(like),
                 ),
             )
+        if needle and sheet_date is None:
+            return stmt.order_by(
+                LavokParserLot.sheet_date.desc(),
+                LavokParserLot.score.desc().nullslast(),
+                LavokParserLot.id.asc(),
+            )
         return stmt.order_by(LavokParserLot.score.desc().nullslast(), LavokParserLot.id.asc())
 
     async def list_lots(

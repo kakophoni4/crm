@@ -42,12 +42,16 @@ const total = ref(0)
 const sheetDates = ref<string[]>([])
 const sheetDate = ref<string | null>(null)
 const search = ref('')
+const appliedSearch = ref('')
 const selected = ref<LavokParserLot | null>(null)
 const activeTab = ref<'all' | 'favorites'>('all')
 const statusFilter = ref<string | null>(null)
 
 const dateOptions = computed<SelectOption[]>(() =>
   sheetDates.value.map((value) => ({ label: formatSheetDate(value), value })),
+)
+const searchingAllDays = computed(
+  () => activeTab.value === 'all' && Boolean(appliedSearch.value),
 )
 
 function formatSheetDate(value: string): string {
@@ -81,6 +85,7 @@ const detailFields = computed(() => {
   if (!row) return []
   return [
     { label: 'ИНН', value: row.inn },
+    { label: 'Дата листа', value: formatSheetDate(row.sheet_date) },
     { label: 'Цена', value: formatPrice(row.price) },
     { label: 'Балл', value: row.score },
     { label: 'Налог', value: row.tax },
@@ -114,6 +119,7 @@ async function load(): Promise<void> {
     rows.value = data.items
     total.value = data.total
     sheetDates.value = data.sheet_dates
+    appliedSearch.value = activeTab.value === 'all' ? search.value.trim() : ''
     if (data.sheet_date && sheetDate.value == null) {
       sheetDate.value = data.sheet_date
     }
@@ -232,6 +238,16 @@ const columns = computed<DataTableColumns<LavokParserLot>>(() => [
     render: (row) => row.name || '—',
   },
   { title: 'ИНН', key: 'inn', width: 130 },
+  ...(searchingAllDays.value
+    ? [
+        {
+          title: 'Дата',
+          key: 'sheet_date',
+          width: 110,
+          render: (row: LavokParserLot) => formatSheetDate(row.sheet_date),
+        },
+      ]
+    : []),
   { title: 'Цена', key: 'price', width: 110, render: (row) => formatPrice(row.price) },
   { title: 'Балл', key: 'score', width: 70, render: (row) => row.score || '—' },
   { title: 'Налог', key: 'tax', width: 90, ellipsis: { tooltip: true }, render: (row) => row.tax || '—' },
@@ -361,11 +377,14 @@ onMounted(() => {
         />
         <NButton @click="load">Найти</NButton>
         <NTag :bordered="false">{{ total }} строк</NTag>
+        <NTag v-if="searchingAllDays" type="info" :bordered="false">по всем дням</NTag>
         <span class="parser-page__hint">
           {{
             activeTab === 'favorites'
               ? 'Статусы: новая, смотрю, беру. Можно отфильтровать сверху.'
-              : 'Перенесите лавку в избранное, чтобы вести её отдельно.'
+              : searchingAllDays
+                ? 'Поиск идёт по всем датам листов, не только по выбранному дню.'
+                : 'Поиск по названию или ИНН смотрит все дни. Без поиска — выбранная дата.'
           }}
         </span>
       </div>
@@ -379,7 +398,7 @@ onMounted(() => {
           :bordered="false"
           :single-line="false"
           size="small"
-          :scroll-x="1100"
+          :scroll-x="searchingAllDays ? 1210 : 1100"
           :row-props="(row: LavokParserLot) => ({
             style: 'cursor: pointer',
             onClick: () => openLot(row),

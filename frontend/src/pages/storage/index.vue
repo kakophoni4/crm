@@ -571,21 +571,52 @@ async function ensureActiveTabLoaded(): Promise<void> {
   else if (activeTab.value === 'group' && !groupsLoaded.value) await loadGroupSummaries()
 }
 
+const vaultUploadQueue: File[] = []
+let vaultUploadFlushTimer: ReturnType<typeof setTimeout> | null = null
+const vaultUploading = ref(false)
+
 async function onVaultUpload(data: { file: UploadFileInfo }): Promise<boolean> {
   const file = data.file.file
   if (!file) return false
-  if (file.size > maxUploadBytesFor(file)) {
-    message.error(`Файл слишком большой (макс. ${uploadLimitLabel(file)})`)
-    return false
-  }
-  try {
-    await uploadVaultFile(file, { parent_id: vaultParentId.value })
-    message.success('Файл добавлен в хранилище')
-    await loadVault()
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Ошибка загрузки')
-  }
+  vaultUploadQueue.push(file)
+  if (vaultUploadFlushTimer) clearTimeout(vaultUploadFlushTimer)
+  vaultUploadFlushTimer = setTimeout(() => {
+    void flushVaultUploads()
+  }, 40)
   return false
+}
+
+async function flushVaultUploads(): Promise<void> {
+  if (vaultUploading.value) return
+  const files = vaultUploadQueue.splice(0)
+  if (!files.length) return
+  vaultUploading.value = true
+  let ok = 0
+  let skipped = 0
+  try {
+    for (const file of files) {
+      if (file.size > maxUploadBytesFor(file)) {
+        skipped += 1
+        message.error(`${file.name}: слишком большой (макс. ${uploadLimitLabel(file)})`)
+        continue
+      }
+      try {
+        await uploadVaultFile(file, { parent_id: vaultParentId.value })
+        ok += 1
+      } catch (err) {
+        message.error(
+          err instanceof AppError ? `${file.name}: ${err.message}` : `${file.name}: ошибка загрузки`,
+        )
+      }
+    }
+    if (ok === 1) message.success('Файл добавлен в хранилище')
+    else if (ok > 1) message.success(`Загружено файлов: ${ok}`)
+    if (ok > 0) await loadVault()
+    if (skipped && !ok) message.warning('Ни один файл не загружен')
+  } finally {
+    vaultUploading.value = false
+    if (vaultUploadQueue.length) void flushVaultUploads()
+  }
 }
 
 function openLargeSharePicker(): void {
@@ -1203,10 +1234,10 @@ onMounted(() => {
                 <template #icon><Folder :size="16" /></template>
                 Создать папку
               </NButton>
-              <NUpload :show-file-list="false" @before-upload="onVaultUpload">
-                <NButton type="primary">
+              <NUpload multiple :show-file-list="false" @before-upload="onVaultUpload">
+                <NButton type="primary" :loading="vaultUploading">
                   <template #icon><Upload :size="16" /></template>
-                  Загрузить файл
+                  Загрузить файлы
                 </NButton>
               </NUpload>
               <NButton v-if="isAdmin && vaultCanManage" secondary @click="openLargeSharePicker">

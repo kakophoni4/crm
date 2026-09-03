@@ -111,8 +111,9 @@ class LavokParserService:
                 sheet_date=None,
             )
         effective = sheet_date or (dates[0] if dates else None)
+        query_date = None if (q or "").strip() else effective
         rows, total = await self._repo.list_lots(
-            sheet_date=effective,
+            sheet_date=query_date,
             q=q,
             include_deleted=include_deleted,
             mark=mark,
