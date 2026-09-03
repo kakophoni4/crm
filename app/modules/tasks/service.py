@@ -54,6 +54,13 @@ from app.shared.exceptions import NotFound, PermissionDenied, ValidationError
 DUE_SOON_WINDOW = timedelta(hours=24)
 
 
+def _user_role_value(user: User | None) -> str | None:
+    if user is None:
+        return None
+    role = user.role
+    return role.value if isinstance(role, UserRole) else str(role)
+
+
 class TaskService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -385,6 +392,7 @@ class TaskService:
             lead_id=getattr(task, "lead_id", None),
             parent_task_id=getattr(task, "parent_task_id", None),
             created_by=task.created_by,
+            created_by_role=_user_role_value(creator),
             assignee_id=task.assignee_id,
             due_at=task.due_at,
             completed_at=task.completed_at,

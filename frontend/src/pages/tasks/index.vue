@@ -44,7 +44,13 @@ import {
   type TaskType,
   type TaskWorkloadSummary,
 } from '@/features/tasks/api'
-import { TASK_TYPE_COLORS } from '@/features/tasks/types'
+import {
+  TASK_TYPE_COLORS,
+  isOfficePostedTask,
+  officePostedKind,
+  officePostedLabel,
+  pinOfficePostedTasks,
+} from '@/features/tasks/types'
 import {
   sortTasks,
   taskDeadline,
@@ -211,6 +217,11 @@ function deadlineFor(task: DepartmentTask) {
   return taskDeadline(task.due_at, nowMs.value)
 }
 
+function officeBannerText(task: DepartmentTask): string {
+  const kind = officePostedKind(task)
+  return kind ? officePostedLabel(kind) : ''
+}
+
 const mineActiveTasks = computed(() =>
   myTasks.value.filter((task) => task.status === 'new' || task.status === 'open'),
 )
@@ -235,13 +246,38 @@ const visibleMineTasks = computed(() => {
   }
   return sortTasks(rows, sortMode.value, nowMs.value)
 })
+const mineTaskGroups = computed(() => {
+  const rows = visibleMineTasks.value
+  const office = rows.filter(isOfficePostedTask)
+  const rest = rows.filter((task) => !isOfficePostedTask(task))
+  if (!office.length) {
+    return [{ key: 'all', title: null as string | null, items: rest }]
+  }
+  const groups: { key: string; title: string | null; items: DepartmentTask[] }[] = [
+    {
+      key: 'office',
+      title: `От бухгалтерии и админа · ${office.length}`,
+      items: office,
+    },
+  ]
+  if (rest.length) {
+    groups.push({
+      key: 'rest',
+      title: `Остальные задачи · ${rest.length}`,
+      items: rest,
+    })
+  }
+  return groups
+})
 const displayedBoard = computed(() => {
   if (!board.value) return null
   return {
     ...board.value,
     columns: board.value.columns.map((col) => ({
       ...col,
-      items: sortTasks(col.items.filter(matchesDueFilter), sortMode.value, nowMs.value),
+      items: pinOfficePostedTasks(
+        sortTasks(col.items.filter(matchesDueFilter), sortMode.value, nowMs.value),
+      ),
     })),
   }
 })
@@ -832,6 +868,8 @@ onUnmounted(() => {
                       'task-card--dragging': draggingTask?.id === task.id,
                       'task-card--overdue': cardIsOverdue(task),
                       'task-card--due-soon': task.due_soon && !cardIsOverdue(task),
+                      'task-card--from-accounting': officePostedKind(task) === 'accounting',
+                      'task-card--from-admin': officePostedKind(task) === 'admin',
                       [`task-card--${task.status}`]: true,
                     }"
                     data-task-card
@@ -841,6 +879,13 @@ onUnmounted(() => {
                     @dragstart="onDragStart(task, $event)"
                     @dragend="onDragEnd"
                   >
+                    <div
+                      v-if="officePostedKind(task)"
+                      class="task-card__office-banner"
+                      :class="`task-card__office-banner--${officePostedKind(task)}`"
+                    >
+                      {{ officeBannerText(task) }}
+                    </div>
                     <div class="task-card-head">
                       <NTag
                         :color="{ color: typeColor(task.task_type), textColor: '#fff' }"
@@ -969,17 +1014,34 @@ onUnmounted(() => {
           </NTabs>
           <NSpin :show="mineLoading && myTasks.length === 0">
             <div v-if="visibleMineTasks.length" class="task-list">
-              <div
-                v-for="task in visibleMineTasks"
-                :key="task.id"
-                class="task-card task-card--clickable"
-                :class="{
-                  [`task-card--${task.status}`]: true,
-                  'task-card--overdue': cardIsOverdue(task),
-                  'task-card--due-soon': task.due_soon && !cardIsOverdue(task),
-                }"
-                @click="openTaskDetail(task)"
-              >
+              <template v-for="group in mineTaskGroups" :key="group.key">
+                <h3
+                  v-if="group.title"
+                  class="task-list-heading"
+                  :class="{ 'task-list-heading--rest': group.key === 'rest' }"
+                >
+                  {{ group.title }}
+                </h3>
+                <div
+                  v-for="task in group.items"
+                  :key="task.id"
+                  class="task-card task-card--clickable"
+                  :class="{
+                    [`task-card--${task.status}`]: true,
+                    'task-card--overdue': cardIsOverdue(task),
+                    'task-card--due-soon': task.due_soon && !cardIsOverdue(task),
+                    'task-card--from-accounting': officePostedKind(task) === 'accounting',
+                    'task-card--from-admin': officePostedKind(task) === 'admin',
+                  }"
+                  @click="openTaskDetail(task)"
+                >
+                <div
+                  v-if="officePostedKind(task)"
+                  class="task-card__office-banner"
+                  :class="`task-card__office-banner--${officePostedKind(task)}`"
+                >
+                  {{ officeBannerText(task) }}
+                </div>
                 <div class="task-card-head">
                   <NTag :color="{ color: typeColor(task.task_type), textColor: '#fff' }" size="small">
                     {{ task.task_type_label }}
@@ -1068,6 +1130,7 @@ onUnmounted(() => {
                   Вернуть
                 </NButton>
               </div>
+              </template>
             </div>
             <p v-else class="empty-hint">{{ mineEmptyHint }}</p>
           </NSpin>
@@ -1308,12 +1371,34 @@ onUnmounted(() => {
   max-width: 640px;
 }
 
+.task-list-heading {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #6d28d9;
+  border-radius: 8px;
+}
+
+.task-list-heading--rest {
+  margin-top: 8px;
+  background: var(--app-surface-elevated);
+  color: var(--app-text-muted);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .task-card {
   border: 1px solid var(--app-border);
   border-left-width: 3px;
   border-radius: var(--app-control-radius);
   padding: 12px;
   background: var(--app-surface);
+  overflow: hidden;
 }
 
 .task-card--new {
@@ -1338,6 +1423,20 @@ onUnmounted(() => {
 
 .task-card--due-soon {
   background: color-mix(in srgb, var(--app-warning) 10%, var(--app-surface));
+}
+
+.task-card--from-accounting {
+  background: color-mix(in srgb, #7c3aed 14%, var(--app-surface));
+  border-color: color-mix(in srgb, #7c3aed 50%, var(--app-border));
+  border-left-width: 4px;
+  border-left-color: #7c3aed;
+}
+
+.task-card--from-admin {
+  background: color-mix(in srgb, #0f766e 14%, var(--app-surface));
+  border-color: color-mix(in srgb, #0f766e 50%, var(--app-border));
+  border-left-width: 4px;
+  border-left-color: #0f766e;
 }
 
 .task-card--overdue {
@@ -1370,6 +1469,38 @@ onUnmounted(() => {
 
 .task-card--overdue:hover {
   border-color: var(--app-danger);
+}
+
+.task-card--from-accounting:hover {
+  border-color: #7c3aed;
+}
+
+.task-card--from-admin:hover {
+  border-color: #0f766e;
+}
+
+.task-card--overdue.task-card--from-accounting:hover,
+.task-card--overdue.task-card--from-admin:hover {
+  border-color: var(--app-danger);
+}
+
+.task-card__office-banner {
+  margin: -12px -12px 10px;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.task-card__office-banner--accounting {
+  background: #6d28d9;
+}
+
+.task-card__office-banner--admin {
+  background: #0f766e;
 }
 
 .task-card-head {

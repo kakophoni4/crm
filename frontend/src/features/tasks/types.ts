@@ -21,6 +21,7 @@ export interface DepartmentTask {
   lead_id?: number | null
   parent_task_id?: number | null
   created_by: number
+  created_by_role?: string | null
   assignee_id: number
   due_at: string | null
   completed_at: string | null
@@ -129,6 +130,37 @@ export const TASK_TYPE_COLORS: Record<TaskType, string> = {
   high: '#d97706',
   normal: '#2563eb',
   low: '#6b7280',
+}
+
+const OFFICE_POSTER_ROLES = new Set(['admin', 'accountant', 'chief_accountant'])
+
+export type OfficePostedKind = 'accounting' | 'admin'
+
+export function officePostedKind(
+  task: Pick<DepartmentTask, 'created_by_role'>,
+): OfficePostedKind | null {
+  const role = task.created_by_role ?? ''
+  if (role === 'admin') return 'admin'
+  if (role === 'accountant' || role === 'chief_accountant') return 'accounting'
+  return OFFICE_POSTER_ROLES.has(role) ? 'accounting' : null
+}
+
+export function isOfficePostedTask(task: Pick<DepartmentTask, 'created_by_role'>): boolean {
+  return officePostedKind(task) != null
+}
+
+export function officePostedLabel(kind: OfficePostedKind): string {
+  return kind === 'admin' ? 'Админ' : 'Бухгалтерия'
+}
+
+export function pinOfficePostedTasks<T extends Pick<DepartmentTask, 'created_by_role'>>(tasks: T[]): T[] {
+  const office: T[] = []
+  const rest: T[] = []
+  for (const task of tasks) {
+    if (isOfficePostedTask(task)) office.push(task)
+    else rest.push(task)
+  }
+  return [...office, ...rest]
 }
 
 const ROLE_SHORT_LABEL: Record<string, string> = {

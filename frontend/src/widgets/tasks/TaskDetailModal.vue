@@ -38,7 +38,7 @@ import {
   type TaskDetail,
   type TaskHistoryItem,
 } from '@/features/tasks/api'
-import { TASK_TYPE_COLORS, type TaskFileBrief } from '@/features/tasks/types'
+import { TASK_TYPE_COLORS, officePostedKind, officePostedLabel, type TaskFileBrief } from '@/features/tasks/types'
 import { taskDeadline, taskIsOverdue } from '@/features/tasks/due'
 import {
   attachmentPreviewSupported,
@@ -495,6 +495,11 @@ function typeColor(task: DepartmentTask): string {
   return TASK_TYPE_COLORS[task.task_type] || '#6b7280'
 }
 
+const detailOfficeKind = computed(() => (detail.value ? officePostedKind(detail.value) : null))
+const detailOfficeBanner = computed(() =>
+  detailOfficeKind.value ? officePostedLabel(detailOfficeKind.value) : '',
+)
+
 function openChild(id: number): void {
   emit('open', id)
 }
@@ -512,8 +517,19 @@ function openChild(id: number): void {
       <template v-if="detail">
         <div
           class="task-detail"
-          :class="{ 'task-detail--overdue': detail && taskIsOverdue(detail) }"
+          :class="{
+            'task-detail--overdue': detail && taskIsOverdue(detail),
+            'task-detail--from-accounting': detailOfficeKind === 'accounting',
+            'task-detail--from-admin': detailOfficeKind === 'admin',
+          }"
         >
+          <div
+            v-if="detailOfficeKind"
+            class="task-detail__office-banner"
+            :class="`task-detail__office-banner--${detailOfficeKind}`"
+          >
+            {{ detailOfficeBanner }}
+          </div>
           <NSpace size="small" wrap>
             <NTag :color="{ color: typeColor(detail), textColor: '#fff' }" size="small">
               {{ detail.task_type_label }}
@@ -799,6 +815,37 @@ function openChild(id: number): void {
   border-radius: 10px;
   background: var(--app-danger-soft);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-danger) 28%, transparent);
+}
+.task-detail--from-accounting:not(.task-detail--overdue) {
+  padding: 12px;
+  margin: -4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #7c3aed 12%, var(--app-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #7c3aed 28%, transparent);
+}
+.task-detail--from-admin:not(.task-detail--overdue) {
+  padding: 12px;
+  margin: -4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #0f766e 12%, var(--app-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #0f766e 28%, transparent);
+}
+.task-detail__office-banner {
+  margin: -12px -12px 0;
+  padding: 10px 12px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff;
+  border-radius: 10px 10px 0 0;
+}
+.task-detail__office-banner--accounting {
+  background: #6d28d9;
+}
+.task-detail__office-banner--admin {
+  background: #0f766e;
 }
 .task-detail h4 {
   margin: 0 0 6px;

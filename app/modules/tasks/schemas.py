@@ -59,6 +59,7 @@ class TaskResponse(BaseModel):
     lead_id: int | None = None
     parent_task_id: int | None = None
     created_by: int
+    created_by_role: str | None = None
     assignee_id: int
     due_at: datetime | None
     completed_at: datetime | None
