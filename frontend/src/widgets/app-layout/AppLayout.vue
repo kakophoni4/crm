@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useWindowSize } from '@vueuse/core'
 import { NLayout, NLayoutContent } from 'naive-ui'
-import { computed, ref, watch, KeepAlive } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import GlobalSearchModal from '@/features/search/GlobalSearchModal.vue'

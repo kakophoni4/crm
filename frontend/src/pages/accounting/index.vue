@@ -699,6 +699,10 @@ async function loadOrders(opts?: { force?: boolean }): Promise<void> {
   }
 }
 
+function onSearchOrders(): void {
+  void loadOrders({ force: true })
+}
+
 async function loadRequirements(): Promise<void> {
   if (!requirements.value.length) requirementsLoading.value = true
   try {
@@ -1505,9 +1509,9 @@ onUnmounted(() => {
               clearable
               placeholder="Поиск: ИНН, CRM, менеджер..."
               style="min-width: 240px"
-              @keyup.enter="loadOrders"
+              @keyup.enter="onSearchOrders"
             />
-            <NButton type="primary" @click="loadOrders">Найти</NButton>
+            <NButton type="primary" @click="onSearchOrders">Найти</NButton>
           </div>
           <NSpin :show="ordersLoading && orderGroups.length === 0">
             <NEmpty v-if="!ordersLoading && orderGroups.length === 0" description="Нет заявок" />
