@@ -169,10 +169,6 @@ class LawyerRegistryService:
         include_shops: bool = False,
         include_hidden: bool = False,
     ) -> LawyerDirectorListResponse:
-        try:
-            await self.sync_from_tickets()
-        except Exception:
-            logger.warning("lawyer_registry_tickets_sync_failed", exc_info=True)
         filtered = any(
             [q, kind, company_status, unreliable, zsk, ecsp_status, manager, dirovod],
         )
@@ -533,18 +529,22 @@ class LawyerRegistryService:
         now = monotonic()
         if now - _last_tickets_sync_at < _TICKETS_SYNC_COOLDOWN_SEC:
             return 0
+        _last_tickets_sync_at = now
         from app.modules.tickets.client import SmertnikiUnavailable, smertniki_request
 
         try:
-            companies_payload = await smertniki_request("GET", "/api/v1/companies")
+            companies_payload = await smertniki_request("GET", "/api/v1/companies", timeout=8.0)
             tickets_payload = await smertniki_request(
                 "GET",
                 "/api/v1/tickets",
                 params={"status": "in_progress"},
+                timeout=8.0,
             )
         except SmertnikiUnavailable:
             return 0
-        _last_tickets_sync_at = now
+        except Exception:
+            logger.warning("lawyer_registry_tickets_sync_failed", exc_info=True)
+            return 0
 
         companies = payload_items(companies_payload)
         tickets = payload_items(tickets_payload)

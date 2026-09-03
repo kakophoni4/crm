@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     # smertniki EGRUL monitor HTTP API (tickets / shops)
     smertniki_api_url: str = ""
     smertniki_api_token: str = ""
-    smertniki_api_timeout_seconds: float = 180.0
+    smertniki_api_timeout_seconds: float = 12.0
 
     # sbis-norm FNS requirements pull (http://host:8000/api/sbis/requirements/)
     sbis_norm_api_base_url: str = ""
