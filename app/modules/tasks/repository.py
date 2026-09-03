@@ -226,13 +226,54 @@ class TaskRepository:
         )
 
     @staticmethod
-    def sort_tasks_for_assignee(tasks: list[DepartmentTask]) -> list[DepartmentTask]:
-        def sort_key(row: DepartmentTask) -> tuple[int, float, int]:
-            try:
-                type_order = TASK_TYPE_SORT_ORDER.get(TaskType(row.task_type), 99)
-            except ValueError:
-                type_order = 99
-            due_ts = row.due_at.timestamp() if row.due_at else float("inf")
-            return (type_order, due_ts, -row.id)
+    def sort_tasks_for_assignee(
+        tasks: list[DepartmentTask],
+        *,
+        now: datetime | None = None,
+        mode: str = "due",
+    ) -> list[DepartmentTask]:
+        return TaskRepository.sort_task_items(tasks, now=now, mode=mode)
 
-        return sorted(tasks, key=sort_key)
+    @staticmethod
+    def sort_task_items[T](
+        items: list[T],
+        *,
+        now: datetime | None = None,
+        mode: str = "due",
+    ) -> list[T]:
+        now_ts = (now or datetime.now(UTC)).timestamp()
+
+        def type_order(row: T) -> int:
+            raw = getattr(row, "task_type", None)
+            try:
+                return TASK_TYPE_SORT_ORDER.get(TaskType(raw), 99)
+            except (TypeError, ValueError):
+                return 99
+
+        def due_parts(row: T) -> tuple[int, float]:
+            due = getattr(row, "due_at", None)
+            if due is None:
+                return (2, float("inf"))
+            if hasattr(due, "tzinfo") and due.tzinfo is None:
+                due = due.replace(tzinfo=UTC)
+            due_ts = due.timestamp() if hasattr(due, "timestamp") else float("inf")
+            return (0 if due_ts < now_ts else 1, due_ts)
+
+        def created_ts(row: T) -> float:
+            created = getattr(row, "created_at", None)
+            if created is None or not hasattr(created, "timestamp"):
+                return 0.0
+            if hasattr(created, "tzinfo") and created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            return created.timestamp()
+
+        def sort_key(row: T) -> tuple[float, ...]:
+            due_bucket, due_ts = due_parts(row)
+            row_id = int(getattr(row, "id", 0) or 0)
+            if mode == "created":
+                return (0.0, -created_ts(row), float(-row_id))
+            if mode == "priority":
+                return (float(type_order(row)), float(due_bucket), due_ts, float(-row_id))
+            return (float(due_bucket), due_ts, float(type_order(row)), float(-row_id))
+
+        return sorted(items, key=sort_key)

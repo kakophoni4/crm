@@ -115,6 +115,7 @@ const ordersLoading = ref(false)
 const requirementsLoading = ref(false)
 const ownersLoading = ref(false)
 const syncingRequirements = ref(false)
+const SHOW_REQUIREMENTS_TAB = false
 const activeTab = ref('orders')
 const isChief = ref(false)
 const units = ref<AccountingUnit[]>([])
@@ -1380,6 +1381,10 @@ const requirementInnerColumns = computed<DataTableColumns<AccountingRequirement>
 )
 
 watch(activeTab, async (tab) => {
+  if (!SHOW_REQUIREMENTS_TAB && tab === 'requirements') {
+    activeTab.value = 'orders'
+    return
+  }
   if (tab === 'orders') await loadOrders()
   else if (tab === 'requirements') await loadRequirements()
   else await loadUnitOwners()
@@ -1578,7 +1583,7 @@ onUnmounted(() => {
           </NSpin>
         </NTabPane>
 
-        <NTabPane name="requirements" tab="Требования">
+        <NTabPane v-if="SHOW_REQUIREMENTS_TAB" name="requirements" tab="Требования">
           <div class="accounting-page__requirements">
             <NTabs v-model:value="requirementsStatusTab" type="segment" size="small" animated>
               <NTabPane name="new" tab="Непрочитанные" />

@@ -651,6 +651,10 @@ class TaskService:
             if item.status in by_status:
                 by_status[item.status].append(item)
 
+        now = datetime.now(UTC)
+        for status, items in by_status.items():
+            by_status[status] = self._repo.sort_task_items(items, now=now, mode="due")
+
         columns = [
             TaskBoardColumn(
                 status=TaskStatus.NEW.value,

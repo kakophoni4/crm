@@ -45,6 +45,12 @@ import {
   type TaskWorkloadSummary,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS } from '@/features/tasks/types'
+import {
+  sortTasks,
+  taskDeadline,
+  taskIsOverdue,
+  type TaskSortMode,
+} from '@/features/tasks/due'
 import { uploadFile } from '@/features/chats/api'
 import { AppError } from '@/shared/api/http'
 import { peekCached, setCached } from '@/shared/lib/stale-cache'
@@ -75,17 +81,23 @@ const assigneeUsers = ref<TaskAssigneeOption[]>([])
 const departments = ref<Department[]>([])
 const selectedDeptId = ref<number | null>(null)
 
+type TaskViewFilter = TaskStatus | 'overdue' | 'due_soon'
+const REAL_TASK_STATUSES = new Set<TaskStatus>(['new', 'open', 'done_pending', 'closed', 'deleted'])
+
 const filterQuery = ref('')
 const filterQueryDebounced = ref('')
 const filterAssigneeId = ref<number | null>(null)
 const filterCreatedBy = ref<number | null>(null)
-const filterStatus = ref<TaskStatus | null>(null)
+const filterStatus = ref<TaskViewFilter | null>(null)
+const sortMode = ref<TaskSortMode>('due')
 const includeClosedMine = ref(true)
 const includeClosedBoard = ref(true)
 type MineBucket = 'active' | 'review' | 'done'
 const mineBucket = ref<MineBucket>('active')
 const mineSummary = ref<TaskWorkloadSummary | null>(null)
+const nowMs = ref(Date.now())
 let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let dueTickTimer: ReturnType<typeof setInterval> | null = null
 
 const draggingTask = ref<DepartmentTask | null>(null)
 const dragOverStatus = ref<string | null>(null)
@@ -118,7 +130,9 @@ const assigneeOptions = computed(() =>
 )
 
 const statusFilterOptions = computed(() => {
-  const options: { label: string; value: TaskStatus }[] = [
+  const options: { label: string; value: TaskViewFilter }[] = [
+    { label: 'Просроченные', value: 'overdue' },
+    { label: 'Скоро срок', value: 'due_soon' },
     { label: 'Новые', value: 'new' },
     { label: 'В работе', value: 'open' },
     { label: 'На проверке', value: 'done_pending' },
@@ -129,6 +143,12 @@ const statusFilterOptions = computed(() => {
   }
   return options
 })
+
+const sortOptions: { label: string; value: TaskSortMode }[] = [
+  { label: 'По сроку', value: 'due' },
+  { label: 'По приоритету', value: 'priority' },
+  { label: 'По дате создания', value: 'created' },
+]
 
 const hasTaskFilters = computed(
   () =>
@@ -147,11 +167,12 @@ const includeClosed = computed({
 })
 
 function currentQuery(): TaskListQuery {
+  const status = filterStatus.value
   return {
     assignee_id: filterAssigneeId.value,
     created_by: filterCreatedBy.value,
     q: filterQueryDebounced.value || null,
-    status: filterStatus.value,
+    status: status && REAL_TASK_STATUSES.has(status as TaskStatus) ? (status as TaskStatus) : null,
     include_closed: includeClosed.value,
   }
 }
@@ -174,6 +195,22 @@ const currentSummaryText = computed(() =>
     : formatWorkload(mineSummary.value),
 )
 
+function matchesDueFilter(task: DepartmentTask): boolean {
+  if (filterStatus.value === 'overdue') return taskIsOverdue(task, nowMs.value)
+  if (filterStatus.value === 'due_soon') {
+    return Boolean(task.due_soon) && !taskIsOverdue(task, nowMs.value)
+  }
+  return true
+}
+
+function cardIsOverdue(task: DepartmentTask): boolean {
+  return taskIsOverdue(task, nowMs.value)
+}
+
+function deadlineFor(task: DepartmentTask) {
+  return taskDeadline(task.due_at, nowMs.value)
+}
+
 const mineActiveTasks = computed(() =>
   myTasks.value.filter((task) => task.status === 'new' || task.status === 'open'),
 )
@@ -184,11 +221,33 @@ const mineDoneTasks = computed(() =>
   myTasks.value.filter((task) => task.status === 'closed' || task.status === 'deleted'),
 )
 const visibleMineTasks = computed(() => {
-  if (mineBucket.value === 'review') return mineReviewTasks.value
-  if (mineBucket.value === 'done') return mineDoneTasks.value
-  return mineActiveTasks.value
+  let rows: DepartmentTask[]
+  if (filterStatus.value === 'overdue') {
+    rows = myTasks.value.filter((task) => taskIsOverdue(task, nowMs.value))
+  } else if (filterStatus.value === 'due_soon') {
+    rows = myTasks.value.filter((task) => task.due_soon && !taskIsOverdue(task, nowMs.value))
+  } else if (mineBucket.value === 'review') {
+    rows = mineReviewTasks.value
+  } else if (mineBucket.value === 'done') {
+    rows = mineDoneTasks.value
+  } else {
+    rows = mineActiveTasks.value
+  }
+  return sortTasks(rows, sortMode.value, nowMs.value)
+})
+const displayedBoard = computed(() => {
+  if (!board.value) return null
+  return {
+    ...board.value,
+    columns: board.value.columns.map((col) => ({
+      ...col,
+      items: sortTasks(col.items.filter(matchesDueFilter), sortMode.value, nowMs.value),
+    })),
+  }
 })
 const mineEmptyHint = computed(() => {
+  if (filterStatus.value === 'overdue') return 'Нет просроченных задач'
+  if (filterStatus.value === 'due_soon') return 'Нет задач со скорым сроком'
   if (hasTaskFilters.value) return 'Нет задач по выбранным фильтрам'
   if (mineBucket.value === 'review') return 'Нет задач на проверке'
   if (mineBucket.value === 'done') return 'Нет выполненных задач'
@@ -253,7 +312,7 @@ const departmentMap = computed(() =>
 const showAllDepartments = computed(() => isAdmin.value && selectedDeptId.value == null)
 
 const kanbanGridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(${board.value?.columns.length || 3}, minmax(200px, 1fr))`,
+  gridTemplateColumns: `repeat(${displayedBoard.value?.columns.length || 3}, minmax(200px, 1fr))`,
 }))
 
 function formatDue(iso: string | null): string {
@@ -639,11 +698,21 @@ watch(
   },
 )
 
+watch(filterStatus, (value) => {
+  if (value === 'overdue' || value === 'due_soon') {
+    mineBucket.value = 'active'
+  }
+})
+
 onMounted(async () => {
   const cachedMine = peekCached<DepartmentTask[]>(MINE_CACHE_KEY)
   if (cachedMine) myTasks.value = cachedMine
   const cachedBoard = peekCached<TaskBoard>(boardCacheKey.value)
   if (cachedBoard) board.value = cachedBoard
+
+  dueTickTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 60_000)
 
   await Promise.all([loadDepartments(), loadAssignees(), refresh()])
   await connectTasksRealtime()
@@ -663,6 +732,7 @@ onUnmounted(() => {
   unsubTasks?.()
   if (wsRefreshTimer) clearTimeout(wsRefreshTimer)
   if (queryDebounceTimer) clearTimeout(queryDebounceTimer)
+  if (dueTickTimer) clearInterval(dueTickTimer)
 })
 </script>
 
@@ -705,7 +775,13 @@ onUnmounted(() => {
           :options="statusFilterOptions"
           clearable
           placeholder="Статус"
-          style="min-width: 160px"
+          style="min-width: 170px"
+        />
+        <NSelect
+          v-model:value="sortMode"
+          :options="sortOptions"
+          placeholder="Сортировка"
+          style="min-width: 180px"
         />
         <label v-if="activeTab === 'board'" class="task-filters__closed">
           <NSwitch v-model:value="includeClosed" size="small" />
@@ -728,9 +804,9 @@ onUnmounted(() => {
             />
           </div>
           <NSpin :show="boardLoading && !board">
-            <div v-if="board" class="kanban" :style="kanbanGridStyle">
+            <div v-if="displayedBoard" class="kanban" :style="kanbanGridStyle">
               <div
-                v-for="col in board.columns"
+                v-for="col in displayedBoard.columns"
                 :key="col.status"
                 class="kanban-col"
                 :class="{
@@ -752,7 +828,12 @@ onUnmounted(() => {
                     v-for="task in col.items"
                     :key="task.id"
                     class="task-card task-card--draggable"
-                    :class="{ 'task-card--dragging': draggingTask?.id === task.id }"
+                    :class="{
+                      'task-card--dragging': draggingTask?.id === task.id,
+                      'task-card--overdue': cardIsOverdue(task),
+                      'task-card--due-soon': task.due_soon && !cardIsOverdue(task),
+                      [`task-card--${task.status}`]: true,
+                    }"
                     data-task-card
                     :data-task-id="task.id"
                     draggable="true"
@@ -767,7 +848,7 @@ onUnmounted(() => {
                       >
                         {{ task.task_type_label }}
                       </NTag>
-                      <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
+                      <NTag v-if="cardIsOverdue(task)" type="error" size="small">Просрочена</NTag>
                       <NTag v-else-if="task.due_soon" type="warning" size="small">Скоро срок</NTag>
                     </div>
                     <p class="task-card-title">{{ task.title }}</p>
@@ -777,7 +858,21 @@ onUnmounted(() => {
                     </p>
                     <p class="task-card-meta">Исполнитель: {{ task.assignee?.full_name ?? '—' }}</p>
                     <p class="task-card-meta">Поставил: {{ task.creator?.full_name ?? '—' }}</p>
-                    <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
+                    <p class="task-card-meta task-card__due">
+                      <span
+                        class="task-card__due-date"
+                        :class="{ 'task-card__due-date--overdue': cardIsOverdue(task) }"
+                      >
+                        Срок: {{ formatDue(task.due_at) }}
+                      </span>
+                      <span
+                        v-if="task.due_at && task.status !== 'closed' && task.status !== 'deleted'"
+                        class="task-card__countdown"
+                        :class="`task-card__countdown--${deadlineFor(task).tone}`"
+                      >
+                        {{ deadlineFor(task).text }}
+                      </span>
+                    </p>
                     <NSpace size="small" class="task-card-actions">
                       <NButton
                         v-if="canReassignTask(task)"
@@ -861,7 +956,13 @@ onUnmounted(() => {
         </NTabPane>
 
         <NTabPane name="mine" tab="Мои задачи">
-          <NTabs v-model:value="mineBucket" type="segment" size="small" class="mine-buckets">
+          <NTabs
+            v-if="filterStatus !== 'overdue' && filterStatus !== 'due_soon'"
+            v-model:value="mineBucket"
+            type="segment"
+            size="small"
+            class="mine-buckets"
+          >
             <NTabPane name="active" :tab="`Активные · ${mineActiveTasks.length}`" />
             <NTabPane name="review" :tab="`На проверке · ${mineReviewTasks.length}`" />
             <NTabPane name="done" :tab="`Готово · ${mineDoneTasks.length}`" />
@@ -872,7 +973,11 @@ onUnmounted(() => {
                 v-for="task in visibleMineTasks"
                 :key="task.id"
                 class="task-card task-card--clickable"
-                :class="`task-card--${task.status}`"
+                :class="{
+                  [`task-card--${task.status}`]: true,
+                  'task-card--overdue': cardIsOverdue(task),
+                  'task-card--due-soon': task.due_soon && !cardIsOverdue(task),
+                }"
                 @click="openTaskDetail(task)"
               >
                 <div class="task-card-head">
@@ -887,7 +992,7 @@ onUnmounted(() => {
                   <NTag v-else-if="task.status === 'closed'" type="success" size="small">
                     Готово
                   </NTag>
-                  <NTag v-if="task.is_overdue" type="error" size="small">Просрочена</NTag>
+                  <NTag v-if="cardIsOverdue(task)" type="error" size="small">Просрочена</NTag>
                   <NTag v-else-if="task.due_soon" type="warning" size="small">Скоро срок</NTag>
                   <NTag
                     v-if="task.created_by === auth.user?.id && task.assignee_id !== auth.user?.id"
@@ -898,7 +1003,21 @@ onUnmounted(() => {
                 </div>
                 <p class="task-card-title">{{ task.title }}</p>
                 <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
-                <p class="task-card-meta">Срок: {{ formatDue(task.due_at) }}</p>
+                <p class="task-card-meta task-card__due">
+                  <span
+                    class="task-card__due-date"
+                    :class="{ 'task-card__due-date--overdue': cardIsOverdue(task) }"
+                  >
+                    Срок: {{ formatDue(task.due_at) }}
+                  </span>
+                  <span
+                    v-if="task.due_at && task.status !== 'closed' && task.status !== 'deleted'"
+                    class="task-card__countdown"
+                    :class="`task-card__countdown--${deadlineFor(task).tone}`"
+                  >
+                    {{ deadlineFor(task).text }}
+                  </span>
+                </p>
                 <p class="task-card-meta">
                   Исполнитель: {{ task.assignee?.full_name ?? '—' }}
                 </p>
@@ -1217,6 +1336,18 @@ onUnmounted(() => {
   border-left-color: var(--app-danger);
 }
 
+.task-card--due-soon {
+  background: color-mix(in srgb, var(--app-warning) 10%, var(--app-surface));
+}
+
+.task-card--overdue {
+  background: var(--app-danger-soft);
+  border-color: color-mix(in srgb, var(--app-danger) 55%, var(--app-border));
+  border-left-width: 4px;
+  border-left-color: var(--app-danger);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-danger) 18%, transparent);
+}
+
 .task-card--clickable {
   cursor: pointer;
 }
@@ -1235,6 +1366,10 @@ onUnmounted(() => {
 
 .task-card:hover {
   border-color: var(--app-accent);
+}
+
+.task-card--overdue:hover {
+  border-color: var(--app-danger);
 }
 
 .task-card-head {
@@ -1261,6 +1396,37 @@ onUnmounted(() => {
   margin: 0 0 4px;
   font-size: 12px;
   color: var(--app-text-muted);
+}
+
+.task-card__due {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.task-card__due-date--overdue {
+  color: var(--app-danger);
+  font-weight: 700;
+}
+
+.task-card__countdown {
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.task-card__countdown--overdue {
+  color: var(--app-danger);
+}
+
+.task-card__countdown--soon {
+  color: var(--app-warning);
+}
+
+.task-card__countdown--ok {
+  color: var(--app-text-muted);
+  font-weight: 600;
 }
 
 .task-card-actions {

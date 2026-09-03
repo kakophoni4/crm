@@ -39,6 +39,7 @@ import {
   type TaskHistoryItem,
 } from '@/features/tasks/api'
 import { TASK_TYPE_COLORS, type TaskFileBrief } from '@/features/tasks/types'
+import { taskDeadline, taskIsOverdue } from '@/features/tasks/due'
 import {
   attachmentPreviewSupported,
   resolveAttachmentPreviewKind,
@@ -480,6 +481,16 @@ function formatDue(iso: string | null): string {
   return new Date(iso).toLocaleString('ru-RU')
 }
 
+function deadlineLabel(iso: string | null): string {
+  if (!iso) return ''
+  return taskDeadline(iso).text
+}
+
+function deadlineTone(iso: string | null): string {
+  if (!iso) return 'none'
+  return taskDeadline(iso).tone
+}
+
 function typeColor(task: DepartmentTask): string {
   return TASK_TYPE_COLORS[task.task_type] || '#6b7280'
 }
@@ -499,13 +510,16 @@ function openChild(id: number): void {
   >
     <NSpin :show="loading">
       <template v-if="detail">
-        <div class="task-detail">
+        <div
+          class="task-detail"
+          :class="{ 'task-detail--overdue': detail && taskIsOverdue(detail) }"
+        >
           <NSpace size="small" wrap>
             <NTag :color="{ color: typeColor(detail), textColor: '#fff' }" size="small">
               {{ detail.task_type_label }}
             </NTag>
             <NTag size="small" :bordered="false">{{ statusLabel }}</NTag>
-            <NTag v-if="detail.is_overdue" type="error" size="small">Просрочена</NTag>
+            <NTag v-if="taskIsOverdue(detail)" type="error">Просрочена</NTag>
           </NSpace>
 
           <dl class="task-detail__meta">
@@ -519,7 +533,19 @@ function openChild(id: number): void {
             </div>
             <div>
               <dt>Срок</dt>
-              <dd>{{ formatDue(detail.due_at) }}</dd>
+              <dd
+                class="task-detail__due"
+                :class="{ 'task-detail__due--overdue': taskIsOverdue(detail) }"
+              >
+                {{ formatDue(detail.due_at) }}
+                <span
+                  v-if="detail.due_at && detail.status !== 'closed' && detail.status !== 'deleted'"
+                  class="task-detail__countdown"
+                  :class="`task-detail__countdown--${deadlineTone(detail.due_at)}`"
+                >
+                  {{ deadlineLabel(detail.due_at) }}
+                </span>
+              </dd>
             </div>
           </dl>
 
@@ -767,6 +793,13 @@ function openChild(id: number): void {
   flex-direction: column;
   gap: 14px;
 }
+.task-detail--overdue {
+  padding: 12px;
+  margin: -4px;
+  border-radius: 10px;
+  background: var(--app-danger-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-danger) 28%, transparent);
+}
 .task-detail h4 {
   margin: 0 0 6px;
   font-size: 0.88rem;
@@ -784,6 +817,28 @@ function openChild(id: number): void {
 .task-detail__meta dd {
   margin: 2px 0 0;
   font-size: 0.88rem;
+  font-weight: 600;
+}
+.task-detail__due {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.task-detail__due--overdue {
+  color: var(--app-danger);
+}
+.task-detail__countdown {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.task-detail__countdown--overdue {
+  color: var(--app-danger);
+}
+.task-detail__countdown--soon {
+  color: var(--app-warning);
+}
+.task-detail__countdown--ok {
+  color: var(--app-text-muted);
   font-weight: 600;
 }
 .task-detail__collab {
