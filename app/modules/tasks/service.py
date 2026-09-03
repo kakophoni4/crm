@@ -1594,44 +1594,25 @@ class TaskService:
         due_soon = overdue = unacked_fns = client_due = 0
 
         if role in {UserRole.USER, UserRole.GROUP_SENIOR, UserRole.SENIOR, UserRole.LAWYER}:
-            mine = await self._repo.list_for_assignee(actor.id, include_closed=False)
-            for task in mine:
-                is_overdue, is_due_soon = self._task_flags(task, now)
-                if is_overdue:
-                    overdue += 1
-                elif is_due_soon:
-                    due_soon += 1
-                if (
-                    task.status == TaskStatus.NEW.value
-                    and (getattr(task, "source", None) or "") == "fns_requirement"
-                ):
-                    unacked_fns += 1
-
-        if role in {UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT, UserRole.ADMIN}:
-            if role == UserRole.ACCOUNTANT:
-                rows = await self._repo.list_for_assignee(actor.id, include_closed=False)
-            else:
-                # chief/admin: all active client_request + own
-                result = await self._session.execute(
-                    select(DepartmentTask).where(
-                        DepartmentTask.status.in_(
-                            [TaskStatus.NEW.value, TaskStatus.OPEN.value],
-                        ),
-                    ).limit(500),
-                )
-                rows = list(result.scalars().all())
-            for task in rows:
-                is_overdue, is_due_soon = self._task_flags(task, now)
-                if (getattr(task, "source", None) or "") == "client_request" or role == UserRole.ACCOUNTANT:
-                    if is_overdue or is_due_soon:
-                        client_due += 1
-                if is_overdue:
-                    overdue += 1
-                elif is_due_soon:
-                    due_soon += 1
+            overdue, due_soon, unacked_fns, client_due = await self._repo.count_alert_flags(
+                now=now,
+                due_soon_window=DUE_SOON_WINDOW,
+                user_id=actor.id,
+            )
+        elif role == UserRole.ACCOUNTANT:
+            overdue, due_soon, unacked_fns, client_due = await self._repo.count_alert_flags(
+                now=now,
+                due_soon_window=DUE_SOON_WINDOW,
+                user_id=actor.id,
+            )
+        elif role in {UserRole.CHIEF_ACCOUNTANT, UserRole.ADMIN}:
+            overdue, due_soon, unacked_fns, client_due = await self._repo.count_alert_flags(
+                now=now,
+                due_soon_window=DUE_SOON_WINDOW,
+                user_id=None,
+            )
 
         blink = bool(unacked_fns or client_due or overdue or due_soon)
-        # Managers blink primarily on unacked FNS; accountants/admin on due client/tasks
         if role in {UserRole.USER, UserRole.GROUP_SENIOR}:
             blink = bool(unacked_fns or overdue or due_soon)
         elif role in {UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT, UserRole.ADMIN}:

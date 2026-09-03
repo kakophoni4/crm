@@ -308,16 +308,24 @@ class AccountingService:
             "q": q,
             "period_code": period_code,
         }
-        rows = await self._repo.list_order_lines_all(**filters)
-        unit_cache: dict[str, OptUnit | None] = {}
+        inns = await self._repo.list_order_supplier_inns(**filters)
+        units_by_inn = await self._repo.get_units_by_inns(inns)
+        inns.sort(
+            key=lambda inn: (units_by_inn[inn].name or inn if inn in units_by_inn else inn).casefold(),
+        )
+        total = len(inns)
+        page_inns = inns[offset : offset + limit]
+        if not page_inns:
+            return AccountingUnitOrdersResponse(items=[], total=total, limit=limit, offset=offset)
+        page_filters = {**filters, "supplier_inns": set(page_inns), "supplier_inn": None}
+        rows = await self._repo.list_order_lines_all(**page_filters)
+        unit_cache: dict[str, OptUnit | None] = {inn: units_by_inn.get(inn) for inn in page_inns}
         groups: dict[str, dict[int, AccountingUnitOrderItem]] = {}
         unit_meta: dict[str, AccountingUnitResponse] = {}
 
         for line, order, _lead, contact_name, manager_id, manager_name in rows:
             inn = line.supplier_inn
-            if inn not in unit_cache:
-                unit_cache[inn] = await self._repo.get_unit_by_inn(inn)
-            unit_row = unit_cache[inn]
+            unit_row = unit_cache.get(inn)
             if inn not in unit_meta:
                 unit_meta[inn] = AccountingUnitResponse(
                     id=unit_row.id if unit_row else 0,
@@ -392,10 +400,7 @@ class AccountingService:
                 ),
             )
         grouped.sort(key=lambda row: (row.unit.name or row.unit.inn).casefold())
-
-        total = len(grouped)
-        page = grouped[offset : offset + limit]
-        return AccountingUnitOrdersResponse(items=page, total=total, limit=limit, offset=offset)
+        return AccountingUnitOrdersResponse(items=grouped, total=total, limit=limit, offset=offset)
 
     async def list_order_lines(
         self,

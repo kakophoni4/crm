@@ -165,6 +165,23 @@ class AccountingRepository:
         result = await self._session.execute(self._order_lines_query(**filters))
         return list(result.all())
 
+    async def list_order_supplier_inns(self, **filters: Any) -> list[str]:
+        stmt = (
+            self._order_lines_query(**filters)
+            .with_only_columns(LeadOptOrderLine.supplier_inn, maintain_column_froms=True)
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        return [str(inn) for (inn,) in result.all() if inn]
+
+    async def get_units_by_inns(self, inns: list[str]) -> dict[str, OptUnit]:
+        if not inns:
+            return {}
+        result = await self._session.execute(
+            select(OptUnit).where(OptUnit.inn.in_(inns), OptUnit.is_active.is_(True)),
+        )
+        return {unit.inn: unit for unit in result.scalars().all()}
+
     async def list_unit_owner_rows(
         self,
         *,

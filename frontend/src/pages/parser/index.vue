@@ -6,6 +6,7 @@ import {
   NEmpty,
   NInput,
   NModal,
+  NPagination,
   NSelect,
   NSpin,
   NTabPane,
@@ -30,6 +31,7 @@ import {
   type LavokParserLot,
 } from '@/features/lavok-parser/types'
 import { AppError } from '@/shared/api/http'
+import { VIRTUAL_DATA_TABLE_MAX_HEIGHT, VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
 import AppCard from '@/shared/ui/AppCard.vue'
 
 const message = useMessage()
@@ -46,6 +48,8 @@ const appliedSearch = ref('')
 const selected = ref<LavokParserLot | null>(null)
 const activeTab = ref<'all' | 'favorites'>('all')
 const statusFilter = ref<string | null>(null)
+const parserPage = ref(1)
+const parserPageSize = 80
 
 const dateOptions = computed<SelectOption[]>(() =>
   sheetDates.value.map((value) => ({ label: formatSheetDate(value), value })),
@@ -114,7 +118,8 @@ async function load(): Promise<void> {
       q: search.value.trim() || undefined,
       mark: activeTab.value === 'favorites' ? statusFilter.value : undefined,
       favorite: activeTab.value === 'favorites',
-      limit: 500,
+      limit: parserPageSize,
+      offset: (parserPage.value - 1) * parserPageSize,
     })
     rows.value = data.items
     total.value = data.total
@@ -131,6 +136,16 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+function resetAndLoad(): void {
+  parserPage.value = 1
+  void load()
+}
+
+function onParserPage(page: number): void {
+  parserPage.value = page
+  void load()
 }
 
 async function onIngest({ file, onFinish, onError }: UploadCustomRequestOptions): Promise<void> {
@@ -338,7 +353,7 @@ onMounted(() => {
         >
           <NButton type="primary" :loading="ingesting">Загрузить xlsx</NButton>
         </NUpload>
-        <NButton :loading="loading" @click="load">
+        <NButton :loading="loading" @click="resetAndLoad">
           <template #icon><RefreshCw :size="16" /></template>
           Обновить
         </NButton>
@@ -346,7 +361,7 @@ onMounted(() => {
     </header>
 
     <AppCard>
-      <NTabs v-model:value="activeTab" type="line" @update:value="load">
+      <NTabs v-model:value="activeTab" type="line" @update:value="resetAndLoad">
         <NTabPane name="all" tab="Все лавки" />
         <NTabPane name="favorites" tab="Избранное" />
       </NTabs>
@@ -357,7 +372,7 @@ onMounted(() => {
           :options="dateOptions"
           placeholder="Дата листа"
           style="min-width: 180px"
-          @update:value="load"
+          @update:value="resetAndLoad"
         />
         <NSelect
           v-if="activeTab === 'favorites'"
@@ -366,16 +381,16 @@ onMounted(() => {
           clearable
           placeholder="Статус"
           style="min-width: 160px"
-          @update:value="load"
+          @update:value="resetAndLoad"
         />
         <NInput
           v-model:value="search"
           clearable
           placeholder="ИНН или название"
           style="min-width: 240px"
-          @keyup.enter="load"
+          @keyup.enter="resetAndLoad"
         />
-        <NButton @click="load">Найти</NButton>
+        <NButton @click="resetAndLoad">Найти</NButton>
         <NTag :bordered="false">{{ total }} строк</NTag>
         <NTag v-if="searchingAllDays" type="info" :bordered="false">по всем дням</NTag>
         <span class="parser-page__hint">
@@ -398,12 +413,23 @@ onMounted(() => {
           :bordered="false"
           :single-line="false"
           size="small"
+          virtual-scroll
+          :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
+          :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           :scroll-x="searchingAllDays ? 1210 : 1100"
           :row-props="(row: LavokParserLot) => ({
             style: 'cursor: pointer',
             onClick: () => openLot(row),
           })"
         />
+        <div v-if="total > parserPageSize" style="display: flex; justify-content: flex-end; margin-top: 12px">
+          <NPagination
+            :page="parserPage"
+            :page-size="parserPageSize"
+            :item-count="total"
+            @update:page="onParserPage"
+          />
+        </div>
       </NSpin>
     </AppCard>
 

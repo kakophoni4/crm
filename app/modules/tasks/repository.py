@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.department_task import DepartmentTask
@@ -199,6 +199,50 @@ class TaskRepository:
             .order_by(DepartmentTask.created_at.desc()),
         )
         return list(result.scalars().all())
+
+    def _related_to_user(self, user_id: int):
+        collab_ids = select(DepartmentTaskCollaborator.task_id).where(
+            DepartmentTaskCollaborator.user_id == user_id,
+        )
+        return or_(
+            DepartmentTask.assignee_id == user_id,
+            DepartmentTask.created_by == user_id,
+            DepartmentTask.id.in_(collab_ids),
+        )
+
+    async def count_alert_flags(
+        self,
+        *,
+        now: datetime,
+        due_soon_window: timedelta,
+        user_id: int | None = None,
+    ) -> tuple[int, int, int, int]:
+        active = [TaskStatus.NEW.value, TaskStatus.OPEN.value]
+        base = [DepartmentTask.status.in_(active)]
+        if user_id is not None:
+            base.append(self._related_to_user(user_id))
+
+        async def _count(*extra: object) -> int:
+            stmt = select(func.count()).select_from(DepartmentTask).where(*base, *extra)
+            result = await self._session.execute(stmt)
+            return int(result.scalar_one() or 0)
+
+        overdue = await _count(DepartmentTask.due_at.is_not(None), DepartmentTask.due_at < now)
+        due_soon = await _count(
+            DepartmentTask.due_at.is_not(None),
+            DepartmentTask.due_at >= now,
+            DepartmentTask.due_at <= now + due_soon_window,
+        )
+        unacked_fns = await _count(
+            DepartmentTask.status == TaskStatus.NEW.value,
+            DepartmentTask.source == "fns_requirement",
+        )
+        client_due = await _count(
+            DepartmentTask.source == "client_request",
+            DepartmentTask.due_at.is_not(None),
+            or_(DepartmentTask.due_at < now, DepartmentTask.due_at.between(now, now + due_soon_window)),
+        )
+        return overdue, due_soon, unacked_fns, client_due
 
     async def list_due_for_reminder(
         self,

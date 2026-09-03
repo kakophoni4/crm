@@ -1273,6 +1273,18 @@ class StorageService:
                 if code:
                     period_codes.add(str(code).strip())
 
+        def _period_key_early(code: str) -> tuple[int, int]:
+            parts = str(code).strip().split("/")
+            if len(parts) != 2:
+                return (0, 0)
+            try:
+                quarter, yy = int(parts[0]), int(parts[1])
+            except ValueError:
+                return (0, 0)
+            return (2000 + yy, quarter)
+
+        sales_period_codes = sorted(period_codes, key=_period_key_early, reverse=True)[:8]
+
         from app.modules.accounting.sales_books import normalize_inn
         from app.modules.db.models.opt_unit import OptUnit
         from app.modules.storage.schemas import (
@@ -1289,7 +1301,7 @@ class StorageService:
             str(u.inn): (u.name or str(u.inn)) for u in units_result.scalars().all()
         }
 
-        for code in period_codes:
+        for code in sales_period_codes:
             pairs = await pairs_for_period_orders(
                 self._session,
                 period_code=code,

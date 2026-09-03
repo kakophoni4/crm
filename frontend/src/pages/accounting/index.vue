@@ -73,7 +73,7 @@ import {
 import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
-import { peekCached, setCached } from '@/shared/lib/stale-cache'
+import { peekCached, setCached, getCached } from '@/shared/lib/stale-cache'
 import AppCard from '@/shared/ui/AppCard.vue'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 import { useAuthStore } from '@/shared/store/auth'
@@ -662,7 +662,16 @@ function requirementsCacheKey(): string {
   ].join(':')
 }
 
-async function loadOrders(): Promise<void> {
+async function loadOrders(opts?: { force?: boolean }): Promise<void> {
+  const cacheKey = ordersCacheKey()
+  if (!opts?.force) {
+    const fresh = getCached<{ items: AccountingUnitOrderGroup[]; total: number }>(cacheKey, 15_000)
+    if (fresh) {
+      orderGroups.value = fresh.items
+      ordersTotal.value = fresh.total
+      return
+    }
+  }
   if (!orderGroups.value.length) ordersLoading.value = true
   try {
     const data = await listAccountingOrders({
@@ -962,9 +971,12 @@ async function loadUnitOwners(): Promise<void> {
 }
 
 async function refreshAll(): Promise<void> {
+  if (activeTab.value === 'orders') {
+    await Promise.all([loadUnits(), loadOrders({ force: true })])
+    return
+  }
   await loadUnits()
-  if (activeTab.value === 'orders') await loadOrders()
-  else if (activeTab.value === 'requirements') await loadRequirements()
+  if (activeTab.value === 'requirements') await loadRequirements()
   else await loadUnitOwners()
 }
 

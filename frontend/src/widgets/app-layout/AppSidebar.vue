@@ -24,7 +24,6 @@ import { NDrawer, NDrawerContent, NIcon, NLayoutSider, NMenu, type MenuOption } 
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { fetchRequirementsDueSummary } from '@/features/accounting/api'
 import { fetchTaskAlerts } from '@/features/tasks/api'
 import { listTelephonyAccounts } from '@/features/telephony/api'
 import { useAuthStore } from '@/shared/store/auth'
@@ -71,6 +70,7 @@ const accountingBlink = ref(false)
 let alertsTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshAlerts(): Promise<void> {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
   const tasksP = auth.user?.permissions?.includes('tasks.read')
     ? fetchTaskAlerts()
         .then((alerts) => {
@@ -82,18 +82,7 @@ async function refreshAlerts(): Promise<void> {
     : Promise.resolve().then(() => {
         tasksBlink.value = false
       })
-  const accountingP = auth.canAccounting
-    ? fetchRequirementsDueSummary()
-        .then((due) => {
-          accountingBlink.value = due.overdue > 0 || due.due_soon > 0
-        })
-        .catch(() => {
-          accountingBlink.value = false
-        })
-    : Promise.resolve().then(() => {
-        accountingBlink.value = false
-      })
-  await Promise.all([tasksP, accountingP])
+  await tasksP
 }
 
 function blinkIcon(icon: unknown, blink: boolean) {
@@ -434,7 +423,7 @@ onMounted(() => {
   void refreshAlerts()
   alertsTimer = setInterval(() => {
     void refreshAlerts()
-  }, 60000)
+  }, 90_000)
   window.addEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
 })
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useWindowSize } from '@vueuse/core'
 import { NLayout, NLayoutContent } from 'naive-ui'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, KeepAlive } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import GlobalSearchModal from '@/features/search/GlobalSearchModal.vue'
@@ -86,7 +86,12 @@ function toggleSidebar(): void {
         :class="{ 'app-layout__content--fill': fillViewport }"
         :content-style="contentStyle"
       >
-        <RouterView />
+        <RouterView v-slot="{ Component, route: viewRoute }">
+          <KeepAlive v-if="viewRoute.name !== 'chats'" :max="8">
+            <component :is="Component" />
+          </KeepAlive>
+          <component v-else :is="Component" />
+        </RouterView>
       </NLayoutContent>
     </NLayout>
     <GlobalSearchModal v-if="!phoneChatsOnly" v-model:show="globalSearchOpen" />
