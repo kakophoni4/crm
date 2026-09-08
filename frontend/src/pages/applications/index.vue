@@ -22,7 +22,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { listGroups, type Group } from '@/features/admin/api'
 import {
   listOptOrderManagers,
-  listOptOrders,
   listOptOrdersRegistry,
   listOptPaymentRegister,
   patchOptOrderPeriod,
@@ -400,24 +399,6 @@ function openDetail(row: OptOrderRegistryItem): void {
       ...(activeTab.value === 'benik' ? { tab: 'benik' } : {}),
     },
   })
-}
-
-async function openPaymentDetail(row: OptPaymentLedgerItem): Promise<void> {
-  selectedPayment.value = row
-  paymentDetailOpen.value = true
-  paymentHistory.value = []
-  paymentHistoryLoading.value = true
-  try {
-    const orders = await listOptOrders(row.lead_id)
-    const order = orders.find((item) => item.id === row.order_id) ?? null
-    paymentHistory.value = [...(order?.payments ?? [])].sort(
-      (a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime(),
-    )
-  } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить историю оплат')
-  } finally {
-    paymentHistoryLoading.value = false
-  }
 }
 
 function resolvedOrdersPaymentStatus(): string | undefined {
