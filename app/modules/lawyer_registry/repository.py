@@ -60,8 +60,17 @@ class LawyerRegistryRepository:
         pinned_only: bool = False,
         include_hidden: bool = False,
         hidden_only: bool = False,
+        accountant_user_id: int | None = None,
     ) -> list[LawyerShop]:
         stmt = select(LawyerShop)
+        if accountant_user_id is not None:
+            from app.modules.db.models.opt_unit import OptUnit
+            from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
+
+            assigned = select(OptUnit.inn).join(
+                OptAccountantUnitAssignment, OptAccountantUnitAssignment.unit_id == OptUnit.id,
+            ).where(OptAccountantUnitAssignment.user_id == accountant_user_id)
+            stmt = stmt.where(LawyerShop.inn.in_(assigned))
         if director_id is not None:
             stmt = stmt.where(LawyerShop.director_id == director_id)
         if kind:

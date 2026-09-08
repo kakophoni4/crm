@@ -23,8 +23,8 @@ from app.modules.lawyer_registry.schemas import (
 from app.modules.lawyer_registry.service import LawyerRegistryService
 from app.modules.rbac.permissions import Permission
 from app.shared.db import get_db
-from app.shared.exceptions import ValidationError
-from app.shared.security.permissions import requires_permission
+from app.shared.exceptions import NotFound, ValidationError
+from app.shared.security.permissions import has_permission, requires_permission
 
 router = APIRouter(prefix="/api/v1/lawyer-registry", tags=["lawyer-registry"])
 
@@ -48,11 +48,12 @@ async def list_registry(
     dirovod: Annotated[str | None, Query(max_length=128)] = None,
     include_hidden: bool = False,
 ) -> LawyerDirectorListResponse:
-    _ = actor
-    # Ticket fields are displayed in this registry and in accounting assignments.
-    # The service throttles the external call, so opening the page stays responsive.
-    await service.sync_from_tickets()
-    await db.commit()
+    if not has_permission(actor.role, Permission.PARSER_READ):
+        return await service.accountant_tree(
+            actor, q=q, kind=kind, company_status=company_status,
+            unreliable=unreliable, zsk=zsk, ecsp_status=ecsp_status,
+            manager=manager, dirovod=dirovod, include_hidden=include_hidden,
+        )
     return await service.list_tree(
         q=q,
         kind=kind,
@@ -71,7 +72,8 @@ async def list_alerts(
     actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ, Permission.ACCOUNTING_READ))],
     service: Annotated[LawyerRegistryService, Depends(_service)],
 ) -> LawyerAlertListResponse:
-    _ = actor
+    if not has_permission(actor.role, Permission.PARSER_READ):
+        return LawyerAlertListResponse(items=[], unread=0)
     return await service.list_alerts()
 
 
@@ -122,7 +124,11 @@ async def get_director(
     actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ, Permission.ACCOUNTING_READ))],
     service: Annotated[LawyerRegistryService, Depends(_service)],
 ) -> LawyerDirectorOut:
-    _ = actor
+    if not has_permission(actor.role, Permission.PARSER_READ):
+        tree = await service.accountant_tree(actor, director_id=director_id, include_hidden=True)
+        if not tree.items:
+            raise NotFound(message="Директор не найден среди назначенных вам лавок")
+        return tree.items[0]
     return await service.get_director(director_id)
 
 
@@ -189,6 +195,9 @@ async def patch_shop(
     service: Annotated[LawyerRegistryService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> LawyerShopOut:
+    accounting_fields = {"received_at", "company_status", "treatment_status", "unreliable", "zsk", "ecsp_status", "banks", "accounts_status", "registered_at", "fns", "sbis", "edo_id", "edo_until", "purchased_at", "failed_at", "failure_reason", "accountant"}
+    if body.model_fields_set & accounting_fields:
+        raise ValidationError(message="Эти поля заполняются в разделе «Бухгалтерия → Лавки»")
     result = await service.patch_shop(actor, shop_id, body)
     await db.commit()
     return result

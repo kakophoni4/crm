@@ -186,6 +186,7 @@ class AccountingRepository:
     async def list_unit_owner_rows(
         self,
         *,
+        accountant_user_id: int | None = None,
         active_only: bool = False,
     ) -> list[tuple[OptUnit, int | None, str | None]]:
         stmt = (
@@ -198,6 +199,8 @@ class AccountingRepository:
         )
         if active_only:
             stmt = stmt.where(OptUnit.is_active.is_(True))
+        if accountant_user_id is not None:
+            stmt = stmt.where(OptAccountantUnitAssignment.user_id == accountant_user_id)
         stmt = stmt.order_by(OptUnit.is_active.desc(), OptUnit.name, OptUnit.inn)
         result = await self._session.execute(stmt)
         return list(result.all())

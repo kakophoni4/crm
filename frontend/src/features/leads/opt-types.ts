@@ -75,6 +75,7 @@ export interface OptAttachmentProbeResult {
 export type OptVatRatePercent = 20 | 22
 
 export interface OptOrder {
+  buyer_okved?: string | null
   id: number
   lead_id: number
   order_no: number
@@ -228,6 +229,9 @@ export interface OptPaymentRegisterItem {
 export interface OptPaymentRegisterListResponse {
   items: OptPaymentRegisterItem[]
   total: number
+  total_volume_sum: number
+  commission_due_sum: number
+  amount_paid_sum: number
 }
 
 export interface OptSync1cActionItem {

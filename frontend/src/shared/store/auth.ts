@@ -1,3 +1,4 @@
+import { invalidateCachedPrefix } from '@/shared/lib/stale-cache'
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -130,6 +131,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function clearSession(): void {
+    invalidateCachedPrefix('')
     accessToken.value = null
     refreshToken.value = null
     user.value = null

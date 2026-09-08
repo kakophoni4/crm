@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
 import { UserPlus } from 'lucide-vue-next'
 import type { DataTableColumns, SelectOption } from 'naive-ui'
 import {
@@ -16,7 +17,7 @@ import { useRouter } from 'vue-router'
 
 import type { Contact, ContactStatus } from '@/entities/contact/types'
 import { CONTACT_STATUS_FILTER_OPTIONS, contactStatusLabel } from '@/entities/contact/types'
-import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
+const CreateContactDialog = defineAsyncComponent(() => import('@/features/contacts/CreateContactDialog.vue'))
 import { listContacts } from '@/features/contacts/api'
 import { AppError } from '@/shared/api/http'
 import {

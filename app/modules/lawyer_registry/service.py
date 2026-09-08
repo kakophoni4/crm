@@ -65,6 +65,7 @@ class LawyerRegistryService:
             director_name=director_name,
             kind=shop.kind,
             registered_at=shop.registered_at,
+            received_at=shop.received_at,
             planned_payout=_money(shop.planned_payout),
             company_status=shop.company_status,
             sale_priority=shop.sale_priority,
@@ -268,6 +269,34 @@ class LawyerRegistryService:
             ],
         )
 
+    async def accountant_tree(
+        self, actor: User, *, director_id: int | None = None, **filters: Any,
+    ) -> LawyerDirectorListResponse:
+        # Apply assignment scope in SQL, including when an INN or director ID is
+        # supplied directly. Never serialize the director's other shops or payments.
+        shops = await self._repo.list_shops(
+            accountant_user_id=actor.id, director_id=director_id, **filters,
+        )
+        grouped: dict[int, list[LawyerShop]] = {}
+        orphans = []
+        for shop in shops:
+            if shop.director_id is None:
+                orphans.append(self._shop_out(shop))
+            else:
+                grouped.setdefault(shop.director_id, []).append(shop)
+        directors = (await self._session.execute(
+            select(LawyerDirector).where(LawyerDirector.id.in_(grouped)),
+        )).scalars().all() if grouped else []
+        items = [LawyerDirectorOut(
+            id=director.id, full_name=director.full_name,
+            shop_count=len(grouped[director.id]),
+            shops=[self._shop_out(shop, director.full_name) for shop in grouped[director.id]],
+        ) for director in directors]
+        return LawyerDirectorListResponse(
+            items=items, orphan_shops=orphans, pinned_shops=[],
+            total_directors=len(items), total_shops=len(shops), unread_alerts=0,
+        )
+
     async def create_director(
         self,
         actor: User,
@@ -340,8 +369,8 @@ class LawyerRegistryService:
         data = body.model_dump(exclude_unset=True)
         pinned = data.pop("pinned", None)
         hidden = data.pop("hidden", None)
-        director_name = data.pop("director_name", None)
-        if director_name:
+        if "director_name" in data:
+            director_name = data.pop("director_name")
             director = await self._ensure_director(director_name, actor_id=actor.id)
             shop.director_id = director.id if director else None
         if "director_id" in data:
@@ -449,6 +478,7 @@ class LawyerRegistryService:
                     "name",
                     "kind",
                     "registered_at",
+                    "received_at",
                     "planned_payout",
                     "company_status",
                     "sale_priority",

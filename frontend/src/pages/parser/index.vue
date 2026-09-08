@@ -393,15 +393,7 @@ onMounted(() => {
         <NButton @click="resetAndLoad">Найти</NButton>
         <NTag :bordered="false">{{ total }} строк</NTag>
         <NTag v-if="searchingAllDays" type="info" :bordered="false">по всем дням</NTag>
-        <span class="parser-page__hint">
-          {{
-            activeTab === 'favorites'
-              ? 'Статусы: новая, смотрю, беру. Можно отфильтровать сверху.'
-              : searchingAllDays
-                ? 'Поиск идёт по всем датам листов, не только по выбранному дню.'
-                : 'Поиск по названию или ИНН смотрит все дни. Без поиска — выбранная дата.'
-          }}
-        </span>
+
       </div>
       <NSpin :show="loading && rows.length === 0">
         <NEmpty v-if="!loading && rows.length === 0" description="Нет строк парсера" />

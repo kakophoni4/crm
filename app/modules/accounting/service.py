@@ -233,6 +233,9 @@ class AccountingService:
             unit.volume_limit = body.volume_limit
         if body.name is not None:
             unit.name = body.name
+            from sqlalchemy import update
+            from app.modules.db.models.lawyer_director import LawyerShop
+            await self._session.execute(update(LawyerShop).where(LawyerShop.inn == unit.inn).values(name=body.name))
         if body.is_active is not None:
             unit.is_active = body.is_active
         if body.category_code is not None:
@@ -821,10 +824,9 @@ class AccountingService:
         )
 
     async def list_unit_owners(self, actor: User) -> AccountingUnitOwnerListResponse:
-        if not self._is_chief(actor):
-            raise PermissionDenied()
-        accountants = await self._repo.list_accountant_users()
-        rows = await self._repo.list_unit_owner_rows()
+        is_chief = self._is_chief(actor)
+        accountants = await self._repo.list_accountant_users() if is_chief else []
+        rows = await self._repo.list_unit_owner_rows(accountant_user_id=None if is_chief else actor.id)
         periods_by_inn = await self._repo.list_period_codes_by_inns(
             [unit.inn for unit, _, _ in rows],
         )
@@ -898,6 +900,9 @@ class AccountingService:
                 raise ValidationError(message="Бухгалтер не найден")
             accountant_name = target.full_name
         await self._repo.set_unit_owner(unit_id, accountant_user_id, assigned_by=actor.id)
+        from sqlalchemy import update
+        from app.modules.db.models.lawyer_director import LawyerShop
+        await self._session.execute(update(LawyerShop).where(LawyerShop.inn == unit.inn).values(accountant=accountant_name))
         await self._session.commit()
         periods_by_inn = await self._repo.list_period_codes_by_inns([unit.inn])
         return AccountingUnitOwnerRow(
@@ -937,7 +942,19 @@ class AccountingService:
                 message="Неизвестные лавки",
                 details={"unit_ids": missing},
             )
+        old_ids = await self._repo.list_assigned_unit_ids(user_id)
         await self._repo.replace_user_assignments(user_id, unique_ids, assigned_by=actor.id)
+        from sqlalchemy import select, update
+        from app.modules.db.models.lawyer_director import LawyerShop
+        from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
+        from app.modules.db.models.opt_unit import OptUnit
+        owner_name = (select(User.full_name)
+            .join(OptAccountantUnitAssignment, OptAccountantUnitAssignment.user_id == User.id)
+            .join(OptUnit, OptUnit.id == OptAccountantUnitAssignment.unit_id)
+            .where(OptUnit.inn == LawyerShop.inn).order_by(User.id).limit(1).scalar_subquery())
+        await self._session.execute(update(LawyerShop)
+            .where(LawyerShop.inn.in_(select(OptUnit.inn).where(OptUnit.id.in_(set(old_ids) | set(unique_ids)))))
+            .values(accountant=owner_name).execution_options(synchronize_session=False))
         await self._session.commit()
         return AccountingAssignmentItem(
             user_id=target.id,

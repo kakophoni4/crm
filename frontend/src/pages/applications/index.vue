@@ -44,6 +44,7 @@ import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order
 import { VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
 import { AppError, http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
+import PaymentRegisterDetail from '@/features/leads/PaymentRegisterDetail.vue'
 import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
 type TabName = 'orders' | 'payments' | 'benik'
@@ -65,39 +66,17 @@ const totalVolumeSum = ref(0)
 const commissionDueSum = ref(0)
 const amountPaidSum = ref(0)
 
-const paymentRegisterTotals = computed(() =>
-  paymentRegisterItems.value.reduce(
-    (totals, row) => ({
-      volume: totals.volume + Number(row.volume || 0),
-      due: totals.due + Number(row.due_amount || 0),
-      paid: totals.paid + Number(row.paid_amount || 0),
-      remaining: totals.remaining + Number(row.remaining_amount || 0),
-    }),
-    { volume: 0, due: 0, paid: 0, remaining: 0 },
-  ),
-)
+const paymentRegisterTotals = computed(() => ({
+  volume: totalVolumeSum.value, due: commissionDueSum.value,
+  paid: amountPaidSum.value, remaining: Math.max(0, commissionDueSum.value - amountPaidSum.value),
+}))
 
-const selectedPaymentRegisterShops = computed(() => {
-  const lines = selectedPaymentRegister.value?.lines ?? []
-  const grouped = new Map<string, { name: string; inn: string; category: string; lines: number; volume: number; due: number; beneficiary: number; actual: number; planned: number }>()
-  for (const line of lines) {
-    const key = line.supplier_inn || String(line.id)
-    const current = grouped.get(key) ?? {
-      name: line.supplier_name || `ИНН ${line.supplier_inn}`,
-      inn: line.supplier_inn,
-      category: line.category_code || 'категория не указана',
-      lines: 0, volume: 0, due: 0, beneficiary: 0, actual: 0, planned: 0,
-    }
-    current.lines += 1
-    current.volume += Number(line.volume || 0)
-    current.due += Number(line.due_amount || 0)
-    current.beneficiary += Number(line.beneficiary_amount || 0)
-    current.actual += Number(line.actual_margin || 0)
-    current.planned += Number(line.planned_margin || 0)
-    grouped.set(key, current)
-  }
-  return [...grouped.values()]
-})
+async function reloadSettlement(): Promise<void> {
+  const selectedId = selectedPaymentRegister.value?.id
+  await load()
+  selectedPaymentRegister.value = paymentRegisterItems.value.find((item) => item.id === selectedId) ?? null
+  if (!selectedPaymentRegister.value) paymentRegisterDetailOpen.value = false
+}
 
 const totalsScopeHint = computed(() => {
   if (auth.isAdmin) return 'по всем отделам'
@@ -162,8 +141,8 @@ const selectedPaymentDocs = computed(() => {
 const paymentStatusOptions = computed(() => {
   if (activeTab.value === 'payments') {
     return [
-      { label: 'Все проведённые', value: 'all' },
-      { label: 'Частично', value: 'partial' },
+      { label: 'Все заявки', value: 'all' },
+      { label: 'Не оплачены полностью', value: 'unpaid' },
       { label: 'Оплаченные', value: 'paid' },
     ]
   }
@@ -377,7 +356,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
 const paymentRegisterColumns = computed<DataTableColumns<OptPaymentRegisterItem>>(() => [
   { title: 'Сделка', key: 'order', width: 116, render: (r) => `№${r.lead_id} / ${r.order_no}` },
   { title: 'Клиент', key: 'client', minWidth: 190, ellipsis: { tooltip: true }, render: (r) => r.client_name || r.client_shop_name || `ИНН ${r.client_inn}` },
-  { title: 'Лавок', key: 'shops', width: 90, render: (r) => `${r.lines.length} шт.` },
+  { title: 'Лавок', key: 'shops', width: 90, render: (r) => `${new Set(r.lines.map((line) => line.supplier_inn)).size}` },
   { title: 'Период', key: 'period', width: 110, render: (r) => formatOptPeriodLabel(r.period_code) },
   { title: 'Объём', key: 'volume', width: 130, align: 'right', render: (r) => `${formatMoney(r.volume)} ₽` },
   { title: 'К оплате', key: 'due', width: 118, align: 'right', render: (r) => `${formatRubles(r.due_amount)} ₽` },
@@ -513,7 +492,9 @@ async function removeBlacklist(id: number): Promise<void> {
   }
 }
 
+let loadRequest = 0
 async function load(): Promise<void> {
+    const request = ++loadRequest
     const hasRows = items.value.length > 0 || paymentItems.value.length > 0 || paymentRegisterItems.value.length > 0
   if (!hasRows) loading.value = true
   try {
@@ -528,20 +509,23 @@ async function load(): Promise<void> {
     if (activeTab.value === 'payments') {
       const data = await listOptPaymentRegister({
         ...common,
+        payment_status: paymentStatusFilter.value === 'paid' || paymentStatusFilter.value === 'unpaid' ? paymentStatusFilter.value : undefined,
       })
+      if (request !== loadRequest) return
       paymentRegisterItems.value = data.items
       paymentItems.value = []
       items.value = []
       total.value = data.total
-      totalVolumeSum.value = 0
-      commissionDueSum.value = 0
-      amountPaidSum.value = 0
+      totalVolumeSum.value = Number(data.total_volume_sum)
+      commissionDueSum.value = Number(data.commission_due_sum)
+      amountPaidSum.value = Number(data.amount_paid_sum)
     } else {
       const data = await listOptOrdersRegistry({
         ...common,
         payment_status: resolvedOrdersPaymentStatus(),
         kind: registryKind(),
       })
+      if (request !== loadRequest) return
       items.value = data.items
       paymentItems.value = []
       paymentRegisterItems.value = []
@@ -551,6 +535,7 @@ async function load(): Promise<void> {
       amountPaidSum.value = Number(data.amount_paid_sum ?? 0)
     }
   } catch (err) {
+    if (request !== loadRequest) return
     message.error(
       err instanceof AppError
         ? err.message
@@ -569,7 +554,7 @@ async function load(): Promise<void> {
       amountPaidSum.value = 0
     }
   } finally {
-    loading.value = false
+    if (request === loadRequest) loading.value = false
   }
 }
 
@@ -622,7 +607,7 @@ function onTabChange(name: string | number): void {
   if (name === 'payments') activeTab.value = 'payments'
   else if (name === 'benik') activeTab.value = 'benik'
   else activeTab.value = 'orders'
-  if (activeTab.value === 'payments' && paymentStatusFilter.value === 'unpaid') {
+  if (activeTab.value === 'payments' && paymentStatusFilter.value === 'partial') {
     paymentStatusFilter.value = null
   }
   page.value = 1
@@ -677,12 +662,7 @@ onMounted(() => {
           <ClipboardList :size="22" />
           Заявки ОПТ
         </h1>
-        <p class="applications-page__subtitle">
-          <template v-if="auth.isAdmin">Все данные по всем отделам</template>
-          <template v-else-if="auth.isSenior">Данные вашего отдела</template>
-          <template v-else-if="auth.isGroupSenior">Данные ваших групп</template>
-          <template v-else>Только ваши заявки</template>
-        </p>
+
       </div>
       <div class="applications-page__header-actions">
         <NButton size="small" secondary type="error" @click="openBlacklist">Чёрный список</NButton>
@@ -769,7 +749,7 @@ onMounted(() => {
       </span>
     </div>
     <div v-else-if="activeTab === 'payments' && paymentRegisterItems.length" class="applications-page__totals">
-      <span class="applications-page__totals-label">На этой странице · строк: {{ total }}</span>
+      <span class="applications-page__totals-label">По выбранным фильтрам · заявок: {{ total }}</span>
       <span class="applications-page__totals-metric"><span class="applications-page__totals-key">Объём</span><strong>{{ formatMoney(paymentRegisterTotals.volume) }} ₽</strong></span>
       <span class="applications-page__totals-metric"><span class="applications-page__totals-key">К оплате</span><strong>{{ formatRubles(paymentRegisterTotals.due) }} ₽</strong></span>
       <span class="applications-page__totals-metric"><span class="applications-page__totals-key">Оплачено</span><strong>{{ formatRubles(paymentRegisterTotals.paid) }} ₽</strong></span>
@@ -833,29 +813,8 @@ onMounted(() => {
       :style="{ width: 'min(760px, 96vw)', maxHeight: 'calc(100vh - 32px)' }"
       class="applications-page__modal applications-page__register-modal"
     >
-      <template v-if="selectedPaymentRegister">
-        <dl class="applications-page__facts applications-page__facts--payment">
-          <div><dt>Сделка / заявка</dt><dd>№{{ selectedPaymentRegister.lead_id }} / {{ selectedPaymentRegister.order_no }}</dd></div>
-          <div><dt>Период</dt><dd>{{ formatOptPeriodLabel(selectedPaymentRegister.period_code) }}</dd></div>
-          <div><dt>Менеджер</dt><dd>{{ selectedPaymentRegister.manager_name || '—' }}</dd></div>
-          <div><dt>Клиент</dt><dd>{{ selectedPaymentRegister.client_name || selectedPaymentRegister.client_shop_name || '—' }} · ИНН {{ selectedPaymentRegister.client_inn }}</dd></div>
-          <div><dt>ОКВЭД</dt><dd>{{ selectedPaymentRegister.client_okved || '—' }}</dd></div>
-          <div><dt>Объём</dt><dd>{{ formatMoney(selectedPaymentRegister.volume) }} ₽</dd></div>
-          <div><dt>К оплате / оплачено / долг</dt><dd>{{ formatRubles(selectedPaymentRegister.due_amount) }} ₽ / {{ formatRubles(selectedPaymentRegister.paid_amount) }} ₽ / {{ formatRubles(selectedPaymentRegister.remaining_amount) }} ₽</dd></div>
-        </dl>
-        <h3 class="applications-page__section-title">Лавки</h3>
-        <div class="applications-page__register-lines">
-          <div v-for="shop in selectedPaymentRegisterShops" :key="shop.inn" class="applications-page__register-line">
-            <strong>{{ shop.name }}</strong>
-            <span>ИНН {{ shop.inn }} · {{ shop.category }} · строк счёта: {{ shop.lines }}</span>
-            <span>Объём {{ formatMoney(shop.volume) }} ₽ · к оплате {{ formatRubles(shop.due) }} ₽</span>
-            <span>Бенефициару {{ formatRubles(shop.beneficiary) }} ₽ · маржа факт / план: {{ formatRubles(shop.actual) }} ₽ / {{ formatRubles(shop.planned) }} ₽</span>
-          </div>
-        </div>
-        <div class="applications-page__modal-actions">
-          <NButton @click="paymentRegisterDetailOpen = false">Закрыть</NButton>
-        </div>
-      </template>
+      <PaymentRegisterDetail v-if="selectedPaymentRegister" :key="selectedPaymentRegister.id" :order="selectedPaymentRegister" @saved="reloadSettlement" />
+      <template #footer><NButton @click="paymentRegisterDetailOpen = false">Закрыть</NButton></template>
     </NModal>
 
     <NModal v-model:show="blacklistOpen" preset="card" title="Чёрный список заявок" :style="{ width: 'min(640px, 96vw)' }">
@@ -1286,7 +1245,9 @@ onMounted(() => {
   flex-direction: column;
 }
 
-.applications-page__register-modal :deep(.n-card__content) {
+.applications-page__register-modal :deep(.n-card-content) {
+  min-height: 0;
+  overscroll-behavior: contain;
   overflow-y: auto;
 }
 
@@ -1413,12 +1374,12 @@ onMounted(() => {
 }
 
 .applications-page__modal.n-card > .n-card-header,
-.applications-page__modal.n-card > .n-card__footer {
+.applications-page__modal.n-card > .n-card-footer {
   flex-shrink: 0;
 }
 
-.applications-page__modal.n-card > .n-card__content,
-.applications-page__modal .n-card__content {
+.applications-page__modal.n-card > .n-card-content,
+.applications-page__modal .n-card-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;

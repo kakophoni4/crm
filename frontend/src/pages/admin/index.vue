@@ -147,7 +147,7 @@ onMounted(() => {
   <section class="admin-page">
     <header class="admin-page__header">
       <h1 class="admin-page__title">Админка</h1>
-      <p class="admin-page__subtitle">Управление организацией и справочниками</p>
+
       <div class="admin-page__banner">
         <span class="admin-page__banner-label">Баннер</span>
         <NSwitch
@@ -194,7 +194,7 @@ onMounted(() => {
       title="Показать баннер"
       style="width: min(480px, 94vw)"
     >
-      <p class="admin-page__hint">Выберите, кому показать баннер прямо сейчас. Закроется по клику или клавише.</p>
+
       <NSelect
         v-model:value="selectedUserIds"
         multiple

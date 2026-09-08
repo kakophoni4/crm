@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
 import type { DataTableColumns, UploadFileInfo } from 'naive-ui'
 import {
   NAlert,
@@ -54,7 +55,7 @@ import {
   type VaultShareUser,
 } from '@/features/storage/api'
 import { AppError } from '@/shared/api/http'
-import { formatFileSize, MAX_UPLOAD_FILE_BYTES, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
+import { formatFileSize, maxUploadBytesFor, uploadLimitLabel } from '@/shared/config/uploads'
 import { resolveAttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
 import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
@@ -62,7 +63,7 @@ import {
   VIRTUAL_DATA_TABLE_MAX_HEIGHT,
   VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT,
 } from '@/shared/ui/virtual-data-table'
-import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
+const AttachmentPreviewModal = defineAsyncComponent(() => import('@/widgets/chat/AttachmentPreviewModal.vue'))
 import { compareOptPeriodsDesc, formatOptPeriodLabel } from '@/features/leads/order-fields'
 import { fetchReceiptsTree, peekReceiptsTree } from '@/features/storage/receipts-tree-cache'
 
@@ -1200,13 +1201,7 @@ onMounted(() => {
       <NTabs v-model:value="activeTab" type="line" animated>
         <NTabPane name="vault" tab="Мои файлы">
           <NSpace vertical :size="16">
-            <p class="hint">
-              Личные файлы для отправки в чаты. Папку можно открыть выбранному сотруднику — он увидит
-              всё содержимое и сможет загружать туда файлы. Чтобы передать файл по
-              ссылке без входа — откройте
-              <a href="/share" target="_blank" rel="noopener">/share</a>.
-              Обычный лимит загрузки — {{ formatFileSize(MAX_UPLOAD_FILE_BYTES) }}.
-            </p>
+
             <div v-if="vaultPath.length" class="explorer-nav">
               <NButton size="tiny" quaternary @click="vaultBack">
                 <template #icon><ArrowLeft :size="14" /></template>
@@ -1250,9 +1245,7 @@ onMounted(() => {
                 @change="onLargeFilePicked"
               />
             </NSpace>
-            <p v-if="vaultCanWrite && !vaultCanManage" class="hint">
-              Общая папка: можно загружать файлы. Удалять и менять доступы может только владелец.
-            </p>
+
             <NSpin :show="vaultLoading && vaultFiles.length === 0 && !sharedFolders.length">
               <template v-if="!vaultPath.length && sharedFolders.length">
                 <p class="section-title">Поделились со мной</p>
@@ -1768,10 +1761,7 @@ onMounted(() => {
       style="width: 460px; max-width: 94vw"
     >
       <NSpace vertical>
-        <p class="hint">
-          Сотрудник увидит эту папку, всё содержимое и сможет загружать туда файлы.
-          Удалять и менять доступы сможет только владелец.
-        </p>
+
         <NSelect
           v-model:value="folderShareUserId"
           :options="folderShareUserOptions"
@@ -1805,7 +1795,7 @@ onMounted(() => {
     <NModal v-model:show="shareModalOpen" preset="card" title="Ссылка на файл" style="width: 420px">
       <NSpace vertical>
         <p>{{ shareTarget?.original_name }}</p>
-        <p class="hint">Получатель увидит только файл — без вашего имени и аккаунта.</p>
+
         <NInputNumber
           v-model:value="shareExpiresHours"
           :min="1"

@@ -7,6 +7,8 @@ export interface LawyerShop {
   director_id: number | null
   director_name: string | null
   kind: ShopKind
+  received_at?: string | null
+  dirovod?: string | null
   registered_at: string | null
   planned_payout: number | null
   company_status: string | null

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
+defineOptions({ name: 'TelephonyPage' })
 import { Delete, History, Mic, MicOff, PhoneCall, PhoneOff, RotateCcw, UserPlus, Volume2, Wifi } from 'lucide-vue-next'
 import { NButton, NIcon, NPopconfirm, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
@@ -6,7 +8,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import type { Contact } from '@/entities/contact/types'
-import CreateContactDialog from '@/features/contacts/CreateContactDialog.vue'
+const CreateContactDialog = defineAsyncComponent(() => import('@/features/contacts/CreateContactDialog.vue'))
 import {
   clearTelephonyCalls,
   createTelephonyCall,

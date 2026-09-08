@@ -17,7 +17,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Building2, Pin, Plus, Upload } from 'lucide-vue-next'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import {
@@ -45,12 +45,14 @@ import {
 } from '@/features/lawyer-registry/types'
 import { AppError } from '@/shared/api/http'
 import AppCard from '@/shared/ui/AppCard.vue'
+import AssignedShops from '@/features/lawyer-registry/AssignedShops.vue'
 import { useAuthStore } from '@/shared/store/auth'
 
 const message = useMessage()
 const route = useRoute()
 const auth = useAuthStore()
 const canEditRegistry = computed(() => auth.canParser)
+const assignedShops = computed(() => [...directors.value.flatMap((director) => director.shops ?? []), ...orphans.value])
 const loading = ref(false)
 const directors = ref<LawyerDirector[]>([])
 const orphans = ref<LawyerShop[]>([])
@@ -112,11 +114,6 @@ function toIsoDate(value: number | null | undefined): string | null {
   return `${date.getFullYear()}-${month}-${day}`
 }
 
-function fromIsoDate(value: string | null | undefined): number | null {
-  if (!value) return null
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? null : parsed
-}
 
 function snapshotShopFilters(): void {
   appliedShopFilters.value = {
@@ -171,29 +168,8 @@ function kindLabel(value: string): string {
   return SHOP_KIND_OPTIONS.find((item) => item.value === value)?.label ?? value
 }
 
-const UNRELIABLE_ALIASES: Record<string, string> = {
-  налог: 'Налог',
-  адрес: 'Адрес',
-  'должност.лицо': 'Должност.лицо',
-  'должност. лицо': 'Должност.лицо',
-  'должностное лицо': 'Должност.лицо',
-}
 
-function csvValues(value: string | null | undefined): string[] {
-  if (!value) return []
-  return value
-    .split(/[,;]/)
-    .map((part) => {
-      const trimmed = part.trim()
-      return UNRELIABLE_ALIASES[trimmed.toLowerCase()] ?? trimmed
-    })
-    .filter(Boolean)
-}
 
-function csvJoin(values: string[] | null): string | null {
-  if (!values?.length) return null
-  return values.join(', ')
-}
 
 function money(value: number | null | undefined): string {
   if (value == null) return '—'
@@ -215,7 +191,9 @@ async function toggleHidden(): Promise<void> {
   await loadTree()
 }
 
+let treeRequest = 0
 async function loadTree(): Promise<void> {
+  const request = ++treeRequest
   loading.value = true
   try {
     const data = await listLawyerRegistry({
@@ -229,16 +207,22 @@ async function loadTree(): Promise<void> {
       dirovod: dirovod.value,
       include_hidden: showHidden.value,
     })
+    if (request !== treeRequest) return
     directors.value = data.items
     orphans.value = data.orphan_shops
     pinned.value = data.pinned_shops
     totalShops.value = data.total_shops
     unread.value = data.unread_alerts
     snapshotShopFilters()
+    const openIds = expanded.value.filter(key => key.startsWith('d-')).map(key => Number(key.slice(2)))
+    await Promise.all(openIds.filter(id => data.items.some(director => director.id === id)).map(async id => {
+      const detail = await getLawyerDirector(id)
+      if (request === treeRequest) details.value[id] = detail
+    }))
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить реестр')
   } finally {
-    loading.value = false
+    if (request === treeRequest) loading.value = false
   }
 }
 
@@ -258,7 +242,7 @@ async function onExpand(keys: string | string[]): Promise<void> {
   expanded.value = list
   for (const key of added) {
     const id = Number(key.replace('d-', ''))
-    if (!Number.isFinite(id) || details.value[id]) continue
+    if (!Number.isFinite(id)) continue
     try {
       details.value[id] = await getLawyerDirector(id)
     } catch (err) {
@@ -388,7 +372,13 @@ const shopOptions = computed<SelectOption[]>(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadTree(), loadAlerts()])
+  await Promise.all([loadTree(), ...(canEditRegistry.value ? [loadAlerts()] : [])])
+})
+watch(() => route.query.inn, (inn) => {
+  q.value = typeof inn === 'string' ? inn : ''
+  details.value = {}
+  expanded.value = []
+  void loadTree()
 })
 </script>
 
@@ -399,7 +389,7 @@ onMounted(async () => {
         <p class="hint">
           Все лавки из сводной, сгруппированные по директору.
           <template v-if="canEditRegistry">Поля можно менять, а новая лавка сразу уходит в парсер ЕГРЮЛ.</template>
-          <template v-else>Режим просмотра для бухгалтерии.</template>
+          <template v-else>Здесь видны только лавки, назначенные вам главным бухгалтером.</template>
         </p>
         <NAlert
           v-if="unread"
@@ -457,7 +447,8 @@ onMounted(async () => {
           </button>
         </div>
         <NSpin :show="loading">
-          <NCollapse :expanded-names="expanded" @update:expanded-names="onExpand">
+          <AssignedShops v-if="!canEditRegistry" :shops="assignedShops" />
+          <NCollapse v-else :expanded-names="expanded" @update:expanded-names="onExpand">
             <NCollapseItem
               v-for="director in directors"
               :key="director.id"
@@ -576,67 +567,25 @@ onMounted(async () => {
                         />
                       </label>
                       <label>Статус
-                        <NSelect
-                          :value="shop.company_status"
-                          :options="COMPANY_STATUS_OPTIONS"
-                          size="small"
-                          clearable
-                          placeholder="Выбрать"
-                          @update:value="(v: string | null) => saveShop(shop.id, { company_status: v }, director.id)"
-                        />
+                        <span>{{ shop.company_status || '—' }}</span>
                       </label>
                       <label>Лечение / проблема
-                        <NInput
-                          :value="shop.treatment_status ?? ''"
-                          @blur="(e) => saveShop(shop.id, { treatment_status: (e.target as HTMLInputElement).value || null }, director.id)"
-                        />
+                        <span>{{ shop.treatment_status || '—' }}</span>
                       </label>
                       <label>Недостоверка
-                        <NSelect
-                          :value="csvValues(shop.unreliable)"
-                          :options="UNRELIABLE_OPTIONS"
-                          size="small"
-                          multiple
-                          clearable
-                          placeholder="Выбрать"
-                          @update:value="(v: string[]) => saveShop(shop.id, { unreliable: csvJoin(v) }, director.id)"
-                        />
+                        <span>{{ shop.unreliable || '—' }}</span>
                       </label>
                       <label>ЗСК
-                        <NSelect
-                          :value="shop.zsk"
-                          :options="ZSK_OPTIONS"
-                          size="small"
-                          clearable
-                          placeholder="Выбрать"
-                          @update:value="(v: string | null) => saveShop(shop.id, { zsk: v }, director.id)"
-                        />
+                        <span>{{ shop.zsk || '—' }}</span>
                       </label>
                       <label>ЭЦП
-                        <NSelect
-                          :value="shop.ecsp_status"
-                          :options="ECSP_OPTIONS"
-                          size="small"
-                          clearable
-                          placeholder="Выбрать"
-                          @update:value="(v: string | null) => saveShop(shop.id, { ecsp_status: v }, director.id)"
-                        />
+                        <span>{{ shop.ecsp_status || '—' }}</span>
                       </label>
                       <label>Банки
-                        <NInput
-                          :value="shop.banks ?? ''"
-                          @blur="(e) => saveShop(shop.id, { banks: (e.target as HTMLInputElement).value || null }, director.id)"
-                        />
+                        <span>{{ shop.banks || '—' }}</span>
                       </label>
                       <label>Счета
-                        <NSelect
-                          :value="shop.accounts_status"
-                          :options="ACCOUNT_STATUS_OPTIONS"
-                          size="small"
-                          clearable
-                          placeholder="Выбрать"
-                          @update:value="(v: string | null) => saveShop(shop.id, { accounts_status: v }, director.id)"
-                        />
+                        <span>{{ shop.accounts_status || '—' }}</span>
                       </label>
                       <label>Менеджер
                         <NInput
@@ -645,13 +594,7 @@ onMounted(async () => {
                         />
                       </label>
                       <label>Регистрация
-                        <NDatePicker
-                          :value="fromIsoDate(shop.registered_at)"
-                          type="date"
-                          clearable
-                          style="width: 100%"
-                          @update:value="(v: number | null) => saveShop(shop.id, { registered_at: toIsoDate(v) }, director.id)"
-                        />
+                        <span>{{ shop.registered_at || '—' }}</span>
                       </label>
                       <label>Плановая выплата
                         <NInputNumber
@@ -660,26 +603,29 @@ onMounted(async () => {
                           @update:value="(v) => saveShop(shop.id, { planned_payout: v }, director.id)"
                         />
                       </label>
+                      <label>Дата приёма<span>{{ shop.received_at || '—' }}</span></label>
+                      <label>Категория<span>{{ shop.sale_priority || '—' }}</span></label>
+                      <label>Бухгалтер<span>{{ shop.accountant || '—' }}</span></label>
                       <label>ФНС
-                        <NInput :value="shop.fns ?? ''" @blur="(e) => saveShop(shop.id, { fns: (e.target as HTMLInputElement).value || null }, director.id)" />
+                        <span>{{ shop.fns || '—' }}</span>
                       </label>
                       <label>СБИС
-                        <NInput :value="shop.sbis ?? ''" @blur="(e) => saveShop(shop.id, { sbis: (e.target as HTMLInputElement).value || null }, director.id)" />
+                        <span>{{ shop.sbis || '—' }}</span>
                       </label>
                       <label>ЭДО ID
-                        <NInput :value="shop.edo_id ?? ''" @blur="(e) => saveShop(shop.id, { edo_id: (e.target as HTMLInputElement).value || null }, director.id)" />
+                        <span>{{ shop.edo_id || '—' }}</span>
                       </label>
                       <label>ЭДО до
-                        <NDatePicker :value="fromIsoDate(shop.edo_until)" type="date" clearable style="width: 100%" @update:value="(v: number | null) => saveShop(shop.id, { edo_until: toIsoDate(v) }, director.id)" />
+                        <span>{{ shop.edo_until || '—' }}</span>
                       </label>
                       <label>Дата покупки
-                        <NDatePicker :value="fromIsoDate(shop.purchased_at)" type="date" clearable style="width: 100%" @update:value="(v: number | null) => saveShop(shop.id, { purchased_at: toIsoDate(v) }, director.id)" />
+                        <span>{{ shop.purchased_at || '—' }}</span>
                       </label>
                       <label>Дата слёта
-                        <NDatePicker :value="fromIsoDate(shop.failed_at)" type="date" clearable style="width: 100%" @update:value="(v: number | null) => saveShop(shop.id, { failed_at: toIsoDate(v) }, director.id)" />
+                        <span>{{ shop.failed_at || '—' }}</span>
                       </label>
                       <label>Причина слёта
-                        <NInput :value="shop.failure_reason ?? ''" @blur="(e) => saveShop(shop.id, { failure_reason: (e.target as HTMLInputElement).value || null }, director.id)" />
+                        <span>{{ shop.failure_reason || '—' }}</span>
                       </label>
                     </div>
                     <NSpace style="margin-top: 8px">

@@ -61,6 +61,7 @@ import {
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { AppError } from '@/shared/api/http'
+import OrderOkvedField from '@/features/leads/OrderOkvedField.vue'
 import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
 const props = defineProps<{
@@ -1038,6 +1039,10 @@ onUnmounted(() => {
                   {{ optPaymentStatusLabel(selectedOrder.payment_status) }}
                 </NTag>
               </dd>
+            </div>
+            <div>
+              <dt>ОКВЭД покупателя</dt>
+              <dd><OrderOkvedField :lead-id="selectedOrder.lead_id" :order-id="selectedOrder.id" :value="selectedOrder.buyer_okved" :disabled="disabled" @saved="(value) => { selectedOrder!.buyer_okved = value; if (leadId) setOptOrdersCache(leadId, orders); emit('paymentsChanged') }" /></dd>
             </div>
             <div v-if="!isWide">
               <dt>Покупатель</dt>

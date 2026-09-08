@@ -7,6 +7,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+class OptOrderOkvedUpdate(BaseModel):
+    buyer_okved: str | None = Field(default=None, max_length=200)
+
+
 class OptCounterpartyResponse(BaseModel):
     inn: str
     kpp: str | None = None
@@ -77,6 +81,7 @@ class OptCommissionHistoryItem(BaseModel):
 
 
 class OptOrderResponse(BaseModel):
+    buyer_okved: str | None = None
     id: int
     lead_id: int
     order_no: int
@@ -244,6 +249,15 @@ class OptPaymentRegisterItem(BaseModel):
 class OptPaymentRegisterListResponse(BaseModel):
     items: list[OptPaymentRegisterItem]
     total: int
+    total_volume_sum: Decimal = Decimal('0')
+    commission_due_sum: Decimal = Decimal('0')
+    amount_paid_sum: Decimal = Decimal('0')
+
+
+class OptSupplierSettlementRequest(BaseModel):
+    beneficiary_rate_percent: Decimal | None = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
+    beneficiary_paid_amount: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
+    comment: str | None = Field(default=None, max_length=2000)
 
 
 class OptSendRegistryResponse(BaseModel):

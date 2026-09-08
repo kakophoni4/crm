@@ -12,6 +12,8 @@ interface CacheEntry<T> {
 }
 
 const store = new Map<string, CacheEntry<unknown>>()
+const MAX_ENTRIES = 100
+const MAX_STALE_MS = 10 * 60 * 1000
 
 /** Вернуть значение, только если оно свежее (моложе maxAgeMs). */
 export function getCached<T>(key: string, maxAgeMs: number): T | undefined {
@@ -21,13 +23,24 @@ export function getCached<T>(key: string, maxAgeMs: number): T | undefined {
   return entry.value
 }
 
-/** Вернуть последнее значение независимо от возраста (для мгновенного показа). */
+/** Вернуть последнее значение не старше 10 минут для мгновенного показа. */
 export function peekCached<T>(key: string): T | undefined {
-  return (store.get(key) as CacheEntry<T> | undefined)?.value
+  const entry = store.get(key) as CacheEntry<T> | undefined
+  if (entry && Date.now() - entry.at > MAX_STALE_MS) {
+    store.delete(key)
+    return undefined
+  }
+  return entry?.value
 }
 
 export function setCached<T>(key: string, value: T): void {
+  store.delete(key)
   store.set(key, { value, at: Date.now() })
+  while (store.size > MAX_ENTRIES) {
+    const oldest = store.keys().next().value
+    if (oldest == null) break
+    store.delete(oldest)
+  }
 }
 
 export function invalidateCached(key: string): void {

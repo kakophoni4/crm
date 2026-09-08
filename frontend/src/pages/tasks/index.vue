@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
 import {
   NButton,
   NDatePicker,
@@ -67,7 +68,7 @@ import {
 } from '@/shared/realtime/tasks-ws'
 import { useAuthStore } from '@/shared/store/auth'
 import AppCard from '@/shared/ui/AppCard.vue'
-import TaskDetailModal from '@/widgets/tasks/TaskDetailModal.vue'
+const TaskDetailModal = defineAsyncComponent(() => import('@/widgets/tasks/TaskDetailModal.vue'))
 
 const message = useMessage()
 const dialog = useDialog()

@@ -40,6 +40,7 @@ class LeadOptOrder(Base):
     )
     crm_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     order_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    buyer_okved: Mapped[str | None] = mapped_column(Text, nullable=True)
     buyer_inn: Mapped[str] = mapped_column(Text, nullable=False)
     buyer_kpp: Mapped[str | None] = mapped_column(Text, nullable=True)
     buyer_name: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
 import type { DataTableColumns, SelectOption } from 'naive-ui'
 import {
   NButton,
@@ -35,7 +36,7 @@ import {
   Undo2,
 } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import ShopCardEditor from '@/features/accounting/ShopCardEditor.vue'
 
 import {
   assignAccountingUnitOwner,
@@ -74,15 +75,14 @@ import {
 import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { AppError } from '@/shared/api/http'
 import type { AttachmentPreviewKind } from '@/shared/lib/attachment-preview-kind'
-import { peekCached, setCached, getCached } from '@/shared/lib/stale-cache'
+import { peekCached, setCached, getCached, invalidateCachedPrefix } from '@/shared/lib/stale-cache'
 import AppCard from '@/shared/ui/AppCard.vue'
-import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
+const AttachmentPreviewModal = defineAsyncComponent(() => import('@/widgets/chat/AttachmentPreviewModal.vue'))
 import { useAuthStore } from '@/shared/store/auth'
 
 const message = useMessage()
 const dialog = useDialog()
 const auth = useAuthStore()
-const router = useRouter()
 
 /** Полное юр.имя → короткое «ООО „АФИНА“». */
 function shortLavkaName(name: string | null | undefined): string {
@@ -119,6 +119,7 @@ const ownersLoading = ref(false)
 const syncingRequirements = ref(false)
 const SHOW_REQUIREMENTS_TAB = false
 const activeTab = ref('orders')
+const editingShop = ref<AccountingUnitOwnerRow | null>(null)
 const isChief = ref(false)
 const units = ref<AccountingUnit[]>([])
 const anyLoading = computed(
@@ -260,11 +261,20 @@ const assignmentsSubTab = ref<'selling' | 'requirements'>('selling')
 const togglingUnitId = ref<number | null>(null)
 const deletingUnitId = ref<number | null>(null)
 
+const ownerSearch = ref('')
+const ownerFilter = ref<string | null>(null)
+const ownerPage = ref(1)
+const ownerPageSize = 20
+const filteredOwners = computed(() => unitOwners.value.filter((row) => {
+  const query = ownerSearch.value.trim().toLocaleLowerCase('ru')
+  return (!query || [row.name, row.inn, row.accountant_full_name, row.lawyer_director_name].some((text) => text?.toLocaleLowerCase('ru').includes(query))) && (ownerFilter.value !== 'unassigned' || row.accountant_user_id == null)
+}))
+watch([ownerSearch, ownerFilter, assignmentsSubTab], () => { ownerPage.value = 1 })
 const sellingUnitOwners = computed(() =>
-  unitOwners.value.filter((row) => row.is_active !== false),
+  filteredOwners.value.filter((row) => row.is_active !== false),
 )
 const requirementUnitOwners = computed(() =>
-  unitOwners.value.filter((row) => row.is_active === false),
+  filteredOwners.value.filter((row) => row.is_active === false),
 )
 
 const categories = ref<AccountingUnitCategory[]>([])
@@ -664,7 +674,9 @@ function requirementsCacheKey(): string {
   ].join(':')
 }
 
+let ordersRequest = 0
 async function loadOrders(opts?: { force?: boolean }): Promise<void> {
+  const request = ++ordersRequest
   const cacheKey = ordersCacheKey()
   if (!opts?.force) {
     const fresh = getCached<{ items: AccountingUnitOrderGroup[]; total: number }>(cacheKey, 15_000)
@@ -683,9 +695,10 @@ async function loadOrders(opts?: { force?: boolean }): Promise<void> {
       limit: ordersPageSize,
       offset: (ordersPage.value - 1) * ordersPageSize,
     })
+    if (request !== ordersRequest) return
     orderGroups.value = data.items
     ordersTotal.value = data.total
-    setCached(ordersCacheKey(), { items: data.items, total: data.total })
+    setCached(cacheKey, { items: data.items, total: data.total })
     if (
       !orderSupplierInn.value &&
       !orderPeriodCode.value &&
@@ -695,9 +708,10 @@ async function loadOrders(opts?: { force?: boolean }): Promise<void> {
       setCached(ORDERS_CACHE_KEY, { items: data.items, total: data.total })
     }
   } catch (err) {
+    if (request !== ordersRequest) return
     message.error(err instanceof AppError ? err.message : 'Не удалось загрузить заявки')
   } finally {
-    ordersLoading.value = false
+    if (request === ordersRequest) ordersLoading.value = false
   }
 }
 
@@ -959,8 +973,12 @@ async function submitTaskFromReq(): Promise<void> {
   }
 }
 
+async function onShopSaved(): Promise<void> {
+  invalidateCachedPrefix('accounting:')
+  await Promise.all([loadUnitOwners(), loadUnits()])
+}
+
 async function loadUnitOwners(): Promise<void> {
-  if (!isChief.value) return
   if (!unitOwners.value.length) ownersLoading.value = true
   try {
     const data = await listAccountingUnitOwners()
@@ -1026,10 +1044,8 @@ function sortUnitOwners(rows: AccountingUnitOwnerRow[]): AccountingUnitOwnerRow[
 async function onAssignUnit(row: AccountingUnitOwnerRow, value: number | null): Promise<void> {
   savingUnitId.value = row.unit_id
   try {
-    const updated = await assignAccountingUnitOwner(row.unit_id, value)
-    const idx = unitOwners.value.findIndex((item) => item.unit_id === row.unit_id)
-    if (idx >= 0) unitOwners.value[idx] = updated
-    unitOwners.value = sortUnitOwners(unitOwners.value)
+    await assignAccountingUnitOwner(row.unit_id, value)
+    await loadUnitOwners()
     message.success('Назначение сохранено')
   } catch (err) {
     message.error(err instanceof AppError ? err.message : 'Не удалось сохранить')
@@ -1695,13 +1711,15 @@ onUnmounted(() => {
           </div>
         </NTabPane>
 
-        <NTabPane v-if="isChief" name="assignments" tab="Назначения лавок">
+        <NTabPane name="assignments" tab="Лавки">
+          <div class="accounting-page__filters">
+            <NInput v-model:value="ownerSearch" clearable placeholder="Лавка, ИНН, директор или бухгалтер" />
+            <NSelect v-model:value="ownerFilter" clearable placeholder="Все назначения" :options="[{ label: 'Без бухгалтера', value: 'unassigned' }]" />
+          </div>
+          <span>Найдено: {{ filteredOwners.length }}</span>
           <NTabs v-model:value="assignmentsSubTab" type="segment" size="small" animated>
             <NTabPane name="selling" tab="Продающие лавки">
-              <p class="accounting-page__owners-hint">
-                Доступны для сдачи заявок. Назначенный бухгалтер видит заявки и требования по этим
-                лавкам.
-              </p>
+
               <NSpin :show="ownersLoading && sellingUnitOwners.length === 0">
                 <NEmpty
                   v-if="!ownersLoading && sellingUnitOwners.length === 0"
@@ -1709,7 +1727,7 @@ onUnmounted(() => {
                 />
                 <div v-else class="accounting-page__owners">
                   <div
-                    v-for="row in sellingUnitOwners"
+                    v-for="row in sellingUnitOwners.slice((ownerPage - 1) * ownerPageSize, ownerPage * ownerPageSize)"
                     :key="row.unit_id"
                     class="accounting-page__owner-row"
                     :class="{
@@ -1727,28 +1745,28 @@ onUnmounted(() => {
                         {{ formatPeriodCodes(row.period_codes) }}
                       </span>
                       <span v-if="row.lawyer_shop_id" class="accounting-page__owner-legal">
-                        Юрист: {{ row.lawyer_director_name || 'директор не указан' }}
+                        Директор: {{ row.lawyer_director_name || 'директор не указан' }}
                         <template v-if="row.lawyer_company_status"> · {{ row.lawyer_company_status }}</template>
                         <template v-if="row.lawyer_unreliable"> · {{ row.lawyer_unreliable }}</template>
                         <template v-if="row.lawyer_treatment_status"> · тикеты: {{ row.lawyer_treatment_status }}</template>
                       </span>
-                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing">Нет карточки у юриста</span>
+                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing"></span>
                     </div>
                     <div class="accounting-page__owner-actions">
-                      <NButton size="small" secondary @click="openEditRate(row)">
+                      <NButton v-if="isChief" size="small" secondary @click="openEditRate(row)">
                         <template #icon>
                           <Percent :size="14" />
                         </template>
                         Процент
                       </NButton>
-                      <NButton size="small" secondary @click="openEditPeriods(row)">
+                      <NButton v-if="isChief" size="small" secondary @click="openEditPeriods(row)">
                         <template #icon>
                           <CalendarRange :size="14" />
                         </template>
                         Периоды
                       </NButton>
-                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ name: 'lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
-                      <NButton
+                      <NButton size="small" secondary type="primary" @click="editingShop = row">Карточка лавки</NButton>
+                      <NButton v-if="isChief"
                         size="small"
                         quaternary
                         :loading="togglingUnitId === row.unit_id"
@@ -1756,7 +1774,7 @@ onUnmounted(() => {
                       >
                         В требования
                       </NButton>
-                      <NButton
+                      <NButton v-if="isChief"
                         size="small"
                         quaternary
                         type="error"
@@ -1767,6 +1785,7 @@ onUnmounted(() => {
                       </NButton>
                     </div>
                     <NSelect
+                      v-if="isChief"
                       :value="row.accountant_user_id"
                       :options="accountantOptions"
                       clearable
@@ -1781,9 +1800,7 @@ onUnmounted(() => {
               </NSpin>
             </NTabPane>
             <NTabPane name="requirements" tab="Лавки для требований">
-              <p class="accounting-page__owners-hint">
-                Не участвуют в сдаче. Назначенный бухгалтер видит только требования по этим лавкам.
-              </p>
+
               <NSpin :show="ownersLoading && requirementUnitOwners.length === 0">
                 <NEmpty
                   v-if="!ownersLoading && requirementUnitOwners.length === 0"
@@ -1791,7 +1808,7 @@ onUnmounted(() => {
                 />
                 <div v-else class="accounting-page__owners">
                   <div
-                    v-for="row in requirementUnitOwners"
+                    v-for="row in requirementUnitOwners.slice((ownerPage - 1) * ownerPageSize, ownerPage * ownerPageSize)"
                     :key="row.unit_id"
                     class="accounting-page__owner-row accounting-page__owner-row--requirements"
                     :class="{
@@ -1804,14 +1821,14 @@ onUnmounted(() => {
                       }}</span>
                       <span class="accounting-page__owner-inn">{{ row.inn }}</span>
                       <span v-if="row.lawyer_shop_id" class="accounting-page__owner-legal">
-                        Юрист: {{ row.lawyer_director_name || 'директор не указан' }}
+                        Директор: {{ row.lawyer_director_name || 'директор не указан' }}
                         <template v-if="row.lawyer_company_status"> · {{ row.lawyer_company_status }}</template>
                         <template v-if="row.lawyer_treatment_status"> · тикеты: {{ row.lawyer_treatment_status }}</template>
                       </span>
-                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing">Нет карточки у юриста</span>
+                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing"></span>
                     </div>
                     <div class="accounting-page__owner-actions">
-                      <NButton
+                      <NButton v-if="isChief"
                         size="small"
                         secondary
                         :loading="togglingUnitId === row.unit_id"
@@ -1819,8 +1836,8 @@ onUnmounted(() => {
                       >
                         В продающие
                       </NButton>
-                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ name: 'lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
-                      <NButton
+                      <NButton size="small" secondary type="primary" @click="editingShop = row">Карточка лавки</NButton>
+                      <NButton v-if="isChief"
                         size="small"
                         quaternary
                         type="error"
@@ -1831,6 +1848,7 @@ onUnmounted(() => {
                       </NButton>
                     </div>
                     <NSelect
+                      v-if="isChief"
                       :value="row.accountant_user_id"
                       :options="accountantOptions"
                       clearable
@@ -1845,9 +1863,12 @@ onUnmounted(() => {
               </NSpin>
             </NTabPane>
           </NTabs>
+          <NPagination v-if="(assignmentsSubTab === 'selling' ? sellingUnitOwners.length : requirementUnitOwners.length) > ownerPageSize" v-model:page="ownerPage" :page-size="ownerPageSize" :item-count="assignmentsSubTab === 'selling' ? sellingUnitOwners.length : requirementUnitOwners.length" />
         </NTabPane>
       </NTabs>
     </AppCard>
+
+    <ShopCardEditor v-if="editingShop" :unit="editingShop" @close="editingShop = null" @saved="onShopSaved" />
 
     <NModal
       v-model:show="replyModalOpen"
@@ -1865,9 +1886,7 @@ onUnmounted(() => {
           replyTarget.supplier.inn
         }}
       </p>
-      <p class="accounting-page__owners-hint">
-        Загрузите комплект документов и отправьте.
-      </p>
+
       <NUpload multiple :default-upload="false" @change="onReplyUploadChange">
         <NButton secondary>Выбрать файлы</NButton>
       </NUpload>
@@ -2046,9 +2065,7 @@ onUnmounted(() => {
           <template #suffix>%</template>
         </NInputNumber>
       </NFormItem>
-      <p class="accounting-page__rate-hint">
-        Новые заявки будут считаться с этим процентом. Уже созданные заказы не пересчитываются.
-      </p>
+
       <template #footer>
         <div class="accounting-page__modal-actions">
           <NButton @click="rateEditOpen = false">Отмена</NButton>
@@ -2077,10 +2094,7 @@ onUnmounted(() => {
           style="width: 100%"
         />
       </NFormItem>
-      <p class="accounting-page__rate-hint">
-        Если сумма строк этой лавки в заявках периода (с учётом новой загрузки) превысит лимит —
-        заявка не будет принята. Очистите поле, чтобы снять лимит.
-      </p>
+
       <template #footer>
         <div class="accounting-page__modal-actions">
           <NButton @click="limitEditOpen = false">Отмена</NButton>
@@ -2108,9 +2122,7 @@ onUnmounted(() => {
           style="width: 100%"
         />
       </NFormItem>
-      <p class="accounting-page__rate-hint">
-        Лавка будет доступна в ОПТ только для выбранных периодов сделки.
-      </p>
+
       <template #footer>
         <div class="accounting-page__modal-actions">
           <NButton @click="periodsEditOpen = false">Отмена</NButton>

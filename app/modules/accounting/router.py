@@ -576,7 +576,7 @@ async def ingest_accounting_sales_book_multipart(
 
 @router.get("/assignments/units", response_model=AccountingUnitOwnerListResponse)
 async def list_accounting_unit_owners(
-    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
     service: Annotated[AccountingService, Depends(_service)],
 ) -> AccountingUnitOwnerListResponse:
     return await service.list_unit_owners(actor)

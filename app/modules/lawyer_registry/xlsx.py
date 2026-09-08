@@ -125,13 +125,22 @@ def parse_svodnaya(content: bytes) -> dict[str, list[dict[str, Any]]]:
     shops.extend(_parse_new_shops(wb))
     payments = _parse_payments(wb, "Выплаты ПРИОРИТЕТНЫЕ")
     payments.extend(_parse_payments(wb, "Выплаты ОБСЛУЖИВАЮЩИЕ"))
+    wb.close()
     return {"shops": shops, "payments": payments}
+
+
+def _sheet_rows(sheet: Any) -> list[tuple[Any, ...]]:
+    header = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    width = max((i + 1 for i, value in enumerate(header) if value is not None), default=0)
+    if not width:
+        return []
+    return list(sheet.iter_rows(max_col=width, values_only=True))
 
 
 def _parse_company_sheet(wb: Any, sheet_name: str, kind: str) -> list[dict[str, Any]]:
     if sheet_name not in wb.sheetnames:
         return []
-    rows = list(wb[sheet_name].iter_rows(values_only=True))
+    rows = _sheet_rows(wb[sheet_name])
     if not rows:
         return []
     headers = _header_map(rows[0])
@@ -147,6 +156,7 @@ def _parse_company_sheet(wb: Any, sheet_name: str, kind: str) -> list[dict[str, 
                 "name": name,
                 "kind": kind,
                 "director_name": _as_text(_cell(row, headers, "ФИО директора", "Директор")),
+                "received_at": _as_date(_cell(row, headers, "Дата приема")),
                 "registered_at": _as_date(_cell(row, headers, "Дата регистрации")),
                 "planned_payout": _as_money(_cell(row, headers, "Плановая сумма выплаты")),
                 "company_status": _as_text(_cell(row, headers, "Статус компании", "Статус")),
@@ -214,7 +224,7 @@ def _parse_new_shops(wb: Any) -> list[dict[str, Any]]:
 def _parse_payments(wb: Any, sheet_name: str) -> list[dict[str, Any]]:
     if sheet_name not in wb.sheetnames:
         return []
-    rows = list(wb[sheet_name].iter_rows(values_only=True))
+    rows = _sheet_rows(wb[sheet_name])
     if not rows:
         return []
     header = rows[0]

@@ -39,9 +39,11 @@ from app.modules.leads.opt.schemas import (
     OptOrderReceiptsResponse,
     OptOrderRegistryListResponse,
     OptOrderResponse,
+    OptOrderOkvedUpdate,
     OptOrderSalesBookExtractsResponse,
     OptPaymentLedgerListResponse,
     OptPaymentRegisterListResponse,
+    OptSupplierSettlementRequest,
     OptRegistryManagersResponse,
     OptSendReceiptsResponse,
     OptSendRegistryResponse,
@@ -189,12 +191,27 @@ async def list_opt_payment_register(
     q: str | None = None,
     offset: int = 0,
     limit: int = 50,
+    payment_status: Literal['paid', 'unpaid'] | None = None,
 ) -> OptPaymentRegisterListResponse:
     return await service.list_payment_register(
         actor, group_id=group_id, period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id, q=(q or "").strip() or None,
         offset=max(0, offset), limit=min(max(1, limit), 100),
+        payment_status=payment_status,
     )
+
+
+@router.put('/leads/{lead_id}/opt-orders/{order_id}/settlements/{supplier_inn}')
+async def save_supplier_settlement(
+    lead_id: int, order_id: int, supplier_inn: str,
+    body: OptSupplierSettlementRequest,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, bool]:
+    await service.save_supplier_settlement(actor, lead_id, order_id, supplier_inn, body)
+    await db.commit()
+    return {'ok': True}
 
 @router.get("/leads/{lead_id}/opt-orders", response_model=OptOrderListResponse)
 async def list_opt_orders(
@@ -491,3 +508,18 @@ async def download_opt_registry(
             ),
         },
     )
+
+
+@router.patch("/leads/{lead_id}/opt-orders/{order_id}/okved", response_model=OptOrderOkvedUpdate)
+async def update_order_okved(
+    lead_id: int,
+    order_id: int,
+    body: OptOrderOkvedUpdate,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OptOrderOkvedUpdate:
+    order = await service._get_order_for_actor(actor, lead_id, order_id)
+    order.buyer_okved = (body.buyer_okved or "").strip() or None
+    await db.commit()
+    return OptOrderOkvedUpdate(buyer_okved=order.buyer_okved)

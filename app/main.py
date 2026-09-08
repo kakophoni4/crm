@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.modules.analytics.router import router as analytics_router
 from app.modules.accounting.router import router as accounting_router
+from app.modules.accounting.shop_cards import router as accounting_cards_router
 from app.modules.auth.router import router as auth_router
 from app.modules.bots.router import router as bots_router
 from app.modules.chats.router import router as chats_router
@@ -132,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(analytics_router)
     app.include_router(accounting_router)
+    app.include_router(accounting_cards_router)
     app.include_router(tickets_router)
     app.include_router(lavok_parser_router)
     app.include_router(lawyer_registry_router)

@@ -431,10 +431,7 @@ watch(
     <header class="admin-page__header">
       <div>
         <h1 class="admin-page__title">Боты</h1>
-        <p class="admin-page__hint">
-          Привяжите бота к отделу и назначьте одну группу — тогда чаты и передача карточек идут
-          в рамках этой группы. Без группы чаты попадают в общий ящик отдела, передача недоступна.
-        </p>
+
       </div>
       <NButton type="primary" @click="openCreate">Создать бота</NButton>
       <NButton @click="openCreateWhatsApp">+ WhatsApp</NButton>
@@ -489,7 +486,6 @@ watch(
         </NFormItem>
         <NFormItem
           label="Фиксированный владелец карточек"
-          extra="Карточки этого бота назначаются только этому менеджеру. При сохранении авто-назначенные уже существующие тоже перейдут ему; ручные передачи не трогаем."
         >
           <NSelect
             v-model:value="form.default_owner_user_id"
@@ -500,9 +496,7 @@ watch(
           />
         </NFormItem>
         <template v-if="isWhatsAppForm">
-          <p class="admin-page__wa-hint">
-            Вставьте данные из консоли GREEN API. Секреты ХУИтРИКС и webhook настроятся автоматически.
-          </p>
+
           <NFormItem label="idInstance">
             <NInput
               :value="form.green_instance_id"
@@ -531,7 +525,6 @@ watch(
           <NFormItem
             v-if="form.referrals_enabled"
             label="Username Telegram-бота"
-            extra="Без @. Нужен для ссылки вида t.me/bot?start=код"
           >
             <NInput v-model:value="form.telegram_username" placeholder="timeletterer_bot" />
           </NFormItem>
@@ -587,7 +580,6 @@ watch(
         </NFormItem>
         <NFormItem
           label="Фиксированный владелец карточек"
-          extra="При сохранении: новые + уже существующие авто-назначенные карточки этого бота перейдут к нему. Ручные передачи не трогаем."
         >
           <NSelect
             v-model:value="editForm.default_owner_user_id"
@@ -609,14 +601,12 @@ watch(
         <template v-if="!isWhatsAppEdit">
           <NFormItem
             label="Реферальная система"
-            extra="Менеджер сможет копировать ссылку с карточки. Приход по коду считается, только если код принадлежит контакту этого бота."
           >
             <NSwitch v-model:value="editForm.referrals_enabled" />
           </NFormItem>
           <NFormItem
             v-if="editForm.referrals_enabled"
             label="Username Telegram-бота"
-            extra="Без @. Пример ссылки: https://t.me/timeletterer_bot?start=код"
           >
             <NInput v-model:value="editForm.telegram_username" placeholder="timeletterer_bot" />
           </NFormItem>

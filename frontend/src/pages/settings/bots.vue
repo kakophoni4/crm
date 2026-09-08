@@ -105,9 +105,7 @@ onMounted(() => {
     <header class="admin-page__header">
       <div>
         <h1 class="admin-page__title">Боты отдела</h1>
-        <p class="admin-page__hint">
-          Выберите группы, которым доступен бот. Если групп нет — чаты идут в общий ящик отдела.
-        </p>
+
       </div>
     </header>
     <NSpin :show="loading">

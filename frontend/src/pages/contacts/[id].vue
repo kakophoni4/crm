@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import {
   NButton,
@@ -39,7 +40,7 @@ import {
   formatLeadOpenState,
   leadListItemLabel,
 } from '@/features/leads/mapping'
-import LeadDealModal from '@/widgets/chat/LeadDealModal.vue'
+const LeadDealModal = defineAsyncComponent(() => import('@/widgets/chat/LeadDealModal.vue'))
 import ContactOwnerBadge from '@/entities/contact/ContactOwnerBadge.vue'
 import { contactStatusLabel } from '@/entities/contact/types'
 import { useChatsStore } from '@/features/chats/store'

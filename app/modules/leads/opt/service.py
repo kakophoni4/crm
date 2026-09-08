@@ -56,6 +56,7 @@ from app.modules.leads.opt.schemas import (
     OptPaymentRegisterLine,
     OptPaymentRegisterItem,
     OptPaymentRegisterListResponse,
+    OptSupplierSettlementRequest,
     OptPaymentResponse,
     OptRegistryManagerItem,
     OptRegistryManagersResponse,
@@ -190,6 +191,7 @@ class OptOrderService:
         names = document_names or {}
         history_rows = getattr(order, "commission_history", None) or []
         return OptOrderResponse(
+            buyer_okved=order.buyer_okved,
             id=order.id,
             lead_id=order.lead_id,
             order_no=order.order_no,
@@ -907,9 +909,13 @@ class OptOrderService:
     async def list_payment_register(
         self, actor: User, *, group_id: int | None, period_code: str | None,
         manager_user_id: int | None, q: str | None, offset: int, limit: int,
+        payment_status: str | None = None,
     ) -> OptPaymentRegisterListResponse:
         """Payment register: one row per application, with invoice lines as details."""
-        from sqlalchemy import or_, select
+        from sqlalchemy import func, or_, select
+        from app.modules.db.models.enums import UserRole
+        from app.modules.leads.opt.allocation import allocate_amount
+        from sqlalchemy.orm import raiseload
         from app.modules.db.models.contact import Contact
         from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
         from app.modules.db.models.opt_unit import OptUnit
@@ -929,28 +935,50 @@ class OptOrderService:
             filters.append(Lead.group_id == group_id)
         if period_code:
             filters.append(LeadOptOrder.period_code == period_code)
-        if manager_user_id is not None:
+        if actor.role == UserRole.USER:
+            filters.append(ContactGroupAssignment.owner_user_id == actor.id)
+        elif manager_user_id is not None:
             filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
+        if payment_status == 'paid':
+            filters.append(LeadOptOrder.payment_status == 'paid')
+        elif payment_status == 'unpaid':
+            filters.append(LeadOptOrder.payment_status != 'paid')
         if q:
             like = f"%{q}%"
             filters.append(or_(LeadOptOrder.buyer_name.ilike(like), LeadOptOrder.buyer_inn.ilike(like),
-                               Contact.full_name.ilike(like), LeadOptOrderLine.supplier_name.ilike(like)))
+                               Contact.full_name.ilike(like),
+                               LeadOptOrder.id.in_(select(LeadOptOrderLine.order_id).where(or_(
+                                   LeadOptOrderLine.supplier_name.ilike(like), LeadOptOrderLine.supplier_inn.ilike(like),
+                               )))))
+        orders_query = (select(LeadOptOrder.id)
+            .join(Lead, Lead.id == LeadOptOrder.lead_id)
+            .outerjoin(Contact, Contact.id == Lead.contact_id)
+            .outerjoin(*manager_join).where(*filters))
+        stats = (await self._session.execute(orders_query.with_only_columns(
+            func.count(), func.coalesce(func.sum(LeadOptOrder.total_volume), 0),
+            func.coalesce(func.sum(LeadOptOrder.commission_due), 0),
+            func.coalesce(func.sum(LeadOptOrder.amount_paid), 0), maintain_column_froms=True,
+        ))).one()
+        selected_ids = (await self._session.execute(orders_query.order_by(
+            LeadOptOrder.period_code.desc(), LeadOptOrder.id.desc(),
+        ).offset(offset).limit(limit))).scalars().all()
         base = (select(LeadOptOrderLine, LeadOptOrder, Lead, Contact, ContactGroupAssignment,
                        OptUnit, User)
+                .options(raiseload('*'))
                 .join(LeadOptOrder, LeadOptOrder.id == LeadOptOrderLine.order_id)
                 .join(Lead, Lead.id == LeadOptOrder.lead_id)
                 .outerjoin(Contact, Contact.id == Lead.contact_id)
                 .outerjoin(*manager_join)
                 .outerjoin(OptUnit, OptUnit.inn == LeadOptOrderLine.supplier_inn)
                 .outerjoin(User, User.id == ContactGroupAssignment.owner_user_id)
-                .where(*filters))
+                .where(LeadOptOrder.id.in_(selected_ids)))
         rows = (await self._session.execute(base.order_by(
             LeadOptOrder.period_code.desc(), LeadOptOrder.id.desc(), LeadOptOrderLine.line_no,
         ))).all()
         by_order: dict[int, list[tuple[Any, ...]]] = {}
         for row in rows:
             by_order.setdefault(row[1].id, []).append(row)
-        page_orders = list(by_order.values())[offset:offset + limit]
+        page_orders = list(by_order.values())
         items: list[OptPaymentRegisterItem] = []
         for order_rows in page_orders:
             _line, order, _lead, contact, _assignment, _unit, manager = order_rows[0]
@@ -959,10 +987,12 @@ class OptOrderService:
                 for row in order_rows
             }
             due_by_line = {row[0].id: round_rubles(Decimal(str(row[0].amount)) * rates[row[0].id] / 100) for row in order_rows}
-            total_due = sum(due_by_line.values(), Decimal("0"))
+            total_due = Decimal(str(order.commission_due or 0))
+            allocated = allocate_amount(total_due, list(due_by_line.values()))
+            due_by_line = dict(zip(due_by_line, allocated))
             # The business rule is binary: an application payment covers every
             # invoice line, so never allocate a partial payment across lines.
-            is_paid = order.payment_status == "paid" or Decimal(str(order.amount_paid or 0)) >= total_due > 0
+            is_paid = order.payment_status == 'paid'
             details: list[OptPaymentRegisterLine] = []
             for detail_line, _detail_order, _detail_lead, _detail_contact, _detail_assignment, detail_unit, _detail_manager in order_rows:
                 ben_rate = Decimal(str(detail_line.beneficiary_rate_percent)) if detail_line.beneficiary_rate_percent is not None else None
@@ -980,12 +1010,37 @@ class OptOrderService:
             items.append(OptPaymentRegisterItem(id=order.id, order_id=order.id, lead_id=order.lead_id,
                 order_no=order.order_no, manager_name=(manager.full_name if manager else None),
                 client_name=(contact.full_name if contact else order.buyer_name), client_inn=order.buyer_inn,
-                client_okved=(str((contact.custom_fields or {}).get("okved") or "") or None) if contact else None,
+                client_okved=order.buyer_okved,
                 client_shop_name=order.buyer_name, period_code=order.period_code,
                 volume=sum((detail.volume for detail in details), Decimal("0")), due_amount=total_due,
-                paid_amount=total_due if is_paid else Decimal("0"), remaining_amount=Decimal("0") if is_paid else total_due,
+                paid_amount=Decimal(str(order.amount_paid or 0)),
+                remaining_amount=max(Decimal('0'), total_due - Decimal(str(order.amount_paid or 0))),
                 is_paid=is_paid, lines=details))
-        return OptPaymentRegisterListResponse(items=items, total=len(by_order))
+        return OptPaymentRegisterListResponse(
+            items=items, total=int(stats[0]), total_volume_sum=stats[1],
+            commission_due_sum=stats[2], amount_paid_sum=stats[3],
+        )
+
+    async def save_supplier_settlement(
+        self, actor: User, lead_id: int, order_id: int, supplier_inn: str,
+        body: OptSupplierSettlementRequest,
+    ) -> None:
+        from sqlalchemy import select
+        from sqlalchemy.orm import raiseload
+        from app.modules.leads.opt.allocation import allocate_amount
+
+        await self._get_order_for_actor(actor, lead_id, order_id)
+        lines = (await self._session.execute(select(LeadOptOrderLine).options(raiseload('*')).where(
+            LeadOptOrderLine.order_id == order_id, LeadOptOrderLine.supplier_inn == supplier_inn,
+        ).order_by(LeadOptOrderLine.id).with_for_update())).scalars().all()
+        if not lines:
+            raise NotFound(message='Лавка не найдена в этой заявке')
+        paid = allocate_amount(body.beneficiary_paid_amount, [Decimal(str(line.amount)) for line in lines])
+        for line, paid_amount in zip(lines, paid):
+            line.beneficiary_rate_percent = body.beneficiary_rate_percent
+            line.beneficiary_paid_amount = paid_amount
+            line.comment = (body.comment or '').strip() or None
+        await self._session.flush()
 
     @staticmethod
     async def assert_lead_won_payment_allowed(

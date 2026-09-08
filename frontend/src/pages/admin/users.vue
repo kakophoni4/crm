@@ -594,10 +594,7 @@ onMounted(() => void load())
                   : 'Повысить до старшего группы'
               }}
             </NButton>
-            <span class="admin-page__hint">
-              Группы и остальное не меняются — добавляется только право передавать карточки в своих
-              группах.
-            </span>
+
           </NSpace>
         </NFormItem>
         <NFormItem v-if="showGroupField" label="Группы">

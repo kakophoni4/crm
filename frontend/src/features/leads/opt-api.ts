@@ -22,6 +22,7 @@ export async function listOptOrders(
 }
 
 export async function listOptPaymentRegister(params?: {
+  payment_status?: 'paid' | 'unpaid'
   group_id?: number
   period_code?: string
   manager_user_id?: number

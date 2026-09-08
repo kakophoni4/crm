@@ -13,6 +13,7 @@ def _money(value: Decimal | float | None) -> float | None:
 
 
 class LawyerShopOut(BaseModel):
+    dirovod: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -21,6 +22,7 @@ class LawyerShopOut(BaseModel):
     director_id: int | None = None
     director_name: str | None = None
     kind: str
+    received_at: date | None = None
     registered_at: date | None = None
     planned_payout: float | None = None
     company_status: str | None = None
@@ -110,6 +112,7 @@ class LawyerShopCreateRequest(BaseModel):
     director_name: str | None = Field(default=None, max_length=255)
     director_id: int | None = None
     kind: str = Field(default="new", max_length=32)
+    received_at: date | None = None
     registered_at: date | None = None
     planned_payout: float | None = None
     company_status: str | None = None
@@ -142,6 +145,7 @@ class LawyerShopPatchRequest(BaseModel):
     director_name: str | None = Field(default=None, max_length=255)
     director_id: int | None = None
     kind: str | None = Field(default=None, max_length=32)
+    received_at: date | None = None
     registered_at: date | None = None
     planned_payout: float | None = None
     company_status: str | None = None

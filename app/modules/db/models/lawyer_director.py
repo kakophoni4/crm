@@ -61,6 +61,7 @@ class LawyerShop(Base):
         index=True,
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="priority")
+    received_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     registered_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     planned_payout: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     company_status: Mapped[str | None] = mapped_column(Text, nullable=True)

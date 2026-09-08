@@ -53,6 +53,8 @@ async def run_periodic_maintenance(_job_type: str, _payload: dict[str, object]) 
     await schedule_opt_submit_if_pending()
     await schedule_sbis_norm_sync_if_due()
     await schedule_lavok_parser_pull_if_due()
+    from app.workers.jobs.lawyer_tickets_sync import schedule_lawyer_tickets_sync
+    await schedule_lawyer_tickets_sync()
     await backfill_group_chat_files_job("backfill_group_chat_files", {})
 
 

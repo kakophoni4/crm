@@ -10,6 +10,8 @@ from app.workers.jobs.scheduler import (
 
 
 def register_crm_job_workers() -> None:
+    from app.workers.jobs.lawyer_tickets_sync import JOB_TYPE, sync_lawyer_tickets
+    register_handler(JOB_TYPE, sync_lawyer_tickets)
     register_handler(PERIODIC_JOB_TYPE, run_periodic_maintenance)
     from app.modules.leads.opt.queue import OPT_SUBMIT_JOB_TYPE
     from app.workers.jobs.opt_submit import process_opt_submit_queue

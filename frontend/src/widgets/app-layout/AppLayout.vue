@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useWindowSize } from '@vueuse/core'
 import { NLayout, NLayoutContent } from 'naive-ui'
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import GlobalSearchModal from '@/features/search/GlobalSearchModal.vue'
@@ -14,6 +14,7 @@ import {
 import AppSidebar from '@/widgets/app-layout/AppSidebar.vue'
 import AppTopbar from '@/widgets/app-layout/AppTopbar.vue'
 import IdleContractBanner from '@/widgets/app-layout/IdleContractBanner.vue'
+import '@/shared/ui/workspace-pages.css'
 
 const globalSearchOpen = ref(false)
 useAppHotkeys(globalSearchOpen)
@@ -22,6 +23,11 @@ const { width } = useWindowSize()
 const isMobile = computed(() => width.value <= PHONE_MAX_WIDTH)
 const phoneChatsOnly = usePhoneChatsOnly()
 const route = useRoute()
+const isWorkspacePage = computed(() => route.name !== 'chats')
+watch(isWorkspacePage, (active) => {
+  document.body.classList.toggle('workspace-page-active', active)
+}, { immediate: true })
+onUnmounted(() => document.body.classList.remove('workspace-page-active'))
 const router = useRouter()
 const sidebarCollapsed = ref(false)
 const drawerVisible = ref(false)
@@ -56,7 +62,7 @@ function toggleSidebar(): void {
 <template>
   <NLayout
     class="app-layout"
-    :class="{ 'app-layout--phone-chats': phoneChatsOnly }"
+    :class="{ 'app-layout--phone-chats': phoneChatsOnly, 'app-layout--workspace': isWorkspacePage }"
     :has-sider="!phoneChatsOnly"
   >
     <AppSidebar
@@ -87,7 +93,7 @@ function toggleSidebar(): void {
         :content-style="contentStyle"
       >
         <RouterView v-slot="{ Component, route: viewRoute }">
-          <KeepAlive v-if="viewRoute.name !== 'chats'" :max="8">
+          <KeepAlive v-if="viewRoute.name !== 'chats'" include="TelephonyPage" :max="1">
             <component :is="Component" />
           </KeepAlive>
           <component v-else :is="Component" />
