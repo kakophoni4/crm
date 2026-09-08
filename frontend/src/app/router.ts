@@ -213,7 +213,7 @@ const routes: RouteRecordRaw[] = [
 
         component: () => import('@/pages/lawyer-registry/index.vue'),
 
-        meta: { requiresParser: true },
+        meta: { requiresLawyerRegistry: true },
 
       },
 
@@ -493,6 +493,7 @@ router.beforeEach(async (to) => {
     to.matched.some((r) => r.meta.requiresAccounting) ||
     to.matched.some((r) => r.meta.requiresTickets) ||
     to.matched.some((r) => r.meta.requiresParser) ||
+    to.matched.some((r) => r.meta.requiresLawyerRegistry) ||
     to.matched.some((r) => r.meta.requiresTelephonyCall) ||
     requiresAdminMeta(to.meta) ||
     to.matched.some((record) => requiresAdminMeta(record.meta))
@@ -526,9 +527,14 @@ router.beforeEach(async (to) => {
     return { name: 'contacts' }
   }
 
+  const needsLawyerRegistry = to.matched.some((r) => r.meta.requiresLawyerRegistry)
+  if (needsLawyerRegistry && !auth.canParser && !auth.canAccounting) {
+    return { name: 'contacts' }
+  }
+
   // Бухгалтерам в меню есть «Задачи» — не выкидывать их обратно в кабинет.
   const accountantAllowed =
-    needsAccounting || to.name === 'tasks' || to.name === 'accounting'
+    needsAccounting || needsLawyerRegistry || to.name === 'tasks' || to.name === 'accounting' || to.name === 'lawyer-registry'
   if (auth.isAccountant && !accountantAllowed) {
     return { name: 'accounting' }
   }

@@ -45,9 +45,12 @@ import {
 } from '@/features/lawyer-registry/types'
 import { AppError } from '@/shared/api/http'
 import AppCard from '@/shared/ui/AppCard.vue'
+import { useAuthStore } from '@/shared/store/auth'
 
 const message = useMessage()
 const route = useRoute()
+const auth = useAuthStore()
+const canEditRegistry = computed(() => auth.canParser)
 const loading = ref(false)
 const directors = ref<LawyerDirector[]>([])
 const orphans = ref<LawyerShop[]>([])
@@ -265,6 +268,7 @@ async function onExpand(keys: string | string[]): Promise<void> {
 }
 
 async function saveDirector(id: number, patch: Record<string, unknown>): Promise<void> {
+  if (!canEditRegistry.value) return
   try {
     details.value[id] = await patchLawyerDirector(id, patch)
     await loadTree()
@@ -274,6 +278,7 @@ async function saveDirector(id: number, patch: Record<string, unknown>): Promise
 }
 
 async function saveShop(id: number, patch: Record<string, unknown>, directorId?: number): Promise<void> {
+  if (!canEditRegistry.value) return
   try {
     await patchLawyerShop(id, patch)
     if (directorId) details.value[directorId] = await getLawyerDirector(directorId)
@@ -286,6 +291,7 @@ async function saveShop(id: number, patch: Record<string, unknown>, directorId?:
 }
 
 async function submitShop(): Promise<void> {
+  if (!canEditRegistry.value) return
   try {
     await createLawyerShop({
       inn: shopForm.value.inn.trim(),
@@ -304,6 +310,7 @@ async function submitShop(): Promise<void> {
 }
 
 async function submitDirector(): Promise<void> {
+  if (!canEditRegistry.value) return
   try {
     await createLawyerDirector({
       full_name: directorForm.value.full_name.trim(),
@@ -320,6 +327,7 @@ async function submitDirector(): Promise<void> {
 }
 
 function openPay(directorId: number): void {
+  if (!canEditRegistry.value) return
   payForm.value = {
     director_id: directorId,
     shop_id: null,
@@ -330,6 +338,7 @@ function openPay(directorId: number): void {
 }
 
 async function submitPay(): Promise<void> {
+  if (!canEditRegistry.value) return
   try {
     await addLawyerPayment(payForm.value.director_id, {
       shop_id: payForm.value.shop_id,
@@ -346,6 +355,10 @@ async function submitPay(): Promise<void> {
 }
 
 async function onImport(opts: UploadCustomRequestOptions): Promise<void> {
+  if (!canEditRegistry.value) {
+    opts.onError()
+    return
+  }
   const file = opts.file.file
   if (!file) {
     opts.onError()
@@ -384,21 +397,22 @@ onMounted(async () => {
     <AppCard title="Лавки и диры">
       <NSpace vertical :size="14">
         <p class="hint">
-          Все лавки из сводной, сгруппированные по директору. Поля можно менять. Новая лавка сразу
-          уходит в парсер ЕГРЮЛ; обновления с парсера лавок приходят уведомлением.
+          Все лавки из сводной, сгруппированные по директору.
+          <template v-if="canEditRegistry">Поля можно менять, а новая лавка сразу уходит в парсер ЕГРЮЛ.</template>
+          <template v-else>Режим просмотра для бухгалтерии.</template>
         </p>
         <NAlert
           v-if="unread"
           type="warning"
           :title="`Новые данные парсера: ${unread}`"
-          closable
+          :closable="canEditRegistry"
           @close="dismissAlerts"
         >
           <div v-for="alert in alerts.filter((a) => !a.is_read).slice(0, 6)" :key="alert.id">
             {{ alert.title }} — {{ alert.details }}
           </div>
         </NAlert>
-        <NSpace>
+        <NSpace v-if="canEditRegistry">
           <NButton type="primary" @click="shopOpen = true">
             <template #icon><Plus :size="16" /></template>
             Новая лавка

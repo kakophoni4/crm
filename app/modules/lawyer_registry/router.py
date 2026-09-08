@@ -35,7 +35,7 @@ def _service(db: Annotated[AsyncSession, Depends(get_db)]) -> LawyerRegistryServ
 
 @router.get("", response_model=LawyerDirectorListResponse)
 async def list_registry(
-    actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ))],
+    actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ, Permission.ACCOUNTING_READ))],
     service: Annotated[LawyerRegistryService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
     q: Annotated[str | None, Query(max_length=200)] = None,
@@ -68,7 +68,7 @@ async def list_registry(
 
 @router.get("/alerts", response_model=LawyerAlertListResponse)
 async def list_alerts(
-    actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ))],
+    actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ, Permission.ACCOUNTING_READ))],
     service: Annotated[LawyerRegistryService, Depends(_service)],
 ) -> LawyerAlertListResponse:
     _ = actor
@@ -119,7 +119,7 @@ async def create_director(
 @router.get("/directors/{director_id}", response_model=LawyerDirectorOut)
 async def get_director(
     director_id: int,
-    actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ))],
+    actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ, Permission.ACCOUNTING_READ))],
     service: Annotated[LawyerRegistryService, Depends(_service)],
 ) -> LawyerDirectorOut:
     _ = actor

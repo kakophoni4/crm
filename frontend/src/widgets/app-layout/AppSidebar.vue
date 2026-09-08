@@ -107,6 +107,11 @@ const menuOptions = computed(() => {
         key: 'tasks',
         icon: blinkIcon(CheckSquare, tasksBlink.value),
       },
+      {
+        label: 'Лавки и диры',
+        key: 'lawyer-registry',
+        icon: () => h(NIcon, null, { default: () => h(Building2) }),
+      },
     ]
   }
 
