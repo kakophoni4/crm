@@ -204,6 +204,38 @@ class OptPaymentLedgerListResponse(BaseModel):
     total: int
 
 
+class OptPaymentRegisterItem(BaseModel):
+    id: int
+    order_id: int
+    lead_id: int
+    order_no: int
+    manager_name: str | None = None
+    client_name: str | None = None
+    client_inn: str
+    client_okved: str | None = None
+    client_shop_name: str | None = None
+    supplier_name: str | None = None
+    supplier_inn: str
+    period_code: str | None = None
+    category_code: str | None = None
+    volume: Decimal
+    our_rate_percent: Decimal = Decimal("0")
+    due_amount: Decimal = Decimal("0")
+    paid_amount: Decimal = Decimal("0")
+    remaining_amount: Decimal = Decimal("0")
+    comment: str | None = None
+    beneficiary_rate_percent: Decimal | None = None
+    beneficiary_amount: Decimal = Decimal("0")
+    actual_margin: Decimal = Decimal("0")
+    planned_margin: Decimal = Decimal("0")
+    beneficiary_paid_amount: Decimal = Decimal("0")
+
+
+class OptPaymentRegisterListResponse(BaseModel):
+    items: list[OptPaymentRegisterItem]
+    total: int
+
+
 class OptSendRegistryResponse(BaseModel):
     message_id: int
     chat_id: int

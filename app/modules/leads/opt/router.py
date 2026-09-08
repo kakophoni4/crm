@@ -41,6 +41,7 @@ from app.modules.leads.opt.schemas import (
     OptOrderResponse,
     OptOrderSalesBookExtractsResponse,
     OptPaymentLedgerListResponse,
+    OptPaymentRegisterListResponse,
     OptRegistryManagersResponse,
     OptSendReceiptsResponse,
     OptSendRegistryResponse,
@@ -175,6 +176,24 @@ async def list_opt_payments_ledger(
         kind=kind,
         offset=max(0, offset),
         limit=min(max(1, limit), 100),
+    )
+
+
+@router.get("/opt-payment-register", response_model=OptPaymentRegisterListResponse)
+async def list_opt_payment_register(
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_READ))],
+    service: Annotated[OptOrderService, Depends(_service)],
+    group_id: int | None = None,
+    period_code: str | None = None,
+    manager_user_id: int | None = None,
+    q: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> OptPaymentRegisterListResponse:
+    return await service.list_payment_register(
+        actor, group_id=group_id, period_code=(period_code or "").strip() or None,
+        manager_user_id=manager_user_id, q=(q or "").strip() or None,
+        offset=max(0, offset), limit=min(max(1, limit), 100),
     )
 
 @router.get("/leads/{lead_id}/opt-orders", response_model=OptOrderListResponse)

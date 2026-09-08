@@ -142,6 +142,12 @@ class LeadOptOrderLine(Base):
     vat_amount: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False)
     amount_without_vat: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False)
     document_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Economics of the row is kept on the row, rather than in a spreadsheet.
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    beneficiary_rate_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    beneficiary_paid_amount: Mapped[float] = mapped_column(
+        Numeric(15, 2), nullable=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 

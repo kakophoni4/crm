@@ -24,7 +24,7 @@ import {
   listOptOrderManagers,
   listOptOrders,
   listOptOrdersRegistry,
-  listOptPaymentsLedger,
+  listOptPaymentRegister,
   patchOptOrderPeriod,
   syncOptOrdersWith1c,
 } from '@/features/leads/opt-api'
@@ -32,6 +32,7 @@ import type {
   OptOrderRegistryItem,
   OptPayment,
   OptPaymentLedgerItem,
+  OptPaymentRegisterItem,
   OptRegistryManagerItem,
   OptSync1cResponse,
 } from '@/features/leads/opt-types'
@@ -57,6 +58,7 @@ const activeTab = ref<TabName>('orders')
 const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const paymentItems = ref<OptPaymentLedgerItem[]>([])
+const paymentRegisterItems = ref<OptPaymentRegisterItem[]>([])
 const total = ref(0)
 const totalVolumeSum = ref(0)
 const commissionDueSum = ref(0)
@@ -330,7 +332,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
   return cols
 })
 
-const paymentColumns = computed<DataTableColumns<OptPaymentLedgerItem>>(() => {
+const _paymentColumns = computed<DataTableColumns<OptPaymentLedgerItem>>(() => {
   const cols: DataTableColumns<OptPaymentLedgerItem> = [
     {
       title: 'Дата',
@@ -400,11 +402,57 @@ const paymentColumns = computed<DataTableColumns<OptPaymentLedgerItem>>(() => {
   return cols
 })
 
+const paymentRegisterColumns = computed<DataTableColumns<OptPaymentRegisterItem>>(() => [
+  { title: 'Менеджер', key: 'manager', width: 140, ellipsis: { tooltip: true }, render: (r) => r.manager_name || '—' },
+  { title: 'Клиент', key: 'client', width: 170, ellipsis: { tooltip: true }, render: (r) => r.client_name || `ИНН ${r.client_inn}` },
+  { title: 'ОКВЭД', key: 'okved', width: 110, render: (r) => r.client_okved || '—' },
+  { title: 'Лавка клиента', key: 'client_shop', width: 190, ellipsis: { tooltip: true }, render: (r) => r.client_shop_name || '—' },
+  { title: 'Наша лавка', key: 'supplier', width: 190, ellipsis: { tooltip: true }, render: (r) => r.supplier_name || `ИНН ${r.supplier_inn}` },
+  { title: 'Сделка / заявка', key: 'order', width: 135, render: (r) => `№${r.lead_id} / ${r.order_no}` },
+  { title: 'Период', key: 'period', width: 95, render: (r) => formatOptPeriodLabel(r.period_code) },
+  { title: 'Кат.', key: 'category', width: 70, render: (r) => r.category_code || '—' },
+  { title: 'Объём', key: 'volume', width: 120, align: 'right', render: (r) => `${formatMoney(r.volume)} ₽` },
+  { title: 'Наша цена', key: 'rate', width: 105, align: 'right', render: (r) => `${formatMoney(r.our_rate_percent)}%` },
+  { title: 'К оплате', key: 'due', width: 115, align: 'right', render: (r) => `${formatRubles(r.due_amount)} ₽` },
+  { title: 'Оплачено', key: 'paid', width: 115, align: 'right', render: (r) => `${formatRubles(r.paid_amount)} ₽` },
+  { title: 'Долг', key: 'debt', width: 115, align: 'right', render: (r) => `${formatRubles(r.remaining_amount)} ₽` },
+  { title: 'Комментарий', key: 'comment', width: 180, ellipsis: { tooltip: true }, render: (r) => r.comment || '—' },
+  { title: 'Цена Бена', key: 'ben_rate', width: 100, align: 'right', render: (r) => r.beneficiary_rate_percent == null ? '—' : `${formatMoney(r.beneficiary_rate_percent)}%` },
+  { title: 'Бену', key: 'ben_amount', width: 105, align: 'right', render: (r) => `${formatRubles(r.beneficiary_amount)} ₽` },
+  { title: 'Реальная маржа', key: 'actual', width: 135, align: 'right', render: (r) => `${formatRubles(r.actual_margin)} ₽` },
+  { title: 'Планируемая маржа', key: 'planned', width: 150, align: 'right', render: (r) => `${formatRubles(r.planned_margin)} ₽` },
+  { title: 'Вернули Бену', key: 'ben_paid', width: 135, align: 'right', render: (r) => `${formatRubles(r.beneficiary_paid_amount)} ₽` },
+])
+
 function rowKey(row: OptOrderRegistryItem): DataTableRowKey {
   return row.id
 }
 
-function paymentRowKey(row: OptPaymentLedgerItem): DataTableRowKey {
+function paymentRegisterRowKey(row: OptPaymentRegisterItem): DataTableRowKey {
+  return row.id
+}
+
+function paymentRegisterRowProps(row: OptPaymentRegisterItem) {
+  return {
+    style: 'cursor: pointer',
+    onClick: () => openDetail({
+      id: row.order_id,
+      lead_id: row.lead_id,
+      order_no: row.order_no,
+      group_id: 0,
+      status: '',
+      payment_status: '',
+      total_volume: 0,
+      commission_due: 0,
+      amount_paid: 0,
+      amount_remaining: 0,
+      buyer: { inn: row.client_inn, name: row.client_shop_name || null },
+      created_at: '',
+    }),
+  }
+}
+
+function _paymentRowKey(row: OptPaymentLedgerItem): DataTableRowKey {
   return row.id
 }
 
@@ -415,7 +463,7 @@ function rowProps(row: OptOrderRegistryItem) {
   }
 }
 
-function paymentRowProps(row: OptPaymentLedgerItem) {
+function _paymentRowProps(row: OptPaymentLedgerItem) {
   return {
     style: 'cursor: pointer',
     onClick: () => openPaymentDetail(row),
@@ -457,7 +505,7 @@ function resolvedOrdersPaymentStatus(): string | undefined {
   return value
 }
 
-function resolvedLedgerPaymentStatus(): string {
+function _resolvedLedgerPaymentStatus(): string {
   const value = paymentStatusFilter.value
   if (value === 'partial' || value === 'paid') return value
   return 'partial,paid'
@@ -505,7 +553,7 @@ async function loadGroups(): Promise<void> {
 }
 
 async function load(): Promise<void> {
-  const hasRows = items.value.length > 0 || paymentItems.value.length > 0
+    const hasRows = items.value.length > 0 || paymentItems.value.length > 0 || paymentRegisterItems.value.length > 0
   if (!hasRows) loading.value = true
   try {
     const common = {
@@ -517,12 +565,11 @@ async function load(): Promise<void> {
       limit: pageSize,
     }
     if (activeTab.value === 'payments') {
-      const data = await listOptPaymentsLedger({
+      const data = await listOptPaymentRegister({
         ...common,
-        payment_status: resolvedLedgerPaymentStatus(),
-        kind: 'standard',
       })
-      paymentItems.value = data.items
+      paymentRegisterItems.value = data.items
+      paymentItems.value = []
       items.value = []
       total.value = data.total
       totalVolumeSum.value = 0
@@ -536,6 +583,7 @@ async function load(): Promise<void> {
       })
       items.value = data.items
       paymentItems.value = []
+      paymentRegisterItems.value = []
       total.value = data.total
       totalVolumeSum.value = Number(data.total_volume_sum ?? 0)
       commissionDueSum.value = Number(data.commission_due_sum ?? 0)
@@ -757,7 +805,7 @@ onMounted(() => {
       </span>
     </div>
 
-    <NSpin class="applications-page__spin" :show="loading && items.length === 0 && paymentItems.length === 0">
+    <NSpin class="applications-page__spin" :show="loading && items.length === 0 && paymentItems.length === 0 && paymentRegisterItems.length === 0">
       <template v-if="isOrdersLikeTab">
         <NEmpty
           v-if="!items.length && !loading"
@@ -782,20 +830,20 @@ onMounted(() => {
 
       <template v-else>
         <NEmpty
-          v-if="!paymentItems.length && !loading"
-          description="Проведённых оплат пока нет"
+          v-if="!paymentRegisterItems.length && !loading"
+          description="Строк реестра пока нет"
         />
         <div v-else class="applications-page__table">
           <NDataTable
             size="small"
             flex-height
-            :columns="paymentColumns"
-            :data="paymentItems"
-            :row-key="paymentRowKey"
-            :row-props="paymentRowProps"
+            :columns="paymentRegisterColumns"
+            :data="paymentRegisterItems"
+            :row-key="paymentRegisterRowKey"
+            :row-props="paymentRegisterRowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="1200"
+            :scroll-x="2500"
             virtual-scroll
             :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />

@@ -4,6 +4,7 @@ import type {
   OptOrderListResponse,
   OptOrderRegistryListResponse,
   OptPaymentLedgerListResponse,
+  OptPaymentRegisterListResponse,
   OptRegistryManagerItem,
   OptRegistryManagersResponse,
   OptSync1cResponse,
@@ -18,6 +19,18 @@ export async function listOptOrders(
     signal: options.signal,
   })
   return data.items
+}
+
+export async function listOptPaymentRegister(params?: {
+  group_id?: number
+  period_code?: string
+  manager_user_id?: number
+  q?: string
+  offset?: number
+  limit?: number
+}): Promise<OptPaymentRegisterListResponse> {
+  const { data } = await http.get<OptPaymentRegisterListResponse>('/opt-payment-register', { params })
+  return data
 }
 
 export async function listOptOrdersRegistry(params?: {

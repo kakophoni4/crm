@@ -188,6 +188,38 @@ export interface OptPaymentLedgerListResponse {
   total: number
 }
 
+export interface OptPaymentRegisterItem {
+  id: number
+  order_id: number
+  lead_id: number
+  order_no: number
+  manager_name?: string | null
+  client_name?: string | null
+  client_inn: string
+  client_okved?: string | null
+  client_shop_name?: string | null
+  supplier_name?: string | null
+  supplier_inn: string
+  period_code?: string | null
+  category_code?: string | null
+  volume: number
+  our_rate_percent: number
+  due_amount: number
+  paid_amount: number
+  remaining_amount: number
+  comment?: string | null
+  beneficiary_rate_percent?: number | null
+  beneficiary_amount: number
+  actual_margin: number
+  planned_margin: number
+  beneficiary_paid_amount: number
+}
+
+export interface OptPaymentRegisterListResponse {
+  items: OptPaymentRegisterItem[]
+  total: number
+}
+
 export interface OptSync1cActionItem {
   action: string
   crm_id: string
