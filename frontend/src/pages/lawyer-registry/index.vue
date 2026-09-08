@@ -644,6 +644,27 @@ onMounted(async () => {
                           @update:value="(v) => saveShop(shop.id, { planned_payout: v }, director.id)"
                         />
                       </label>
+                      <label>ФНС
+                        <NInput :value="shop.fns ?? ''" @blur="(e) => saveShop(shop.id, { fns: (e.target as HTMLInputElement).value || null }, director.id)" />
+                      </label>
+                      <label>СБИС
+                        <NInput :value="shop.sbis ?? ''" @blur="(e) => saveShop(shop.id, { sbis: (e.target as HTMLInputElement).value || null }, director.id)" />
+                      </label>
+                      <label>ЭДО ID
+                        <NInput :value="shop.edo_id ?? ''" @blur="(e) => saveShop(shop.id, { edo_id: (e.target as HTMLInputElement).value || null }, director.id)" />
+                      </label>
+                      <label>ЭДО до
+                        <NDatePicker :value="fromIsoDate(shop.edo_until)" type="date" clearable style="width: 100%" @update:value="(v: number | null) => saveShop(shop.id, { edo_until: toIsoDate(v) }, director.id)" />
+                      </label>
+                      <label>Дата покупки
+                        <NDatePicker :value="fromIsoDate(shop.purchased_at)" type="date" clearable style="width: 100%" @update:value="(v: number | null) => saveShop(shop.id, { purchased_at: toIsoDate(v) }, director.id)" />
+                      </label>
+                      <label>Дата слёта
+                        <NDatePicker :value="fromIsoDate(shop.failed_at)" type="date" clearable style="width: 100%" @update:value="(v: number | null) => saveShop(shop.id, { failed_at: toIsoDate(v) }, director.id)" />
+                      </label>
+                      <label>Причина слёта
+                        <NInput :value="shop.failure_reason ?? ''" @blur="(e) => saveShop(shop.id, { failure_reason: (e.target as HTMLInputElement).value || null }, director.id)" />
+                      </label>
                     </div>
                     <NSpace style="margin-top: 8px">
                       <NButton

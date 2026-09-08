@@ -3,6 +3,7 @@
 from app.modules.db.models.audit_log_entry import AuditLogEntry
 from app.modules.db.models.base import Base
 from app.modules.db.models.bot import Bot
+from app.modules.db.models.blacklist_entry import BlacklistEntry
 from app.modules.db.models.bot_event_inbox import BotEventInbox
 from app.modules.db.models.bot_group_assignment import BotGroupAssignment
 from app.modules.db.models.chat import Chat

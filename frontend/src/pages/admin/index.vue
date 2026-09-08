@@ -4,6 +4,7 @@ import {
   NCard,
   NGrid,
   NGridItem,
+  NInput,
   NModal,
   NSelect,
   NSpace,
@@ -18,6 +19,7 @@ import { RouterLink } from 'vue-router'
 import { listUsers, type AdminUser } from '@/features/admin/api'
 import { getIdleBannerStatus, patchIdleBanner, sendIdleBanner, uploadIdleBannerImage, fetchIdleBannerImageUrl } from '@/features/idle-banner/api'
 import { AppError } from '@/shared/api/http'
+import { http } from '@/shared/api/http'
 
 const links = [
   { name: 'admin-departments', label: 'Отделы', desc: 'Создание и редактирование отделов' },
@@ -37,6 +39,10 @@ const sendOpen = ref(false)
 const sendLoading = ref(false)
 const users = ref<AdminUser[]>([])
 const selectedUserIds = ref<number[]>([])
+const blacklistKind = ref<'telegram_username' | 'buyer_inn'>('telegram_username')
+const blacklistValue = ref('')
+const blacklistReason = ref('')
+const blacklistSaving = ref(false)
 
 const userOptions = computed(() =>
   users.value
@@ -117,6 +123,21 @@ async function sendNow(): Promise<void> {
   }
 }
 
+async function addBlacklist(): Promise<void> {
+  if (!blacklistValue.value.trim() || !blacklistReason.value.trim()) {
+    message.warning('Укажите значение и причину')
+    return
+  }
+  blacklistSaving.value = true
+  try {
+    await http.post('/blacklist', { kind: blacklistKind.value, value: blacklistValue.value, reason: blacklistReason.value })
+    blacklistValue.value = ''; blacklistReason.value = ''
+    message.success('Добавлено в чёрный список')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось добавить запись')
+  } finally { blacklistSaving.value = false }
+}
+
 onMounted(() => {
   void loadBanner()
 })
@@ -158,6 +179,14 @@ onMounted(() => {
         </RouterLink>
       </NGridItem>
     </NGrid>
+    <NCard title="Чёрный список заявок" size="small" class="admin-page__blacklist">
+      <NSpace vertical>
+        <NSelect v-model:value="blacklistKind" :options="[{ label: 'Telegram-ник', value: 'telegram_username' }, { label: 'ИНН лавки клиента', value: 'buyer_inn' }]" />
+        <NInput v-model:value="blacklistValue" :placeholder="blacklistKind === 'telegram_username' ? '@username' : 'ИНН'" />
+        <NInput v-model:value="blacklistReason" type="textarea" placeholder="Причина попадания в ЧС" />
+        <NButton type="error" :loading="blacklistSaving" @click="addBlacklist">Добавить в ЧС</NButton>
+      </NSpace>
+    </NCard>
 
     <NModal
       v-model:show="sendOpen"

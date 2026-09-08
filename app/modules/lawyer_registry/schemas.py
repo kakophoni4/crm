@@ -36,6 +36,13 @@ class LawyerShopOut(BaseModel):
     phone: str | None = None
     telegram: str | None = None
     accountant: str | None = None
+    fns: str | None = None
+    sbis: str | None = None
+    edo_until: date | None = None
+    edo_id: str | None = None
+    purchased_at: date | None = None
+    failed_at: date | None = None
+    failure_reason: str | None = None
     comment: str | None = None
     source: str
     last_parser_at: datetime | None = None
@@ -118,6 +125,13 @@ class LawyerShopCreateRequest(BaseModel):
     phone: str | None = None
     telegram: str | None = None
     accountant: str | None = None
+    fns: str | None = None
+    sbis: str | None = None
+    edo_until: date | None = None
+    edo_id: str | None = None
+    purchased_at: date | None = None
+    failed_at: date | None = None
+    failure_reason: str | None = None
     comment: str | None = None
 
 
@@ -143,6 +157,13 @@ class LawyerShopPatchRequest(BaseModel):
     phone: str | None = None
     telegram: str | None = None
     accountant: str | None = None
+    fns: str | None = None
+    sbis: str | None = None
+    edo_until: date | None = None
+    edo_id: str | None = None
+    purchased_at: date | None = None
+    failed_at: date | None = None
+    failure_reason: str | None = None
     comment: str | None = None
     pinned: bool | None = None
     hidden: bool | None = None

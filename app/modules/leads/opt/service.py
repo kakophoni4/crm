@@ -1160,6 +1160,31 @@ class OptOrderService:
 
         parsed, order_kind = _parse_opt_or_benik(content)
 
+        # Block before any lookup, side effect, or outbound 1C submission.
+        from sqlalchemy import select
+        from app.modules.blacklist.router import _normalize
+        from app.modules.db.models.blacklist_entry import BlacklistEntry
+        from app.modules.db.models.contact import Contact
+
+        contact = await self._session.get(Contact, lead.contact_id) if lead.contact_id else None
+        username = _normalize("telegram_username", contact.telegram_username) if contact and contact.telegram_username else ""
+        if username:
+            blocked_tg = await self._session.scalar(
+                select(BlacklistEntry).where(
+                    BlacklistEntry.kind == "telegram_username", BlacklistEntry.value == username,
+                )
+            )
+            if blocked_tg is not None:
+                raise ValidationError(message=f"Загрузка запрещена: Telegram @{username} в чёрном списке. Причина: {blocked_tg.reason}")
+        blocked_inn = await self._session.scalar(
+            select(BlacklistEntry).where(
+                BlacklistEntry.kind == "buyer_inn",
+                BlacklistEntry.value == _normalize("buyer_inn", parsed.buyer_inn),
+            )
+        )
+        if blocked_inn is not None:
+            raise ValidationError(message=f"Загрузка запрещена: лавка с ИНН {parsed.buyer_inn} в чёрном списке. Причина: {blocked_inn.reason}")
+
         if order_kind != "benik" and await self._repo.lead_has_pending_submission(lead.id):
             raise ValidationError(
                 message=(

@@ -22,6 +22,13 @@ export interface LawyerShop {
   phone: string | null
   telegram: string | null
   accountant: string | null
+  fns: string | null
+  sbis: string | null
+  edo_until: string | null
+  edo_id: string | null
+  purchased_at: string | null
+  failed_at: string | null
+  failure_reason: string | null
   comment: string | null
   source: string
   last_parser_at: string | null

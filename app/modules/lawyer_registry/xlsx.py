@@ -135,7 +135,7 @@ def _parse_company_sheet(wb: Any, sheet_name: str, kind: str) -> list[dict[str, 
     items: list[dict[str, Any]] = []
     for row in rows[1:]:
         inn = normalize_inn(_cell(row, headers, "ИНН"))
-        name = _as_text(_cell(row, headers, "Наименование компании"))
+        name = _as_text(_cell(row, headers, "Наименование компании", "Наименование"))
         if not inn or not name:
             continue
         items.append(
@@ -143,7 +143,7 @@ def _parse_company_sheet(wb: Any, sheet_name: str, kind: str) -> list[dict[str, 
                 "inn": inn,
                 "name": name,
                 "kind": kind,
-                "director_name": _as_text(_cell(row, headers, "ФИО директора")),
+                "director_name": _as_text(_cell(row, headers, "ФИО директора", "Директор")),
                 "registered_at": _as_date(_cell(row, headers, "Дата регистрации")),
                 "planned_payout": _as_money(_cell(row, headers, "Плановая сумма выплаты")),
                 "company_status": _as_text(_cell(row, headers, "Статус компании")),
@@ -157,6 +157,13 @@ def _parse_company_sheet(wb: Any, sheet_name: str, kind: str) -> list[dict[str, 
                 "manager": _as_text(_cell(row, headers, "Менеджер")),
                 "phone": _as_text(_cell(row, headers, "Телефон")),
                 "telegram": _as_text(_cell(row, headers, "Телеграм")),
+                "fns": _as_text(_cell(row, headers, "ФНС")),
+                "sbis": _as_text(_cell(row, headers, "СБИС")),
+                "edo_until": _as_date(_cell(row, headers, "ЭДО дата окончания")),
+                "edo_id": _as_text(_cell(row, headers, "ЭДО ID")),
+                "purchased_at": _as_date(_cell(row, headers, "дата покупки")),
+                "failed_at": _as_date(_cell(row, headers, "Дата слета (недостоверки, сдался)")),
+                "failure_reason": _as_text(_cell(row, headers, "Причина слета (адрес, учред, дир - сдались, недостоверны)")),
                 "source": "svodnaya",
             },
         )

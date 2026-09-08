@@ -77,6 +77,8 @@ class LawyerRegistryService:
             phone=shop.phone,
             telegram=shop.telegram,
             accountant=shop.accountant,
+            fns=shop.fns, sbis=shop.sbis, edo_until=shop.edo_until, edo_id=shop.edo_id,
+            purchased_at=shop.purchased_at, failed_at=shop.failed_at, failure_reason=shop.failure_reason,
             comment=shop.comment,
             source=shop.source,
             last_parser_at=shop.last_parser_at,
@@ -457,6 +459,7 @@ class LawyerRegistryService:
                     "phone",
                     "telegram",
                     "accountant",
+                    "fns", "sbis", "edo_until", "edo_id", "purchased_at", "failed_at", "failure_reason",
                     "comment",
                     "source",
                 )
