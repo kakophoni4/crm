@@ -188,19 +188,10 @@ export interface OptPaymentLedgerListResponse {
   total: number
 }
 
-export interface OptPaymentRegisterItem {
+export interface OptPaymentRegisterLine {
   id: number
-  order_id: number
-  lead_id: number
-  order_no: number
-  manager_name?: string | null
-  client_name?: string | null
-  client_inn: string
-  client_okved?: string | null
-  client_shop_name?: string | null
   supplier_name?: string | null
   supplier_inn: string
-  period_code?: string | null
   category_code?: string | null
   volume: number
   our_rate_percent: number
@@ -213,6 +204,25 @@ export interface OptPaymentRegisterItem {
   actual_margin: number
   planned_margin: number
   beneficiary_paid_amount: number
+}
+
+export interface OptPaymentRegisterItem {
+  id: number
+  order_id: number
+  lead_id: number
+  order_no: number
+  manager_name?: string | null
+  client_name?: string | null
+  client_inn: string
+  client_okved?: string | null
+  client_shop_name?: string | null
+  period_code?: string | null
+  volume: number
+  due_amount: number
+  paid_amount: number
+  remaining_amount: number
+  is_paid: boolean
+  lines: OptPaymentRegisterLine[]
 }
 
 export interface OptPaymentRegisterListResponse {

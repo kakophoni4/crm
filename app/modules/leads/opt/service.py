@@ -53,6 +53,7 @@ from app.modules.leads.opt.schemas import (
     OptPaymentDocument,
     OptPaymentLedgerItem,
     OptPaymentLedgerListResponse,
+    OptPaymentRegisterLine,
     OptPaymentRegisterItem,
     OptPaymentRegisterListResponse,
     OptPaymentResponse,
@@ -907,8 +908,8 @@ class OptOrderService:
         self, actor: User, *, group_id: int | None, period_code: str | None,
         manager_user_id: int | None, q: str | None, offset: int, limit: int,
     ) -> OptPaymentRegisterListResponse:
-        """Spreadsheet-style register: one row per invoice line, never per payment."""
-        from sqlalchemy import func, or_, select
+        """Payment register: one row per application, with invoice lines as details."""
+        from sqlalchemy import or_, select
         from app.modules.db.models.contact import Contact
         from app.modules.db.models.contact_group_assignment import ContactGroupAssignment
         from app.modules.db.models.opt_unit import OptUnit
@@ -943,33 +944,48 @@ class OptOrderService:
                 .outerjoin(OptUnit, OptUnit.inn == LeadOptOrderLine.supplier_inn)
                 .outerjoin(User, User.id == ContactGroupAssignment.owner_user_id)
                 .where(*filters))
-        count = int((await self._session.execute(select(func.count()).select_from(base.subquery()))).scalar_one())
-        rows = (await self._session.execute(base.order_by(LeadOptOrder.period_code.desc(), LeadOptOrder.id.desc(), LeadOptOrderLine.line_no)
-                                            .offset(offset).limit(limit))).all()
-        by_order: dict[int, list[tuple[LeadOptOrderLine, OptUnit | None]]] = {}
-        for line, order, _lead, _contact, _assignment, unit, _manager in rows:
-            by_order.setdefault(order.id, []).append((line, unit))
+        rows = (await self._session.execute(base.order_by(
+            LeadOptOrder.period_code.desc(), LeadOptOrder.id.desc(), LeadOptOrderLine.line_no,
+        ))).all()
+        by_order: dict[int, list[tuple[Any, ...]]] = {}
+        for row in rows:
+            by_order.setdefault(row[1].id, []).append(row)
+        page_orders = list(by_order.values())[offset:offset + limit]
         items: list[OptPaymentRegisterItem] = []
-        for line, order, lead, contact, _assignment, unit, manager in rows:
-            siblings = by_order[order.id]
-            rates = {row.id: Decimal(str(rate_percent_for_unit(u, category_code=(u.category_code if u else None)))) for row, u in siblings}
-            due_by_line = {row.id: round_rubles(Decimal(str(row.amount)) * rates[row.id] / 100) for row, _u in siblings}
+        for order_rows in page_orders:
+            _line, order, _lead, contact, _assignment, _unit, manager = order_rows[0]
+            rates = {
+                row[0].id: Decimal(str(rate_percent_for_unit(row[5], category_code=(row[5].category_code if row[5] else None))))
+                for row in order_rows
+            }
+            due_by_line = {row[0].id: round_rubles(Decimal(str(row[0].amount)) * rates[row[0].id] / 100) for row in order_rows}
             total_due = sum(due_by_line.values(), Decimal("0"))
-            due = due_by_line[line.id]
-            paid = round_rubles(Decimal(str(order.amount_paid or 0)) * due / total_due) if total_due else Decimal("0")
-            ben_rate = Decimal(str(line.beneficiary_rate_percent)) if line.beneficiary_rate_percent is not None else None
-            ben_amount = round_rubles(Decimal(str(line.amount)) * ben_rate / 100) if ben_rate is not None else Decimal("0")
-            ben_paid = Decimal(str(line.beneficiary_paid_amount or 0))
-            items.append(OptPaymentRegisterItem(id=line.id, order_id=order.id, lead_id=order.lead_id,
+            # The business rule is binary: an application payment covers every
+            # invoice line, so never allocate a partial payment across lines.
+            is_paid = order.payment_status == "paid" or Decimal(str(order.amount_paid or 0)) >= total_due > 0
+            details: list[OptPaymentRegisterLine] = []
+            for detail_line, _detail_order, _detail_lead, _detail_contact, _detail_assignment, detail_unit, _detail_manager in order_rows:
+                ben_rate = Decimal(str(detail_line.beneficiary_rate_percent)) if detail_line.beneficiary_rate_percent is not None else None
+                ben_amount = round_rubles(Decimal(str(detail_line.amount)) * ben_rate / 100) if ben_rate is not None else Decimal("0")
+                ben_paid = Decimal(str(detail_line.beneficiary_paid_amount or 0))
+                due = due_by_line[detail_line.id]
+                paid = due if is_paid else Decimal("0")
+                details.append(OptPaymentRegisterLine(
+                    id=detail_line.id, supplier_name=detail_line.supplier_name, supplier_inn=detail_line.supplier_inn,
+                    category_code=(detail_unit.category_code if detail_unit else None), volume=Decimal(str(detail_line.amount)),
+                    our_rate_percent=rates[detail_line.id], due_amount=due, paid_amount=paid, remaining_amount=due-paid,
+                    comment=detail_line.comment, beneficiary_rate_percent=ben_rate, beneficiary_amount=ben_amount,
+                    actual_margin=paid-ben_paid, planned_margin=due-ben_amount, beneficiary_paid_amount=ben_paid,
+                ))
+            items.append(OptPaymentRegisterItem(id=order.id, order_id=order.id, lead_id=order.lead_id,
                 order_no=order.order_no, manager_name=(manager.full_name if manager else None),
                 client_name=(contact.full_name if contact else order.buyer_name), client_inn=order.buyer_inn,
                 client_okved=(str((contact.custom_fields or {}).get("okved") or "") or None) if contact else None,
-                client_shop_name=order.buyer_name, supplier_name=line.supplier_name, supplier_inn=line.supplier_inn,
-                period_code=order.period_code, category_code=(unit.category_code if unit else None), volume=Decimal(str(line.amount)),
-                our_rate_percent=rates[line.id], due_amount=due, paid_amount=paid, remaining_amount=due-paid,
-                comment=line.comment, beneficiary_rate_percent=ben_rate, beneficiary_amount=ben_amount,
-                actual_margin=paid-ben_paid, planned_margin=due-ben_amount, beneficiary_paid_amount=ben_paid))
-        return OptPaymentRegisterListResponse(items=items, total=count)
+                client_shop_name=order.buyer_name, period_code=order.period_code,
+                volume=sum((detail.volume for detail in details), Decimal("0")), due_amount=total_due,
+                paid_amount=total_due if is_paid else Decimal("0"), remaining_amount=Decimal("0") if is_paid else total_due,
+                is_paid=is_paid, lines=details))
+        return OptPaymentRegisterListResponse(items=items, total=len(by_order))
 
     @staticmethod
     async def assert_lead_won_payment_allowed(

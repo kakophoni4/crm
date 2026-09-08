@@ -24,7 +24,7 @@ def _normalize(kind: str, value: str) -> str:
 
 @router.get("", response_model=BlacklistListResponse)
 async def list_entries(
-    _: Annotated[User, Depends(requires_permission(Permission.USERS_UPDATE))],
+    _: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BlacklistListResponse:
     rows = (await db.execute(select(BlacklistEntry).order_by(BlacklistEntry.created_at.desc()))).scalars().all()
@@ -34,7 +34,7 @@ async def list_entries(
 @router.post("", response_model=BlacklistEntryResponse, status_code=201)
 async def create_entry(
     body: BlacklistCreateRequest,
-    actor: Annotated[User, Depends(requires_permission(Permission.USERS_UPDATE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BlacklistEntryResponse:
     value = _normalize(body.kind, body.value)
@@ -53,7 +53,7 @@ async def create_entry(
 @router.delete("/{entry_id}", status_code=204)
 async def delete_entry(
     entry_id: int,
-    _: Annotated[User, Depends(requires_permission(Permission.USERS_UPDATE))],
+    _: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     row = await db.get(BlacklistEntry, entry_id)

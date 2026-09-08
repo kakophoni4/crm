@@ -119,6 +119,9 @@ def parse_svodnaya(content: bytes) -> dict[str, list[dict[str, Any]]]:
     shops: list[dict[str, Any]] = []
     shops.extend(_parse_company_sheet(wb, "Приоритетные компании", "priority"))
     shops.extend(_parse_company_sheet(wb, "Обслуживающие компании", "service"))
+    # Рабочий список юриста: его можно загружать без предварительного
+    # переименования листа в шаблон сводной таблицы.
+    shops.extend(_parse_company_sheet(wb, "Организации", "priority"))
     shops.extend(_parse_new_shops(wb))
     payments = _parse_payments(wb, "Выплаты ПРИОРИТЕТНЫЕ")
     payments.extend(_parse_payments(wb, "Выплаты ОБСЛУЖИВАЮЩИЕ"))
@@ -146,24 +149,27 @@ def _parse_company_sheet(wb: Any, sheet_name: str, kind: str) -> list[dict[str, 
                 "director_name": _as_text(_cell(row, headers, "ФИО директора", "Директор")),
                 "registered_at": _as_date(_cell(row, headers, "Дата регистрации")),
                 "planned_payout": _as_money(_cell(row, headers, "Плановая сумма выплаты")),
-                "company_status": _as_text(_cell(row, headers, "Статус компании")),
-                "sale_priority": _as_text(_cell(row, headers, "Приоритет продажи")),
+                "company_status": _as_text(_cell(row, headers, "Статус компании", "Статус")),
+                "sale_priority": _as_text(_cell(row, headers, "Приоритет продажи", "Категория")),
                 "unreliable": _as_text(_cell(row, headers, "Недостоверка", "Недостоверность")),
                 "ecsp_status": _as_text(_cell(row, headers, "ЭЦП")),
                 "ecsp_until": _as_date(_cell(row, headers, "ЭЦП ДО")),
                 "zsk": _as_text(_cell(row, headers, "ЗСК")),
                 "banks": _as_text(_cell(row, headers, "Банки")),
-                "accounts_status": _as_text(_cell(row, headers, "Статус счетов")),
+                "accounts_status": _as_text(_cell(row, headers, "Статус счетов", "Наличие РС (есть/нет/блок/ждем)")),
                 "manager": _as_text(_cell(row, headers, "Менеджер")),
                 "phone": _as_text(_cell(row, headers, "Телефон")),
                 "telegram": _as_text(_cell(row, headers, "Телеграм")),
+                "accountant": _as_text(_cell(row, headers, "Бухгалтер")),
                 "fns": _as_text(_cell(row, headers, "ФНС")),
                 "sbis": _as_text(_cell(row, headers, "СБИС")),
                 "edo_until": _as_date(_cell(row, headers, "ЭДО дата окончания")),
                 "edo_id": _as_text(_cell(row, headers, "ЭДО ID")),
                 "purchased_at": _as_date(_cell(row, headers, "дата покупки")),
+                "dirovod": _as_text(_cell(row, headers, "дировод")),
                 "failed_at": _as_date(_cell(row, headers, "Дата слета (недостоверки, сдался)")),
                 "failure_reason": _as_text(_cell(row, headers, "Причина слета (адрес, учред, дир - сдались, недостоверны)")),
+                "comment": _as_text(_cell(row, headers, "Комментарий")),
                 "source": "svodnaya",
             },
         )

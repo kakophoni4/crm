@@ -35,6 +35,7 @@ import {
   Undo2,
 } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
 import {
   assignAccountingUnitOwner,
@@ -81,6 +82,7 @@ import { useAuthStore } from '@/shared/store/auth'
 const message = useMessage()
 const dialog = useDialog()
 const auth = useAuthStore()
+const router = useRouter()
 
 /** Полное юр.имя → короткое «ООО „АФИНА“». */
 function shortLavkaName(name: string | null | undefined): string {
@@ -1724,6 +1726,13 @@ onUnmounted(() => {
                       <span class="accounting-page__owner-periods">
                         {{ formatPeriodCodes(row.period_codes) }}
                       </span>
+                      <span v-if="row.lawyer_shop_id" class="accounting-page__owner-legal">
+                        Юрист: {{ row.lawyer_director_name || 'директор не указан' }}
+                        <template v-if="row.lawyer_company_status"> · {{ row.lawyer_company_status }}</template>
+                        <template v-if="row.lawyer_unreliable"> · {{ row.lawyer_unreliable }}</template>
+                        <template v-if="row.lawyer_treatment_status"> · тикеты: {{ row.lawyer_treatment_status }}</template>
+                      </span>
+                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing">Нет карточки у юриста</span>
                     </div>
                     <div class="accounting-page__owner-actions">
                       <NButton size="small" secondary @click="openEditRate(row)">
@@ -1738,6 +1747,7 @@ onUnmounted(() => {
                         </template>
                         Периоды
                       </NButton>
+                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ path: '/lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
                       <NButton
                         size="small"
                         quaternary
@@ -1793,6 +1803,12 @@ onUnmounted(() => {
                         shortLavkaName(row.name) || row.name || row.inn
                       }}</span>
                       <span class="accounting-page__owner-inn">{{ row.inn }}</span>
+                      <span v-if="row.lawyer_shop_id" class="accounting-page__owner-legal">
+                        Юрист: {{ row.lawyer_director_name || 'директор не указан' }}
+                        <template v-if="row.lawyer_company_status"> · {{ row.lawyer_company_status }}</template>
+                        <template v-if="row.lawyer_treatment_status"> · тикеты: {{ row.lawyer_treatment_status }}</template>
+                      </span>
+                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing">Нет карточки у юриста</span>
                     </div>
                     <div class="accounting-page__owner-actions">
                       <NButton
@@ -1803,6 +1819,7 @@ onUnmounted(() => {
                       >
                         В продающие
                       </NButton>
+                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ path: '/lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
                       <NButton
                         size="small"
                         quaternary
@@ -2433,6 +2450,25 @@ onUnmounted(() => {
 .accounting-page__owner-inn {
   font-size: 0.8rem;
   color: var(--app-text-muted);
+}
+
+.accounting-page__owner-legal {
+  font-size: 0.78rem;
+  color: var(--app-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.accounting-page__owner-legal--missing {
+  color: var(--app-warning-text, #a35b00);
+}
+
+@media (max-width: 900px) {
+  .accounting-page__owner-row {
+    grid-template-columns: 1fr;
+  }
+  .accounting-page__owner-actions {
+    justify-content: flex-start;
+  }
 }
 
 .accounting-page__owner-periods {

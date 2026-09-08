@@ -828,10 +828,19 @@ class AccountingService:
         periods_by_inn = await self._repo.list_period_codes_by_inns(
             [unit.inn for unit, _, _ in rows],
         )
+        from sqlalchemy import select
+        from app.modules.db.models.lawyer_director import LawyerDirector, LawyerShop
+        lawyer_rows = (await self._session.execute(
+            select(LawyerShop, LawyerDirector.full_name)
+            .outerjoin(LawyerDirector, LawyerDirector.id == LawyerShop.director_id)
+            .where(LawyerShop.inn.in_([unit.inn for unit, _, _ in rows])),
+        )).all()
+        lawyer_by_inn = {shop.inn: (shop, director_name) for shop, director_name in lawyer_rows}
         deduped: dict[int, AccountingUnitOwnerRow] = {}
         for unit, accountant_id, accountant_name in rows:
             if unit.id in deduped:
                 continue
+            lawyer_shop, lawyer_director_name = lawyer_by_inn.get(unit.inn, (None, None))
             deduped[unit.id] = AccountingUnitOwnerRow(
                 unit_id=unit.id,
                 inn=unit.inn,
@@ -847,6 +856,11 @@ class AccountingService:
                 period_codes=periods_by_inn.get(unit.inn, []),
                 accountant_user_id=accountant_id,
                 accountant_full_name=accountant_name,
+                lawyer_shop_id=lawyer_shop.id if lawyer_shop else None,
+                lawyer_director_name=lawyer_director_name,
+                lawyer_company_status=lawyer_shop.company_status if lawyer_shop else None,
+                lawyer_unreliable=lawyer_shop.unreliable if lawyer_shop else None,
+                lawyer_treatment_status=lawyer_shop.treatment_status if lawyer_shop else None,
             )
         items = sorted(
             deduped.values(),

@@ -204,19 +204,10 @@ class OptPaymentLedgerListResponse(BaseModel):
     total: int
 
 
-class OptPaymentRegisterItem(BaseModel):
+class OptPaymentRegisterLine(BaseModel):
     id: int
-    order_id: int
-    lead_id: int
-    order_no: int
-    manager_name: str | None = None
-    client_name: str | None = None
-    client_inn: str
-    client_okved: str | None = None
-    client_shop_name: str | None = None
     supplier_name: str | None = None
     supplier_inn: str
-    period_code: str | None = None
     category_code: str | None = None
     volume: Decimal
     our_rate_percent: Decimal = Decimal("0")
@@ -229,6 +220,25 @@ class OptPaymentRegisterItem(BaseModel):
     actual_margin: Decimal = Decimal("0")
     planned_margin: Decimal = Decimal("0")
     beneficiary_paid_amount: Decimal = Decimal("0")
+
+
+class OptPaymentRegisterItem(BaseModel):
+    id: int
+    order_id: int
+    lead_id: int
+    order_no: int
+    manager_name: str | None = None
+    client_name: str | None = None
+    client_inn: str
+    client_okved: str | None = None
+    client_shop_name: str | None = None
+    period_code: str | None = None
+    volume: Decimal
+    due_amount: Decimal = Decimal("0")
+    paid_amount: Decimal = Decimal("0")
+    remaining_amount: Decimal = Decimal("0")
+    is_paid: bool = False
+    lines: list[OptPaymentRegisterLine] = Field(default_factory=list)
 
 
 class OptPaymentRegisterListResponse(BaseModel):

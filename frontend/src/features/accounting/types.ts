@@ -102,6 +102,11 @@ export interface AccountingUnitOwnerRow {
   period_codes?: string[]
   accountant_user_id?: number | null
   accountant_full_name?: string | null
+  lawyer_shop_id?: number | null
+  lawyer_director_name?: string | null
+  lawyer_company_status?: string | null
+  lawyer_unreliable?: string | null
+  lawyer_treatment_status?: string | null
 }
 
 export const OPT_STATUS_LABELS: Record<string, string> = {

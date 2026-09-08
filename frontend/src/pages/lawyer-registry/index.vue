@@ -18,6 +18,7 @@ import {
 } from 'naive-ui'
 import { Building2, Pin, Plus, Upload } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import {
   addLawyerPayment,
@@ -46,6 +47,7 @@ import { AppError } from '@/shared/api/http'
 import AppCard from '@/shared/ui/AppCard.vue'
 
 const message = useMessage()
+const route = useRoute()
 const loading = ref(false)
 const directors = ref<LawyerDirector[]>([])
 const orphans = ref<LawyerShop[]>([])
@@ -56,7 +58,7 @@ const alerts = ref<LawyerAlert[]>([])
 const unread = ref(0)
 const totalShops = ref(0)
 
-const q = ref('')
+const q = ref(typeof route.query.inn === 'string' ? route.query.inn : '')
 const kind = ref<string | null>(null)
 const companyStatus = ref<string | null>(null)
 const unreliable = ref<string | null>(null)

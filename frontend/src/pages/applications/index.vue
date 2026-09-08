@@ -42,7 +42,7 @@ import {
 } from '@/features/leads/opt-types'
 import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
 import { VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
-import { AppError } from '@/shared/api/http'
+import { AppError, http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
@@ -58,10 +58,24 @@ const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const paymentItems = ref<OptPaymentLedgerItem[]>([])
 const paymentRegisterItems = ref<OptPaymentRegisterItem[]>([])
+const paymentRegisterDetailOpen = ref(false)
+const selectedPaymentRegister = ref<OptPaymentRegisterItem | null>(null)
 const total = ref(0)
 const totalVolumeSum = ref(0)
 const commissionDueSum = ref(0)
 const amountPaidSum = ref(0)
+
+const paymentRegisterTotals = computed(() =>
+  paymentRegisterItems.value.reduce(
+    (totals, row) => ({
+      volume: totals.volume + Number(row.volume || 0),
+      due: totals.due + Number(row.due_amount || 0),
+      paid: totals.paid + Number(row.paid_amount || 0),
+      remaining: totals.remaining + Number(row.remaining_amount || 0),
+    }),
+    { volume: 0, due: 0, paid: 0, remaining: 0 },
+  ),
+)
 
 const totalsScopeHint = computed(() => {
   if (auth.isAdmin) return 'по всем отделам'
@@ -85,6 +99,13 @@ const editingPeriodOrderId = ref<number | null>(null)
 const syncing1c = ref(false)
 const syncReportOpen = ref(false)
 const syncReport = ref<OptSync1cResponse | null>(null)
+const blacklistOpen = ref(false)
+const blacklistKind = ref<'telegram_username' | 'buyer_inn'>('telegram_username')
+const blacklistValue = ref('')
+const blacklistReason = ref('')
+const blacklistItems = ref<Array<{ id: number; kind: 'telegram_username' | 'buyer_inn'; value: string; reason: string }>>([])
+const blacklistLoading = ref(false)
+const blacklistSaving = ref(false)
 
 const canFilterGroup = computed(
   () => auth.isAdmin || auth.isSenior || auth.isGroupSenior,
@@ -332,25 +353,15 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
 })
 
 const paymentRegisterColumns = computed<DataTableColumns<OptPaymentRegisterItem>>(() => [
-  { title: 'Менеджер', key: 'manager', width: 140, ellipsis: { tooltip: true }, render: (r) => r.manager_name || '—' },
-  { title: 'Клиент', key: 'client', width: 170, ellipsis: { tooltip: true }, render: (r) => r.client_name || `ИНН ${r.client_inn}` },
-  { title: 'ОКВЭД', key: 'okved', width: 110, render: (r) => r.client_okved || '—' },
-  { title: 'Лавка клиента', key: 'client_shop', width: 190, ellipsis: { tooltip: true }, render: (r) => r.client_shop_name || '—' },
-  { title: 'Наша лавка', key: 'supplier', width: 190, ellipsis: { tooltip: true }, render: (r) => r.supplier_name || `ИНН ${r.supplier_inn}` },
-  { title: 'Сделка / заявка', key: 'order', width: 135, render: (r) => `№${r.lead_id} / ${r.order_no}` },
-  { title: 'Период', key: 'period', width: 95, render: (r) => formatOptPeriodLabel(r.period_code) },
-  { title: 'Кат.', key: 'category', width: 70, render: (r) => r.category_code || '—' },
-  { title: 'Объём', key: 'volume', width: 120, align: 'right', render: (r) => `${formatMoney(r.volume)} ₽` },
-  { title: 'Наша цена', key: 'rate', width: 105, align: 'right', render: (r) => `${formatMoney(r.our_rate_percent)}%` },
-  { title: 'К оплате', key: 'due', width: 115, align: 'right', render: (r) => `${formatRubles(r.due_amount)} ₽` },
-  { title: 'Оплачено', key: 'paid', width: 115, align: 'right', render: (r) => `${formatRubles(r.paid_amount)} ₽` },
-  { title: 'Долг', key: 'debt', width: 115, align: 'right', render: (r) => `${formatRubles(r.remaining_amount)} ₽` },
-  { title: 'Комментарий', key: 'comment', width: 180, ellipsis: { tooltip: true }, render: (r) => r.comment || '—' },
-  { title: 'Цена Бена', key: 'ben_rate', width: 100, align: 'right', render: (r) => r.beneficiary_rate_percent == null ? '—' : `${formatMoney(r.beneficiary_rate_percent)}%` },
-  { title: 'Бену', key: 'ben_amount', width: 105, align: 'right', render: (r) => `${formatRubles(r.beneficiary_amount)} ₽` },
-  { title: 'Реальная маржа', key: 'actual', width: 135, align: 'right', render: (r) => `${formatRubles(r.actual_margin)} ₽` },
-  { title: 'Планируемая маржа', key: 'planned', width: 150, align: 'right', render: (r) => `${formatRubles(r.planned_margin)} ₽` },
-  { title: 'Вернули Бену', key: 'ben_paid', width: 135, align: 'right', render: (r) => `${formatRubles(r.beneficiary_paid_amount)} ₽` },
+  { title: 'Сделка', key: 'order', width: 116, render: (r) => `№${r.lead_id} / ${r.order_no}` },
+  { title: 'Клиент', key: 'client', minWidth: 190, ellipsis: { tooltip: true }, render: (r) => r.client_name || r.client_shop_name || `ИНН ${r.client_inn}` },
+  { title: 'Лавок', key: 'shops', width: 90, render: (r) => `${r.lines.length} шт.` },
+  { title: 'Период', key: 'period', width: 110, render: (r) => formatOptPeriodLabel(r.period_code) },
+  { title: 'Объём', key: 'volume', width: 130, align: 'right', render: (r) => `${formatMoney(r.volume)} ₽` },
+  { title: 'К оплате', key: 'due', width: 118, align: 'right', render: (r) => `${formatRubles(r.due_amount)} ₽` },
+  { title: 'Оплачено', key: 'paid', width: 118, align: 'right', render: (r) => `${formatRubles(r.paid_amount)} ₽` },
+  { title: 'Осталось', key: 'debt', width: 118, align: 'right', render: (r) => h(NTag, { size: 'small', type: r.remaining_amount > 0 ? 'warning' : 'success', bordered: false }, { default: () => `${formatRubles(r.remaining_amount)} ₽` }) },
+  { title: '', key: 'detail', width: 104, render: (r) => h(NButton, { size: 'small', tertiary: true, type: 'primary', onClick: (event: MouseEvent) => { event.stopPropagation(); openPaymentRegisterDetail(r) } }, { default: () => 'Детали' }) },
 ])
 
 function rowKey(row: OptOrderRegistryItem): DataTableRowKey {
@@ -364,23 +375,13 @@ function paymentRegisterRowKey(row: OptPaymentRegisterItem): DataTableRowKey {
 function paymentRegisterRowProps(row: OptPaymentRegisterItem) {
   return {
     style: 'cursor: pointer',
-    onClick: () => openDetail({
-      id: row.order_id,
-      lead_id: row.lead_id,
-      order_no: row.order_no,
-      group_id: 0,
-      status: '',
-      payment_status: '',
-      total_volume: 0,
-      commission_due: 0,
-      amount_paid: 0,
-      amount_remaining: 0,
-      buyer: { inn: row.client_inn, name: row.client_shop_name || null },
-      created_at: '',
-      lines_count: 0,
-      payments_count: 0,
-    }),
+    onClick: () => openPaymentRegisterDetail(row),
   }
+}
+
+function openPaymentRegisterDetail(row: OptPaymentRegisterItem): void {
+  selectedPaymentRegister.value = row
+  paymentRegisterDetailOpen.value = true
 }
 
 function rowProps(row: OptOrderRegistryItem) {
@@ -445,6 +446,48 @@ async function loadGroups(): Promise<void> {
     }
   } catch {
     groups.value = []
+  }
+}
+
+async function openBlacklist(): Promise<void> {
+  blacklistOpen.value = true
+  blacklistLoading.value = true
+  try {
+    const { data } = await http.get<{ items: typeof blacklistItems.value }>('/blacklist')
+    blacklistItems.value = data.items
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось загрузить чёрный список')
+  } finally {
+    blacklistLoading.value = false
+  }
+}
+
+async function addBlacklist(): Promise<void> {
+  if (!blacklistValue.value.trim() || !blacklistReason.value.trim()) {
+    message.warning('Укажите ник или ИНН и причину')
+    return
+  }
+  blacklistSaving.value = true
+  try {
+    const { data } = await http.post('/blacklist', { kind: blacklistKind.value, value: blacklistValue.value, reason: blacklistReason.value })
+    blacklistItems.value.unshift(data)
+    blacklistValue.value = ''
+    blacklistReason.value = ''
+    message.success('Добавлено в чёрный список')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось добавить запись')
+  } finally {
+    blacklistSaving.value = false
+  }
+}
+
+async function removeBlacklist(id: number): Promise<void> {
+  try {
+    await http.delete(`/blacklist/${id}`)
+    blacklistItems.value = blacklistItems.value.filter((item) => item.id !== id)
+    message.success('Запись удалена из чёрного списка')
+  } catch (err) {
+    message.error(err instanceof AppError ? err.message : 'Не удалось удалить запись')
   }
 }
 
@@ -619,17 +662,20 @@ onMounted(() => {
           <template v-else>Только ваши заявки</template>
         </p>
       </div>
-      <NButton
-        v-if="canSync1c && activeTab === 'orders'"
-        size="small"
-        type="primary"
-        secondary
-        :loading="syncing1c"
-        :disabled="syncing1c"
-        @click="onSyncWith1c"
-      >
-        Синхронизировать с 1С
-      </NButton>
+      <div class="applications-page__header-actions">
+        <NButton size="small" secondary type="error" @click="openBlacklist">Чёрный список</NButton>
+        <NButton
+          v-if="canSync1c && activeTab === 'orders'"
+          size="small"
+          type="primary"
+          secondary
+          :loading="syncing1c"
+          :disabled="syncing1c"
+          @click="onSyncWith1c"
+        >
+          Синхронизировать с 1С
+        </NButton>
+      </div>
     </header>
 
     <div class="applications-page__filters">
@@ -700,6 +746,13 @@ onMounted(() => {
         <strong>{{ formatRubles(amountPaidSum) }} ₽</strong>
       </span>
     </div>
+    <div v-else-if="activeTab === 'payments' && paymentRegisterItems.length" class="applications-page__totals">
+      <span class="applications-page__totals-label">На этой странице · строк: {{ total }}</span>
+      <span class="applications-page__totals-metric"><span class="applications-page__totals-key">Объём</span><strong>{{ formatMoney(paymentRegisterTotals.volume) }} ₽</strong></span>
+      <span class="applications-page__totals-metric"><span class="applications-page__totals-key">К оплате</span><strong>{{ formatRubles(paymentRegisterTotals.due) }} ₽</strong></span>
+      <span class="applications-page__totals-metric"><span class="applications-page__totals-key">Оплачено</span><strong>{{ formatRubles(paymentRegisterTotals.paid) }} ₽</strong></span>
+      <span class="applications-page__totals-metric"><span class="applications-page__totals-key">Осталось</span><strong>{{ formatRubles(paymentRegisterTotals.remaining) }} ₽</strong></span>
+    </div>
 
     <NSpin class="applications-page__spin" :show="loading && items.length === 0 && paymentItems.length === 0 && paymentRegisterItems.length === 0">
       <template v-if="isOrdersLikeTab">
@@ -739,7 +792,7 @@ onMounted(() => {
             :row-props="paymentRegisterRowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="2500"
+            :scroll-x="1100"
             virtual-scroll
             :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
@@ -750,6 +803,59 @@ onMounted(() => {
     <div v-if="total > pageSize" class="applications-page__pager">
       <NPagination v-model:page="page" :page-size="pageSize" :item-count="total" />
     </div>
+
+    <NModal
+      v-model:show="paymentRegisterDetailOpen"
+      preset="card"
+      :title="selectedPaymentRegister ? `Расчёт по заявке №${selectedPaymentRegister.order_no}` : 'Расчёт'"
+      :style="{ width: 'min(760px, 96vw)' }"
+      class="applications-page__modal"
+    >
+      <template v-if="selectedPaymentRegister">
+        <dl class="applications-page__facts applications-page__facts--payment">
+          <div><dt>Сделка / заявка</dt><dd>№{{ selectedPaymentRegister.lead_id }} / {{ selectedPaymentRegister.order_no }}</dd></div>
+          <div><dt>Период</dt><dd>{{ formatOptPeriodLabel(selectedPaymentRegister.period_code) }}</dd></div>
+          <div><dt>Менеджер</dt><dd>{{ selectedPaymentRegister.manager_name || '—' }}</dd></div>
+          <div><dt>Клиент</dt><dd>{{ selectedPaymentRegister.client_name || selectedPaymentRegister.client_shop_name || '—' }} · ИНН {{ selectedPaymentRegister.client_inn }}</dd></div>
+          <div><dt>ОКВЭД</dt><dd>{{ selectedPaymentRegister.client_okved || '—' }}</dd></div>
+          <div><dt>Объём</dt><dd>{{ formatMoney(selectedPaymentRegister.volume) }} ₽</dd></div>
+          <div><dt>К оплате / оплачено / долг</dt><dd>{{ formatRubles(selectedPaymentRegister.due_amount) }} ₽ / {{ formatRubles(selectedPaymentRegister.paid_amount) }} ₽ / {{ formatRubles(selectedPaymentRegister.remaining_amount) }} ₽</dd></div>
+        </dl>
+        <h3 class="applications-page__section-title">Лавки и строки счёта</h3>
+        <div class="applications-page__register-lines">
+          <div v-for="line in selectedPaymentRegister.lines" :key="line.id" class="applications-page__register-line">
+            <strong>{{ line.supplier_name || `ИНН ${line.supplier_inn}` }}</strong>
+            <span>ИНН {{ line.supplier_inn }} · {{ line.category_code || 'категория не указана' }}</span>
+            <span>Объём {{ formatMoney(line.volume) }} ₽ · цена {{ formatMoney(line.our_rate_percent) }}%</span>
+            <span>К оплате {{ formatRubles(line.due_amount) }} ₽ · бенефициару {{ formatRubles(line.beneficiary_amount) }} ₽</span>
+            <span>Маржа факт / план: {{ formatRubles(line.actual_margin) }} ₽ / {{ formatRubles(line.planned_margin) }} ₽</span>
+            <span v-if="line.comment">Комментарий: {{ line.comment }}</span>
+          </div>
+        </div>
+        <div class="applications-page__modal-actions">
+          <NButton @click="paymentRegisterDetailOpen = false">Закрыть</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal v-model:show="blacklistOpen" preset="card" title="Чёрный список заявок" :style="{ width: 'min(640px, 96vw)' }">
+      <p class="applications-page__muted">Заявка от указанного Telegram-ника или с ИНН лавки не будет загружена. Причина будет показана при попытке загрузки.</p>
+      <div class="applications-page__blacklist-form">
+        <NSelect v-model:value="blacklistKind" :options="[{ label: 'Telegram-ник человека', value: 'telegram_username' }, { label: 'ИНН лавки клиента', value: 'buyer_inn' }]" />
+        <NInput v-model:value="blacklistValue" :placeholder="blacklistKind === 'telegram_username' ? '@username' : 'ИНН'" />
+        <NInput v-model:value="blacklistReason" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="Почему добавлен в ЧС" />
+        <NButton type="error" :loading="blacklistSaving" @click="addBlacklist">Добавить в ЧС</NButton>
+      </div>
+      <NSpin :show="blacklistLoading">
+        <NEmpty v-if="!blacklistLoading && !blacklistItems.length" description="Чёрный список пуст" />
+        <div v-else class="applications-page__blacklist-list">
+          <div v-for="item in blacklistItems" :key="item.id" class="applications-page__blacklist-item">
+            <div><strong>{{ item.kind === 'telegram_username' ? `@${item.value}` : `ИНН ${item.value}` }}</strong><span>{{ item.reason }}</span></div>
+            <NButton size="small" quaternary type="error" @click="removeBlacklist(item.id)">Убрать</NButton>
+          </div>
+        </div>
+      </NSpin>
+    </NModal>
 
     <NModal
       v-model:show="paymentDetailOpen"
@@ -1057,6 +1163,13 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+.applications-page__header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .applications-page__title {
   display: inline-flex;
   align-items: center;
@@ -1122,6 +1235,61 @@ onMounted(() => {
   font-weight: 600;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.applications-page__modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.applications-page__register-lines {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.applications-page__register-line {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.applications-page__register-line span {
+  color: var(--app-text-muted);
+}
+
+.applications-page__blacklist-form {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.applications-page__blacklist-list {
+  display: grid;
+  gap: 8px;
+}
+
+.applications-page__blacklist-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  background: var(--app-surface-elevated);
+  border-radius: 8px;
+}
+
+.applications-page__blacklist-item div {
+  display: grid;
+  gap: 3px;
+}
+
+.applications-page__blacklist-item span {
+  color: var(--app-text-muted);
+  font-size: 0.85rem;
 }
 
 .applications-page__footer {

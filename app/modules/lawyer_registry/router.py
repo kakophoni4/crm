@@ -37,6 +37,7 @@ def _service(db: Annotated[AsyncSession, Depends(get_db)]) -> LawyerRegistryServ
 async def list_registry(
     actor: Annotated[User, Depends(requires_permission(Permission.PARSER_READ))],
     service: Annotated[LawyerRegistryService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
     q: Annotated[str | None, Query(max_length=200)] = None,
     kind: Annotated[str | None, Query(max_length=32)] = None,
     company_status: Annotated[str | None, Query(max_length=64)] = None,
@@ -48,6 +49,10 @@ async def list_registry(
     include_hidden: bool = False,
 ) -> LawyerDirectorListResponse:
     _ = actor
+    # Ticket fields are displayed in this registry and in accounting assignments.
+    # The service throttles the external call, so opening the page stays responsive.
+    await service.sync_from_tickets()
+    await db.commit()
     return await service.list_tree(
         q=q,
         kind=kind,

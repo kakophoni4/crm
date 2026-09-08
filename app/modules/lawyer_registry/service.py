@@ -6,6 +6,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.db.models.lawyer_director import (
@@ -14,6 +15,7 @@ from app.modules.db.models.lawyer_director import (
     LawyerParserAlert,
     LawyerShop,
 )
+from app.modules.db.models.opt_unit import OptUnit
 from app.modules.db.models.user import User
 from app.modules.lawyer_registry.repository import LawyerRegistryRepository
 from app.modules.lawyer_registry.schemas import (
@@ -322,6 +324,7 @@ class LawyerRegistryService:
             **data,
         )
         await self._repo.add(shop)
+        await self._sync_accounting_unit(shop)
         await self._push_to_parser(inn)
         return self._shop_out(shop, director.full_name if director else None)
 
@@ -354,6 +357,7 @@ class LawyerRegistryService:
         elif hidden is False:
             shop.hidden_at = None
         self._repo.touch(shop)
+        await self._sync_accounting_unit(shop)
         await self._session.flush()
         director = await self._repo.get_director(shop.director_id) if shop.director_id else None
         return self._shop_out(shop, director.full_name if director else None)
@@ -472,6 +476,7 @@ class LawyerRegistryService:
                     **{k: v for k, v in payload.items() if v is not None},
                 )
                 await self._repo.add(shop)
+                await self._sync_accounting_unit(shop)
                 shops_created += 1
             else:
                 for key, value in payload.items():
@@ -480,10 +485,13 @@ class LawyerRegistryService:
                 if director is not None:
                     shop.director_id = director.id
                 self._repo.touch(shop)
+                await self._sync_accounting_unit(shop)
                 shops_updated += 1
             if director is not None and item.get("planned_payout") and not director.salary_plan:
                 director.salary_plan = item["planned_payout"]
             if director is not None:
+                if item.get("dirovod") and not director.dirovod:
+                    director.dirovod = item["dirovod"]
                 if item.get("ecsp_status") and not director.ecsp_status:
                     director.ecsp_status = item.get("ecsp_status")
                 if item.get("ecsp_until") and not director.ecsp_until:
@@ -672,3 +680,15 @@ class LawyerRegistryService:
             )
         except Exception:
             logger.warning("lawyer_registry_smertniki_add_failed", inn=inn, exc_info=True)
+    async def _sync_accounting_unit(self, shop: LawyerShop) -> None:
+        """Keep the accountant assignment directory tied to the lawyer shop by INN."""
+        unit = (await self._session.execute(
+            select(OptUnit).where(OptUnit.inn == shop.inn),
+        )).scalar_one_or_none()
+        if unit is None:
+            # A newly imported legal shop must be explicitly enabled for sales.
+            # It is immediately available in the accountant's “requirements” list.
+            self._session.add(OptUnit(inn=shop.inn, name=shop.name, is_active=False))
+            return
+        if shop.name and unit.name != shop.name:
+            unit.name = shop.name
