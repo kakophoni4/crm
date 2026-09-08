@@ -332,76 +332,6 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
   return cols
 })
 
-const _paymentColumns = computed<DataTableColumns<OptPaymentLedgerItem>>(() => {
-  const cols: DataTableColumns<OptPaymentLedgerItem> = [
-    {
-      title: 'Дата',
-      key: 'paid_at',
-      width: 140,
-      render: (row) => formatDateTime(row.paid_at),
-    },
-    {
-      title: 'Сумма',
-      key: 'amount',
-      align: 'right',
-      width: 120,
-      render: (row) => `${formatMoney(row.amount)} ₽`,
-    },
-    {
-      title: 'Тип',
-      key: 'payment_type',
-      width: 110,
-      render: (row) =>
-        `${optPaymentTypeLabel(row.payment_type)} · ${optPaymentRecipientLabel(row.recipient)}`,
-    },
-    {
-      title: 'Подтверждение',
-      key: 'documents_count',
-      width: 130,
-      render: (row) => (row.documents_count > 0 ? 'есть файл' : 'нет'),
-    },
-    {
-      title: 'Сделка',
-      key: 'deal',
-      render: (row) => `Сделка №${row.lead_id} · №${row.order_no}`,
-    },
-    {
-      title: 'Клиент',
-      key: 'contact',
-      ellipsis: { tooltip: true },
-      render: (row) => row.contact_name || row.buyer.name || `ИНН ${row.buyer.inn}`,
-    },
-  ]
-  if (canFilterManager.value) {
-    cols.push({
-      title: 'Менеджер карточки',
-      key: 'manager',
-      ellipsis: { tooltip: true },
-      render: (row) => row.manager_name || '—',
-    })
-  }
-  cols.push(
-    {
-      title: 'Внёс оплату',
-      key: 'created_by',
-      ellipsis: { tooltip: true },
-      render: (row) => row.created_by_name || `user #${row.created_by}`,
-    },
-    {
-      title: 'Статус заявки',
-      key: 'order_payment_status',
-      width: 120,
-      render: (row) =>
-        h(
-          NTag,
-          { size: 'small', type: paymentTagType(row.order_payment_status), bordered: false },
-          { default: () => optPaymentStatusLabel(row.order_payment_status) },
-        ),
-    },
-  )
-  return cols
-})
-
 const paymentRegisterColumns = computed<DataTableColumns<OptPaymentRegisterItem>>(() => [
   { title: 'Менеджер', key: 'manager', width: 140, ellipsis: { tooltip: true }, render: (r) => r.manager_name || '—' },
   { title: 'Клиент', key: 'client', width: 170, ellipsis: { tooltip: true }, render: (r) => r.client_name || `ИНН ${r.client_inn}` },
@@ -448,25 +378,16 @@ function paymentRegisterRowProps(row: OptPaymentRegisterItem) {
       amount_remaining: 0,
       buyer: { inn: row.client_inn, name: row.client_shop_name || null },
       created_at: '',
+      lines_count: 0,
+      payments_count: 0,
     }),
   }
-}
-
-function _paymentRowKey(row: OptPaymentLedgerItem): DataTableRowKey {
-  return row.id
 }
 
 function rowProps(row: OptOrderRegistryItem) {
   return {
     style: 'cursor: pointer',
     onClick: () => openDetail(row),
-  }
-}
-
-function _paymentRowProps(row: OptPaymentLedgerItem) {
-  return {
-    style: 'cursor: pointer',
-    onClick: () => openPaymentDetail(row),
   }
 }
 
@@ -503,12 +424,6 @@ function resolvedOrdersPaymentStatus(): string | undefined {
   const value = paymentStatusFilter.value
   if (value === 'all' || value == null) return undefined
   return value
-}
-
-function _resolvedLedgerPaymentStatus(): string {
-  const value = paymentStatusFilter.value
-  if (value === 'partial' || value === 'paid') return value
-  return 'partial,paid'
 }
 
 async function loadManagers(): Promise<void> {
