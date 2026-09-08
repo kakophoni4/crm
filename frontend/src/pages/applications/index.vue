@@ -77,6 +77,28 @@ const paymentRegisterTotals = computed(() =>
   ),
 )
 
+const selectedPaymentRegisterShops = computed(() => {
+  const lines = selectedPaymentRegister.value?.lines ?? []
+  const grouped = new Map<string, { name: string; inn: string; category: string; lines: number; volume: number; due: number; beneficiary: number; actual: number; planned: number }>()
+  for (const line of lines) {
+    const key = line.supplier_inn || String(line.id)
+    const current = grouped.get(key) ?? {
+      name: line.supplier_name || `ИНН ${line.supplier_inn}`,
+      inn: line.supplier_inn,
+      category: line.category_code || 'категория не указана',
+      lines: 0, volume: 0, due: 0, beneficiary: 0, actual: 0, planned: 0,
+    }
+    current.lines += 1
+    current.volume += Number(line.volume || 0)
+    current.due += Number(line.due_amount || 0)
+    current.beneficiary += Number(line.beneficiary_amount || 0)
+    current.actual += Number(line.actual_margin || 0)
+    current.planned += Number(line.planned_margin || 0)
+    grouped.set(key, current)
+  }
+  return [...grouped.values()]
+})
+
 const totalsScopeHint = computed(() => {
   if (auth.isAdmin) return 'по всем отделам'
   if (auth.isSenior) return 'по вашему отделу'
@@ -808,8 +830,8 @@ onMounted(() => {
       v-model:show="paymentRegisterDetailOpen"
       preset="card"
       :title="selectedPaymentRegister ? `Расчёт по заявке №${selectedPaymentRegister.order_no}` : 'Расчёт'"
-      :style="{ width: 'min(760px, 96vw)' }"
-      class="applications-page__modal"
+      :style="{ width: 'min(760px, 96vw)', maxHeight: 'calc(100vh - 32px)' }"
+      class="applications-page__modal applications-page__register-modal"
     >
       <template v-if="selectedPaymentRegister">
         <dl class="applications-page__facts applications-page__facts--payment">
@@ -821,15 +843,13 @@ onMounted(() => {
           <div><dt>Объём</dt><dd>{{ formatMoney(selectedPaymentRegister.volume) }} ₽</dd></div>
           <div><dt>К оплате / оплачено / долг</dt><dd>{{ formatRubles(selectedPaymentRegister.due_amount) }} ₽ / {{ formatRubles(selectedPaymentRegister.paid_amount) }} ₽ / {{ formatRubles(selectedPaymentRegister.remaining_amount) }} ₽</dd></div>
         </dl>
-        <h3 class="applications-page__section-title">Лавки и строки счёта</h3>
+        <h3 class="applications-page__section-title">Лавки</h3>
         <div class="applications-page__register-lines">
-          <div v-for="line in selectedPaymentRegister.lines" :key="line.id" class="applications-page__register-line">
-            <strong>{{ line.supplier_name || `ИНН ${line.supplier_inn}` }}</strong>
-            <span>ИНН {{ line.supplier_inn }} · {{ line.category_code || 'категория не указана' }}</span>
-            <span>Объём {{ formatMoney(line.volume) }} ₽ · цена {{ formatMoney(line.our_rate_percent) }}%</span>
-            <span>К оплате {{ formatRubles(line.due_amount) }} ₽ · бенефициару {{ formatRubles(line.beneficiary_amount) }} ₽</span>
-            <span>Маржа факт / план: {{ formatRubles(line.actual_margin) }} ₽ / {{ formatRubles(line.planned_margin) }} ₽</span>
-            <span v-if="line.comment">Комментарий: {{ line.comment }}</span>
+          <div v-for="shop in selectedPaymentRegisterShops" :key="shop.inn" class="applications-page__register-line">
+            <strong>{{ shop.name }}</strong>
+            <span>ИНН {{ shop.inn }} · {{ shop.category }} · строк счёта: {{ shop.lines }}</span>
+            <span>Объём {{ formatMoney(shop.volume) }} ₽ · к оплате {{ formatRubles(shop.due) }} ₽</span>
+            <span>Бенефициару {{ formatRubles(shop.beneficiary) }} ₽ · маржа факт / план: {{ formatRubles(shop.actual) }} ₽ / {{ formatRubles(shop.planned) }} ₽</span>
           </div>
         </div>
         <div class="applications-page__modal-actions">
@@ -1259,6 +1279,15 @@ onMounted(() => {
 
 .applications-page__register-line span {
   color: var(--app-text-muted);
+}
+
+.applications-page__register-modal {
+  display: flex;
+  flex-direction: column;
+}
+
+.applications-page__register-modal :deep(.n-card__content) {
+  overflow-y: auto;
 }
 
 .applications-page__blacklist-form {

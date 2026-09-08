@@ -1747,7 +1747,7 @@ onUnmounted(() => {
                         </template>
                         Периоды
                       </NButton>
-                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ path: '/lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
+                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ name: 'lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
                       <NButton
                         size="small"
                         quaternary
@@ -1819,7 +1819,7 @@ onUnmounted(() => {
                       >
                         В продающие
                       </NButton>
-                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ path: '/lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
+                      <NButton v-if="row.lawyer_shop_id" size="small" tertiary type="primary" @click="router.push({ name: 'lawyer-registry', query: { inn: row.inn } })">У юриста</NButton>
                       <NButton
                         size="small"
                         quaternary
