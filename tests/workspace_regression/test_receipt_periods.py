@@ -45,7 +45,7 @@ async def test_reingest_updates_existing_period_and_stale_parsed_metadata(monkey
         supplier_inn="7751377028", supplier_kpp=None, supplier_name="ОПТИМА",
         period_code="1/26", doc_kind="receipt", parsed_name="ОПТИМА",
         raw_text="за 1 квартал, 21, 2026 год", is_correction=True,
-        accepted_date=date(2026, 8, 4),
+        accepted_date=date(2026, 8, 4), tax_kind="vat",
     )
     existing = SimpleNamespace(period_code="2/26")
     session = AsyncMock()
@@ -86,3 +86,32 @@ def test_dated_filename_replaces_export_date_and_is_idempotent():
     expected = "квитанция о приеме (ОПТИМА) 04.08.2026.pdf"
     assert dated_receipt_filename(original, date(2026, 8, 4)) == expected
     assert dated_receipt_filename(expected, date(2026, 8, 4)) == expected
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("КНД 1166002 декларация 1151001", "vat"),
+    ("NO_NDS_7751_7751", "vat"),
+    ("Налоговая декларация по налогу на добавленную стоимость", "vat"),
+    ("Налоговая декларация по налогу на прибыль организаций 1151006, за 6 месяцев, квартальный, 2026 год NO_PRIB_7723_7723", "other"),
+    ("КНД 1166002", None),
+    ("", None),
+])
+def test_declaration_tax_kind(text, kind):
+    from app.modules.leads.opt.receipt_pdf import tax_kind_from_text
+    assert tax_kind_from_text(text) == kind
+
+
+@pytest.mark.parametrize("kind, code", [("other", "receipt_not_vat"), (None, "validation_error")])
+async def test_non_vat_is_rejected_before_upload(monkeypatch, kind, code):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    import app.modules.accounting.receipts as receipts
+    from app.shared.exceptions import AppError
+    monkeypatch.setattr(receipts, "OptReceiptRepository", lambda _: SimpleNamespace(get_by_external_id=AsyncMock(return_value=None)))
+    monkeypatch.setattr(receipts, "parse_receipt_pdf", lambda *a, **kw: SimpleNamespace(tax_kind=kind))
+    files = MagicMock()
+    monkeypatch.setattr(receipts, "FilesService", files)
+    with pytest.raises(AppError) as exc:
+        await receipts.ingest_receipt_pdf(AsyncMock(), external_id="test", pdf_bytes=b"pdf", source_filename="test.pdf", period_code="2/26")
+    assert exc.value.code == code
+    files.assert_not_called()

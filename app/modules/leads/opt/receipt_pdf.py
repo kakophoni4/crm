@@ -36,6 +36,7 @@ class ParsedReceiptPdf:
     raw_text: str
     is_correction: bool = False
     accepted_date: date | None = None
+    tax_kind: str | None = None
 
 
 # In PDF: «…1151001, первичный, за 2 квартал…» vs «…корректирующий (1), за 1 квартал…»
@@ -101,6 +102,23 @@ def normalize_receipt_filename(filename: str) -> str:
     if match is None:
         return name
     return f"{match.group('head')}{match.group('ext')}"
+
+
+def tax_kind_from_text(text: str) -> str | None:
+    """Identify the declaration, not the receipt form's own KND code."""
+    blob = " ".join(text.split())
+    codes = set(re.findall(r"\b115\d{4}\b", blob))
+    file_kinds = set(re.findall(r"\bNO_([A-Z0-9]+)_", blob, re.IGNORECASE))
+    file_kinds = {kind.upper() for kind in file_kinds}
+    if codes - {"1151001"} or file_kinds - {"NDS"}:
+        return "other"
+    if "1151001" in codes or "NDS" in file_kinds:
+        return "vat"
+    if re.search(r"деклараци\w* по налогу на добавленную стоимость", blob, re.IGNORECASE):
+        return "vat"
+    if re.search(r"деклараци\w* по налогу на прибыль", blob, re.IGNORECASE):
+        return "other"
+    return None
 
 
 def acceptance_date_from_text(text: str) -> date | None:
@@ -250,4 +268,5 @@ def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
         raw_text=text[:4000],
         is_correction=is_correction,
         accepted_date=acceptance_date_from_text(text),
+        tax_kind=tax_kind_from_text(text),
     )

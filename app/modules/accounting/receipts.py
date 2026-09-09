@@ -29,7 +29,7 @@ from app.modules.leads.opt.receipt_pdf import (
     short_name_from_filename,
 )
 from app.modules.rbac.scope import SCOPE_ALL, ScopeContext, visible_group_ids
-from app.shared.exceptions import NotFound, ValidationError
+from app.shared.exceptions import AppError, NotFound, ValidationError
 
 _FILENAME_SAFE = re.compile(r"[^\w\-+.() ]+", re.UNICODE)
 
@@ -164,6 +164,10 @@ async def ingest_receipt_pdf(
     source_filename = normalize_receipt_filename(source_filename)
 
     parsed = parse_receipt_pdf(pdf_bytes, filename=source_filename)
+    if parsed.tax_kind == "other":
+        raise AppError(code="receipt_not_vat", message="Пропущен документ не по НДС", status=422)
+    if parsed.tax_kind != "vat":
+        raise ValidationError(message="Не удалось подтвердить, что PDF относится к декларации по НДС")
     source_filename = dated_receipt_filename(source_filename, parsed.accepted_date)
     inn = (supplier_inn or parsed.supplier_inn or "").strip()
     if not inn:

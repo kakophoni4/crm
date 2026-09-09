@@ -37,3 +37,12 @@ def test_period_never_carries_over_from_same_company(monkeypatch, tmp_path, expl
                           directory=tmp_path, default_period=explicit) == 0
     assert len(calls) == 2
     assert all(call["period_code"] == (explicit or None) for call in calls)
+
+
+@pytest.mark.parametrize("code, expected", [("receipt_not_vat", 0), ("validation_error", 1)])
+def test_only_non_vat_errors_are_skipped(monkeypatch, tmp_path, capsys, code, expected):
+    (tmp_path / "notice.pdf").write_bytes(b"pdf")
+    monkeypatch.setattr(agent, "_multipart_ingest", lambda *a, **kw: (422, {"error": {"code": code}}))
+    assert agent.run_once(crm="https://crm.example", token="test", directory=tmp_path, default_period="") == expected
+    output = capsys.readouterr().out
+    assert ("SKIP" in output) == (expected == 0)

@@ -159,6 +159,7 @@ def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> i
     print(f"scan {directory}: {len(files)} pdf (default_period={default_period or '-'})")
     ok = 0
     fail = 0
+    skipped = 0
     for path in files:
         raw = path.read_bytes()
         digest = hashlib.sha256(raw).hexdigest()
@@ -173,6 +174,11 @@ def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> i
             raw=raw,
             period_code=period_hint,
         )
+        error = payload.get("error")
+        if code == 422 and isinstance(error, dict) and error.get("code") == "receipt_not_vat":
+            print(f"  SKIP {path.name}: not VAT")
+            skipped += 1
+            continue
         if 200 <= code < 300:
             created = payload.get("created")
             period = str(payload.get("period_code") or period_hint or "")
@@ -185,7 +191,7 @@ def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> i
         else:
             print(f"  FAIL {path.name} http={code} {payload}")
             fail += 1
-    print(f"done ok={ok} fail={fail}")
+    print(f"done ok={ok} skipped={skipped} fail={fail}")
     return 0 if fail == 0 else 1
 
 
