@@ -29,7 +29,7 @@ export ACCOUNTING_INGEST_TOKEN='…из deploy/.env.staging на CRM…'
 export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_pdf_nds
 
 python3 scripts/sbis_receipts_host_pull.py
-# в CRM имена без даты/хеша: «извещение о вводе (Афина).pdf»
+# CRM добавляет дату принятия из PDF: «квитанция о приеме (Афина) 04.08.2026.pdf»
 # фоном:
 # python3 scripts/sbis_receipts_host_pull.py --daemon
 ```
@@ -56,3 +56,5 @@ PDF на стороне CRM парсятся (`pypdf`): ИНН, КПП, пери
 | POST | `…/send-receipts` |
 | GET | `/api/v1/storage/receipts/tree` |
 | GET | `/api/v1/storage/receipts/{id}/download` |
+
+Дата в имени берётся из явного текста принятия, иначе из отметки электронной подписи (MSK). Если дата не распознана, имя остаётся без даты. Повторный импорт обновляет имена ранее загруженных документов.

@@ -24,6 +24,7 @@ from app.modules.leads.opt.periods import normalize_period_code
 from app.modules.leads.opt.receipt_pdf import (
     is_generic_supplier_name,
     normalize_receipt_filename,
+    dated_receipt_filename,
     parse_receipt_pdf,
     short_name_from_filename,
 )
@@ -163,6 +164,7 @@ async def ingest_receipt_pdf(
     source_filename = normalize_receipt_filename(source_filename)
 
     parsed = parse_receipt_pdf(pdf_bytes, filename=source_filename)
+    source_filename = dated_receipt_filename(source_filename, parsed.accepted_date)
     inn = (supplier_inn or parsed.supplier_inn or "").strip()
     if not inn:
         unit = None
@@ -217,6 +219,7 @@ async def ingest_receipt_pdf(
         "period_code": parsed.period_code,
         "doc_kind": parsed.doc_kind,
         "short_name": parsed.parsed_name,
+        "accepted_date": parsed.accepted_date.isoformat() if parsed.accepted_date else None,
         "is_correction": is_correction,
     }
 

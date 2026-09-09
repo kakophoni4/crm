@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from app.modules.accounting.receipts import resolve_receipt_period
@@ -43,6 +45,7 @@ async def test_reingest_updates_existing_period_and_stale_parsed_metadata(monkey
         supplier_inn="7751377028", supplier_kpp=None, supplier_name="ОПТИМА",
         period_code="1/26", doc_kind="receipt", parsed_name="ОПТИМА",
         raw_text="за 1 квартал, 21, 2026 год", is_correction=True,
+        accepted_date=date(2026, 8, 4),
     )
     existing = SimpleNamespace(period_code="2/26")
     session = AsyncMock()
@@ -57,6 +60,29 @@ async def test_reingest_updates_existing_period_and_stale_parsed_metadata(monkey
         source_filename="receipt.pdf", period_code="2/26",
         metadata={"parsed": {"period_code": "2/26"}},
     )
+    assert row.source_filename == "receipt 04.08.2026.pdf"
+    assert row.metadata_json["parsed"]["accepted_date"] == "2026-08-04"
     assert not created
     assert row.period_code == "1/26"
     assert row.metadata_json["parsed"]["period_code"] == "1/26"
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("направлен 03.08.2026, принят 04.08.2026", "2026-08-04"),
+    ("Документ подписан 04.08.26 12:31\n(MSK)", "2026-08-04"),
+    ("принята 05.08.2026; 06.08.26 12:31 (MSK)", "2026-08-05"),
+    ("принят 31.02.2026", None),
+    ("направлен 03.08.2026", None),
+])
+def test_acceptance_date(text, expected):
+    from app.modules.leads.opt.receipt_pdf import acceptance_date_from_text
+    value = acceptance_date_from_text(text)
+    assert (value.isoformat() if value else None) == expected
+
+
+def test_dated_filename_replaces_export_date_and_is_idempotent():
+    from app.modules.leads.opt.receipt_pdf import dated_receipt_filename
+    original = "квитанция о приеме (ОПТИМА) 06-08-2026 abcdef12.pdf"
+    expected = "квитанция о приеме (ОПТИМА) 04.08.2026.pdf"
+    assert dated_receipt_filename(original, date(2026, 8, 4)) == expected
+    assert dated_receipt_filename(expected, date(2026, 8, 4)) == expected

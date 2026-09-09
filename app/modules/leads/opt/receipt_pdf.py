@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from io import BytesIO
 
 _INN_RE = re.compile(r"\b(\d{10}|\d{12})\b")
@@ -34,6 +35,7 @@ class ParsedReceiptPdf:
     parsed_name: str | None
     raw_text: str
     is_correction: bool = False
+    accepted_date: date | None = None
 
 
 # In PDF: «…1151001, первичный, за 2 квартал…» vs «…корректирующий (1), за 1 квартал…»
@@ -99,6 +101,32 @@ def normalize_receipt_filename(filename: str) -> str:
     if match is None:
         return name
     return f"{match.group('head')}{match.group('ext')}"
+
+
+def acceptance_date_from_text(text: str) -> date | None:
+    """Read the explicit acceptance date, then the electronic signature stamp."""
+    patterns = (
+        r"принят[а-яё]*\s+(\d{2})[.](\d{2})[.](\d{4})",
+        r"(\d{2})[.](\d{2})[.](\d{2}(?:\d{2})?)\s+\d{1,2}:\d{2}\s*\(MSK\)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            day, month, year = map(int, match.groups())
+            if year < 100:
+                year += 2000
+            try:
+                return date(year, month, day)
+            except ValueError:
+                continue
+    return None
+
+
+def dated_receipt_filename(filename: str, accepted_date: date | None) -> str:
+    name = normalize_receipt_filename(filename)
+    if accepted_date is None:
+        return name
+    stem = name[:-4] if name.lower().endswith(".pdf") else name
+    return f"{stem} {accepted_date:%d.%m.%Y}.pdf"
 
 
 def short_name_from_filename(filename: str) -> str | None:
@@ -221,4 +249,5 @@ def parse_receipt_pdf(pdf_bytes: bytes, *, filename: str) -> ParsedReceiptPdf:
         parsed_name=short,
         raw_text=text[:4000],
         is_correction=is_correction,
+        accepted_date=acceptance_date_from_text(text),
     )
