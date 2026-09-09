@@ -23,9 +23,9 @@ export interface LeadOrderFields {
   tree_adjustment?: number | string | null
 }
 
-/** Quarter/year options for OPT deals (2025–2026). */
-export const OPT_PERIOD_OPTIONS = [2025, 2026].flatMap((year) =>
-  [1, 2, 3, 4].map((quarter) => {
+/** Selling periods: Q3 2023 through Q4 2026. */
+export const OPT_PERIOD_OPTIONS = [2023, 2024, 2025, 2026].flatMap((year) =>
+  (year === 2023 ? [3, 4] : [1, 2, 3, 4]).map((quarter) => {
     const yy = String(year % 100).padStart(2, '0')
     const value = `${quarter}/${yy}`
     return { label: `${quarter} кв. ${year} (${value})`, value }

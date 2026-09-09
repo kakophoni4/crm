@@ -10,8 +10,8 @@ from datetime import date
 # UI / storage format: "{quarter}/{yy}" e.g. 2/26 = Q2 2026
 _PERIOD_RE = re.compile(r"^([1-4])/(\d{2})$")
 
-# Years shown in the period picker (relative to business need: 2025–2026).
-OPT_PERIOD_YEARS = (2025, 2026)
+# Selling periods start at Q3 2023.
+OPT_PERIOD_YEARS = (2023, 2024, 2025, 2026)
 
 # Park companies — available for 2Q 2026.
 PARK_2Q26_INNS: tuple[str, ...] = (
@@ -56,6 +56,8 @@ def list_opt_period_codes(*, years: tuple[int, ...] = OPT_PERIOD_YEARS) -> list[
     for year in years:
         yy = year % 100
         for quarter in (1, 2, 3, 4):
+            if year == 2023 and quarter < 3:
+                continue
             codes.append(f"{quarter}/{yy:02d}")
     return codes
 
@@ -188,7 +190,7 @@ def resolve_application_period(
         raise ValidationError(
             message=(
                 f"Квартал {period_label(top_code)} по датам заявки сейчас нельзя принять "
-                "(доступны 2025–2026)."
+                "(доступны III–IV кварталы 2023 и все кварталы 2024–2026)."
             ),
             details={"period_code": top_code},
         )
