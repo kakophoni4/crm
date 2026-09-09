@@ -33,6 +33,19 @@ from app.shared.exceptions import NotFound, ValidationError
 _FILENAME_SAFE = re.compile(r"[^\w\-+.() ]+", re.UNICODE)
 
 
+def resolve_receipt_period(parsed_period: str | None, supplied_period: str | None, *, is_correction: bool) -> str:
+    """The document's reporting period takes precedence over batch hints."""
+    parsed = normalize_period_code(parsed_period)
+    if parsed:
+        return parsed
+    if is_correction:
+        raise ValidationError(message="Не удалось определить период корректировки из PDF: проверьте документ")
+    supplied = normalize_period_code(supplied_period)
+    if supplied:
+        return supplied
+    raise ValidationError(message="Не удалось определить период из PDF — укажите period_code (например 2/26)")
+
+
 def receipt_external_id(*, source_path: str, content_sha256: str | None = None) -> str:
     """Stable id: prefer content hash, else path hash."""
     if content_sha256:
@@ -164,19 +177,17 @@ async def ingest_receipt_pdf(
                 details={"filename": source_filename},
             )
 
-    period = normalize_period_code(period_code or parsed.period_code)
-    if not period:
-        raise ValidationError(
-            message="Не удалось определить период из PDF — укажите period_code (например 2/26)",
-            details={"filename": source_filename},
-        )
-
     kind = (doc_kind or parsed.doc_kind or "receipt").strip().lower()
     if kind not in {"receipt", "notice"}:
         kind = "receipt"
     is_correction = bool(parsed.is_correction)
     if isinstance(metadata, dict) and "is_correction" in metadata:
         is_correction = bool(metadata.get("is_correction"))
+
+    period = resolve_receipt_period(
+        parsed.period_code, period_code,
+        is_correction=parsed.is_correction or is_correction,
+    )
 
     unit = await session.execute(select(OptUnit).where(OptUnit.inn == inn))
     unit_row = unit.scalar_one_or_none()
@@ -200,14 +211,14 @@ async def ingest_receipt_pdf(
 
     received_at = datetime.now(UTC).replace(tzinfo=None)
     meta = dict(metadata or {})
-    meta.setdefault("parsed", {
+    meta["parsed"] = {
         "inn": parsed.supplier_inn,
         "kpp": parsed.supplier_kpp,
         "period_code": parsed.period_code,
         "doc_kind": parsed.doc_kind,
         "short_name": parsed.parsed_name,
         "is_correction": is_correction,
-    })
+    }
 
     if existing is not None:
         if not replace_existing:

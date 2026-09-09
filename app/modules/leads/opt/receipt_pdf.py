@@ -122,6 +122,12 @@ def period_code_from_text(text: str) -> str | None:
     )
     # Allow OCR/pdf gaps: "2 квартал" … "2026"
     patterns = (
+        # SBIS includes a numeric reporting-period code between quarter and year.
+        # Example: «за 1 квартал, 21, 2026 год».
+        re.compile(
+            r"([1-4])\s*к\s*в\s*а\s*р\s*т\s*а\s*л\s*,\s*2[1-4]\s*,\s*20\s*(\d{2})\s*г",
+            re.IGNORECASE,
+        ),
         re.compile(
             r"([1-4])\s*к\s*в\s*а\s*р\s*т\s*а\s*л[\s,.\-]{0,20}20\s*(\d{2})\s*(?:г(?:од|ода|\.)?)?",
             re.IGNORECASE,
