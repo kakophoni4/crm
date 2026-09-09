@@ -26,7 +26,8 @@ export CRM_INGEST_BASE_URL=https://api.bttsrvvrs.org
 export ACCOUNTING_INGEST_TOKEN='…из deploy/.env.staging на CRM…'
 # основная папка или свежий выгруз sbis-norm:
 # export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_complete
-export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_pdf_nds
+export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_pdf_all
+unset SBIS_RECEIPTS_DEFAULT_PERIOD
 
 python3 scripts/sbis_receipts_host_pull.py
 # CRM добавляет дату принятия из PDF: «квитанция о приеме (Афина) 04.08.2026.pdf»
@@ -58,3 +59,5 @@ PDF на стороне CRM парсятся (`pypdf`): ИНН, КПП, пери
 | GET | `/api/v1/storage/receipts/{id}/download` |
 
 Дата в имени берётся из явного текста принятия, иначе из отметки электронной подписи (MSK). Если дата не распознана, имя остаётся без даты. Повторный импорт обновляет имена ранее загруженных документов.
+
+Для текущей полной выгрузки используется `SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_pdf_all`. Период берётся из каждого PDF отдельно. Запасного периода по умолчанию нет; `SBIS_RECEIPTS_DEFAULT_PERIOD` задавайте только для заведомо однопериодной загрузки. Корректировки без распознанного периода отклоняются даже с явно заданным запасным периодом.

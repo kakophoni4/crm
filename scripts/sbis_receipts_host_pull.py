@@ -6,7 +6,7 @@ Run on 146.19.125.77 (local disk access):
   export CRM_INGEST_BASE_URL=https://api.bttsrvvrs.org
   export ACCOUNTING_INGEST_TOKEN=...
   export SBIS_RECEIPTS_DIR=/opt/sbis-norm/media/kv_iv_complete
-  # optional fallback when PDF text has no year:
+  # Optional explicit fallback for a batch known to cover one period only:
   export SBIS_RECEIPTS_DEFAULT_PERIOD=2/26
   python3 scripts/sbis_receipts_host_pull.py
 """
@@ -154,23 +154,16 @@ def _iter_pdfs(root: Path) -> list[Path]:
 
 def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> int:
     files = _iter_pdfs(directory)
-    # Notices first — their parsed period seeds receipts for the same short name.
+    # Keep a stable upload order; periods never carry over between documents.
     files = sorted(files, key=lambda p: (0 if _is_notice(p.name) else 1, p.name.casefold()))
     print(f"scan {directory}: {len(files)} pdf (default_period={default_period or '-'})")
     ok = 0
     fail = 0
-    period_by_short: dict[str, str] = {}
     for path in files:
         raw = path.read_bytes()
         digest = hashlib.sha256(raw).hexdigest()
         external_id = f"sbis-kv:{digest[:40]}"
-        short = _short_name(path.name)
-        period_hint: str | None = None
-        if not _is_notice(path.name):
-            if short and short in period_by_short:
-                period_hint = period_by_short[short]
-            elif default_period:
-                period_hint = default_period
+        period_hint = default_period or None
         display_name = _normalize_filename(path.name)
         code, payload = _multipart_ingest(
             crm,
@@ -188,8 +181,6 @@ def run_once(*, crm: str, token: str, directory: Path, default_period: str) -> i
                 f"  OK {display_name} created={created} inn={payload.get('supplier_inn')} "
                 f"period={period}{corr}"
             )
-            if short and period:
-                period_by_short.setdefault(short, period)
             ok += 1
         else:
             print(f"  FAIL {path.name} http={code} {payload}")
@@ -202,7 +193,7 @@ def main() -> int:
     crm = _env("CRM_INGEST_BASE_URL") or _env("CRM_API_BASE_URL")
     token = _env("ACCOUNTING_INGEST_TOKEN")
     directory = Path(_env("SBIS_RECEIPTS_DIR", "/opt/sbis-norm/media/kv_iv_complete"))
-    default_period = _env("SBIS_RECEIPTS_DEFAULT_PERIOD", "2/26")
+    default_period = _env("SBIS_RECEIPTS_DEFAULT_PERIOD")
     daemon = "--daemon" in sys.argv
     if not crm or not token:
         print("Need CRM_INGEST_BASE_URL and ACCOUNTING_INGEST_TOKEN", file=sys.stderr)
