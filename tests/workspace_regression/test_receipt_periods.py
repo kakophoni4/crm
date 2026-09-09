@@ -115,3 +115,11 @@ async def test_non_vat_is_rejected_before_upload(monkeypatch, kind, code):
         await receipts.ingest_receipt_pdf(AsyncMock(), external_id="test", pdf_bytes=b"pdf", source_filename="test.pdf", period_code="2/26")
     assert exc.value.code == code
     files.assert_not_called()
+
+
+def test_tax_disclosure_consent_is_not_vat():
+    from app.modules.leads.opt.receipt_pdf import tax_kind_from_text
+    text = "Код по КНД 1167001 Квитанция о приеме Согласие налогоплательщика IU_SOGNTOB_7733_7733_7733414245773301001_20260824_01a03328"
+    assert tax_kind_from_text(text) == "other"
+    # The receipt form alone does not identify the underlying document.
+    assert tax_kind_from_text("Код по КНД 1167001 Квитанция о приеме") is None

@@ -107,6 +107,9 @@ def normalize_receipt_filename(filename: str) -> str:
 def tax_kind_from_text(text: str) -> str | None:
     """Identify the declaration, not the receipt form's own KND code."""
     blob = " ".join(text.split())
+    # Consent to disclosure of tax information is not a VAT declaration.
+    if re.search(r"\bIU_SOGNTOB_", blob, re.IGNORECASE):
+        return "other"
     codes = set(re.findall(r"\b115\d{4}\b", blob))
     file_kinds = set(re.findall(r"\bNO_([A-Z0-9]+)_", blob, re.IGNORECASE))
     file_kinds = {kind.upper() for kind in file_kinds}
