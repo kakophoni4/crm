@@ -73,3 +73,28 @@ describe('accounting shop row editing', () => {
     expect(wrapper.find('input').exists()).toBe(false)
   })
 })
+
+it('keeps edits across column groups and saves them together', async () => {
+  patch.mockResolvedValue({ data: {} })
+  const wrapper = render()
+  const click = async (label: string) =>
+    wrapper
+      .findAll('button')
+      .find((b) => b.text() === label)!
+      .trigger('click')
+  await click('Заполнить')
+  await wrapper.get('input[aria-label="Комментарий"]').setValue('Комментарий изменён')
+  await click('ЭЦП и ЭДО')
+  expect(wrapper.find('input[aria-label="Комментарий"]').exists()).toBe(false)
+  await wrapper.get('input[aria-label="СБИС"]').setValue('Активен')
+  await click('Основное')
+  expect((wrapper.get('input[aria-label="Комментарий"]').element as HTMLInputElement).value).toBe(
+    'Комментарий изменён',
+  )
+  await click('Сохранить')
+  await flushPromises()
+  expect(patch).toHaveBeenCalledWith('/accounting/units/1/card', {
+    comment: 'Комментарий изменён',
+    sbis: 'Активен',
+  })
+})
