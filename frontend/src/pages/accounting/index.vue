@@ -37,6 +37,7 @@ import {
 } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import ShopCardEditor from '@/features/accounting/ShopCardEditor.vue'
+import ShopsTable from '@/features/accounting/ShopsTable.vue'
 
 import {
   assignAccountingUnitOwner,
@@ -494,10 +495,6 @@ async function submitEditPeriods(): Promise<void> {
   }
 }
 
-function formatPeriodCodes(codes: string[] | null | undefined): string {
-  if (!codes?.length) return 'периоды не заданы'
-  return codes.join(', ')
-}
 
 async function submitCreateUnit(): Promise<void> {
   const form = createForm.value
@@ -645,10 +642,6 @@ function lavkaTitle(unit: AccountingUnitOrderGroup['unit']): string {
   return lavkaLabel(unit.name, unit.inn)
 }
 
-function formatUnitRate(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `${Number(value)}%`
-}
 
 async function loadUnits(): Promise<void> {
   const data = await listAccountingUnits()
@@ -1714,7 +1707,7 @@ onUnmounted(() => {
         <NTabPane name="assignments" tab="Лавки">
           <div class="accounting-page__filters">
             <NInput v-model:value="ownerSearch" clearable placeholder="Лавка, ИНН, директор или бухгалтер" />
-            <NSelect v-model:value="ownerFilter" clearable placeholder="Все назначения" :options="[{ label: 'Без бухгалтера', value: 'unassigned' }]" />
+            <NSelect v-model:value="ownerFilter" clearable placeholder="Все лавки" :options="[{ label: 'Без бухгалтера', value: 'unassigned' }]" />
           </div>
           <span>Найдено: {{ filteredOwners.length }}</span>
           <NTabs v-model:value="assignmentsSubTab" type="segment" size="small" animated>
@@ -1725,33 +1718,8 @@ onUnmounted(() => {
                   v-if="!ownersLoading && sellingUnitOwners.length === 0"
                   description="Нет продающих лавок"
                 />
-                <div v-else class="accounting-page__owners">
-                  <div
-                    v-for="row in sellingUnitOwners.slice((ownerPage - 1) * ownerPageSize, ownerPage * ownerPageSize)"
-                    :key="row.unit_id"
-                    class="accounting-page__owner-row"
-                    :class="{
-                      'accounting-page__owner-row--unassigned': row.accountant_user_id == null,
-                    }"
-                  >
-                    <div class="accounting-page__owner-lavka">
-                      <span class="accounting-page__owner-name">{{
-                        shortLavkaName(row.name) || row.name || row.inn
-                      }}</span>
-                      <span class="accounting-page__owner-inn">
-                        {{ row.inn }} · {{ formatUnitRate(row.commission_rate_percent) }}
-                      </span>
-                      <span class="accounting-page__owner-periods">
-                        {{ formatPeriodCodes(row.period_codes) }}
-                      </span>
-                      <span v-if="row.lawyer_shop_id" class="accounting-page__owner-legal">
-                        Директор: {{ row.lawyer_director_name || 'директор не указан' }}
-                        <template v-if="row.lawyer_company_status"> · {{ row.lawyer_company_status }}</template>
-                        <template v-if="row.lawyer_unreliable"> · {{ row.lawyer_unreliable }}</template>
-                        <template v-if="row.lawyer_treatment_status"> · тикеты: {{ row.lawyer_treatment_status }}</template>
-                      </span>
-                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing"></span>
-                    </div>
+                <ShopsTable v-else :rows="sellingUnitOwners.slice((ownerPage - 1) * ownerPageSize, ownerPage * ownerPageSize)" @saved="onShopSaved">
+                  <template #actions="{ row }">
                     <div class="accounting-page__owner-actions">
                       <NButton v-if="isChief" size="small" secondary @click="openEditRate(row)">
                         <template #icon>
@@ -1795,8 +1763,8 @@ onUnmounted(() => {
                       style="min-width: 220px"
                       @update:value="(value) => onAssignUnit(row, value as number | null)"
                     />
-                  </div>
-                </div>
+                  </template>
+                </ShopsTable>
               </NSpin>
             </NTabPane>
             <NTabPane name="requirements" tab="Лавки для требований">
@@ -1806,27 +1774,8 @@ onUnmounted(() => {
                   v-if="!ownersLoading && requirementUnitOwners.length === 0"
                   description="Нет лавок только для требований"
                 />
-                <div v-else class="accounting-page__owners">
-                  <div
-                    v-for="row in requirementUnitOwners.slice((ownerPage - 1) * ownerPageSize, ownerPage * ownerPageSize)"
-                    :key="row.unit_id"
-                    class="accounting-page__owner-row accounting-page__owner-row--requirements"
-                    :class="{
-                      'accounting-page__owner-row--unassigned': row.accountant_user_id == null,
-                    }"
-                  >
-                    <div class="accounting-page__owner-lavka">
-                      <span class="accounting-page__owner-name">{{
-                        shortLavkaName(row.name) || row.name || row.inn
-                      }}</span>
-                      <span class="accounting-page__owner-inn">{{ row.inn }}</span>
-                      <span v-if="row.lawyer_shop_id" class="accounting-page__owner-legal">
-                        Директор: {{ row.lawyer_director_name || 'директор не указан' }}
-                        <template v-if="row.lawyer_company_status"> · {{ row.lawyer_company_status }}</template>
-                        <template v-if="row.lawyer_treatment_status"> · тикеты: {{ row.lawyer_treatment_status }}</template>
-                      </span>
-                      <span v-else class="accounting-page__owner-legal accounting-page__owner-legal--missing"></span>
-                    </div>
+                <ShopsTable v-else :rows="requirementUnitOwners.slice((ownerPage - 1) * ownerPageSize, ownerPage * ownerPageSize)" @saved="onShopSaved">
+                  <template #actions="{ row }">
                     <div class="accounting-page__owner-actions">
                       <NButton v-if="isChief"
                         size="small"
@@ -1858,8 +1807,8 @@ onUnmounted(() => {
                       style="min-width: 220px"
                       @update:value="(value) => onAssignUnit(row, value as number | null)"
                     />
-                  </div>
-                </div>
+                  </template>
+                </ShopsTable>
               </NSpin>
             </NTabPane>
           </NTabs>

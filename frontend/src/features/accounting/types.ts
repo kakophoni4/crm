@@ -102,6 +102,7 @@ export interface AccountingUnitOwnerRow {
   period_codes?: string[]
   accountant_user_id?: number | null
   accountant_full_name?: string | null
+  shop_fields?: Record<string, string | null>
   lawyer_shop_id?: number | null
   lawyer_director_name?: string | null
   lawyer_company_status?: string | null

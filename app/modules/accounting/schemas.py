@@ -357,6 +357,7 @@ class AccountingUnitOwnerRow(BaseModel):
     period_codes: list[str] = Field(default_factory=list)
     accountant_user_id: int | None = None
     accountant_full_name: str | None = None
+    shop_fields: dict[str, str | None] = Field(default_factory=dict)
     lawyer_shop_id: int | None = None
     lawyer_director_name: str | None = None
     lawyer_company_status: str | None = None

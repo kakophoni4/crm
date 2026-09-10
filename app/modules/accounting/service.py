@@ -833,16 +833,16 @@ class AccountingService:
         from sqlalchemy import select
         from app.modules.db.models.lawyer_director import LawyerDirector, LawyerShop
         lawyer_rows = (await self._session.execute(
-            select(LawyerShop, LawyerDirector.full_name)
+            select(LawyerShop, LawyerDirector.full_name, LawyerDirector.dirovod)
             .outerjoin(LawyerDirector, LawyerDirector.id == LawyerShop.director_id)
             .where(LawyerShop.inn.in_([unit.inn for unit, _, _ in rows])),
         )).all()
-        lawyer_by_inn = {shop.inn: (shop, director_name) for shop, director_name in lawyer_rows}
+        lawyer_by_inn = {shop.inn: (shop, director_name, dirovod) for shop, director_name, dirovod in lawyer_rows}
         deduped: dict[int, AccountingUnitOwnerRow] = {}
         for unit, accountant_id, accountant_name in rows:
             if unit.id in deduped:
                 continue
-            lawyer_shop, lawyer_director_name = lawyer_by_inn.get(unit.inn, (None, None))
+            lawyer_shop, lawyer_director_name, dirovod = lawyer_by_inn.get(unit.inn, (None, None, None))
             deduped[unit.id] = AccountingUnitOwnerRow(
                 unit_id=unit.id,
                 inn=unit.inn,
@@ -858,6 +858,16 @@ class AccountingService:
                 period_codes=periods_by_inn.get(unit.inn, []),
                 accountant_user_id=accountant_id,
                 accountant_full_name=accountant_name,
+                shop_fields={
+                    key: str(value) if value is not None else None
+                    for key in (
+                        "registered_at", "fns", "sale_priority", "company_status",
+                        "ecsp_status", "accounts_status", "received_at", "sbis",
+                        "edo_until", "edo_id", "purchased_at", "dirovod",
+                        "failed_at", "failure_reason", "comment",
+                    )
+                    for value in [dirovod if key == "dirovod" else getattr(lawyer_shop, key, None)]
+                },
                 lawyer_shop_id=lawyer_shop.id if lawyer_shop else None,
                 lawyer_director_name=lawyer_director_name,
                 lawyer_company_status=lawyer_shop.company_status if lawyer_shop else None,
