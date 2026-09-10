@@ -95,6 +95,7 @@ function blinkIcon(icon: unknown, blink: boolean) {
 }
 
 const menuOptions = computed(() => {
+  if (auth.isKesher) return [{ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Calculator) }) }]
   if (auth.isAccountant) {
     return [
       {
@@ -251,6 +252,7 @@ const menuOptions = computed(() => {
     })
   }
 
+  if (auth.user?.permissions.includes('cashroom.manage')) items.push({ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Calculator) }) })
   if (auth.canAccounting) {
     items.push({
       label: 'Бухгалтерия',

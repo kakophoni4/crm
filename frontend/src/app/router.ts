@@ -42,6 +42,7 @@ const routes: RouteRecordRaw[] = [
     redirect: () => {
       const auth = useAuthStore()
       if (auth.isAccountant) return '/accounting'
+      if (auth.isKesher) return '/cashroom'
       if (auth.isLawyer) return '/tickets'
       return '/chats'
     },
@@ -207,6 +208,9 @@ const routes: RouteRecordRaw[] = [
 
       {
 
+        path: 'cashroom', name: 'cashroom', component: () => import('@/pages/cashroom/index.vue'), meta: { requiresAuth: true },
+      },
+      {
         path: 'registry',
 
         name: 'lawyer-registry',
@@ -472,7 +476,7 @@ router.beforeEach(async (to) => {
       await auth.hydrate()
       if (auth.isAuthenticated) {
         if (isPhoneChatsOnly(auth)) return '/chats'
-        const defaultRedirect = auth.isAccountant
+        const defaultRedirect = auth.isKesher ? '/cashroom' : auth.isAccountant
           ? '/accounting'
           : auth.isLawyer
             ? '/tickets'
@@ -505,6 +509,9 @@ router.beforeEach(async (to) => {
   if (auth.isAuthenticated && isPhoneChatsOnly(auth) && !isPhoneChatsAllowedRoute(to.name)) {
     return { name: 'chats' }
   }
+
+  if (auth.isKesher && to.name !== 'cashroom') return { name: 'cashroom' }
+  if (to.name === 'cashroom' && !auth.user?.permissions.includes('cashroom.manage')) return { name: 'contacts' }
 
   const needsSeniorOrAdmin = to.matched.some((r) => r.meta.requiresSeniorOrAdmin)
   if (needsSeniorOrAdmin) {

@@ -175,3 +175,5 @@ __all__ = [
     "UserStatus",
     "UserTelegramLink",
 ]
+
+from .cashroom import CashDeal, CashAccount, CashMovement, CashAudit

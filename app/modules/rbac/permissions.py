@@ -109,6 +109,7 @@ class Permission(StrEnum):
     TASKS_MANAGE = "tasks.manage"
 
     # Accounting (OPT cabinet for accountants)
+    CASHROOM_MANAGE = "cashroom.manage"
     ACCOUNTING_READ = "accounting.read"
     ACCOUNTING_MANAGE = "accounting.manage"
 

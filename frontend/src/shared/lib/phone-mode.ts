@@ -18,12 +18,16 @@ export function isPhoneViewport(width?: number): boolean {
   return resolved <= PHONE_MAX_WIDTH
 }
 
-export function isPhoneChatsOnlyRole(auth: { isAccountant: boolean; isLawyer: boolean }): boolean {
-  return !auth.isAccountant && !auth.isLawyer
+export function isPhoneChatsOnlyRole(auth: {
+  isAccountant: boolean
+  isLawyer: boolean
+  isKesher?: boolean
+}): boolean {
+  return !auth.isAccountant && !auth.isLawyer && !auth.isKesher
 }
 
 export function isPhoneChatsOnly(
-  auth: { isAccountant: boolean; isLawyer: boolean },
+  auth: { isAccountant: boolean; isLawyer: boolean; isKesher?: boolean },
   width?: number,
 ): boolean {
   return isPhoneViewport(width) && isPhoneChatsOnlyRole(auth)

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.modules.analytics.router import router as analytics_router
+from app.modules.cashroom.router import router as cashroom_router
 from app.modules.accounting.router import router as accounting_router
 from app.modules.accounting.shop_cards import router as accounting_cards_router
 from app.modules.auth.router import router as auth_router
@@ -132,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(storage_public_router)
     app.include_router(tasks_router)
     app.include_router(analytics_router)
+    app.include_router(cashroom_router)
     app.include_router(accounting_router)
     app.include_router(accounting_cards_router)
     app.include_router(tickets_router)
