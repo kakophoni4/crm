@@ -3,6 +3,7 @@ import {
   Bot,
   Building2,
   Calculator,
+  Wallet,
   ClipboardList,
   FolderOpen,
   CheckSquare,
@@ -95,7 +96,7 @@ function blinkIcon(icon: unknown, blink: boolean) {
 }
 
 const menuOptions = computed(() => {
-  if (auth.isKesher) return [{ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Calculator) }) }]
+  if (auth.isKesher) return [{ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Wallet) }) }]
   if (auth.isAccountant) {
     return [
       {
@@ -252,7 +253,7 @@ const menuOptions = computed(() => {
     })
   }
 
-  if (auth.user?.permissions.includes('cashroom.manage')) items.push({ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Calculator) }) })
+  if (auth.user?.permissions.includes('cashroom.manage')) items.push({ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Wallet) }) })
   if (auth.canAccounting) {
     items.push({
       label: 'Бухгалтерия',
@@ -300,6 +301,7 @@ const activeKey = computed(() => {
   if (route.name === 'tasks') return 'tasks'
   if (route.name === 'notifications' || route.name === 'notification-history') return 'notifications'
   if (route.name === 'accounting') return 'accounting'
+  if (route.name === 'cashroom') return 'cashroom'
   if (route.name === 'tickets') return 'tickets'
   if (route.name === 'parser') return 'parser'
   if (route.name === 'lawyer-registry') return 'lawyer-registry'
@@ -317,6 +319,11 @@ const activeKey = computed(() => {
 })
 
 function onMenuUpdate(key: string): void {
+  if (key === 'cashroom') {
+    void router.push({ name: 'cashroom' })
+    emit('closeDrawer')
+    return
+  }
   if (key === 'chats') {
     void router.push({ name: 'chats' })
     emit('closeDrawer')
