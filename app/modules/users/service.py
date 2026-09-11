@@ -314,7 +314,10 @@ class UserService:
             await self._repo.commit()
         except IntegrityError as exc:
             await self._repo.rollback()
-            raise Conflict(message="User email or username already exists") from exc
+            sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+            if sqlstate == "23505":
+                raise Conflict(message="Пользователь с таким логином или почтой уже существует") from exc
+            raise
         return await user_to_out(self._session, created)
 
     async def update_user(
