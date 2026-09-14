@@ -17,9 +17,10 @@ import { http } from '@/shared/api/http'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Item = Record<string, any>
 const toast = useMessage()
+let promptInitialized = false
 const tabs = [
-  'Подключение',
-  'Промпты',
+  'Настройки',
+  'Инструкция',
   'Каталог',
   'Тестовый чат',
   'Примеры',
@@ -34,7 +35,7 @@ const page = ref(0),
   logJob = ref(''),
   logCursor = ref(0),
   logs = ref<Item[]>([])
-const tab = ref(0),
+const tab = ref(1),
   busy = ref(false),
   error = ref('')
 const connection = reactive<Item>({}),
@@ -48,7 +49,8 @@ const title = ref(''),
   content = ref(''),
   catalog = ref(''),
   catalogVersion = ref(0)
-const liveRequests=ref<Item[]>([]), liveId=ref<string|null>(null)
+const liveRequests = ref<Item[]>([]),
+  liveId = ref<string | null>(null)
 const question = ref(''),
   promptId = ref<number | null>(null),
   candidateId = ref<string | null>(null)
@@ -107,6 +109,14 @@ async function refresh() {
       const data = await get('service/prompts?limit=50&offset=' + page.value * 50)
       items.value = data.items
       selected.value = { active_prompt_id: data.active_prompt_id }
+      if (!promptInitialized && !content.value && !title.value) {
+        if (data.active_prompt_id) {
+          const active = await get('service/prompts/' + data.active_prompt_id)
+          content.value = active.content
+          title.value = (active.title + ' — правки').slice(0, 120)
+        }
+        promptInitialized = true
+      }
     }
     if (tab.value === 2) {
       const data = await get('service/catalog')
@@ -115,7 +125,10 @@ async function refresh() {
       catalogRevision.value = data._crm_revision
     }
     if (tab.value === 3) requests.value = (await get('requests')).items
-    if (tab.value === 4) {items.value=(await get('service/examples?limit=50&offset='+page.value*50)).items;liveRequests.value=(await get('requests?live=true')).items}
+    if (tab.value === 4) {
+      items.value = (await get('service/examples?limit=50&offset=' + page.value * 50)).items
+      liveRequests.value = (await get('requests?live=true')).items
+    }
     if (tab.value === 5)
       items.value = (await get('service/datasets?limit=50&offset=' + page.value * 50)).items
     if (tab.value === 6) {
@@ -194,7 +207,15 @@ async function upload(event: Event) {
     await refresh()
   })
 }
-function selectLiveRequest(id:string){const item=liveRequests.value.find(r=>r.id===id);if(!item?.result)return;selected.value={source_request_id:id};answer.value=item.result.reply;action.value=item.result.action;reason.value=item.result.reason || '';note.value=''}
+function selectLiveRequest(id: string) {
+  const item = liveRequests.value.find((r) => r.id === id)
+  if (!item?.result) return
+  selected.value = { source_request_id: id }
+  answer.value = item.result.reply
+  action.value = item.result.action
+  reason.value = item.result.reason || ''
+  note.value = ''
+}
 function editExample(item: Item) {
   selected.value = item
   answer.value = item.answer?.reply || ''
@@ -236,7 +257,15 @@ onBeforeUnmount(() => {
         <h1>Управление ИИ</h1>
         <p>Инструкции, проверенные ответы и обучение — в одном месте.</p>
       </div>
-      <NButton :loading="busy" @click="() => { run(refresh) }">Обновить</NButton>
+      <NButton
+        :loading="busy"
+        @click="
+          () => {
+            run(refresh)
+          }
+        "
+        >Обновить</NButton
+      >
     </header>
     <nav aria-label="Разделы управления ИИ">
       <button
@@ -244,157 +273,271 @@ onBeforeUnmount(() => {
         v-for="(label, i) in tabs"
         :key="label"
         :class="{ active: tab === i }"
-        @click="() => { tab = i }"
+        @click="
+          () => {
+            tab = i
+          }
+        "
       >
         {{ label }}
       </button>
     </nav>
-    <div v-if="[1, 4, 5, 6].includes(tab)" class="actions">
+    <div v-if="[1, 4, 5, 6].includes(tab) && (page > 0 || items.length >= 50)" class="actions">
       <NButton
         :disabled="busy || page === 0"
-        @click="() => {
-          page--
-          run(refresh)
-         }"
+        @click="
+          () => {
+            page--
+            run(refresh)
+          }
+        "
         >Предыдущая страница</NButton
       ><span>Страница {{ page + 1 }}</span
       ><NButton
         :disabled="busy || items.length < 50"
-        @click="() => {
-          page++
-          run(refresh)
-         }"
+        @click="
+          () => {
+            page++
+            run(refresh)
+          }
+        "
         >Следующая страница</NButton
       >
     </div>
     <NAlert v-if="error" type="error" closable @close="error = ''">{{ error }}</NAlert>
     <section v-if="tab === 0" class="panel">
-      <h2>Подключение к модели</h2>
-      <p>
-        ИИ API: {{ status.base_url }}. Ключ ответов:
-        {{ status.reply_key_configured ? 'задан' : 'не задан' }} · Ключ управления:
-        {{ status.admin_key_configured ? 'задан' : 'не задан' }}
-      </p>
+      <h2>Настройки ИИ</h2>
+      <div class="actions">
+        <NTag
+          :type="status.reply_key_configured && status.admin_key_configured ? 'success' : 'warning'"
+        >
+          {{
+            status.reply_key_configured && status.admin_key_configured
+              ? 'Ключи подключения настроены'
+              : 'Нужно настроить ключи на сервере'
+          }}
+        </NTag>
+      </div>
+      <p class="muted">Рабочая модель: {{ connection.model || 'Загрузка…' }}</p>
       <NAlert :type="status.auto_replies_enabled ? 'info' : 'warning'"
         >Автоответы клиентам
         {{ status.auto_replies_enabled ? 'разрешены сервером' : 'выключены сервером' }}. Проверка
         подключения не подтверждает генерацию и обучение.</NAlert
       >
-      <div v-if="Object.keys(connection).length" class="form-grid">
-        <label>Адрес Ollama<NInput v-model:value="connection.base_url" /></label>
-        <label
-          >Модель<NInput v-model:value="connection.model" /><NSelect
-            v-if="models.length"
-            v-model:value="connection.model"
-            :options="models.map((m) => ({ label: m.name || m.model, value: m.name || m.model }))"
-        /></label>
-        <label
-          >Таймаут, секунд<NInputNumber
-            v-model:value="connection.timeout_seconds"
-            :min="5"
-            :max="600"
-        /></label>
-        <label
-          >Контекст<NInputNumber v-model:value="connection.num_ctx" :min="1024" :max="32768"
-        /></label>
-        <label
-          >Длина ответа<NInputNumber v-model:value="connection.num_predict" :min="32" :max="2048"
-        /></label>
-        <label
-          >Температура<NInputNumber
-            v-model:value="connection.temperature"
-            :min="0"
-            :max="1.5"
-            :step="0.1"
-        /></label>
-      </div>
+      <details v-if="Object.keys(connection).length" class="advanced">
+        <summary>Модель и дополнительные настройки</summary>
+        <p class="muted">Меняйте только при необходимости. Подключение к Ollama уже настроено.</p>
+        <div class="form-grid">
+          <label
+            >Модель<NInput v-model:value="connection.model" /><NSelect
+              v-if="models.length"
+              v-model:value="connection.model"
+              :options="
+                models.map((m) => ({ label: m.name || m.model, value: m.name || m.model }))
+              "
+          /></label>
+          <label
+            >Ожидание ответа, секунд<NInputNumber
+              v-model:value="connection.timeout_seconds"
+              :min="5"
+              :max="600"
+          /></label>
+          <label
+            >Объём контекста, токенов<NInputNumber
+              v-model:value="connection.num_ctx"
+              :min="1024"
+              :max="32768"
+          /></label>
+          <label
+            >Максимум ответа, токенов<NInputNumber
+              v-model:value="connection.num_predict"
+              :min="32"
+              :max="2048"
+          /></label>
+          <label
+            >Разнообразие ответов (температура)<NInputNumber
+              v-model:value="connection.temperature"
+              :min="0"
+              :max="1.5"
+              :step="0.1"
+          /></label>
+        </div>
+        <div class="actions">
+          <NButton
+            :disabled="busy || !Object.keys(connection).length"
+            type="primary"
+            @click="
+              () => {
+                mutate(
+                  'connection',
+                  Object.fromEntries(
+                    [
+                      'base_url',
+                      'model',
+                      'timeout_seconds',
+                      'num_ctx',
+                      'num_predict',
+                      'temperature',
+                      '_crm_revision',
+                    ].map((k) => [k, connection[k]]),
+                  ),
+                  'put',
+                )
+              }
+            "
+            >Сохранить</NButton
+          ><NButton
+            :disabled="busy"
+            @click="
+              () => {
+                run(async () => {
+                  const r = await get('service/models')
+                  models = r.models || r.items || []
+                })
+              }
+            "
+            >Обновить список моделей</NButton
+          >
+        </div>
+      </details>
       <div class="actions">
         <NButton
-          :disabled="busy || !Object.keys(connection).length"
-          type="primary"
-          @click="() => {
-            mutate(
-              'connection',
-              Object.fromEntries(
-                [
-                  'base_url',
-                  'model',
-                  'timeout_seconds',
-                  'num_ctx',
-                  'num_predict',
-                  'temperature',
-                  '_crm_revision',
-                ].map((k) => [k, connection[k]]),
-              ),
-              'put',
-            )
-           }"
-          >Сохранить</NButton
-        ><NButton
           :disabled="busy"
-          @click="() => {
-            run(async () => {
-              const r = await get('service/models')
-              models = r.models || r.items || []
-            })
-           }"
-          >Получить модели</NButton
-        ><NButton
-          :disabled="busy"
-          @click="() => {
-            run(async () => {
-              selected = await api('connection/check')
-            })
-           }"
+          @click="
+            () => {
+              run(async () => {
+                selected = await api('connection/check')
+              })
+            }
+          "
           >Проверить подключение</NButton
         >
       </div>
-      <div v-if="selected" class="details">
-        <p v-for="(value, key) in selected" :key="key">{{ key }}: {{ value }}</p>
-      </div>
-    </section>
-    <section v-if="tab === 1" class="panel">
-      <h2>Новая версия инструкции</h2>
-      <NInput v-model:value="title" placeholder="Название версии" :maxlength="120" /><NInput
-        v-model:value="content"
-        type="textarea"
-        :autosize="{ minRows: 8 }"
-        :maxlength="16000"
-        placeholder="Как общаться, что уточнять и когда передавать менеджеру"
-      />
-      <p>
-        Сохранение не активирует версию и не запускает обучение. Сервис добавляет обязательные
-        правила достоверности отдельно.
-      </p>
-      <NButton
-        :disabled="busy || !title.trim() || !content.trim()"
-        type="primary"
-        @click="() => { mutate('prompts', { title, content }) }"
-        >Сохранить новую версию</NButton
+      <NAlert
+        v-if="selected"
+        :type="selected.reachable && selected.model_available ? 'success' : 'warning'"
       >
-      <article v-for="item in items" :key="item.id">
-        <h3>
-          {{ item.title }} <NTag v-if="selected?.active_prompt_id === item.id">Активная</NTag>
-        </h3>
-        <p class="text">{{ item.content }}</p>
+        {{
+          selected.reachable
+            ? selected.model_available
+              ? 'Подключение работает, модель доступна.'
+              : 'Сервер доступен, выбранная модель не найдена.'
+            : 'Не удалось подтвердить подключение.'
+        }}
+        Для проверки ответа откройте тестовый чат.
+      </NAlert>
+    </section>
+    <section v-if="tab === 1" class="panel prompt-panel">
+      <div>
+        <p class="eyebrow">ПОВЕДЕНИЕ ИИ</p>
+        <h2>Как ИИ должен общаться</h2>
+        <p class="muted">
+          Опишите стиль общения, какие вопросы задавать и когда звать менеджера. Цены и услуги
+          удобнее хранить в каталоге.
+        </p>
+      </div>
+      <div class="prompt-steps">
+        <span>1. Напишите инструкцию</span><span>2. Сохраните и проверьте</span
+        ><span>3. Включите версию</span>
+      </div>
+      <label
+        >Название версии
+        <NInput
+          v-model:value="title"
+          placeholder="Например: Короткие ответы · сентябрь"
+          :maxlength="120"
+      /></label>
+      <label
+        >Инструкция
+        <NInput
+          v-model:value="content"
+          type="textarea"
+          :autosize="{ minRows: 16, maxRows: 32 }"
+          :maxlength="16000"
+          show-count
+          placeholder="Роль и стиль общения
+Какую задачу ты помогаешь решить клиенту? Как обращаешься к нему?
+
+Порядок ответа
+Что нужно уточнить перед ответом?
+
+Передача менеджеру
+В каких случаях нужно пригласить человека?"
+        />
+      </label>
+      <div class="prompt-footer">
+        <p class="muted">
+          Сохранение создаёт новую версию. Чтобы использовать её в ответах, нажмите «Включить» после
+          проверки.
+        </p>
+        <NButton
+          :disabled="busy || !title.trim() || !content.trim()"
+          type="primary"
+          @click="
+            () => {
+              mutate('prompts', { title, content })
+            }
+          "
+          >Сохранить новую версию</NButton
+        >
+      </div>
+      <div class="version-heading">
+        <h3>Сохранённые версии</h3>
+        <NTag v-if="selected?.active_prompt_id"
+          >Рабочая версия №{{ selected.active_prompt_id }}</NTag
+        >
+      </div>
+      <p v-if="!items.length && !busy" class="muted">Пока нет версий. Начните с инструкции выше.</p>
+      <article
+        v-for="item in items"
+        :key="item.id"
+        class="prompt-version"
+        :class="{ 'is-active': selected?.active_prompt_id === item.id }"
+      >
+        <div class="version-heading">
+          <h3>{{ item.title }}</h3>
+          <NTag v-if="selected?.active_prompt_id === item.id" type="success"
+            >Используется сейчас</NTag
+          >
+        </div>
+        <details>
+          <summary>Посмотреть текст инструкции</summary>
+          <p class="text">{{ item.content }}</p>
+        </details>
         <div class="actions">
           <NButton
-            @click="() => {
-              run(async () => {
-                content = (await get('service/prompts/' + item.id)).content
-                title = item.title + ' — новая версия'
-              })
-             }"
-            >Открыть текст</NButton
-          ><NButton
-            @click="() => {
-              promptId = item.id
-              candidateId = null
-              tab = 3
-             }"
-            >Проверить</NButton
-          ><NButton :disabled="busy" @click="() => { mutate(`prompts/${item.id}/activate`) }"
-            >Активировать эту версию</NButton
+            :disabled="busy"
+            @click="
+              () => {
+                run(async () => {
+                  content = (await get('service/prompts/' + item.id)).content
+                  title = (item.title + ' — правки').slice(0, 120)
+                })
+              }
+            "
+            >Редактировать копию</NButton
+          >
+          <NButton
+            :disabled="busy"
+            @click="
+              () => {
+                promptId = item.id
+                candidateId = null
+                tab = 3
+              }
+            "
+            >Проверить в чате</NButton
+          >
+          <NButton
+            :disabled="busy || selected?.active_prompt_id === item.id"
+            type="primary"
+            secondary
+            @click="
+              () => {
+                mutate(`prompts/${item.id}/activate`)
+              }
+            "
+            >Включить</NButton
           >
         </div>
       </article>
@@ -410,7 +553,11 @@ onBeforeUnmount(() => {
       /><NButton
         type="primary"
         :disabled="busy"
-        @click="() => { mutate('catalog', { content: catalog, _crm_revision: catalogRevision }, 'put') }"
+        @click="
+          () => {
+            mutate('catalog', { content: catalog, _crm_revision: catalogRevision }, 'put')
+          }
+        "
         >Сохранить каталог</NButton
       >
     </section>
@@ -422,11 +569,13 @@ onBeforeUnmount(() => {
       </p>
       <div class="actions">
         <NButton
-          @click="() => {
-            history = []
-            promptId = null
-            candidateId = null
-           }"
+          @click="
+            () => {
+              history = []
+              promptId = null
+              candidateId = null
+            }
+          "
           >Начать новый диалог</NButton
         >
       </div>
@@ -435,7 +584,14 @@ onBeforeUnmount(() => {
         v-model:value="question"
         type="textarea"
         placeholder="Проверьте реальный вопрос клиента"
-      /><NButton type="primary" :disabled="busy || !question.trim()" @click="() => { test }"
+      /><NButton
+        type="primary"
+        :disabled="busy || !question.trim()"
+        @click="
+          () => {
+            test()
+          }
+        "
         >Отправить тест</NButton
       >
       <article v-for="item in requests" :key="item.id">
@@ -457,30 +613,56 @@ onBeforeUnmount(() => {
         </details>
         <div v-if="item.result" class="actions">
           <NButton
-            @click="() => {
-              history = [
-                ...item.body.messages,
-                ...(item.result.reply ? [{ role: 'assistant', content: item.result.reply }] : []),
-              ]
-              promptId = item.body.prompt_id || null
-             }"
+            @click="
+              () => {
+                history = [
+                  ...item.body.messages,
+                  ...(item.result.reply ? [{ role: 'assistant', content: item.result.reply }] : []),
+                ]
+                promptId = item.body.prompt_id || null
+              }
+            "
             >Продолжить этот диалог</NButton
           ><NButton
-            @click="() => {
-              tab = 4
-              selected = { source_request_id: item.id }
-              answer = item.result.reply
-              action = item.result.action
-              reason = item.result.reason || ''
-             }"
+            @click="
+              () => {
+                tab = 4
+                selected = { source_request_id: item.id }
+                answer = item.result.reply
+                action = item.result.action
+                reason = item.result.reason || ''
+              }
+            "
             >Исправить / сохранить пример</NButton
           >
         </div>
       </article>
     </section>
     <section v-if="tab === 4" class="panel">
-      <h2>Проверенные примеры</h2><label>Сохранить или исправить ответ из рабочего чата<NSelect v-model:value="liveId" :options="liveRequests.filter(r=>r.status==='delivered').map(r=>({label:r.result.reply.slice(0,100),value:r.id}))" @update:value="v=>{if(typeof v==='string')selectLiveRequest(v)}" /></label>
-      <NButton :disabled="busy" @click="() => { exportExamples }">Экспорт одобренных</NButton>
+      <h2>Проверенные примеры</h2>
+      <label
+        >Сохранить или исправить ответ из рабочего чата<NSelect
+          v-model:value="liveId"
+          :options="
+            liveRequests
+              .filter((r) => r.status === 'delivered')
+              .map((r) => ({ label: r.result.reply.slice(0, 100), value: r.id }))
+          "
+          @update:value="
+            (v) => {
+              if (typeof v === 'string') selectLiveRequest(v)
+            }
+          "
+      /></label>
+      <NButton
+        :disabled="busy"
+        @click="
+          () => {
+            exportExamples()
+          }
+        "
+        >Экспорт одобренных</NButton
+      >
       <div v-if="selected" class="editor">
         <NInput v-model:value="answer" type="textarea" placeholder="Эталонный ответ" /><NSelect
           v-model:value="action"
@@ -494,17 +676,19 @@ onBeforeUnmount(() => {
           placeholder="Причина передачи / отсутствия ответа"
         /><NInput v-model:value="note" placeholder="Комментарий для проверки" /><NButton
           :disabled="busy"
-          @click="() => {
-            mutate(
-              selected!.id ? `examples/${selected!.id}` : 'examples',
-              {
-                ...(selected!.id ? {} : { source_request_id: selected!.source_request_id }),
-                answer: { reply: answer, action, reason: reason || null },
-                note,
-              },
-              selected!.id ? 'patch' : 'post',
-            )
-           }"
+          @click="
+            () => {
+              mutate(
+                selected!.id ? `examples/${selected!.id}` : 'examples',
+                {
+                  ...(selected!.id ? {} : { source_request_id: selected!.source_request_id }),
+                  answer: { reply: answer, action, reason: reason || null },
+                  note,
+                },
+                selected!.id ? 'patch' : 'post',
+              )
+            }
+          "
           >Сохранить без одобрения</NButton
         >
       </div>
@@ -517,10 +701,28 @@ onBeforeUnmount(() => {
         <p class="text">{{ item.answer?.reply }}</p>
         <p>{{ item.note }}</p>
         <div class="actions">
-          <NButton @click="() => { editExample(item) }">Исправить</NButton
-          ><NButton :disabled="busy || item.approved" @click="() => { mutate(`examples/${item.id}/approve`) }"
+          <NButton
+            @click="
+              () => {
+                editExample(item)
+              }
+            "
+            >Исправить</NButton
+          ><NButton
+            :disabled="busy || item.approved"
+            @click="
+              () => {
+                mutate(`examples/${item.id}/approve`)
+              }
+            "
             >Одобрить</NButton
-          ><NButton :disabled="busy" @click="() => { mutate(`examples/${item.id}`, {}, 'delete') }"
+          ><NButton
+            :disabled="busy"
+            @click="
+              () => {
+                mutate(`examples/${item.id}`, {}, 'delete')
+              }
+            "
             >Удалить</NButton
           >
         </div>
@@ -539,7 +741,11 @@ onBeforeUnmount(() => {
           @change="upload" /></label
       ><NButton
         :disabled="busy || !datasetName.trim()"
-        @click="() => { mutate('datasets/from-approved?name=' + encodeURIComponent(datasetName)) }"
+        @click="
+          () => {
+            mutate('datasets/from-approved?name=' + encodeURIComponent(datasetName))
+          }
+        "
         >Собрать из одобренных примеров</NButton
       >
       <p>
@@ -550,15 +756,17 @@ onBeforeUnmount(() => {
         <h3>{{ item.name }}</h3>
         <p>{{ item.approved ? 'одобрен' : 'ожидает проверки' }}</p>
         <NButton
-          @click="() => {
-            run(async () => {
-              datasetOffset = 0
-              selected = await get('service/datasets/' + item.id)
-              reviewed = false
-              anonymized = false
-              servicesOnly = false
-            })
-           }"
+          @click="
+            () => {
+              run(async () => {
+                datasetOffset = 0
+                selected = await get('service/datasets/' + item.id)
+                reviewed = false
+                anonymized = false
+                servicesOnly = false
+              })
+            }
+          "
           >Просмотреть и проверить</NButton
         >
       </article>
@@ -567,21 +775,25 @@ onBeforeUnmount(() => {
         <div class="actions">
           <NButton
             :disabled="busy || datasetOffset === 0"
-            @click="() => {
-              run(async () => {
-                datasetOffset -= 50
-                selected = await get(`service/datasets/${selected!.id}?offset=${datasetOffset}`)
-              })
-             }"
+            @click="
+              () => {
+                run(async () => {
+                  datasetOffset -= 50
+                  selected = await get(`service/datasets/${selected!.id}?offset=${datasetOffset}`)
+                })
+              }
+            "
             >Предыдущие записи</NButton
           ><NButton
             :disabled="busy || datasetOffset + 50 >= selected.count"
-            @click="() => {
-              run(async () => {
-                datasetOffset += 50
-                selected = await get(`service/datasets/${selected!.id}?offset=${datasetOffset}`)
-              })
-             }"
+            @click="
+              () => {
+                run(async () => {
+                  datasetOffset += 50
+                  selected = await get(`service/datasets/${selected!.id}?offset=${datasetOffset}`)
+                })
+              }
+            "
             >Следующие записи</NButton
           >
         </div>
@@ -599,13 +811,15 @@ onBeforeUnmount(() => {
         </div>
         <NButton
           :disabled="busy || !reviewed || !anonymized || !servicesOnly"
-          @click="() => {
-            mutate(`datasets/${selected!.id}/approve`, {
-              reviewed,
-              personal_data_removed: anonymized,
-              authorized_services_only: servicesOnly,
-            })
-           }"
+          @click="
+            () => {
+              mutate(`datasets/${selected!.id}/approve`, {
+                reviewed,
+                personal_data_removed: anonymized,
+                authorized_services_only: servicesOnly,
+              })
+            }
+          "
           >Одобрить датасет</NButton
         >
       </div>
@@ -651,16 +865,18 @@ onBeforeUnmount(() => {
       <NButton
         type="primary"
         :disabled="busy || !resources.worker_online || !baseModel || !datasetId"
-        @click="() => {
-          mutate('training/jobs', {
-            dataset_id: datasetId,
-            base_model: baseModel,
-            epochs,
-            max_length: maxLength,
-            learning_rate: rate,
-            seed,
-          })
-         }"
+        @click="
+          () => {
+            mutate('training/jobs', {
+              dataset_id: datasetId,
+              base_model: baseModel,
+              epochs,
+              max_length: maxLength,
+              learning_rate: rate,
+              seed,
+            })
+          }
+        "
         >Запустить обучение</NButton
       >
       <article v-for="item in items" :key="item.id">
@@ -670,20 +886,26 @@ onBeforeUnmount(() => {
         <p>{{ item.metrics }}</p>
         <div class="actions">
           <NButton
-            @click="() => {
-              run(async () => {
-                selected = await get(`service/training/jobs/${item.id}`)
-                logJob = item.id
-                logCursor = 0
-                logs = []
-                await refresh()
-              })
-             }"
+            @click="
+              () => {
+                run(async () => {
+                  selected = await get(`service/training/jobs/${item.id}`)
+                  logJob = item.id
+                  logCursor = 0
+                  logs = []
+                  await refresh()
+                })
+              }
+            "
             >Показать журнал</NButton
           ><NButton
             v-if="['queued', 'running'].includes(item.status)"
             :disabled="busy"
-            @click="() => { mutate(`training/jobs/${item.id}/cancel`) }"
+            @click="
+              () => {
+                mutate(`training/jobs/${item.id}/cancel`)
+              }
+            "
             >Запросить отмену</NButton
           >
         </div>
@@ -710,20 +932,28 @@ onBeforeUnmount(() => {
         <NTag>{{ item.evaluated ? 'Качество одобрено' : 'Требуется тест и проверка' }}</NTag>
         <div class="actions">
           <NButton
-            @click="() => {
-              candidateId = item.id
-              tab = 3
-             }"
+            @click="
+              () => {
+                candidateId = item.id
+                tab = 3
+              }
+            "
             >Проверить в чате</NButton
           ><NButton
-            @click="() => {
-              selected = item
-              qualityReviewed = false
-             }"
+            @click="
+              () => {
+                selected = item
+                qualityReviewed = false
+              }
+            "
             >Оценить качество</NButton
           ><NButton
             :disabled="busy || !item.evaluated"
-            @click="() => { mutate(`model-versions/${item.id}/activate`) }"
+            @click="
+              () => {
+                mutate(`model-versions/${item.id}/activate`)
+              }
+            "
             >Активировать</NButton
           >
         </div>
@@ -733,9 +963,13 @@ onBeforeUnmount(() => {
           >Я проверил реальные ответы этой версии</NCheckbox
         ><NButton
           :disabled="busy || !qualityReviewed"
-          @click="() => {
-            mutate(`model-versions/${selected!.id}/approve`, { quality_reviewed: qualityReviewed })
-           }"
+          @click="
+            () => {
+              mutate(`model-versions/${selected!.id}/approve`, {
+                quality_reviewed: qualityReviewed,
+              })
+            }
+          "
           >Одобрить модель</NButton
         >
       </div>
@@ -753,7 +987,11 @@ onBeforeUnmount(() => {
         <NButton
           v-if="item.data.activation_id && !item.action.endsWith('/rollback')"
           :disabled="busy"
-          @click="() => { mutate(`model-activations/${item.data.activation_id}/rollback`) }"
+          @click="
+            () => {
+              mutate(`model-activations/${item.data.activation_id}/rollback`)
+            }
+          "
           >Откатить эту активацию</NButton
         >
       </article>
@@ -874,5 +1112,63 @@ input[type='file'] {
   h1 {
     font-size: 24px;
   }
+}
+.muted {
+  color: var(--app-text-muted);
+  margin: 0;
+  line-height: 1.6;
+}
+.advanced {
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+summary {
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.advanced[open] > * + * {
+  margin-top: 18px;
+}
+.prompt-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+.prompt-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.prompt-footer p {
+  flex: 1 1 260px;
+}
+.version-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.version-heading h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.prompt-version {
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+.prompt-version.is-active {
+  border-color: var(--app-accent);
+}
+.prompt-panel :deep(textarea) {
+  line-height: 1.75;
 }
 </style>
