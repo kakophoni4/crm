@@ -94,6 +94,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
 
     children: [
+      { path: 'ai', name: 'ai-management', component: () => import('@/pages/ai/index.vue'), meta: { requiresAdmin: true } },
 
       {
 

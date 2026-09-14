@@ -43,6 +43,11 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
             inc_bot_outbound("failed")
             return
 
+        from app.modules.ai.delivery import validate_outbox
+
+        if not await validate_outbox(session, row):
+            return
+
         secret = await bot_repo.decrypt_outbound_secret(bot)
         body_dict = {
             "command": row.command,
@@ -81,6 +86,12 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                 )
             response_payload = response.json()
             row.status = BotOutboundStatus.SENT
+            if row.request_id.startswith("crm-chat-"):
+                from app.modules.db.models.ai import AIRequest
+
+                ai_request = await session.get(AIRequest, row.request_id)
+                if ai_request:
+                    ai_request.status = "delivered"
             row.response_payload = response_payload
             row.last_error = None
             await outbound_repo.save(row)
@@ -123,8 +134,25 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                 retry_row = await BotOutboundLogRepository(retry_session).get_by_id(log_id)
                 if retry_row is None:
                     return
+                if retry_row.request_id.startswith("crm-chat-"):
+                    from app.modules.db.models.ai import AIRequest, AIChatState
+
+                    ai_request = await retry_session.get(AIRequest, retry_row.request_id)
+                    if ai_request:
+                        ai_request.status = "delivery_uncertain"
+                        state = await retry_session.get(AIChatState, ai_request.chat_id)
+                        if state:
+                            state.data = {
+                                **state.data,
+                                "error": {
+                                    "message": "Доставка ответа ИИ не подтверждена. Проверьте канал перед ручной отправкой."
+                                },
+                            }
                 retry_row.last_error = error_text
-                if retry_row.attempts >= MAX_ATTEMPTS:
+                if (
+                    retry_row.request_id.startswith("crm-chat-")
+                    or retry_row.attempts >= MAX_ATTEMPTS
+                ):
                     retry_row.status = BotOutboundStatus.FAILED
                     await BotOutboundLogRepository(retry_session).save(retry_row)
                     await retry_session.commit()

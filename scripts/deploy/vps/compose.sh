@@ -18,6 +18,11 @@ COMPOSE=(
   --env-file "$ENV_FILE"
 )
 
+AI_ENV_FILE="${AI_ENV_FILE:-/root/crm-ai-connection.env}"
+if [[ -f "$AI_ENV_FILE" ]]; then
+  COMPOSE+=(--env-file "$AI_ENV_FILE")
+fi
+
 compose() {
   "${COMPOSE[@]}" "$@"
 }

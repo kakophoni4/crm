@@ -147,6 +147,11 @@ async def _prepare_auto_reply(
     settings: GroupAfterHoursSettings,
     chat: Chat,
 ) -> AfterHoursOutboundJob | None:
+    from app.shared.settings import settings as app_settings
+    from app.modules.db.models.ai import AIChatState
+    ai_state = await session.get(AIChatState, chat.id) if app_settings.ai_auto_replies_enabled else None
+    if ai_state is not None and ai_state.mode != "OFF":
+        return None
     text = (settings.reply_text or "").strip()
     if not text:
         return None

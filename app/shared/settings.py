@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -13,6 +13,11 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    ai_service_base_url: str = "http://10.77.77.1:8088"
+    ai_service_reply_key: SecretStr = SecretStr("")
+    ai_service_admin_key: SecretStr = SecretStr("")
+    ai_auto_replies_enabled: bool = False
 
     app_env: str = "dev"
     app_debug: bool = True

@@ -30,3 +30,6 @@ scripts/opt_park_categories.json
 scripts/deploy/seed-opt-lavki.sql
 scripts/deploy/seed-opt-park-categories.sql
 scripts/fixtures/opt-test-crm.xlsx
+
+# Private AI service connection
+crm-ai-connection.env

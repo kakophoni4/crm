@@ -245,6 +245,7 @@ const menuOptions = computed(() => {
     })
   }
 
+  if (auth.isAdmin) items.push({label:'Управление ИИ',key:'ai-management',icon:()=>h(NIcon,null,{default:()=>h(Bot)})})
   if (auth.isAdmin) {
     items.push({
       label: 'Админка',
@@ -301,6 +302,7 @@ const activeKey = computed(() => {
   if (route.name === 'tasks') return 'tasks'
   if (route.name === 'notifications' || route.name === 'notification-history') return 'notifications'
   if (route.name === 'accounting') return 'accounting'
+  if (route.name === 'ai-management') return 'ai-management'
   if (route.name === 'cashroom') return 'cashroom'
   if (route.name === 'tickets') return 'tickets'
   if (route.name === 'parser') return 'parser'
@@ -319,6 +321,7 @@ const activeKey = computed(() => {
 })
 
 function onMenuUpdate(key: string): void {
+  if (key === 'ai-management') { void router.push({name:'ai-management'}); emit('closeDrawer'); return }
   if (key === 'cashroom') {
     void router.push({ name: 'cashroom' })
     emit('closeDrawer')

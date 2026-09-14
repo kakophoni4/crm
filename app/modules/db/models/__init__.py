@@ -176,4 +176,5 @@ __all__ = [
     "UserTelegramLink",
 ]
 
+from .ai import AIRequest, AIChatState, AIAudit
 from .cashroom import CashDeal, CashAccount, CashMovement, CashAudit

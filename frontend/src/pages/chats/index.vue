@@ -82,6 +82,7 @@ import { connectLeadsRealtime } from '@/shared/realtime/leads-ws'
 
 import { connectOwnershipRealtime } from '@/shared/realtime/ownership-ws'
 
+import AIChatControls from '@/widgets/chat/AIChatControls.vue'
 import MessageInput from '@/widgets/chat/MessageInput.vue'
 
 import MessageList from '@/widgets/chat/MessageList.vue'
@@ -829,6 +830,7 @@ onUnmounted(() => {
 
 
 
+          <AIChatControls :chat-id="store.currentChat.id" />
           <TakeoverBadge
 
             :takeover="store.activeTakeover"

@@ -8,6 +8,8 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.modules.ai.chats import router as ai_chats_router
+from app.modules.ai.imports import router as ai_router
 from app.modules.analytics.router import router as analytics_router
 from app.modules.cashroom.router import router as cashroom_router
 from app.modules.accounting.router import router as accounting_router
@@ -86,6 +88,8 @@ async def lifespan(_app: FastAPI) -> Any:
         await stop_worker_heartbeat()
         await stop_crm_jobs()
         await stop_worker()
+    from app.modules.ai.client import close_client
+    await close_client()
     await close_redis()
     await dispose_engine()
 
@@ -133,6 +137,8 @@ def create_app() -> FastAPI:
     app.include_router(storage_public_router)
     app.include_router(tasks_router)
     app.include_router(analytics_router)
+    app.include_router(ai_router)
+    app.include_router(ai_chats_router)
     app.include_router(cashroom_router)
     app.include_router(accounting_router)
     app.include_router(accounting_cards_router)

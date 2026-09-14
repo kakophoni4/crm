@@ -9,6 +9,7 @@ import { useAuthStore } from '@/shared/store/auth'
 import { connectRealtime, getRealtimeWS } from '@/shared/realtime/ws-client'
 
 export type ChatNotificationTopic =
+  | 'chat.ai.handoff'
   | 'chat.message.inbound'
   | 'message.replied.on_behalf'
   | 'contact.escalation.group_notify'
@@ -55,6 +56,7 @@ export function textMatchesMutePhrases(text: string | null | undefined, phrases:
 }
 // owner_notify intentionally omitted: owners already get chat.message.inbound
 const FEED_TOPICS: ChatNotificationTopic[] = [
+  'chat.ai.handoff',
   'message.replied.on_behalf',
   'contact.escalation.group_notify',
   'contact.ownership.assigned',
@@ -106,6 +108,7 @@ function formatLine(topic: ChatNotificationTopic, payload: Record<string, unknow
   const group = groupSuffix(payload)
 
   switch (topic) {
+    case 'chat.ai.handoff': return `ИИ передал разговор ${contact} менеджеру${group}`
     case 'chat.message.inbound':
       return `Новое сообщение ${contact}${group}`
     case 'message.replied.on_behalf': {
@@ -322,6 +325,16 @@ export const useChatNotificationsStore = defineStore('chat-notifications', () =>
     } catch {
       // Mute phrases stay from local cache if settings API is unavailable.
     }
+    try {
+      const {http}=await import('@/shared/api/http')
+      const response=await http.get('/ai/notices')
+      for (const notice of response.data.items.reverse()) {
+        const id='ai-notice-'+notice.id
+        if (!items.value.some(item=>item.id===id)) items.value.unshift({id,at:Date.parse(notice.created_at),topic:'chat.ai.handoff',line:notice.reason,chatId:notice.chat_id,read:false})
+      }
+      items.value=items.value.slice(0,MAX_ITEMS)
+      persist()
+    } catch { /* Existing notifications remain available without AI access. */ }
     await ensureGroupDirectory()
     await connectRealtime()
     for (const topic of FEED_TOPICS) {
