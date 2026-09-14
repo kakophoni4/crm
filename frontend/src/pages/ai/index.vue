@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
 import {
   NButton,
   NInput,
@@ -20,17 +20,45 @@ const toast = useMessage()
 let promptInitialized = false
 const testPrompts = ref<Item[]>([])
 const activeTestPrompt = ref<number | null>(null)
-const tabs = [
-  'Настройки',
-  'Инструкция',
-  'Каталог',
-  'Тестовый чат',
-  'Примеры',
-  'Датасеты',
-  'Обучение',
-  'Версии моделей',
-  'Журнал',
+const steps = [
+  {
+    title: 'Настроить помощника',
+    tabs: [1, 2],
+    description: 'Опишите, как отвечать, и добавьте услуги и цены.',
+    next: 'Сохраните инструкцию. Затем откройте проверку ответов.',
+  },
+  {
+    title: 'Проверить ответы',
+    tabs: [3],
+    description: 'Задавайте вопросы как клиент. Эти сообщения видите только вы.',
+    next: 'Хорошие ответы сохраняйте для обучения, плохие — исправляйте.',
+  },
+  {
+    title: 'Подготовить материал',
+    tabs: [5, 4],
+    description: 'Выберите текущие переписки CRM и отметьте правильные ответы сотрудников.',
+    next: 'Сохраните учебный набор. Затем проверьте его и разрешите обучение.',
+  },
+  {
+    title: 'Обучить помощника',
+    tabs: [6],
+    description: 'Выберите проверенный учебный набор и модель, затем запустите обучение.',
+    next: 'Когда задача завершится, перейдите к проверке новой версии.',
+  },
+  {
+    title: 'Проверить и включить',
+    tabs: [7],
+    description: 'Сравните новую модель с рабочей на одинаковых вопросах.',
+    next: 'Если ответы лучше — подтвердите качество и включите новую версию.',
+  },
 ]
+const currentStep = computed(() => steps.findIndex((step) => step.tabs.includes(tab.value)))
+const materialSource = ref<'crm' | 'examples'>('crm')
+const roleNames: Record<string, string> = {
+  user: 'Клиент',
+  assistant: 'Сотрудник',
+  system: 'Инструкция',
+}
 const page = ref(0),
   datasetOffset = ref(0),
   datasets = ref<Item[]>([]),
@@ -211,14 +239,14 @@ async function upload(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
   await run(async () => {
-    if (!datasetName.value.trim()) throw new Error('Укажите название датасета')
+    if (!datasetName.value.trim()) throw new Error('Укажите название учебного набора')
     if (file.size > 32 * 1024 * 1024) throw new Error('Максимальный размер — 32 МБ')
     await http.post('/ai/service/datasets/import', file, {
       params: { name: datasetName.value },
       headers: { 'Content-Type': 'application/octet-stream' },
       timeout: 60000,
     })
-    toast.success('Датасет загружен. Для обучения требуется отдельное одобрение.')
+    toast.success('Учебный набор загружен. Откройте его и подтвердите проверку.')
     await refresh()
   })
 }
@@ -282,21 +310,99 @@ onBeforeUnmount(() => {
         >Обновить</NButton
       >
     </header>
-    <nav aria-label="Разделы управления ИИ">
+    <nav class="step-nav" aria-label="Шаги настройки и обучения">
       <button
+        v-for="(step, i) in steps"
+        :key="step.title"
         :disabled="busy || loading"
-        v-for="(label, i) in tabs"
-        :key="label"
-        :class="{ active: tab === i }"
+        :class="{ active: currentStep === i }"
         @click="
           () => {
-            tab = i
+            tab = step.tabs[0]
           }
         "
       >
-        {{ label }}
+        <span class="step-number">{{ i + 1 }}</span
+        ><span>{{ step.title }}</span>
       </button>
     </nav>
+    <div class="actions">
+      <NButton
+        :disabled="busy"
+        @click="
+          () => {
+            tab = 0
+          }
+        "
+        >Подключение и настройки</NButton
+      ><NButton
+        :disabled="busy"
+        @click="
+          () => {
+            tab = 8
+          }
+        "
+        >История действий и откат</NButton
+      >
+    </div>
+    <section v-if="currentStep >= 0" class="step-guide">
+      <div>
+        <p class="eyebrow">ШАГ {{ currentStep + 1 }} ИЗ 5</p>
+        <h2>{{ steps[currentStep].title }}</h2>
+        <p>{{ steps[currentStep].description }}</p>
+        <p class="muted">{{ steps[currentStep].next }}</p>
+      </div>
+      <div v-if="currentStep === 0" class="actions">
+        <NButton
+          :type="tab === 1 ? 'primary' : 'default'"
+          :disabled="busy"
+          @click="
+            () => {
+              tab = 1
+            }
+          "
+          >Как отвечать</NButton
+        ><NButton
+          :type="tab === 2 ? 'primary' : 'default'"
+          :disabled="busy"
+          @click="
+            () => {
+              tab = 2
+            }
+          "
+          >Услуги и цены</NButton
+        ><NButton
+          :disabled="busy"
+          @click="
+            () => {
+              tab = 3
+            }
+          "
+          >Дальше: проверить ответ →</NButton
+        >
+      </div>
+      <div v-if="currentStep === 2" class="actions">
+        <NButton
+          :type="tab === 5 ? 'primary' : 'default'"
+          :disabled="busy"
+          @click="
+            () => {
+              tab = 5
+            }
+          "
+          >Переписки и учебные наборы</NButton
+        ><NButton
+          :type="tab === 4 ? 'primary' : 'default'"
+          :disabled="busy"
+          @click="
+            () => {
+              tab = 4
+            }
+          "
+          >Сохранённые ответы ИИ</NButton
+        >
+      </div>
+    </section>
     <div v-if="[1, 4, 5, 6].includes(tab) && (page > 0 || items.length >= 50)" class="actions">
       <NButton
         :disabled="busy || page === 0"
@@ -679,13 +785,30 @@ onBeforeUnmount(() => {
                 reason = item.result.reason || ''
               }
             "
-            >Исправить / сохранить пример</NButton
+            >Исправить ответ и взять для обучения</NButton
           >
         </div>
       </article>
     </section>
     <section v-if="tab === 4" class="panel">
-      <h2>Проверенные примеры</h2>
+      <h2>Ответы для обучения</h2>
+      <p class="muted">
+        Здесь ответы, сохранённые из тестового или рабочего чата ИИ. Исправьте текст и нажмите
+        «Подтвердить ответ». Только подтверждённые ответы попадут в набор.
+      </p>
+      <NButton
+        :disabled="busy"
+        @click="
+          () => {
+            tab = 3
+          }
+        "
+        >Добавить ответ из тестового чата</NButton
+      >
+      <p v-if="!items.length && !selected && !busy">
+        Пока нет сохранённых ответов. Можно получить ответ в тестовом чате или взять готовые
+        переписки на шаге 3.
+      </p>
       <label
         >Сохранить или исправить ответ из рабочего чата<NSelect
           v-model:value="liveId"
@@ -735,14 +858,16 @@ onBeforeUnmount(() => {
               )
             }
           "
-          >Сохранить без одобрения</NButton
+          >Сохранить исправления — затем подтвердить ниже</NButton
         >
       </div>
       <article v-for="item in items" :key="item.id">
         <NTag>{{ item.approved ? 'Одобрен' : 'Нужна проверка' }}</NTag>
         <details>
           <summary>Контекст</summary>
-          <p v-for="(m, i) in item.messages" :key="i" class="text">{{ m.role }}: {{ m.content }}</p>
+          <p v-for="(m, i) in item.messages" :key="i" class="text">
+            {{ roleNames[m.role] || m.role }}: {{ m.content }}
+          </p>
         </details>
         <p class="text">{{ item.answer?.reply }}</p>
         <p>{{ item.note }}</p>
@@ -761,7 +886,7 @@ onBeforeUnmount(() => {
                 mutate(`examples/${item.id}/approve`)
               }
             "
-            >Одобрить</NButton
+            >Подтвердить ответ</NButton
           ><NButton
             :disabled="busy"
             @click="
@@ -774,29 +899,70 @@ onBeforeUnmount(() => {
         </div>
       </article>
     </section>
-    <section v-if="tab === 5" class="panel">
-      <h2>Датасеты</h2>
-      <RawPrepare @created="run(refresh)" /><NInput
-        v-model:value="datasetName"
-        placeholder="Название нового датасета"
-      /><label class="upload"
-        >Загрузить подготовленный JSONL / GZ<input
-          type="file"
-          accept=".jsonl,.gz"
+    <section v-show="tab === 5" class="panel">
+      <h2>Материал для обучения</h2>
+      <div class="actions">
+        <NButton
+          :type="materialSource === 'crm' ? 'primary' : 'default'"
+          @click="
+            () => {
+              materialSource = 'crm'
+            }
+          "
+          >Взять переписки из CRM</NButton
+        ><NButton
+          :type="materialSource === 'examples' ? 'primary' : 'default'"
+          @click="
+            () => {
+              materialSource = 'examples'
+            }
+          "
+          >Собрать сохранённые ответы ИИ</NButton
+        >
+      </div>
+      <RawPrepare v-show="materialSource === 'crm'" @created="run(refresh)" />
+      <div v-if="materialSource === 'examples'" class="editor">
+        <p>
+          Сначала подтвердите ответы в разделе «Сохранённые ответы ИИ». Здесь они собираются в
+          отдельный учебный набор.
+        </p>
+        <NButton
           :disabled="busy"
-          @change="upload" /></label
-      ><NButton
-        :disabled="busy || !datasetName.trim()"
-        @click="
-          () => {
-            mutate('datasets/from-approved?name=' + encodeURIComponent(datasetName))
-          }
-        "
-        >Собрать из одобренных примеров</NButton
-      >
+          @click="
+            () => {
+              tab = 4
+            }
+          "
+          >Посмотреть и подтвердить ответы</NButton
+        ><NInput v-model:value="datasetName" placeholder="Название учебного набора" />
+        <details>
+          <summary>Есть готовый файл? Загрузить отдельно</summary>
+          <label class="upload"
+            >Загрузить подготовленный JSONL / GZ<input
+              type="file"
+              accept=".jsonl,.gz"
+              :disabled="busy"
+              @change="upload"
+          /></label>
+        </details>
+        <NButton
+          :disabled="busy || !datasetName.trim()"
+          @click="
+            () => {
+              mutate('datasets/from-approved?name=' + encodeURIComponent(datasetName))
+            }
+          "
+          >Собрать из одобренных примеров</NButton
+        >
+      </div>
+      <h3>Сохранённые учебные наборы</h3>
+      <p v-if="!items.length && !busy">
+        Наборов пока нет. Выберите переписки выше, проверьте ответы и сохраните их — набор появится
+        здесь.
+      </p>
       <p>
-        Загрузка не означает одобрение. Для обучения нужно минимум 20 уникальных примеров из 5
-        диалогов.
+        Создание набора не запускает обучение. Для обучения нужно минимум 20 уникальных примеров из
+        5 диалогов.
       </p>
       <article v-for="item in items" :key="item.id">
         <h3>{{ item.name }}</h3>
@@ -814,6 +980,17 @@ onBeforeUnmount(() => {
             }
           "
           >Просмотреть и проверить</NButton
+        ><NButton
+          v-if="item.approved"
+          :disabled="busy"
+          type="primary"
+          @click="
+            () => {
+              datasetId = item.id
+              tab = 6
+            }
+          "
+          >Дальше: обучить на этом наборе →</NButton
         >
       </article>
       <div v-if="selected">
@@ -846,12 +1023,13 @@ onBeforeUnmount(() => {
         <article v-for="(record, i) in selected.records || selected.items || []" :key="i">
           <p class="text">{{ record.system }}</p>
           <p v-for="(m, j) in record.messages" :key="j" class="text">
-            {{ m.role }}: {{ m.content }}
+            {{ roleNames[m.role] || m.role }}: {{ m.content }}
           </p>
           <p class="text">Ответ: {{ record.answer?.reply }}</p>
         </article>
         <div class="checks">
-          <NCheckbox v-model:checked="reviewed">Я проверил содержание датасета</NCheckbox
+          <NCheckbox v-model:checked="reviewed"
+            >Я просмотрел переписки и проверил правильность ответов</NCheckbox
           ><NCheckbox v-model:checked="anonymized">Персональные данные удалены</NCheckbox
           ><NCheckbox v-model:checked="servicesOnly">Только разрешённые услуги</NCheckbox>
         </div>
@@ -866,24 +1044,38 @@ onBeforeUnmount(() => {
               })
             }
           "
-          >Одобрить датасет</NButton
+          >Разрешить использовать этот набор для обучения</NButton
         >
       </div>
     </section>
     <section v-if="tab === 6" class="panel">
-      <h2>Обучение</h2>
+      <h2>Запуск обучения</h2>
+      <p v-if="!datasets.some((d) => d.approved) && !busy">
+        Пока нет готового материала. На шаге 3 создайте учебный набор и подтвердите его проверку.
+      </p>
+      <NButton
+        v-if="!datasets.some((d) => d.approved)"
+        :disabled="busy"
+        @click="
+          () => {
+            tab = 5
+          }
+        "
+        >Подготовить материал →</NButton
+      >
       <NAlert :type="resources.worker_online ? 'info' : 'warning'"
         >{{
           resources.worker_online ? 'Обучающий сервер подключён' : 'Обучающий сервер не подключён'
         }}. Полный цикл обучения требует серверной приёмки.</NAlert
       >
-      <div v-if="resources.resources">
+      <details v-if="resources.resources">
+        <summary>Технические сведения сервера</summary>
         <p>Свободные ресурсы: {{ resources.resources }}</p>
         <p v-for="(profile, key) in resources.profiles" :key="key">{{ key }}: {{ profile }}</p>
-      </div>
+      </details>
       <div class="form-grid">
         <label
-          >Одобренный датасет<NSelect
+          >Проверенный учебный набор<NSelect
             v-model:value="datasetId"
             :options="
               datasets.filter((d) => d.approved).map((d) => ({ label: d.name, value: d.id }))
@@ -896,18 +1088,30 @@ onBeforeUnmount(() => {
                 label: value,
                 value,
               }))
-            " /></label
-        ><label>Эпохи<NInputNumber v-model:value="epochs" :min="0.1" :max="3" :step="0.1" /></label
-        ><label
-          >Длина примера<NInputNumber v-model:value="maxLength" :min="256" :max="2048" /></label
-        ><label
-          >Скорость обучения<NInputNumber
-            v-model:value="rate"
-            :min="0.000001"
-            :max="0.0003"
-            :step="0.00001" /></label
-        ><label>Seed<NInputNumber v-model:value="seed" /></label>
+            "
+        /></label>
       </div>
+      <details>
+        <summary>Дополнительные параметры обучения</summary>
+        <p>Для первого запуска можно оставить значения по умолчанию.</p>
+        <div class="form-grid">
+          <label
+            >Количество проходов по материалу<NInputNumber
+              v-model:value="epochs"
+              :min="0.1"
+              :max="3"
+              :step="0.1" /></label
+          ><label
+            >Длина примера<NInputNumber v-model:value="maxLength" :min="256" :max="2048" /></label
+          ><label
+            >Скорость обучения<NInputNumber
+              v-model:value="rate"
+              :min="0.000001"
+              :max="0.0003"
+              :step="0.00001" /></label
+          ><label>Seed (для повторяемости)<NInputNumber v-model:value="seed" /></label>
+        </div>
+      </details>
       <NButton
         type="primary"
         :disabled="busy || !resources.worker_online || !baseModel || !datasetId"
@@ -925,8 +1129,21 @@ onBeforeUnmount(() => {
         "
         >Запустить обучение</NButton
       >
+      <NButton
+        :disabled="busy"
+        @click="
+          () => {
+            tab = 7
+          }
+        "
+        >Обучение завершилось? Проверить новую версию →</NButton
+      >
+      <h3>Запуски обучения</h3>
+      <p v-if="!items.length && !busy">
+        Обучение ещё не запускалось. После запуска здесь появится его состояние.
+      </p>
       <article v-for="item in items" :key="item.id">
-        <h3>{{ item.id }}</h3>
+        <h3>Обучение · {{ new Date(item.created_at).toLocaleString('ru-RU') }}</h3>
         <NTag>{{ labels[item.status] || item.status }}</NTag>
         <p>{{ item.error }}</p>
         <p>{{ item.metrics }}</p>
@@ -969,7 +1186,10 @@ onBeforeUnmount(() => {
       </div>
     </section>
     <section v-if="tab === 7" class="panel">
-      <h2>Версии моделей</h2>
+      <h2>Результаты обучения</h2>
+      <p v-if="!items.length && !busy">
+        Новых версий пока нет. Они появятся после успешного обучения на шаге 4.
+      </p>
       <p>Рабочая модель: {{ connection.model }}</p>
       <p>Обучение создаёт кандидата. Тест, одобрение и активация выполняются отдельно.</p>
       <article v-for="item in items" :key="item.id">
@@ -1216,5 +1436,33 @@ summary {
 }
 .prompt-panel :deep(textarea) {
   line-height: 1.75;
+}
+.step-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.step-nav button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  min-width: 0;
+}
+.step-number {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+.step-guide {
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  background: var(--app-accent-soft);
+  padding: 20px;
+  display: grid;
+  gap: 16px;
 }
 </style>

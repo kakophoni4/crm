@@ -78,3 +78,35 @@ def test_oversize_decompressed_archive_is_rejected(monkeypatch):
     with pytest.raises(AppError) as error:
         prepare(gzip.compress(b"x" * 1024))
     assert error.value.status == 413
+
+
+def test_preparation_chat_limit_preserves_multiple_dialogues():
+    lines = []
+    for cid in (1, 2):
+        messages = []
+        for i in range(6):
+            messages.extend(
+                [
+                    {"id": i * 2 + 1, "direction": "inbound", "text": "question"},
+                    {
+                        "id": i * 2 + 2,
+                        "direction": "outbound",
+                        "sender_user_id": 3,
+                        "text": "answer",
+                    },
+                ]
+            )
+        lines.append(json.dumps({"chat": {"id": cid}, "messages": messages}))
+    result = prepare("\n".join(lines).encode(), per_chat_limit=2)
+    assert len(result["records"]) == 4
+    assert len({r["chat_id"] for r in result["records"]}) == 2
+
+
+def test_source_selection_rejects_invalid_and_oversized_ids():
+    from pydantic import ValidationError
+
+    from app.modules.ai.imports import SourceChatsInput
+
+    for ids in ([], [0], [-1], [2**63], list(range(1, 22))):
+        with pytest.raises(ValidationError):
+            SourceChatsInput(chat_ids=ids)

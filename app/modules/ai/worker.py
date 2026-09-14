@@ -78,7 +78,11 @@ async def process_one(request_id: Any) -> None:
 
                     from app.modules.ai.imports import prepare
 
-                    result = await run_in_threadpool(prepare, base64.b64decode(body["archive"]))
+                    result = await run_in_threadpool(
+                        prepare,
+                        base64.b64decode(body["archive"]),
+                        per_chat_limit=body.get("per_chat_limit"),
+                    )
                     row = await db.get(AIRequest, request_id)
                     if row is None:
                         return
