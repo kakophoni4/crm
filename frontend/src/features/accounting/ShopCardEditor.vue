@@ -169,7 +169,7 @@ onMounted(load)
 .shop-extra summary {
   cursor: pointer;
   padding: 12px 0;
-  color: var(--text-color-2, #666);
+  color: var(--app-text-muted);
 }
 .shop-actions {
   display: flex;

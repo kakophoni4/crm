@@ -861,7 +861,7 @@ function historyValue(v: unknown): string {
 .eyebrow {
   font-size: 11px;
   letter-spacing: 2px;
-  color: var(--text-color-3, #777);
+  color: var(--app-text-muted);
 }
 h1 {
   font-size: 30px;
@@ -884,8 +884,8 @@ h3 {
 .metric,
 .panel,
 .account {
-  border: 1px solid var(--border-color, #e5e7eb);
-  background: var(--card-color, #fff);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
   border-radius: 14px;
 }
 .metric {
@@ -894,7 +894,7 @@ h3 {
 .metric span,
 small,
 .muted {
-  color: var(--text-color-3, #777);
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 .metric strong {
@@ -932,12 +932,12 @@ small,
 }
 .registry-head {
   font-size: 12px;
-  color: var(--text-color-3, #777);
+  color: var(--app-text-muted);
   padding: 0 0 12px;
 }
 .deal-row {
   padding: 18px 0;
-  border-top: 1px solid var(--border-color, #e5e7eb);
+  border-top: 1px solid var(--app-border);
   align-items: start;
 }
 .deal-row > * {
@@ -985,7 +985,7 @@ small,
   display: none;
 }
 .late {
-  color: #d03050 !important;
+  color: var(--app-danger) !important;
 }
 footer {
   display: flex;
@@ -994,7 +994,7 @@ footer {
   align-items: center;
   gap: 14px;
   margin-top: 20px;
-  color: var(--text-color-3, #777);
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 .empty {
@@ -1024,15 +1024,15 @@ footer {
   font-variant-numeric: tabular-nums;
 }
 .account.active {
-  border-color: #18a058;
-  box-shadow: 0 0 0 1px #18a058;
+  border-color: var(--app-success);
+  box-shadow: 0 0 0 1px var(--app-success);
 }
 .movement {
   display: flex;
   justify-content: space-between;
   gap: 16px;
   padding: 16px 0;
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  border-bottom: 1px solid var(--app-border);
   overflow-wrap: anywhere;
 }
 .movement > div {
@@ -1092,7 +1092,7 @@ label > :deep(*) {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  background: var(--body-color, #f5f7f8);
+  background: var(--app-surface-elevated);
   border-radius: 12px;
   padding: 16px;
   margin: 20px 0;
@@ -1102,7 +1102,7 @@ label > :deep(*) {
 }
 .history {
   padding: 12px 0;
-  border-bottom: 1px solid var(--border-color, #eee);
+  border-bottom: 1px solid var(--app-border);
   font-size: 12px;
 }
 .history summary {
@@ -1130,7 +1130,7 @@ label > :deep(*) {
   }
   .mobile-label {
     display: block;
-    color: var(--text-color-3, #777);
+    color: var(--app-text-muted);
     font-size: 12px;
   }
   .metrics {

@@ -216,7 +216,7 @@ function value(row: AccountingUnitOwnerRow, key: string) {
 .shops-table {
   max-height: 70vh;
   overflow-y: auto;
-  border: 1px solid var(--border-color, #e0e0e6);
+  border: 1px solid var(--app-border);
   border-radius: 6px;
 }
 table {
@@ -229,8 +229,8 @@ table {
 th,
 td {
   padding: 8px;
-  border-right: 1px solid var(--border-color, #e0e0e6);
-  border-bottom: 1px solid var(--border-color, #e0e0e6);
+  border-right: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--app-border);
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
@@ -240,7 +240,7 @@ th {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--card-color, #fff);
+  background: var(--app-surface);
   font-weight: 600;
 }
 th:first-child {
@@ -267,7 +267,7 @@ th:last-child {
 .shop-inn {
   display: block;
   margin-top: 4px;
-  color: var(--text-color-2, #666);
+  color: var(--app-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .actions :deep(.n-button) {
@@ -286,7 +286,7 @@ td :deep(.n-input) {
   gap: 12px;
   align-items: center;
   min-width: 0;
-  color: var(--text-color-2, #666);
+  color: var(--app-text-muted);
 }
 .details-content :deep(.n-select) {
   min-width: 0 !important;
@@ -303,7 +303,7 @@ td :deep(.n-input) {
   tbody > tr {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-bottom: 2px solid var(--border-color, #e0e0e6);
+    border-bottom: 2px solid var(--app-border);
   }
   td {
     display: block;
@@ -312,7 +312,7 @@ td :deep(.n-input) {
     content: attr(data-label);
     display: block;
     font-size: 12px;
-    color: var(--text-color-2, #666);
+    color: var(--app-text-muted);
     margin-bottom: 4px;
   }
   td:first-child,

@@ -2196,14 +2196,14 @@ onUnmounted(() => {
 }
 
 .accounting-page__due--overdue {
-  color: #dc2626;
+  color: var(--app-danger);
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .accounting-page__due--soon {
-  color: #d97706;
+  color: var(--app-warning);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2420,7 +2420,7 @@ onUnmounted(() => {
 }
 
 .accounting-page__owner-legal--missing {
-  color: var(--app-warning-text, #a35b00);
+  color: var(--app-warning);
 }
 
 @media (max-width: 900px) {
