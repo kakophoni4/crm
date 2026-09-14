@@ -18,6 +18,8 @@ import { http } from '@/shared/api/http'
 type Item = Record<string, any>
 const toast = useMessage()
 let promptInitialized = false
+const testPrompts = ref<Item[]>([])
+const activeTestPrompt = ref<number | null>(null)
 const tabs = [
   'Настройки',
   'Инструкция',
@@ -124,7 +126,12 @@ async function refresh() {
       catalogVersion.value = data.version
       catalogRevision.value = data._crm_revision
     }
-    if (tab.value === 3) requests.value = (await get('requests')).items
+    if (tab.value === 3) {
+      requests.value = (await get('requests')).items
+      const prompts = await get('service/prompts?limit=200')
+      testPrompts.value = prompts.items
+      activeTestPrompt.value = prompts.active_prompt_id || null
+    }
     if (tab.value === 4) {
       items.value = (await get('service/examples?limit=50&offset=' + page.value * 50)).items
       liveRequests.value = (await get('requests?live=true')).items
@@ -162,12 +169,20 @@ async function mutate(path: string, body: unknown = {}, method = 'post') {
 async function test() {
   if (!question.value.trim()) return
   await run(async () => {
+    const prompts = await get('service/prompts?limit=200')
+    testPrompts.value = prompts.items
+    activeTestPrompt.value = prompts.active_prompt_id || null
+    const resolvedPrompt = promptId.value || activeTestPrompt.value
+    if (!resolvedPrompt)
+      throw new Error(
+        'Выберите сохранённую инструкцию ниже или создайте её во вкладке «Инструкция». Активировать её для теста необязательно.',
+      )
     const messages = [...history.value, { role: 'user', content: question.value }]
     await api(candidateId.value ? `model-versions/${candidateId.value}/test` : 'test/replies', {
       messages,
       mode: 'assistant',
       context: { manager_notified: false },
-      ...(promptId.value ? { prompt_id: promptId.value } : {}),
+      prompt_id: resolvedPrompt,
     })
     question.value = ''
     await refresh()
@@ -563,6 +578,38 @@ onBeforeUnmount(() => {
     </section>
     <section v-if="tab === 3" class="panel">
       <h2>Тестовый чат</h2>
+      <label
+        >Инструкция для теста
+        <NSelect
+          v-model:value="promptId"
+          clearable
+          :disabled="busy"
+          :placeholder="
+            activeTestPrompt
+              ? 'Рабочая инструкция №' + activeTestPrompt
+              : 'Выберите сохранённую инструкцию'
+          "
+          :options="
+            testPrompts.map((p) => ({
+              label: p.title + (p.id === activeTestPrompt ? ' · рабочая' : ''),
+              value: p.id,
+            }))
+          "
+        />
+      </label>
+      <NAlert v-if="!promptId && !activeTestPrompt && !busy" type="warning">
+        Для теста нужна инструкция. Выберите сохранённую версию в списке; включать её для клиентов
+        не требуется.
+        <NButton
+          text
+          @click="
+            () => {
+              tab = 1
+            }
+          "
+          >Открыть инструкции</NButton
+        >
+      </NAlert>
       <p>
         Клиенты не получают эти сообщения. Промпт: {{ promptId || 'активный' }}. Модель:
         {{ candidateId || 'рабочая' }}.
@@ -572,7 +619,6 @@ onBeforeUnmount(() => {
           @click="
             () => {
               history = []
-              promptId = null
               candidateId = null
             }
           "
@@ -586,7 +632,7 @@ onBeforeUnmount(() => {
         placeholder="Проверьте реальный вопрос клиента"
       /><NButton
         type="primary"
-        :disabled="busy || !question.trim()"
+        :disabled="busy || !question.trim() || (!promptId && !activeTestPrompt)"
         @click="
           () => {
             test()
@@ -601,7 +647,7 @@ onBeforeUnmount(() => {
           {{ item.result.reply || 'Без сообщения клиенту' }}
         </p>
         <p v-if="item.error">{{ item.error.message }}</p>
-        <details>
+        <details v-if="item.result">
           <summary>Параметры ответа</summary>
           <p>{{ item.id }}</p>
           <p
