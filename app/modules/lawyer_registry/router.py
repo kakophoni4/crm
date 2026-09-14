@@ -195,7 +195,7 @@ async def patch_shop(
     service: Annotated[LawyerRegistryService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> LawyerShopOut:
-    accounting_fields = {"received_at", "company_status", "treatment_status", "unreliable", "zsk", "ecsp_status", "banks", "accounts_status", "registered_at", "fns", "sbis", "edo_id", "edo_until", "purchased_at", "failed_at", "failure_reason", "accountant"}
+    accounting_fields = {"received_at", "company_status", "treatment_status", "unreliable", "zsk", "ecsp_status", "banks", "accounts_status", "registered_at", "fns", "sbis", "sbis_access", "sbis_login", "official_email", "official_phone", "edo_id", "edo_until", "purchased_at", "failed_at", "failure_reason", "accountant"}
     if body.model_fields_set & accounting_fields:
         raise ValidationError(message="Эти поля заполняются в разделе «Бухгалтерия → Лавки»")
     result = await service.patch_shop(actor, shop_id, body)

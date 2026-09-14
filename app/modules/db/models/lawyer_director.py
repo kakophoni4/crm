@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Numeric, Text, func
+from sqlalchemy import LargeBinary, BigInteger, Boolean, Date, DateTime, ForeignKey, Numeric, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.modules.db.models.base import Base
@@ -81,6 +81,11 @@ class LawyerShop(Base):
     sbis: Mapped[str | None] = mapped_column(Text, nullable=True)
     edo_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     edo_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sbis_access: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sbis_login: Mapped[str | None] = mapped_column(Text, nullable=True)
+    official_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    official_phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sbis_password_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     purchased_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     failed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

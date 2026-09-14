@@ -864,6 +864,7 @@ class AccountingService:
                         "registered_at", "fns", "sale_priority", "company_status",
                         "ecsp_status", "accounts_status", "received_at", "sbis",
                         "edo_until", "edo_id", "purchased_at", "dirovod",
+                        "sbis_access", "sbis_login", "official_email", "official_phone",
                         "failed_at", "failure_reason", "comment",
                     )
                     for value in [dirovod if key == "dirovod" else getattr(lawyer_shop, key, None)]

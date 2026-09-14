@@ -1,7 +1,11 @@
 """Accounting edits the shared shop record, scoped by unit assignment."""
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
+from pydantic import SecretStr, Field
+from app.modules.bots.crypto import encrypt_secret, decrypt_secret
+from app.modules.db.models.enums import UserRole
+from app.shared.exceptions import PermissionDenied
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,8 +24,23 @@ from app.shared.security.permissions import requires_permission
 router = APIRouter(prefix="/api/v1/accounting", tags=["accounting"])
 
 
+async def require_sbis_access(db: AsyncSession, actor: User, unit_id: int) -> None:
+    if actor.role == UserRole.ADMIN:
+        return
+    if actor.role not in (UserRole.ACCOUNTANT, UserRole.CHIEF_ACCOUNTANT):
+        raise PermissionDenied(message="Нет доступа к паролю СБИС")
+    from app.modules.db.models.opt_accountant_unit_assignment import OptAccountantUnitAssignment
+    assigned = await db.scalar(select(OptAccountantUnitAssignment.id).where(
+        OptAccountantUnitAssignment.unit_id == unit_id,
+        OptAccountantUnitAssignment.user_id == actor.id,
+    ))
+    if assigned is None:
+        raise PermissionDenied(message="Пароль СБИС доступен только назначенному бухгалтеру и администратору")
+
+
 class AccountingShopPatch(LawyerShopPatchRequest):
     dirovod: str | None = None
+    sbis_password: SecretStr | None = Field(default=None, max_length=512)
 
 
 async def scoped_unit(db: AsyncSession, actor: User, unit_id: int, *, lock: bool = False) -> OptUnit:
@@ -57,6 +76,10 @@ async def patch_shop_card(
 ) -> LawyerShopOut:
     unit = await scoped_unit(db, actor, unit_id, lock=True)
     data = body.model_dump(exclude_unset=True)
+    update_password = "sbis_password" in data
+    password = data.pop("sbis_password", None)
+    if update_password:
+        await require_sbis_access(db, actor, unit_id)
     update_dirovod = "dirovod" in data
     dirovod = data.pop("dirovod", None)
     shop_body = LawyerShopPatchRequest(**data)
@@ -84,5 +107,22 @@ async def patch_shop_card(
             raise ValidationError(message="Сначала укажите директора")
         if director is not None:
             director.dirovod = dirovod
+    if update_password:
+        secret = password.get_secret_value() if password is not None else ""
+        shop.sbis_password_encrypted = await encrypt_secret(db, secret) if secret else None
     await db.commit()
     return result.model_copy(update={"dirovod": director.dirovod if director else None})
+
+
+@router.post("/units/{unit_id}/sbis-password/reveal")
+async def reveal_sbis_password(
+    unit_id: int,
+    response: Response,
+    actor: Annotated[User, Depends(requires_permission(Permission.ACCOUNTING_READ))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await require_sbis_access(db, actor, unit_id)
+    unit = await scoped_unit(db, actor, unit_id)
+    shop = await db.scalar(select(LawyerShop).where(LawyerShop.inn == unit.inn))
+    response.headers["Cache-Control"] = "no-store"
+    return {"password": await decrypt_secret(db, shop.sbis_password_encrypted) if shop and shop.sbis_password_encrypted else None}

@@ -42,6 +42,10 @@ class LawyerShopOut(BaseModel):
     sbis: str | None = None
     edo_until: date | None = None
     edo_id: str | None = None
+    sbis_access: str | None = Field(default=None, max_length=512)
+    sbis_login: str | None = Field(default=None, max_length=512)
+    official_email: str | None = Field(default=None, max_length=512)
+    official_phone: str | None = Field(default=None, max_length=512)
     purchased_at: date | None = None
     failed_at: date | None = None
     failure_reason: str | None = None
@@ -132,6 +136,10 @@ class LawyerShopCreateRequest(BaseModel):
     sbis: str | None = None
     edo_until: date | None = None
     edo_id: str | None = None
+    sbis_access: str | None = Field(default=None, max_length=512)
+    sbis_login: str | None = Field(default=None, max_length=512)
+    official_email: str | None = Field(default=None, max_length=512)
+    official_phone: str | None = Field(default=None, max_length=512)
     purchased_at: date | None = None
     failed_at: date | None = None
     failure_reason: str | None = None
@@ -165,6 +173,10 @@ class LawyerShopPatchRequest(BaseModel):
     sbis: str | None = None
     edo_until: date | None = None
     edo_id: str | None = None
+    sbis_access: str | None = Field(default=None, max_length=512)
+    sbis_login: str | None = Field(default=None, max_length=512)
+    official_email: str | None = Field(default=None, max_length=512)
+    official_phone: str | None = Field(default=None, max_length=512)
     purchased_at: date | None = None
     failed_at: date | None = None
     failure_reason: str | None = None

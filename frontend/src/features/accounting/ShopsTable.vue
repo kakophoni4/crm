@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import SbisPassword from './SbisPassword.vue'
 import { NButton, NInput, NDatePicker, useMessage } from 'naive-ui'
 import { http, AppError } from '@/shared/api/http'
 import type { AccountingUnitOwnerRow } from './types'
@@ -7,6 +8,10 @@ import { shopTableFields } from './shopFields'
 defineProps<{ rows: AccountingUnitOwnerRow[] }>()
 const emit = defineEmits<{ saved: [] }>()
 const groups = [
+  {
+    label: 'Доступы и контакты',
+    keys: ['sbis_access', 'sbis_login', 'sbis_password', 'official_email', 'official_phone'],
+  },
   {
     label: 'Основное',
     keys: [
@@ -31,7 +36,7 @@ const groups = [
     ],
   },
 ]
-const activeGroup = ref(0)
+const activeGroup = ref(1)
 const visibleFields = computed(() =>
   shopTableFields.filter(
     ([key]) => key === 'name' || groups[activeGroup.value]!.keys.includes(key),
@@ -47,7 +52,7 @@ function startEdit(row: AccountingUnitOwnerRow) {
   editing.value = row.unit_id
   draft.value = Object.fromEntries(
     shopTableFields
-      .filter(([key]) => key !== 'inn' && key !== 'accountant_full_name')
+      .filter(([key]) => key !== 'inn' && key !== 'accountant_full_name' && key !== 'sbis_password')
       .map(([key]) => [
         key,
         key === 'name'
@@ -124,8 +129,13 @@ function value(row: AccountingUnitOwnerRow, key: string) {
           <template v-for="row in rows" :key="row.unit_id">
             <tr>
               <td v-for="field in visibleFields" :key="field[0]" :data-label="field[1]">
+                <SbisPassword
+                  v-if="field[2] === 'secret'"
+                  :unit-id="row.unit_id"
+                  :accountant-id="row.accountant_user_id"
+                />
                 <template
-                  v-if="
+                  v-else-if="
                     editing === row.unit_id &&
                     field[0] !== 'inn' &&
                     field[0] !== 'accountant_full_name'

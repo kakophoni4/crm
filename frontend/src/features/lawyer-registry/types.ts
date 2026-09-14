@@ -28,6 +28,10 @@ export interface LawyerShop {
   sbis: string | null
   edo_until: string | null
   edo_id: string | null
+  sbis_access: string | null
+  sbis_login: string | null
+  official_email: string | null
+  official_phone: string | null
   purchased_at: string | null
   failed_at: string | null
   failure_reason: string | null

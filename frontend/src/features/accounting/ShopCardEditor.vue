@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import SbisPassword from './SbisPassword.vue'
 import { shopTableFields } from './shopFields'
 import { NButton, NDatePicker, NForm, NFormItem, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import { http, AppError } from '@/shared/api/http'
@@ -28,6 +29,10 @@ const allFields = [
   ['banks', 'Банки'],
   ['accounts_status', 'Счета'],
   ['sbis', 'СБИС'],
+  ['sbis_access', 'Доступ в СБИС'],
+  ['sbis_login', 'Логин СБИС'],
+  ['official_email', 'Официальная почта'],
+  ['official_phone', 'Официальный телефон'],
   ['edo_until', 'ЭДО действует до', 'date'],
   ['edo_id', 'ЭДО ID'],
   ['purchased_at', 'Дата покупки', 'date'],
@@ -111,8 +116,13 @@ onMounted(load)
       <NForm v-else-if="!loading" label-placement="top" @submit.prevent="save">
         <div class="shop-form">
           <NFormItem v-for="field in fields" :key="field[0]" :label="field[1]">
+            <SbisPassword
+              v-if="field[2] === 'secret'"
+              :unit-id="unit.unit_id"
+              :accountant-id="unit.accountant_user_id"
+            />
             <NDatePicker
-              v-if="field[2] === 'date'"
+              v-else-if="field[2] === 'date'"
               v-model:formatted-value="form[field[0]]"
               value-format="yyyy-MM-dd"
               type="date"
