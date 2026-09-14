@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import Cashroom from '@/pages/cashroom/index.vue'
+vi.mock('@/pages/cashroom/CashImport.vue',()=>({default:{template:'<span />'}}))
 import { isPhoneChatsOnly } from '@/shared/lib/phone-mode'
 
 const { get, post, error } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), error: vi.fn() }))

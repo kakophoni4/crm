@@ -18,6 +18,7 @@ import {
 } from 'naive-ui'
 import { Plus, ArrowDownLeft, ArrowUpRight, Wallet, RefreshCw } from 'lucide-vue-next'
 import { http } from '@/shared/api/http'
+import CashImport from './CashImport.vue'
 
 type Deal = {
   id: number
@@ -386,6 +387,7 @@ const detailMetrics = [
   ['profit', 'Прибыль'],
 ] as const
 const actionLabels: Record<string, string> = {
+  excel_import: 'Импорт из Excel',
   deal_created: 'Сделка создана',
   deal_updated: 'Сделка изменена',
   payment_created: 'Платёж записан',
@@ -420,6 +422,7 @@ function historyValue(v: unknown): string {
         <h1>Кэшеварня</h1>
       </div>
       <div class="actions">
+        <CashImport @imported="load" />
         <NButton :loading="loading" aria-label="Обновить" @click="load"
           ><RefreshCw :size="16" /></NButton
         ><NButton type="primary" size="large" @click="edit()"
@@ -738,7 +741,7 @@ function historyValue(v: unknown): string {
             {{ actionLabels[h.action] || h.action }} · {{ h.actor }} · {{ date(h.at) }}
           </summary>
           <div v-for="(v, k) in h.changes" :key="k">
-            <template v-if="k !== 'operation_key'"
+            <template v-if="k !== 'operation_key' && k !== 'source_key'"
               ><b>{{ labels[k] || k }}:</b> {{ historyValue(v) }}</template
             >
           </div>

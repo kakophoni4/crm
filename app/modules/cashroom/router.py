@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated, Literal
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from sqlalchemy import select, func, case, or_
@@ -253,3 +253,23 @@ async def void_movement(movement_id: int, body: VoidBody, db: DB, actor: Actor):
         await audit(db, actor, "payment_voided", {"reason": body.reason}, row.deal_id, row.id)
     await db.commit()
     return {"id": row.id}
+
+
+@router.post("/import-excel")
+async def import_excel(db: DB, actor: Actor, file: UploadFile, apply: bool = False):
+    from app.modules.db.models.enums import UserRole
+    from app.shared.exceptions import PermissionDenied
+    from app.modules.cashroom.import_excel import parse_workbook, import_records
+    from starlette.concurrency import run_in_threadpool
+    if actor.role != UserRole.ADMIN:
+        raise PermissionDenied(message="Импорт доступен только администратору")
+    content = await file.read(5_000_001)
+    if len(content) > 5_000_000: raise ValidationError(message="Файл не должен превышать 5 МБ")
+    records, warnings = await run_in_threadpool(parse_workbook, content)
+    try:
+        result = await import_records(db, actor, records, warnings, apply=apply)
+        if apply: await db.commit()
+        return result
+    except Exception:
+        await db.rollback()
+        raise
