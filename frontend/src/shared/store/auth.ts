@@ -93,6 +93,7 @@ export const useAuthStore = defineStore('auth', () => {
     () => user.value?.role === 'accountant' || user.value?.role === 'chief_accountant',
   )
   const isChiefAccountant = computed(() => user.value?.role === 'chief_accountant')
+  const isNulevka = computed(() => user.value?.role === 'nulevka')
   const isKesher = computed(() => user.value?.role === 'kesher')
   const isLawyer = computed(() => user.value?.role === 'lawyer')
   const canForceCardOwner = computed(
@@ -254,6 +255,7 @@ export const useAuthStore = defineStore('auth', () => {
     isChiefAccountant,
     isLawyer,
     isKesher,
+    isNulevka,
     canForceCardOwner,
     canAccounting,
     canTickets,

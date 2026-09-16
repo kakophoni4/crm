@@ -41,6 +41,7 @@ const routes: RouteRecordRaw[] = [
 
     redirect: () => {
       const auth = useAuthStore()
+      if (auth.isNulevka) return '/storage'
       if (auth.isAccountant) return '/accounting'
       if (auth.isKesher) return '/cashroom'
       if (auth.isLawyer) return '/tickets'
@@ -477,7 +478,7 @@ router.beforeEach(async (to) => {
       await auth.hydrate()
       if (auth.isAuthenticated) {
         if (isPhoneChatsOnly(auth)) return '/chats'
-        const defaultRedirect = auth.isKesher ? '/cashroom' : auth.isAccountant
+        const defaultRedirect = auth.isNulevka ? '/storage' : auth.isKesher ? '/cashroom' : auth.isAccountant
           ? '/accounting'
           : auth.isLawyer
             ? '/tickets'
@@ -511,7 +512,8 @@ router.beforeEach(async (to) => {
     return { name: 'chats' }
   }
 
-  if (auth.isKesher && to.name !== 'cashroom') return { name: 'cashroom' }
+  if (auth.isNulevka && to.name !== 'storage') return { name: 'storage' }
+  if (auth.isKesher && to.name !== 'cashroom' && to.name !== 'storage') return { name: 'cashroom' }
   if (to.name === 'cashroom' && !auth.user?.permissions.includes('cashroom.manage')) return { name: 'contacts' }
 
   const needsSeniorOrAdmin = to.matched.some((r) => r.meta.requiresSeniorOrAdmin)

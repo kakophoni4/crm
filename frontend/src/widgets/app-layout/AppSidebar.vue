@@ -96,7 +96,12 @@ function blinkIcon(icon: unknown, blink: boolean) {
 }
 
 const menuOptions = computed(() => {
-  if (auth.isKesher) return [{ label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Wallet) }) }]
+  const storageItem = { label: 'Хранилище', key: 'storage', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) }
+  if (auth.isNulevka) return [storageItem]
+  if (auth.isKesher) return [
+    { label: 'Кэшеварня', key: 'cashroom', icon: () => h(NIcon, null, { default: () => h(Wallet) }) },
+    storageItem,
+  ]
   if (auth.isAccountant) {
     return [
       {

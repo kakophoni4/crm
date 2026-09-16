@@ -60,7 +60,7 @@ async function onSubmit(): Promise<void> {
       await router.replace('/chats')
       return
     }
-    const defaultRedirect = auth.isAccountant
+    const defaultRedirect = auth.isNulevka ? '/storage' : auth.isKesher ? '/cashroom' : auth.isAccountant
       ? '/accounting'
       : auth.isLawyer
         ? '/tickets'

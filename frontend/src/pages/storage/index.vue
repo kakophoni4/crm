@@ -1345,7 +1345,7 @@ onMounted(() => {
           </NSpace>
         </NTabPane>
 
-        <NTabPane name="receipts" tab="Квитанции">
+        <NTabPane v-if="!auth.isKesher && !auth.isNulevka" name="receipts" tab="Квитанции">
           <NSpin :show="receiptsLoading && receiptPeriods.length === 0">
             <div v-if="selectedReceiptPeriod" class="explorer-nav">
               <NButton size="tiny" quaternary @click="receiptsBack">
@@ -1621,7 +1621,7 @@ onMounted(() => {
           </NSpin>
         </NTabPane>
 
-        <NTabPane name="group" tab="Файлы из чатов">
+        <NTabPane v-if="!auth.isKesher && !auth.isNulevka" name="group" tab="Файлы из чатов">
           <NSpin :show="groupLoading && !groupSummaries.length && selectedGroupId == null">
             <div v-if="selectedGroupId != null" class="explorer-nav">
               <NButton size="tiny" quaternary @click="groupFilesBack">

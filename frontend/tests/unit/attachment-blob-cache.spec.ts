@@ -24,7 +24,7 @@ vi.mock('@/shared/api/http', () => ({
 
 describe('attachment blob cache prefetch', () => {
   const createObjectURL = vi.spyOn(URL, 'createObjectURL')
-  const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL')
+  vi.spyOn(URL, 'revokeObjectURL')
 
   beforeEach(() => {
     createObjectURL.mockImplementation((blob) => `blob:${(blob as Blob).size}`)

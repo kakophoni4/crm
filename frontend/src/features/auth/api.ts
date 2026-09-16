@@ -7,7 +7,7 @@ export type UserRole =
   | 'admin'
   | 'accountant'
   | 'chief_accountant'
-  | 'lawyer' | 'kesher'
+  | 'lawyer' | 'kesher' | 'nulevka'
 
 export interface AuthUserSummary {
   id: number

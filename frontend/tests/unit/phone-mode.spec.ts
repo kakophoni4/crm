@@ -21,6 +21,11 @@ describe('phone-mode', () => {
     expect(isPhoneChatsOnly({ isAccountant: false, isLawyer: false }, 1280)).toBe(false)
   })
 
+  it('keeps storage roles out of the mobile chats-only mode', () => {
+    expect(isPhoneChatsOnly({ isAccountant: false, isLawyer: false, isNulevka: true }, 390)).toBe(false)
+    expect(isPhoneChatsOnly({ isAccountant: false, isLawyer: false, isKesher: true }, 390)).toBe(false)
+  })
+
   it('allows only login, chats and public share routes', () => {
     expect(isPhoneChatsAllowedRoute('chats')).toBe(true)
     expect(isPhoneChatsAllowedRoute('login')).toBe(true)

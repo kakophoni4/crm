@@ -81,6 +81,8 @@ describe('admin routes', () => {
       role: 'user',
       department_id: 1,
       group_id: 1,
+      username: 'test_user',
+      group_ids: [],
       presence: 'offline',
       permissions: [],
     }
@@ -102,6 +104,8 @@ describe('admin routes', () => {
       role: 'senior',
       department_id: 1,
       group_id: 1,
+      username: 'test_user',
+      group_ids: [],
       presence: 'offline',
       permissions: [],
     }
@@ -123,6 +127,8 @@ describe('admin routes', () => {
       role: 'admin',
       department_id: null,
       group_id: null,
+      username: 'test_user',
+      group_ids: [],
       presence: 'offline',
       permissions: [],
     }

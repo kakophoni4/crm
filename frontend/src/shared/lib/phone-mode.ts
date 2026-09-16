@@ -21,13 +21,14 @@ export function isPhoneViewport(width?: number): boolean {
 export function isPhoneChatsOnlyRole(auth: {
   isAccountant: boolean
   isLawyer: boolean
+  isNulevka?: boolean
   isKesher?: boolean
 }): boolean {
-  return !auth.isAccountant && !auth.isLawyer && !auth.isKesher
+  return !auth.isAccountant && !auth.isLawyer && !auth.isKesher && !auth.isNulevka
 }
 
 export function isPhoneChatsOnly(
-  auth: { isAccountant: boolean; isLawyer: boolean; isKesher?: boolean },
+  auth: { isAccountant: boolean; isLawyer: boolean; isNulevka?: boolean; isKesher?: boolean },
   width?: number,
 ): boolean {
   return isPhoneViewport(width) && isPhoneChatsOnlyRole(auth)

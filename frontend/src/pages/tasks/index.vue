@@ -444,10 +444,6 @@ async function submitCreate(): Promise<void> {
     message.warning('Укажите название и исполнителя')
     return
   }
-  if (isAdmin.value && formDepartmentId.value == null) {
-    message.warning('Выберите отдел')
-    return
-  }
   createLoading.value = true
   try {
     const fileIds: number[] = []
@@ -1150,11 +1146,13 @@ onUnmounted(() => {
         <NFormItem label="Тип" required>
           <NSelect v-model:value="formType" :options="typeOptions" />
         </NFormItem>
-        <NFormItem v-if="isAdmin" label="Отдел" required>
+        <NFormItem v-if="isAdmin" label="Отдел (необязательно)">
           <NSelect
             v-model:value="formDepartmentId"
             :options="departments.map((d) => ({ label: d.name, value: d.id }))"
             filterable
+            clearable
+            placeholder="Определить автоматически"
           />
         </NFormItem>
         <NFormItem label="Исполнитель" required>

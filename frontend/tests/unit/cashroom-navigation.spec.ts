@@ -18,7 +18,7 @@ it.each([false, true])('opens cashroom from the menu and highlights it (kesher=%
   const wrapper = mount(AppSidebar, {props:{collapsed:false,mobile:false,drawerVisible:false},global:{stubs:{NLayoutSider:{template:'<div><slot /></div>'}}}})
   const menu = wrapper.findComponent(NMenu)
   expect(menu.props('value')).toBe('cashroom')
-  expect(menu.props('options').some(option => option.key === 'cashroom')).toBe(true)
+  expect(menu.props('options')?.some(option => option.key === 'cashroom')).toBe(true)
   menu.vm.$emit('update:value', 'cashroom')
   expect(push).toHaveBeenCalledWith({name:'cashroom'})
   expect(wrapper.emitted('closeDrawer')).toHaveLength(1)

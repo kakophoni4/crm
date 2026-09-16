@@ -65,7 +65,7 @@ const form = ref({
     | 'admin'
     | 'accountant'
     | 'chief_accountant'
-    | 'lawyer' | 'kesher',
+    | 'lawyer' | 'kesher' | 'nulevka',
   group_ids: [] as number[],
   department_id: null as number | null,
   set_as_department_head: false,
@@ -91,6 +91,7 @@ const roleOptions = computed<SelectOption[]>(() =>
         { label: 'Главный бухгалтер', value: 'chief_accountant' },
         { label: 'Юрист', value: 'lawyer' },
         { label: 'Кешер', value: 'kesher' },
+        { label: 'Нулевка', value: 'nulevka' },
         { label: 'Администратор', value: 'admin' },
       ],
 )
@@ -142,6 +143,7 @@ function roleLabel(role: AdminUser['role']): string {
     case 'chief_accountant':
       return 'Главный бухгалтер'
     case 'kesher': return 'Кешер'
+    case 'nulevka': return 'Нулевка'
     case 'lawyer':
       return 'Юрист'
     case 'admin':
@@ -330,7 +332,7 @@ watch(
       role === 'admin' ||
       role === 'accountant' ||
       role === 'chief_accountant' ||
-      (role === 'lawyer' || role === 'kesher')
+      (role === 'lawyer' || role === 'kesher' || role === 'nulevka')
     ) {
       form.value.group_ids = []
       form.value.department_id = null
@@ -389,7 +391,7 @@ async function load(): Promise<void> {
 }
 
 function validateForm(
-  role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant' | 'chief_accountant' | 'lawyer' | 'kesher',
+  role: 'user' | 'senior' | 'group_senior' | 'admin' | 'accountant' | 'chief_accountant' | 'lawyer' | 'kesher' | 'nulevka',
 ): string | null {
   if (!editing.value) {
     if (!form.value.username.trim() || !form.value.password) {
