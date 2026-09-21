@@ -125,6 +125,11 @@ const menuOptions = computed(() => {
   if (auth.isLawyer) {
     const lawyerItems: MenuOption[] = [
       {
+        label: 'Бухгалтерия',
+        key: 'accounting',
+        icon: () => h(NIcon, null, { default: () => h(Calculator) }),
+      },
+      {
         label: 'Хранилище',
         key: 'storage',
         icon: () => h(NIcon, null, { default: () => h(FolderOpen) }),

@@ -130,6 +130,8 @@ _LAWYER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.TASKS_READ,
         Permission.TELEPHONY_READ,
         Permission.TELEPHONY_CALL,
+        Permission.ACCOUNTING_READ,
+        Permission.ACCOUNTING_MANAGE,
         Permission.TICKETS_READ,
         Permission.PARSER_READ,
     }

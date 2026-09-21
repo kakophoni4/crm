@@ -550,6 +550,7 @@ router.beforeEach(async (to) => {
   }
 
   const lawyerAllowed =
+    needsAccounting ||
     needsTickets ||
     needsParser ||
     to.name === 'tasks' ||
