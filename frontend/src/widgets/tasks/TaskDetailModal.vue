@@ -21,6 +21,7 @@ import { computed, ref, watch } from 'vue'
 
 import { uploadFile } from '@/features/chats/api'
 import {
+  updateTask,
   addTaskComment,
   attachTaskFiles,
   completeTask,
@@ -45,7 +46,7 @@ import {
   resolveAttachmentPreviewKind,
   type AttachmentPreviewKind,
 } from '@/shared/lib/attachment-preview-kind'
-import { AppError } from '@/shared/api/http'
+import { AppError, http } from '@/shared/api/http'
 import { fetchAttachmentBlob } from '@/shared/lib/attachment-blob-cache'
 import { useAuthStore } from '@/shared/store/auth'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
@@ -68,6 +69,7 @@ const loading = ref(false)
 const detail = ref<TaskDetail | null>(null)
 const historyItems = ref<TaskHistoryItem[]>([])
 const historyLoading = ref(false)
+const telegramStatus = ref('')
 const commentBody = ref('')
 const commentLoading = ref(false)
 const notifyLoading = ref<string | null>(null)
@@ -121,6 +123,35 @@ const isCreator = computed(() => {
 const canChangeAssignee = computed(
   () => isActive.value && (isCreator.value || isWorkingOn.value || isManager.value),
 )
+
+const editingFields = ref(false)
+const fieldTitle = ref('')
+const fieldDue = ref<number | null>(null)
+const fieldsSaving = ref(false)
+const canEditTitle = computed(() => isManager.value || isCreator.value)
+const canEditFields = computed(() => isActive.value && (canEditTitle.value || detail.value?.assignee_id === meId.value))
+function editFields(): void {
+  if (!detail.value) return
+  fieldTitle.value = detail.value.title
+  fieldDue.value = detail.value.due_at ? new Date(detail.value.due_at).getTime() : null
+  editingFields.value = true
+}
+async function saveFields(): Promise<void> {
+  if (!detail.value || fieldsSaving.value) return
+  if (canEditTitle.value && !fieldTitle.value.trim()) { message.warning('Укажите название'); return }
+  fieldsSaving.value = true
+  try {
+    await updateTask(detail.value.id, {
+      ...(canEditTitle.value ? { title: fieldTitle.value.trim() } : {}),
+      due_at: fieldDue.value == null ? null : new Date(fieldDue.value).toISOString(),
+    })
+    editingFields.value = false
+    await load(detail.value.id)
+    emit('updated')
+    message.success('Задача обновлена')
+  } catch (err) { message.error(err instanceof AppError ? err.message : 'Не удалось сохранить') }
+  finally { fieldsSaving.value = false }
+}
 
 const canReply = computed(() => isWorkingOn.value && isActive.value)
 const canAttachFiles = computed(() => {
@@ -210,9 +241,15 @@ async function loadAssignees(): Promise<void> {
 }
 
 async function load(id: number): Promise<void> {
+  editingFields.value = false
   loading.value = true
   try {
     detail.value = await getTask(id)
+    telegramStatus.value = ''
+    try {
+      const {data} = await http.get<{status:string}>(`/tasks/${id}/telegram-status`)
+      telegramStatus.value = ({sent:'Отправлено', pending:'В очереди', waiting:'Telegram сотрудника или бот не подключён', failed:'Ошибка доставки, повтор через 5 минут', cancelled:'Отменено', not_queued:'Для старой задачи уведомление не создавалось'} as Record<string,string>)[data.status] ?? data.status
+    } catch { telegramStatus.value = 'Статус доставки недоступен' }
     void loadHistory(id)
     const me = meId.value
     const working =
@@ -570,6 +607,15 @@ function openChild(id: number): void {
             {{ detail.collaborators.map((c) => c.full_name).join(', ') }}
           </p>
 
+          <p v-if="telegramStatus">Telegram: {{ telegramStatus }}</p>
+          <section v-if="canEditFields">
+            <NButton v-if="!editingFields" size="small" @click="editFields">{{ canEditTitle ? 'Изменить название и срок' : 'Перенести срок' }}</NButton>
+            <NSpace v-else vertical>
+              <NInput v-if="canEditTitle" v-model:value="fieldTitle" maxlength="512" placeholder="Название задачи" />
+              <NDatePicker v-model:value="fieldDue" type="datetime" clearable placeholder="Срок задачи" />
+              <NSpace><NButton type="primary" :loading="fieldsSaving" @click="saveFields">Сохранить</NButton><NButton :disabled="fieldsSaving" @click="editingFields = false">Отмена</NButton></NSpace>
+            </NSpace>
+          </section>
           <section>
             <h4>Описание</h4>
             <p v-if="detail.description" class="task-detail__desc">{{ detail.description }}</p>

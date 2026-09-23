@@ -195,7 +195,7 @@ export interface OptPaymentRegisterLine {
   supplier_inn: string
   category_code?: string | null
   volume: number
-  our_rate_percent: number
+  our_rate_percent: number | null
   due_amount: number
   paid_amount: number
   remaining_amount: number
@@ -222,6 +222,7 @@ export interface OptPaymentRegisterItem {
   due_amount: number
   paid_amount: number
   remaining_amount: number
+  allocation_estimated?: boolean
   is_paid: boolean
   lines: OptPaymentRegisterLine[]
 }

@@ -209,3 +209,20 @@ async def close_lead(
             "closed_by_user_id": actor.id,
         },
     )
+
+
+@router.post("/leads/{lead_id}/reopen", response_model=LeadDetailResponse)
+@audit(AuditAction.LEAD_STATUS_UPDATE, "lead")
+async def reopen_lead(
+    lead_id: int,
+    body: LeadCloseRequest,
+    request: Request,
+    actor: Annotated[User, Depends(requires_permission(Permission.CONTACTS_UPDATE))],
+    service: Annotated[LeadApiService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AuditedResult[LeadDetailResponse]:
+    result = await service.reopen_lead(actor, lead_id, body.status_id)
+    # Refetch relationship so the returned label agrees with the new status.
+    await db.refresh(result.lead, attribute_names=['pipeline_status'])
+    return AuditedResult(data=await service.get_lead(actor, lead_id),
+                         entity_id=lead_id, payload=result.audit_payload)

@@ -42,6 +42,7 @@ from app.modules.db.models.group_chat_file import GroupChatFile
 from app.modules.db.models.group_after_hours_settings import GroupAfterHoursSettings
 from app.modules.db.models.group_escalation_settings import GroupEscalationSettings
 from app.modules.db.models.idle_banner_settings import IdleBannerSettings
+from app.modules.db.models.sales_season import SalesSeason
 from app.modules.db.models.lead import Lead
 from app.modules.db.models.lead_comment import LeadComment
 from app.modules.db.models.lead_opt_order import LeadOptOrder, LeadOptOrderLine

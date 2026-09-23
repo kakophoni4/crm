@@ -22,9 +22,10 @@ export async function listOptOrders(
 }
 
 export async function listOptPaymentRegister(params?: {
-  payment_status?: 'paid' | 'unpaid'
+  payment_status?: 'paid' | 'unpaid' | 'partial'
   group_id?: number
   period_code?: string
+  season_id?: number
   manager_user_id?: number
   q?: string
   offset?: number
@@ -41,6 +42,7 @@ export async function listOptOrdersRegistry(params?: {
   chat_id?: number
   payment_status?: string
   period_code?: string
+  season_id?: number
   manager_user_id?: number
   q?: string
   open_only?: boolean
@@ -56,6 +58,7 @@ export async function listOptOrderManagers(params?: {
   department_id?: number
   group_id?: number
   period_code?: string
+  season_id?: number
   kind?: string
 }): Promise<OptRegistryManagerItem[]> {
   const { data } = await http.get<OptRegistryManagersResponse>('/opt-orders/managers', { params })
@@ -92,6 +95,7 @@ export async function listOptPaymentsLedger(params?: {
   payment_type?: string
   payment_status?: string
   period_code?: string
+  season_id?: number
   manager_user_id?: number
   q?: string
   kind?: string
@@ -132,6 +136,7 @@ export async function uploadOptFromChatAttachment(
     message_id: number
     attachment_index: number
     period_code?: string
+  season_id?: number
   },
 ): Promise<OptOrder> {
   const { data } = await http.post<OptOrder>(

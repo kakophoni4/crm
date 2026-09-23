@@ -215,7 +215,7 @@ class OptPaymentRegisterLine(BaseModel):
     supplier_inn: str
     category_code: str | None = None
     volume: Decimal
-    our_rate_percent: Decimal = Decimal("0")
+    our_rate_percent: Decimal | None = None
     due_amount: Decimal = Decimal("0")
     paid_amount: Decimal = Decimal("0")
     remaining_amount: Decimal = Decimal("0")
@@ -242,6 +242,7 @@ class OptPaymentRegisterItem(BaseModel):
     due_amount: Decimal = Decimal("0")
     paid_amount: Decimal = Decimal("0")
     remaining_amount: Decimal = Decimal("0")
+    allocation_estimated: bool = False
     is_paid: bool = False
     lines: list[OptPaymentRegisterLine] = Field(default_factory=list)
 

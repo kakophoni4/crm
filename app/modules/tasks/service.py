@@ -751,17 +751,23 @@ class TaskService:
         return response
 
     async def update(self, actor: User, task_id: int, body: TaskUpdateRequest) -> TaskResponse:
-        if not self._is_senior_or_admin(actor):
-            raise PermissionDenied(message="Редактировать задачи может только старший оператор")
         task = await self._repo.get_by_id(task_id)
         if task is None or task.status not in {s.value for s in ACTIVE_TASK_STATUSES}:
             raise NotFound(message="Задача не найдена")
         await self._ensure_task_visible(actor, task)
 
+        can_edit = self._is_senior_or_admin(actor) or task.created_by == actor.id
+        if not can_edit and not (
+            task.assignee_id == actor.id and body.model_fields_set <= {"due_at"}
+        ):
+            raise PermissionDenied(message="Можно изменить только срок своей задачи")
+
         changes: dict[str, dict[str, object | None]] = {}
 
         if body.title is not None:
             title = body.title.strip()
+            if not title:
+                raise ValidationError(message="Название задачи не может быть пустым")
             if title != task.title:
                 changes["title"] = {"from": task.title, "to": title}
             task.title = title

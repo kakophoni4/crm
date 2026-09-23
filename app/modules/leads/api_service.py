@@ -501,6 +501,29 @@ class LeadApiService:
             skip_audit=audit_action is None,
         )
 
+    async def reopen_lead(self, actor: User, lead_id: int, status_id: int) -> LeadMutationResult:
+        ctx = await self._ctx(actor)
+        lead = (await self._session.execute(select(Lead).where(Lead.id == lead_id).with_for_update())).scalar_one_or_none()
+        lead = await self._require_lead_access(ctx, lead)
+        if lead.closed_at is None:
+            raise Conflict(message="Сделка уже открыта")
+        status = await ensure_status_kind(self._session, status_id, StatusKind.LEAD_PIPELINE)
+        if status.code in {PIPELINE_WON_CODE, PIPELINE_LOST_CODE}:
+            raise ValidationError(message="Выберите рабочий статус")
+        old_status, old_closed = lead.status_id, lead.closed_at
+        lead.closed_at = None
+        lead.retention_expires_at = None
+        lead.status_id = status_id
+        await self._session.flush()
+        await publish('lead.status_changed', {
+            'lead_id': lead.id, 'contact_id': lead.contact_id, 'group_id': lead.group_id,
+            'from_status_id': old_status, 'to_status_id': status_id, 'closed_at': None,
+        }, scope={'group_id': lead.group_id})
+        return LeadMutationResult(lead=lead, audit_payload={
+            'kind': 'reopen', 'from_status_id': old_status, 'to_status_id': status_id,
+            'previous_closed_at': old_closed.isoformat(),
+        })
+
     async def close_lead(self, actor: User, lead_id: int, body: LeadCloseRequest) -> Lead:
         ctx = await self._ctx(actor)
         lead = await self._require_lead_access(ctx, await self._repo.get_by_id(lead_id))

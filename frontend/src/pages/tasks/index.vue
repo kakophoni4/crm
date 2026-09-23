@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   NButton,
   NDatePicker,
@@ -308,6 +309,11 @@ const reassignAssigneeId = ref<number | null>(null)
 
 const detailOpen = ref(false)
 const detailTaskId = ref<number | null>(null)
+const route = useRoute()
+watch(() => route.query.task, value => {
+  const id = Number(value)
+  if (Number.isSafeInteger(id) && id > 0) { detailTaskId.value = id; detailOpen.value = true }
+}, { immediate: true })
 
 function isAssignedToMe(task: DepartmentTask): boolean {
   const uid = auth.user?.id

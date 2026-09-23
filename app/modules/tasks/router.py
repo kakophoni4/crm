@@ -221,7 +221,7 @@ async def notify_task_creator(
 async def update_task(
     task_id: int,
     body: TaskUpdateRequest,
-    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_MANAGE))],
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
     service: Annotated[TaskService, Depends(_service)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:
@@ -323,3 +323,16 @@ async def delete_task(
     await service.delete(actor, task_id, permanent=permanent)
     await db.commit()
     return {"deleted": True, "permanent": permanent}
+
+
+@router.get('/{task_id}/telegram-status')
+async def task_telegram_status(
+    task_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.TASKS_READ))],
+    service: Annotated[TaskService, Depends(_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from sqlalchemy import text
+    await service.get_task(actor, task_id)
+    row = (await db.execute(text('SELECT status, error_code FROM task_notification_outbox WHERE task_id=:id ORDER BY id DESC LIMIT 1'), {'id':task_id})).mappings().first()
+    return dict(row) if row else {'status':'not_queued', 'error_code':None}

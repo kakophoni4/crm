@@ -4,7 +4,8 @@ import { nextTick } from 'vue'
 
 import MessageAttachment from '@/widgets/chat/MessageAttachment.vue'
 
-vi.mock('@vueuse/core', () => ({
+vi.mock('@vueuse/core', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@vueuse/core')>(),
   useIntersectionObserver: (_target: unknown, callback: (entries: Array<{ isIntersecting: boolean }>) => void) => {
     void Promise.resolve().then(() => callback([{ isIntersecting: true }]))
     return { stop: vi.fn() }
@@ -95,4 +96,15 @@ describe('MessageAttachment preview', () => {
 
     wrapper.unmount()
   })
+  it('plays a voice attachment using the authenticated blob', async () => {
+    fetchAttachmentBlob.mockResolvedValue({ url: 'blob:test-voice', mime: 'audio/ogg', blob: new Blob(['voice'], {type:'audio/ogg'}) })
+    const wrapper = mount(MessageAttachment, {props:{att:{type:'voice',status:'ready',download_path:'/api/v1/files/77',filename:'voice.ogg',mime:'audio/ogg'},eager:true}})
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('audio').attributes('src')).toBe('blob:test-voice')
+    expect(wrapper.find('audio').attributes('controls')).toBeDefined()
+    wrapper.unmount()
+  })
+
 })

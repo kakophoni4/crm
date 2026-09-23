@@ -44,6 +44,8 @@ import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order
 import { VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
 import { AppError, http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
+import SeasonPicker from '@/features/leads/SeasonPicker.vue'
+import SalesRegister from '@/features/leads/SalesRegister.vue'
 import PaymentRegisterDetail from '@/features/leads/PaymentRegisterDetail.vue'
 import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
@@ -55,6 +57,14 @@ const route = useRoute()
 const auth = useAuthStore()
 
 const activeTab = ref<TabName>('orders')
+const seasonId = ref<number | null>(null)
+const seasonsReady = ref(false)
+const tableView = ref(localStorage.getItem('applications-table-view') === 'true')
+watch(tableView, v => { localStorage.setItem('applications-table-view', String(v)); page.value = 1; void load() })
+watch(seasonId, () => { page.value = 1; void load() })
+function openSalesRow(row: OptPaymentRegisterItem) {
+  void router.push({name:'application-detail',params:{leadId:String(row.lead_id),orderId:String(row.order_id)}})
+}
 const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const paymentItems = ref<OptPaymentLedgerItem[]>([])
@@ -274,7 +284,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       title: 'Заявка',
       key: 'order',
       width: 170,
-      ellipsis: { tooltip: true },
+
       render: (row) => `Сделка №${row.lead_id} · №${row.order_no}`,
     },
     {
@@ -287,7 +297,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       title: 'Клиент',
       key: 'contact',
       minWidth: 160,
-      ellipsis: { tooltip: true },
+
       render: (row) => row.contact_name || row.buyer.name || `ИНН ${row.buyer.inn}`,
     },
   ]
@@ -296,7 +306,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       title: 'Менеджер',
       key: 'manager',
       width: 140,
-      ellipsis: { tooltip: true },
+
       render: (row) => row.manager_name || '—',
     })
   }
@@ -305,7 +315,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
       title: 'Группа',
       key: 'group',
       width: 150,
-      ellipsis: { tooltip: true },
+
       render: (row) => row.group_name || `Группа #${row.group_id}`,
     },
     {
@@ -355,7 +365,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
 
 const paymentRegisterColumns = computed<DataTableColumns<OptPaymentRegisterItem>>(() => [
   { title: 'Сделка', key: 'order', width: 116, render: (r) => `№${r.lead_id} / ${r.order_no}` },
-  { title: 'Клиент', key: 'client', minWidth: 190, ellipsis: { tooltip: true }, render: (r) => r.client_name || r.client_shop_name || `ИНН ${r.client_inn}` },
+  { title: 'Клиент', key: 'client', minWidth: 190,  render: (r) => r.client_name || r.client_shop_name || `ИНН ${r.client_inn}` },
   { title: 'Лавок', key: 'shops', width: 90, render: (r) => `${new Set(r.lines.map((line) => line.supplier_inn)).size}` },
   { title: 'Период', key: 'period', width: 110, render: (r) => formatOptPeriodLabel(r.period_code) },
   { title: 'Объём', key: 'volume', width: 130, align: 'right', render: (r) => `${formatMoney(r.volume)} ₽` },
@@ -494,11 +504,13 @@ async function removeBlacklist(id: number): Promise<void> {
 
 let loadRequest = 0
 async function load(): Promise<void> {
+    if (!seasonsReady.value) return
     const request = ++loadRequest
     const hasRows = items.value.length > 0 || paymentItems.value.length > 0 || paymentRegisterItems.value.length > 0
   if (!hasRows) loading.value = true
   try {
     const common = {
+      season_id: seasonId.value || undefined,
       group_id: groupFilterId(),
       period_code: periodFilter.value || undefined,
       manager_user_id: canFilterManager.value ? managerFilter.value || undefined : undefined,
@@ -506,10 +518,10 @@ async function load(): Promise<void> {
       offset: (page.value - 1) * pageSize,
       limit: pageSize,
     }
-    if (activeTab.value === 'payments') {
+    if (activeTab.value === 'payments' || (tableView.value && activeTab.value === 'orders')) {
       const data = await listOptPaymentRegister({
         ...common,
-        payment_status: paymentStatusFilter.value === 'paid' || paymentStatusFilter.value === 'unpaid' ? paymentStatusFilter.value : undefined,
+        payment_status: paymentStatusFilter.value === 'paid' || paymentStatusFilter.value === 'unpaid' || paymentStatusFilter.value === 'partial' ? paymentStatusFilter.value : undefined,
       })
       if (request !== loadRequest) return
       paymentRegisterItems.value = data.items
@@ -545,7 +557,8 @@ async function load(): Promise<void> {
             ? 'Не удалось загрузить заявки Беника'
             : 'Не удалось загрузить заявки',
     )
-    if (!hasRows) {
+    {
+      paymentRegisterItems.value = []
       items.value = []
       paymentItems.value = []
       total.value = 0
@@ -722,6 +735,12 @@ onMounted(() => {
         />
     </div>
 
+    <SeasonPicker v-model="seasonId" @ready="seasonsReady = true; load()" />
+    <div v-if="activeTab === 'orders'" style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0">
+      <NButton :type="!tableView ? 'primary' : 'default'" @click="tableView = false">Обычный вид</NButton>
+      <NButton :type="tableView ? 'primary' : 'default'" @click="tableView = true">Таблица продаж</NButton>
+      <NButton @click="seasonId = 0; paymentStatusFilter = 'unpaid'; page = 1">Долги всех сезонов</NButton>
+    </div>
     <NTabs class="applications-page__tabs" :value="activeTab" type="line" @update:value="onTabChange">
       <NTabPane name="orders" tab="Заявки" />
       <NTabPane name="benik" tab="Бенефициар" />
@@ -757,7 +776,8 @@ onMounted(() => {
     </div>
 
     <NSpin class="applications-page__spin" :show="loading && items.length === 0 && paymentItems.length === 0 && paymentRegisterItems.length === 0">
-      <template v-if="isOrdersLikeTab">
+      <SalesRegister v-if="tableView && activeTab === 'orders'" :items="paymentRegisterItems" @open="openSalesRow" @saved="load" />
+      <template v-else-if="isOrdersLikeTab">
         <NEmpty
           v-if="!items.length && !loading"
           :description="activeTab === 'benik' ? 'Заявок Беника пока нет' : 'Заявок пока нет'"
@@ -1363,6 +1383,11 @@ onMounted(() => {
 :deep(.n-data-table-tr:hover) {
   background: color-mix(in srgb, var(--app-accent, #3b82f6) 8%, transparent);
 }
+.applications-page :deep(.n-data-table-td) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
 </style>
 
 <style>
@@ -1404,5 +1429,10 @@ onMounted(() => {
 
 .applications-page__pill--warn.n-tag {
   background: #9a6700 !important;
+}
+.applications-page :deep(.n-data-table-td) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
 }
 </style>

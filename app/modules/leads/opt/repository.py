@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.modules.chats.timeutil import utc_now
 
-from sqlalchemy import delete, select, func, update
+from sqlalchemy import delete, select, func, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,7 +55,7 @@ class OptOrderRepository:
                 LeadOptOrderLine.supplier_inn == supplier_inn,
                 LeadOptOrder.period_code == period_code,
                 LeadOptOrder.deleted_at.is_(None),
-                LeadOptOrder.status.in_(("queued", "submitting", "submitted")),
+                LeadOptOrder.status.in_(("queued", "submitting", "submitted", "ready")),
             ),
         )
         return Decimal(str(result.scalar_one() or 0)).quantize(Decimal("0.01"))
@@ -247,6 +247,13 @@ class OptOrderRepository:
             return
         inns = [line.supplier_inn for line in order.lines]
         units = await self.get_units_by_inns(inns)
+        from app.modules.leads.opt.tariffs import normalize_category_code, rate_percent_for_unit
+        for line in order.lines:
+            if line.pricing_rate_percent is None:
+                unit = units.get(line.supplier_inn)
+                category = normalize_category_code(unit.category_code if unit else None)
+                line.pricing_rate_percent = rate_percent_for_unit(unit, category_code=category)
+                line.pricing_category = category
         total_volume, base_commission, breakdown = compute_order_pricing(order.lines, units)
         adjustment = round_rubles(order.commission_adjustment or 0)
         commission_due = round_rubles(base_commission + adjustment)
@@ -500,7 +507,7 @@ class OptOrderRepository:
             .where(
                 LeadOptOrder.content_fingerprint == fingerprint,
                 LeadOptOrder.deleted_at.is_(None),
-                LeadOptOrder.status.in_(("queued", "submitting", "submitted")),
+                LeadOptOrder.status.in_(("queued", "submitting", "submitted", "ready")),
             )
             .options(
                 selectinload(LeadOptOrder.lines),
@@ -559,8 +566,16 @@ class OptOrderRepository:
         vat_rate_percent: float = 22.0,
         period_code: str | None = None,
         order_kind: str = "standard",
+        season_id: int | None = None,
     ) -> LeadOptOrder:
         kind = order_kind if order_kind == "benik" else "standard"
+        await self._session.execute(text("SELECT id FROM leads WHERE id=:id FOR UPDATE"), {"id": lead_id})
+        if content_fingerprint:
+            await self._session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": content_fingerprint})
+            existing = await self.get_order_by_content_fingerprint(content_fingerprint)
+            if existing is not None:
+                from app.shared.exceptions import ValidationError
+                raise ValidationError(message=f"Такая заявка уже существует: {existing.id}")
         order_no = await self.next_order_no(lead_id)
         order = LeadOptOrder(
             lead_id=lead_id,
@@ -579,6 +594,8 @@ class OptOrderRepository:
             content_fingerprint=content_fingerprint,
             created_by=created_by,
         )
+        if season_id is not None:
+            order.season_id = season_id
         self._session.add(order)
         await self._session.flush()
 

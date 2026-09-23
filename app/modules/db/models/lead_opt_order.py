@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Index, Integer, Numeric, Text, func, text
+from sqlalchemy import FetchedValue, BigInteger, Date, ForeignKey, Index, Integer, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +49,7 @@ class LeadOptOrder(Base):
         nullable=False,
         server_default="22",
     )
+    season_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('sales_seasons.id', ondelete='RESTRICT'), server_default=FetchedValue())
     period_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="standard")
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
@@ -145,6 +146,8 @@ class LeadOptOrderLine(Base):
     document_number: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Economics of the row is kept on the row, rather than in a spreadsheet.
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pricing_rate_percent: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    pricing_category: Mapped[str | None] = mapped_column(Text, nullable=True)
     beneficiary_rate_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     beneficiary_paid_amount: Mapped[float] = mapped_column(
         Numeric(15, 2), nullable=False, server_default="0"

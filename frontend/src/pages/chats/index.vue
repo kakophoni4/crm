@@ -372,7 +372,7 @@ async function onSend(
 
     const textErr = err instanceof AppError ? err.message : 'Не удалось отправить'
 
-    message.error(textErr)
+    throw new Error(textErr)
 
   }
 
@@ -865,7 +865,7 @@ onUnmounted(() => {
             :chat-id="store.currentChat.id"
             :reply-to="replyToMessage"
             @cancel-reply="replyToMessage = null"
-            @send="onSend"
+            :send-message="onSend"
           />
 
         </template>

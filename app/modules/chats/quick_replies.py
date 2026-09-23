@@ -59,7 +59,14 @@ class QuickReplyTemplateService:
         if department_id is not None:
             stmt = stmt.where(QuickReplyTemplate.department_id == department_id)
         if group_id is not None:
-            stmt = stmt.where(QuickReplyTemplate.group_id == group_id)
+            group = await self._session.get(Group, group_id)
+            if group is None:
+                raise NotFound(message="Группа не найдена")
+            stmt = stmt.where(or_(
+                QuickReplyTemplate.group_id == group_id,
+                (QuickReplyTemplate.group_id.is_(None)) &
+                (QuickReplyTemplate.department_id == group.department_id),
+            ))
         if q:
             needle = f"%{q.strip()}%"
             stmt = stmt.where(

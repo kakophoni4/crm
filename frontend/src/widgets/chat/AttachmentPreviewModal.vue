@@ -283,8 +283,8 @@ function download(): void {
   overflow: auto;
   transform-origin: top center;
   transition: transform 120ms ease;
-  background: #fff;
-  color: #111;
+  background: var(--app-surface);
+  color: var(--app-text);
   border-radius: 8px;
   padding: 16px 20px;
   box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
@@ -307,8 +307,14 @@ function download(): void {
 
 .attachment-preview__html-wrap :deep(th),
 .attachment-preview__html-wrap :deep(td) {
-  border: 1px solid #ddd;
+  border: 1px solid var(--app-border);
   padding: 6px 8px;
+  height: auto !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  min-width: 90px;
+  max-width: 320px;
 }
 
 .attachment-preview__fallback {

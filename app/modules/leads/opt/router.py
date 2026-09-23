@@ -58,6 +58,8 @@ from app.shared.db import get_db
 from app.shared.security.permissions import requires_permission
 
 router = APIRouter(prefix="/api/v1", tags=["leads-opt"])
+from app.modules.leads.opt.seasons import register_routes
+register_routes(router)
 
 
 def _service(db: Annotated[AsyncSession, Depends(get_db)]) -> OptOrderService:
@@ -74,6 +76,7 @@ async def list_opt_orders_registry(
     chat_id: int | None = None,
     payment_status: str | None = None,
     period_code: str | None = None,
+    season_id: int | None = None,
     manager_user_id: int | None = None,
     q: str | None = None,
     open_only: bool = False,
@@ -88,6 +91,7 @@ async def list_opt_orders_registry(
         contact_id=contact_id,
         chat_id=chat_id,
         payment_status=payment_status,
+        season_id=season_id,
         period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id,
         q=(q or "").strip() or None,
@@ -159,6 +163,7 @@ async def list_opt_payments_ledger(
     payment_type: str | None = None,
     payment_status: str | None = None,
     period_code: str | None = None,
+    season_id: int | None = None,
     manager_user_id: int | None = None,
     q: str | None = None,
     kind: str | None = None,
@@ -172,6 +177,7 @@ async def list_opt_payments_ledger(
         contact_id=contact_id,
         payment_type=payment_type,
         payment_status=payment_status,
+        season_id=season_id,
         period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id,
         q=(q or "").strip() or None,
@@ -187,17 +193,19 @@ async def list_opt_payment_register(
     service: Annotated[OptOrderService, Depends(_service)],
     group_id: int | None = None,
     period_code: str | None = None,
+    season_id: int | None = None,
     manager_user_id: int | None = None,
     q: str | None = None,
     offset: int = 0,
     limit: int = 50,
-    payment_status: Literal['paid', 'unpaid'] | None = None,
+    payment_status: Literal['paid', 'unpaid', 'partial'] | None = None,
 ) -> OptPaymentRegisterListResponse:
     return await service.list_payment_register(
         actor, group_id=group_id, period_code=(period_code or "").strip() or None,
         manager_user_id=manager_user_id, q=(q or "").strip() or None,
         offset=max(0, offset), limit=min(max(1, limit), 100),
         payment_status=payment_status,
+        season_id=season_id,
     )
 
 

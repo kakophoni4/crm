@@ -475,6 +475,7 @@ class OptOrderService:
         chat_id: int | None = None,
         payment_status: str | None = None,
         period_code: str | None = None,
+        season_id: int | None = None,
         manager_user_id: int | None = None,
         q: str | None = None,
         open_only: bool = False,
@@ -511,6 +512,8 @@ class OptOrderService:
         )
 
         filters = []
+        if season_id is not None:
+            filters.append(LeadOptOrder.season_id == season_id)
         if scoped != SCOPE_ALL:
             filters.append(Lead.group_id.in_(scoped))
         if department_id is not None:
@@ -746,6 +749,7 @@ class OptOrderService:
         payment_type: str | None = None,
         payment_status: str | None = None,
         period_code: str | None = None,
+        season_id: int | None = None,
         manager_user_id: int | None = None,
         q: str | None = None,
         kind: str | None = None,
@@ -767,6 +771,8 @@ class OptOrderService:
             return OptPaymentLedgerListResponse(items=[], total=0)
 
         filters = []
+        if season_id is not None:
+            filters.append(LeadOptOrder.season_id == season_id)
         if scoped != SCOPE_ALL:
             filters.append(Lead.group_id.in_(scoped))
         if department_id is not None:
@@ -909,7 +915,7 @@ class OptOrderService:
     async def list_payment_register(
         self, actor: User, *, group_id: int | None, period_code: str | None,
         manager_user_id: int | None, q: str | None, offset: int, limit: int,
-        payment_status: str | None = None,
+        payment_status: str | None = None, season_id: int | None = None,
     ) -> OptPaymentRegisterListResponse:
         """Payment register: one row per application, with invoice lines as details."""
         from sqlalchemy import func, or_, select
@@ -929,6 +935,8 @@ class OptOrderService:
         manager_join = (ContactGroupAssignment, (ContactGroupAssignment.contact_id == Lead.contact_id)
                         & (ContactGroupAssignment.group_id == Lead.group_id))
         filters = [LeadOptOrder.deleted_at.is_(None), LeadOptOrder.order_kind == "standard"]
+        if season_id is not None:
+            filters.append(LeadOptOrder.season_id == season_id)
         if scope != SCOPE_ALL:
             filters.append(Lead.group_id.in_(scope))
         if group_id is not None:
@@ -941,6 +949,8 @@ class OptOrderService:
             filters.append(ContactGroupAssignment.owner_user_id == manager_user_id)
         if payment_status == 'paid':
             filters.append(LeadOptOrder.payment_status == 'paid')
+        elif payment_status == 'partial':
+            filters.append(LeadOptOrder.payment_status == 'partial')
         elif payment_status == 'unpaid':
             filters.append(LeadOptOrder.payment_status != 'paid')
         if q:
@@ -982,14 +992,9 @@ class OptOrderService:
         items: list[OptPaymentRegisterItem] = []
         for order_rows in page_orders:
             _line, order, _lead, contact, _assignment, _unit, manager = order_rows[0]
-            rates = {
-                row[0].id: Decimal(str(rate_percent_for_unit(row[5], category_code=(row[5].category_code if row[5] else None))))
-                for row in order_rows
-            }
-            due_by_line = {row[0].id: round_rubles(Decimal(str(row[0].amount)) * rates[row[0].id] / 100) for row in order_rows}
+            from app.modules.leads.opt.register_pricing import register_line_pricing
+            rates, due_by_line, estimated = register_line_pricing(order, [r[0] for r in order_rows])
             total_due = Decimal(str(order.commission_due or 0))
-            allocated = allocate_amount(total_due, list(due_by_line.values()))
-            due_by_line = dict(zip(due_by_line, allocated))
             # The business rule is binary: an application payment covers every
             # invoice line, so never allocate a partial payment across lines.
             is_paid = order.payment_status == 'paid'
@@ -1015,6 +1020,7 @@ class OptOrderService:
                 volume=sum((detail.volume for detail in details), Decimal("0")), due_amount=total_due,
                 paid_amount=Decimal(str(order.amount_paid or 0)),
                 remaining_amount=max(Decimal('0'), total_due - Decimal(str(order.amount_paid or 0))),
+                allocation_estimated=estimated,
                 is_paid=is_paid, lines=details))
         return OptPaymentRegisterListResponse(
             items=items, total=int(stats[0]), total_volume_sum=stats[1],

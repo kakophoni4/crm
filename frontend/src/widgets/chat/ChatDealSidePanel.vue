@@ -59,6 +59,7 @@ import { leadCommentItems } from '@/features/leads/comments'
 import type { LeadDetail, LeadListItem } from '@/features/leads/types'
 import { useChatsStore } from '@/features/chats/store'
 import OptOrdersPanel from '@/widgets/chat/OptOrdersPanel.vue'
+import ReopenLead from '@/features/leads/ReopenLead.vue'
 import { AppError } from '@/shared/api/http'
 
 const props = defineProps<{
@@ -666,6 +667,10 @@ async function saveLeadComment(): Promise<void> {
             </NTag>
           </div>
 
+          <div v-if="leadDetail.closed_at" class="deal-side__field">
+            <span>{{ service || 'Услуга не указана' }} · {{ leadDetail.status_label }}</span>
+            <ReopenLead :lead-id="leadDetail.id" @reopened="loadLeads(true); loadLeadDetail(leadDetail.id, true)" />
+          </div>
           <div v-if="hasSelectedOpenLead" class="deal-side__field">
             <span class="deal-side__label">Статус</span>
             <NSelect

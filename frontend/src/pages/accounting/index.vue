@@ -1158,14 +1158,14 @@ function orderColumns(): DataTableColumns<AccountingUnitOrder> {
       title: 'Файл',
       key: 'source_filename',
       minWidth: 140,
-      ellipsis: { tooltip: true },
+
       render: (row) => row.source_filename || row.crm_id,
     },
     {
       title: 'Покупатель',
       key: 'buyer_name',
       minWidth: 160,
-      ellipsis: { tooltip: true },
+
       render: (row) => row.buyer_name || row.buyer_inn,
     },
     {
@@ -1228,7 +1228,7 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     title: 'Лавка',
     key: 'supplier',
     minWidth: 200,
-    ellipsis: { tooltip: true },
+
     render: (row) => {
       const short = shortLavkaName(row.supplier.name) || row.supplier.inn
       const full = row.supplier.name || row.supplier.inn
@@ -1296,7 +1296,7 @@ const requirementColumns = computed<DataTableColumns<AccountingRequirement>>(() 
     title: 'Требование',
     key: 'title',
     minWidth: 140,
-    ellipsis: { tooltip: true },
+
     render: (row) => {
       const notice = isAccountBlockNotice(row)
       const title = notice
@@ -2169,9 +2169,8 @@ onUnmounted(() => {
 }
 
 .accounting-page__lavka-short {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   max-width: 260px;
 }
 
@@ -2435,5 +2434,10 @@ onUnmounted(() => {
 .accounting-page__owner-periods {
   font-size: 0.78rem;
   color: var(--app-text-muted);
+}
+.accounting-page :deep(.n-data-table-td) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
 }
 </style>

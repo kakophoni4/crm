@@ -30,6 +30,7 @@ async function main() {
       // Vite modules use script requests; all API/network fetches below stay local.
       let data = { items: [], total: 0, unread: 0, blink: false }
       if (p.endsWith('/auth/me')) data = { id: 10, role, full_name: 'Тестовый пользователь', permissions: role === 'user' ? ['contacts.read', 'contacts.update', 'tasks.read'] : ['accounting.read', 'tasks.read'], group_id: 1, department_id: 1, group_ids: [1] }
+      else if (p.endsWith('/sales-seasons')) data = [{id:1,name:'2-й квартал 2026',is_current:true,is_planned:false,starts_at:'1970-01-01T00:00:00Z'}]
       else if (p.endsWith('/opt-payment-register')) data = { items: [order], total: 1, total_volume_sum: order.volume, commission_due_sum: order.due_amount, amount_paid_sum: order.paid_amount }
       else if (p.includes('/settlements/')) { saved = request.postDataJSON(); data = { ok: true } }
       else if (p.endsWith('/lawyer-registry')) data = { items: [{ id: 1, full_name: 'Директор', shops: [{ id: 1, inn: '1111111111', name: 'Назначенная лавка', director_name: 'Директор', kind: 'priority', company_status: 'Действует' }], shop_count: 1 }], orphan_shops: [], pinned_shops: [], total_directors: 1, total_shops: 1, unread_alerts: 0 }
@@ -37,6 +38,15 @@ async function main() {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
     })
     const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5177'
+    for (const theme of ['light', 'dark']) {
+      await page.addInitScript((value) => { localStorage.setItem('crm-theme-mode', value); localStorage.setItem('applications-table-view', 'true') }, theme)
+      await page.goto(`${origin}/applications`)
+      await page.locator('.sales-register tbody tr').first().waitFor()
+      assert.ok(await page.locator('.sales-register').evaluate(node => node.scrollWidth <= node.clientWidth + 1))
+      await page.locator('.sales-register').getByText('Бенефициар', {exact:true}).click()
+      await page.getByText('Плановая маржа: Не определена', {exact:false}).waitFor()
+      await page.screenshot({path:path.join(os.tmpdir(), `crm-sales-${theme}.png`)})
+    }
     await page.goto(`${origin}/applications?tab=payments`)
     await page.getByRole('button', { name: 'Детали', exact: true }).click()
     await page.getByText('Получено от клиента', { exact: true }).waitFor()

@@ -61,6 +61,7 @@ const failureText = computed(() => {
 })
 const previewKind = computed(() => resolveAttachmentPreviewKind(row.value))
 const isImage = computed(() => previewKind.value === 'image')
+const isAudio = computed(() => row.value.type === 'voice' || mime.value?.startsWith('audio/') || /\.(ogg|opus|mp3|m4a|wav)$/i.test(label.value))
 const isReady = computed(() => status.value === 'ready' && downloadPath.value != null)
 const canPreview = computed(() => attachmentPreviewSupported(previewKind.value))
 const docIcon = computed(() => {
@@ -205,6 +206,11 @@ onUnmounted(() => {
       @keydown.enter.prevent="openPreview"
       @keydown.space.prevent="openPreview"
     />
+    <div v-else-if="isAudio && isReady" class="message-attachment__audio">
+      <audio v-if="blobUrl" :key="blobUrl" :src="blobUrl" controls preload="metadata" aria-label="Голосовое сообщение" style="max-width: 100%; width: 280px" />
+      <NButton v-else :loading="loading" @click="load(true)">Прослушать голосовое</NButton>
+      <span v-if="failed" role="alert">Не удалось загрузить аудио. Повторите попытку.</span>
+    </div>
     <div v-else-if="!isImage && isReady" class="message-attachment__doc">
       <button
         type="button"

@@ -26,6 +26,7 @@ const props = defineProps<{
   groupId?: number | null
   chatId?: number | null
   replyTo?: ChatMessage | null
+  sendMessage?: (text: string, attachments: { file_id: number; name?: string; mime?: string }[], replyId: number | null) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -42,6 +43,14 @@ const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const pendingFiles = ref<{ file_id: number; name: string; mime?: string }[]>([])
 const sending = ref(false)
+const uploading = ref(0)
+function resizeInput(): void {
+  const el = textareaRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 220)}px`
+}
+watch(text, () => nextTick(resizeInput))
 const dragOver = ref(false)
 const quickReplies = ref<QuickReplyTemplate[]>([])
 const quickRepliesOpen = ref(false)
@@ -53,6 +62,16 @@ const newQuickReplyBody = ref('')
 const vaultPickerOpen = ref(false)
 const phoneChatsOnly = usePhoneViewport()
 let quickReplySearchTimer: number | null = null
+
+const drafts = new Map<number, { text: string; files: typeof pendingFiles.value }>()
+watch(() => props.chatId, (id, previous) => {
+  if (previous != null) drafts.set(previous, {text: text.value, files: [...pendingFiles.value]})
+  const draft = id == null ? undefined : drafts.get(id)
+  text.value = draft?.text ?? ''
+  pendingFiles.value = draft?.files ?? []
+  vaultPickerOpen.value = false
+  quickReplies.value = []
+})
 
 const quickReplyQuery = computed(() => text.value.trim())
 const sharedQuickReplies = computed(() =>
@@ -100,8 +119,11 @@ function openVaultPicker(): void {
 async function addFile(file: File): Promise<void> {
   if (props.disabled) return
   if (!validateFileSize(file)) return
+  const chatId = props.chatId
+  uploading.value += 1
   try {
     const uploaded = await uploadFile(file)
+    if (chatId !== props.chatId) return
     pendingFiles.value.push({
       file_id: uploaded.id,
       name: uploaded.name ?? file.name,
@@ -110,6 +132,8 @@ async function addFile(file: File): Promise<void> {
     message.success(`Файл «${file.name}» загружен`)
   } catch (err) {
     message.error(err instanceof Error ? err.message : 'Не удалось загрузить файл')
+  } finally {
+    uploading.value -= 1
   }
 }
 
@@ -121,24 +145,23 @@ async function onBeforeUpload(data: { file: UploadFileInfo }): Promise<boolean> 
 }
 
 async function submit(): Promise<void> {
-  const body = text.value.trim()
-  if (!body && !pendingFiles.value.length) return
-  if (props.disabled || sending.value) return
+  const originalText = text.value
+  const body = originalText.trim()
+  if ((!body && !pendingFiles.value.length) || props.disabled || sending.value || uploading.value) return
+  const chatId = props.chatId
+  const attachments = pendingFiles.value.map((f) => ({ ...f }))
   sending.value = true
   try {
-    emit(
-      'send',
-      body,
-      pendingFiles.value.map((f) => ({
-        file_id: f.file_id,
-        name: f.name,
-        mime: f.mime,
-      })),
-      props.replyTo?.id ?? null,
-    )
-    text.value = ''
-    pendingFiles.value = []
-    emit('cancelReply')
+    if (props.sendMessage) await props.sendMessage(body, attachments, props.replyTo?.id ?? null)
+    else emit('send', body, attachments, props.replyTo?.id ?? null)
+    if (props.chatId === chatId) {
+      if (text.value === originalText) text.value = ''
+      const sentIds = new Set(attachments.map(f => f.file_id))
+      pendingFiles.value = pendingFiles.value.filter(f => !sentIds.has(f.file_id))
+      emit('cancelReply')
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : 'Не удалось отправить. Текст и файлы сохранены.')
   } finally {
     sending.value = false
   }
@@ -451,6 +474,7 @@ watch(
       </div>
     </div>
 
+    <div v-if="uploading" role="status">Загрузка файлов: {{ uploading }}</div>
     <div class="message-input__row">
       <div class="message-input__attach" role="toolbar" aria-label="Вложения и шаблоны">
         <div class="message-input__tool-cell">
@@ -468,7 +492,7 @@ watch(
           </NButton>
         </div>
         <div class="message-input__tool-cell">
-          <NUpload :show-file-list="false" @before-upload="onBeforeUpload">
+          <NUpload multiple :disabled="disabled || sending" :show-file-list="false" @before-upload="onBeforeUpload">
             <NButton
               class="message-input__tool"
               quaternary
@@ -509,7 +533,7 @@ watch(
       <NButton
         class="message-input__send"
         type="primary"
-        :disabled="disabled || (!text.trim() && !pendingFiles.length)"
+        :disabled="disabled || uploading > 0 || (!text.trim() && !pendingFiles.length)"
         :loading="sending"
         aria-label="Отправить"
         @click="submit"
@@ -816,7 +840,7 @@ watch(
   width: 100%;
   min-width: 0;
   min-height: 42px;
-  max-height: 160px;
+  max-height: 220px;
   margin: 0;
   padding: 9px 12px;
   border: 1px solid var(--app-border);

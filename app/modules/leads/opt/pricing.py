@@ -34,8 +34,9 @@ def compute_order_pricing(
     for line in lines:
         inn = str(line.supplier_inn)
         unit = units_by_inn.get(inn)
-        category = normalize_category_code(unit.category_code if unit else None)
-        rate = rate_percent_for_unit(unit, category_code=category)
+        category = getattr(line, 'pricing_category', None) or normalize_category_code(unit.category_code if unit else None)
+        stored = getattr(line, 'pricing_rate_percent', None)
+        rate = Decimal(str(stored)) if stored is not None else rate_percent_for_unit(unit, category_code=category)
         volume_by_cat_rate[(category, rate)] += Decimal(str(line.amount))
 
     cat_rate_counts = Counter(category for category, _rate in volume_by_cat_rate)

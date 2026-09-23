@@ -2,6 +2,7 @@
 import { NModal, NSpin, NTag } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
+import ReopenLead from '@/features/leads/ReopenLead.vue'
 import { getLead } from '@/features/leads/api'
 import { readLeadDealFields } from '@/features/leads/order-fields'
 import {
@@ -84,6 +85,7 @@ async function load(leadId: number): Promise<void> {
           {{ leadListItemLabel(lead) }}
         </p>
 
+        <ReopenLead v-if="lead.closed_at" :lead-id="lead.id" @reopened="load(lead.id)" />
         <dl class="lead-deal-modal__grid">
           <dt>Услуга</dt>
           <dd>{{ orderFields.order?.service || '—' }}</dd>
@@ -102,6 +104,9 @@ async function load(leadId: number): Promise<void> {
               <dt>{{ treeAdjustment > 0 ? 'Надбавка' : 'Скидка' }}</dt>
               <dd>{{ formatMoney(Math.abs(treeAdjustment)) }} ₽</dd>
             </template>
+          </template>
+          <template v-if="orderFields.order?.tree_payments?.length">
+            <dt>Оплаты</dt><dd><div v-for="payment in orderFields.order.tree_payments" :key="payment.id">{{ formatLeadDate(payment.paid_at) }} · {{ formatMoney(payment.amount) }} ₽</div></dd>
           </template>
           <dt>Количество</dt>
           <dd>{{ orderFields.order?.quantity ?? '—' }}</dd>

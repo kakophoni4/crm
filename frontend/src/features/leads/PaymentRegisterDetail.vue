@@ -62,6 +62,8 @@ async function save() {
       <div><dt>Осталось получить</dt><dd>{{ money(order.remaining_amount) }}</dd></div>
     </dl>
 
+    <p v-if="order.allocation_estimated" class="settlement__hint">Историческая разбивка ставок не сохранена. Комиссия по лавкам показана пропорционально объёму; точная общая сумма заявки не изменена.</p>
+    <p v-if="Number(order.paid_amount) > 0 && !order.is_paid" class="settlement__hint">Частичная оплата относится ко всей заявке. Оплата отдельных лавок не определена.</p>
     <div class="settlement__heading"><h3>Лавки в заявке</h3><span>{{ shops.length }}</span></div>
     <section v-for="shop in shops" :key="shop.inn" class="settlement__shop">
       <div class="settlement__identity"><div><h4>{{ shop.name }}</h4><p>ИНН {{ shop.inn }} · документов: {{ shop.lines.length }}</p></div>
