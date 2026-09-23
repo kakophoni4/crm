@@ -2088,18 +2088,20 @@ onUnmounted(() => {
 .accounting-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   padding-bottom: 16px;
   width: 100%;
   max-width: none;
 }
 
 .accounting-page__card {
+  padding: 12px 16px;
+  box-sizing: border-box;
   width: 100%;
 }
 
 .accounting-page__main-tabs :deep(.n-tabs-nav-scroll-content) {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .accounting-page__main-tabs :deep(.n-tabs-nav) {
@@ -2131,7 +2133,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.125rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.2;
@@ -2191,7 +2193,7 @@ onUnmounted(() => {
 }
 
 .accounting-page__requirements .accounting-page__pagination {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .accounting-page__due--overdue {
@@ -2439,5 +2441,21 @@ onUnmounted(() => {
   white-space: normal;
   overflow-wrap: anywhere;
   vertical-align: top;
+}
+
+/* Explicit flex bases prevent full-width selects from taking separate rows. */
+.accounting-page__filters { gap: 8px; }
+.accounting-page__filters > :deep(.n-select),
+.accounting-page__filters > :deep(.n-input) {
+  flex: 1 1 220px;
+  width: auto;
+  min-width: 0 !important;
+}
+.accounting-page__filters > :deep(.n-button) { flex: 0 0 auto; }
+.accounting-page__main-tabs :deep(.n-tabs-tab) { padding-top: 8px; padding-bottom: 8px; }
+@media (max-width: 700px) {
+  .accounting-page__card { padding: 10px; }
+  .accounting-page__filters > :deep(.n-select),
+  .accounting-page__filters > :deep(.n-input) { flex-basis: 100%; }
 }
 </style>

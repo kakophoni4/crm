@@ -735,11 +735,13 @@ onMounted(() => {
         />
     </div>
 
+    <div class="applications-page__controls">
     <SeasonPicker v-model="seasonId" @ready="seasonsReady = true; load()" />
-    <div v-if="activeTab === 'orders'" style="display:flex; gap:8px; flex-wrap:wrap; margin:8px 0">
-      <NButton :type="!tableView ? 'primary' : 'default'" @click="tableView = false">Обычный вид</NButton>
-      <NButton :type="tableView ? 'primary' : 'default'" @click="tableView = true">Таблица продаж</NButton>
-      <NButton @click="seasonId = 0; paymentStatusFilter = 'unpaid'; page = 1">Долги всех сезонов</NButton>
+    <div v-if="activeTab === 'orders'" class="applications-page__views">
+      <NButton size="small" :type="!tableView ? 'primary' : 'default'" @click="tableView = false">Обычный вид</NButton>
+      <NButton size="small" :type="tableView ? 'primary' : 'default'" @click="tableView = true">Таблица продаж</NButton>
+      <NButton size="small" @click="seasonId = 0; paymentStatusFilter = 'unpaid'; page = 1">Долги всех сезонов</NButton>
+    </div>
     </div>
     <NTabs class="applications-page__tabs" :value="activeTab" type="line" @update:value="onTabChange">
       <NTabPane name="orders" tab="Заявки" />
@@ -1067,16 +1069,21 @@ onMounted(() => {
 .applications-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   height: 100%;
   min-height: 0;
   min-width: 0;
   width: 100%;
-  padding: 16px 20px 12px;
+  padding: 10px 16px;
   box-sizing: border-box;
   overflow: hidden;
 }
 
+.applications-page__controls { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; flex-shrink:0; }
+.applications-page__views { display:flex; gap:4px; flex-wrap:wrap; }
+.applications-page__tabs { flex-shrink:0; }
+.applications-page__tabs :deep(.n-tab-pane) { display:none; }
+.applications-page__tabs :deep(.n-tabs-tab) { padding:7px 0; }
 .applications-page__pager {
   display: flex;
   justify-content: flex-end;
@@ -1122,7 +1129,7 @@ onMounted(() => {
   align-items: baseline;
   justify-content: flex-end;
   gap: 10px 22px;
-  padding: 10px 14px;
+  padding: 6px 10px;
   border: 1px solid var(--n-border-color);
   border-radius: 10px;
   background: color-mix(in srgb, var(--n-color) 92%, var(--app-text-muted));
@@ -1189,7 +1196,7 @@ onMounted(() => {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
   flex-shrink: 0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--app-border);
   border-radius: 12px;
   background: var(--app-surface);

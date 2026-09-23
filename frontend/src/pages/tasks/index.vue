@@ -777,7 +777,7 @@ onUnmounted(() => {
 
 <template>
   <div class="tasks-page">
-    <AppCard>
+    <AppCard class="tasks-panel">
       <div class="tasks-header">
         <h2 class="tasks-title">Задачи</h2>
         <NButton v-if="canCreateTasks" type="primary" @click="openCreate">
@@ -791,7 +791,7 @@ onUnmounted(() => {
           v-model:value="filterQuery"
           clearable
           placeholder="Поиск по названию или описанию"
-          style="min-width: 220px; flex: 1"
+          size="small"
         />
         <NSelect
           v-model:value="filterAssigneeId"
@@ -799,7 +799,7 @@ onUnmounted(() => {
           filterable
           clearable
           placeholder="Исполнитель"
-          style="min-width: 200px; flex: 1"
+          size="small"
         />
         <NSelect
           v-model:value="filterCreatedBy"
@@ -807,20 +807,20 @@ onUnmounted(() => {
           filterable
           clearable
           placeholder="Постановщик"
-          style="min-width: 200px; flex: 1"
+          size="small"
         />
         <NSelect
           v-model:value="filterStatus"
           :options="statusFilterOptions"
           clearable
           placeholder="Статус"
-          style="min-width: 170px"
+          size="small"
         />
         <NSelect
           v-model:value="sortMode"
           :options="sortOptions"
           placeholder="Сортировка"
-          style="min-width: 180px"
+          size="small"
         />
         <label v-if="activeTab === 'board'" class="task-filters__closed">
           <NSwitch v-model:value="includeClosed" size="small" />
@@ -830,7 +830,7 @@ onUnmounted(() => {
       </div>
       <p v-if="currentSummaryText" class="task-filters__summary">{{ currentSummaryText }}</p>
 
-      <NTabs v-model:value="activeTab" type="line" style="margin-top: 16px">
+      <NTabs v-model:value="activeTab" type="line" style="margin-top: 8px">
         <NTabPane v-if="isManager" name="board" tab="Доска отдела">
           <div v-if="isAdmin" class="dept-filter">
             <NSelect
@@ -1249,15 +1249,15 @@ onUnmounted(() => {
 }
 
 .dept-filter {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .task-filters {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) repeat(4, minmax(140px, 1fr));
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .task-filters__closed {
@@ -1277,7 +1277,7 @@ onUnmounted(() => {
 
 .kanban {
   display: grid;
-  gap: 16px;
+  gap: 10px;
   align-items: start;
   overflow-x: auto;
 }
@@ -1292,7 +1292,8 @@ onUnmounted(() => {
   background: var(--app-surface-elevated);
   border: 1px solid var(--app-border);
   border-radius: var(--app-control-radius);
-  padding: 12px;
+  padding: 10px;
+  min-width: 0;
   min-height: 240px;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
@@ -1431,25 +1432,25 @@ onUnmounted(() => {
 }
 
 .task-card--from-accounting {
-  background: color-mix(in srgb, #7c3aed 14%, var(--app-surface));
+  background: var(--app-surface);
   border-color: color-mix(in srgb, #7c3aed 50%, var(--app-border));
   border-left-width: 4px;
   border-left-color: #7c3aed;
 }
 
 .task-card--from-admin {
-  background: color-mix(in srgb, #0f766e 14%, var(--app-surface));
+  background: var(--app-surface);
   border-color: color-mix(in srgb, #0f766e 50%, var(--app-border));
   border-left-width: 4px;
   border-left-color: #0f766e;
 }
 
 .task-card--overdue {
-  background: var(--app-danger-soft);
+  background: var(--app-surface);
   border-color: color-mix(in srgb, var(--app-danger) 55%, var(--app-border));
   border-left-width: 4px;
   border-left-color: var(--app-danger);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-danger) 18%, transparent);
+
 }
 
 .task-card--clickable {
@@ -1489,23 +1490,20 @@ onUnmounted(() => {
   border-color: var(--app-danger);
 }
 
-.task-card__office-banner {
-  margin: -12px -12px 10px;
-  padding: 8px 10px;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #fff;
+ .task-card__office-banner {
+  display: inline-flex;
+  margin: 0 0 8px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-text);
 }
-
 .task-card__office-banner--accounting {
-  background: #6d28d9;
+  background: color-mix(in srgb, #8b5cf6 16%, var(--app-surface));
 }
-
 .task-card__office-banner--admin {
-  background: #0f766e;
+  background: color-mix(in srgb, #14b8a6 16%, var(--app-surface));
 }
 
 .task-card-head {
@@ -1518,7 +1516,7 @@ onUnmounted(() => {
 .task-card-title {
   margin: 0 0 6px;
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .task-card-desc {
@@ -1567,5 +1565,30 @@ onUnmounted(() => {
 
 .task-card-actions {
   margin-top: 10px;
+}
+
+.tasks-panel { padding: 14px 16px; }
+.task-filters > * { min-width: 0; }
+.task-card-title { overflow-wrap: anywhere; }
+.kanban .task-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-list-heading {
+  background: var(--app-accent-soft);
+  color: var(--app-text);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+@media (max-width: 1200px) {
+  .task-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .tasks-panel { padding: 12px; }
+  .task-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-filters > :first-child { grid-column: 1 / -1; }
 }
 </style>

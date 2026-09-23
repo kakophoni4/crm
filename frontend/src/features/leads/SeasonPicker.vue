@@ -46,10 +46,10 @@ onUnmounted(() => clearInterval(refreshTimer))
 </script>
 <template>
   <NSpace align="center" wrap>
-    <span>Рабочий сезон</span>
-    <NSelect style="width: min(290px, 70vw)" :value="modelValue ?? 0" :options="options" @update:value="emit('update:modelValue', $event)" />
+    <span style="font-size:12px;color:var(--app-text-muted)">Сезон</span>
+    <NSelect size="small" style="width: min(290px, 70vw)" :value="modelValue ?? 0" :options="options" @update:value="emit('update:modelValue', $event)" />
     <NButton v-if="failed" @click="load">Повторить</NButton>
-    <NButton v-if="auth.isAdmin" @click="show = true; start = Date.now() + 300000">Открыть новый сезон</NButton>
+    <NButton size="small" quaternary v-if="auth.isAdmin" @click="show = true; start = Date.now() + 300000">+ Сезон</NButton>
   </NSpace>
   <NModal v-model:show="show" preset="card" title="Новый рабочий сезон" style="width: min(520px, 94vw)">
     <NSpace vertical>

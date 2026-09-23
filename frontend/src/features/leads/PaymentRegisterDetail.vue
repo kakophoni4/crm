@@ -95,24 +95,25 @@ async function save() {
 </template>
 
 <style scoped>
-.settlement { display: grid; gap: 20px; }
+.settlement { display: grid; gap: 12px; container-type: inline-size; }
 .settlement h3, .settlement h4, .settlement p { margin: 0; }
 .settlement h3 { font-size: 17px; } .settlement h4 { font-size: 14px; overflow-wrap: anywhere; }
 .settlement__identity { display: flex; justify-content: space-between; gap: 16px; align-items: start; flex-wrap: wrap; }
 .settlement__identity > div { flex: 1; min-width: 220px; }
 .settlement__identity p { color: var(--app-text-muted); font-size: 12px; margin-top: 4px; }
-.settlement__meta, .settlement__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; margin: 0; }
+.settlement__meta, .settlement__metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }
 .settlement dt { font-size: 12px; color: var(--app-text-muted); margin-bottom: 5px; }
-.settlement dd { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.settlement__metrics { padding: 16px; border-radius: 10px; background: var(--app-surface-elevated); }
+.settlement dd { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.settlement__metrics { padding: 10px; border-radius: 8px; background: var(--app-surface-elevated); }
 .settlement__meta dd { font-size: 13px; }
 .settlement__hint { font-size: 12px; line-height: 1.6; color: var(--app-text-muted); }
 .settlement__heading { display: flex; align-items: center; gap: 8px; }
 .settlement__heading span { padding: 2px 8px; border-radius: 20px; background: var(--app-accent-soft); color: var(--app-accent); }
-.settlement__shop { display: grid; gap: 14px; border: 1px solid var(--app-border); padding: 16px; border-radius: 12px; }
+.settlement__shop { display: grid; gap: 10px; border: 1px solid var(--app-border); padding: 12px; border-radius: 12px; }
 .settlement__form { border-top: 1px solid var(--app-border); padding-top: 16px; }
 .settlement__form :deep(.n-input-number) { width: 100%; }
 .settlement__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .settlement__comment { white-space: pre-wrap; font-size: 13px; }
+@container (min-width: 600px) { .settlement__metrics { grid-template-columns: repeat(4,minmax(0,1fr)); } .settlement__shop .settlement__metrics { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @media (max-width: 480px) { .settlement__metrics { grid-template-columns: 1fr; } }
 </style>
