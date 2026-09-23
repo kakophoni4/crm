@@ -13,6 +13,8 @@ import {
   resolveAttachmentPreviewKind,
 } from '@/shared/lib/attachment-preview-kind'
 import { usePhoneViewport } from '@/shared/lib/phone-mode'
+import VoiceTranscript from './VoiceTranscript.vue'
+import VoiceMessagePlayer from './VoiceMessagePlayer.vue'
 import AttachmentPreviewModal from '@/widgets/chat/AttachmentPreviewModal.vue'
 
 const props = withDefaults(
@@ -61,7 +63,7 @@ const failureText = computed(() => {
 })
 const previewKind = computed(() => resolveAttachmentPreviewKind(row.value))
 const isImage = computed(() => previewKind.value === 'image')
-const isAudio = computed(() => row.value.type === 'voice' || mime.value?.startsWith('audio/') || /\.(ogg|opus|mp3|m4a|wav)$/i.test(label.value))
+const isAudio = computed(() => row.value.type === 'voice' || mime.value?.startsWith('audio/') || /\.(oga|ogg|opus|mp3|m4a|wav)$/i.test(label.value))
 const isReady = computed(() => status.value === 'ready' && downloadPath.value != null)
 const canPreview = computed(() => attachmentPreviewSupported(previewKind.value))
 const docIcon = computed(() => {
@@ -181,7 +183,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <span ref="rootRef" class="message-attachment-wrap">
+  <span ref="rootRef" class="message-attachment-wrap" :class="{ 'message-attachment-wrap--audio': isAudio }">
     <span v-if="status === 'pending' || status === 'queued'" class="message-attachment message-attachment--pending">
       Загрузка файла…
     </span>
@@ -206,10 +208,9 @@ onUnmounted(() => {
       @keydown.enter.prevent="openPreview"
       @keydown.space.prevent="openPreview"
     />
-    <div v-else-if="isAudio && isReady" class="message-attachment__audio">
-      <audio v-if="blobUrl" :key="blobUrl" :src="blobUrl" controls preload="metadata" aria-label="Голосовое сообщение" style="max-width: 100%; width: 280px" />
-      <NButton v-else :loading="loading" @click="load(true)">Прослушать голосовое</NButton>
-      <span v-if="failed" role="alert">Не удалось загрузить аудио. Повторите попытку.</span>
+    <div v-else-if="isAudio && isReady">
+      <VoiceMessagePlayer :src="blobUrl" :blob="blob" :loading="loading" :failed="failed" @load="load(true)" />
+      <VoiceTranscript v-if="downloadPath && /chats\/\d+\/messages\/\d+\/attachments\/\d+$/.test(downloadPath)" :path="downloadPath" :initial="typeof row.transcript === 'string' ? row.transcript : undefined" />
     </div>
     <div v-else-if="!isImage && isReady" class="message-attachment__doc">
       <button
@@ -273,6 +274,8 @@ onUnmounted(() => {
   display: block;
   max-width: min(180px, 100%);
 }
+
+.message-attachment-wrap--audio { width: 280px; max-width: 100%; }
 
 .message-attachment {
   display: block;

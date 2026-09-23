@@ -505,3 +505,28 @@ async def release_takeover(
         entity_id=takeover.id,
         payload=payload,
     )
+
+
+@router.post("/{chat_id}/messages/{message_id}/attachments/{attachment_index}/transcription")
+@router.get("/{chat_id}/messages/{message_id}/attachments/{attachment_index}/transcription")
+async def transcribe_message_attachment(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    chat_id: int,
+    message_id: int,
+    attachment_index: int,
+    actor: Annotated[
+        User,
+        Depends(
+            requires_permission(
+                Permission.CHATS_READ_OWN,
+                Permission.CHATS_READ_GROUP,
+                Permission.CHATS_READ_DEPARTMENT,
+                Permission.CHATS_READ_ALL,
+            ),
+        ),
+    ],
+    service: Annotated[ChatMessagesService, Depends(_messages_service)],
+) -> dict:
+    from app.modules.chats.transcription import attachment_transcription
+    return await attachment_transcription(request.method, service, db, actor, chat_id, message_id, attachment_index)

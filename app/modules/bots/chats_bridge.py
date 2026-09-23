@@ -56,6 +56,8 @@ def _message_list_preview(text_body: str | None, attachments: list[dict[str, Any
     if not attachments:
         return "Вложение"
     first = attachments[0]
+    if first.get("type") == "voice":
+        return "Голосовое сообщение"
     filename = first.get("filename") or first.get("name")
     if filename:
         return str(filename)[:200]

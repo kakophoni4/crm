@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    speech_service_url: str = "http://speech:8090"
     ai_service_base_url: str = "http://10.77.77.1:8088"
     ai_service_reply_key: SecretStr = SecretStr("")
     ai_service_admin_key: SecretStr = SecretStr("")

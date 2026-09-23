@@ -466,6 +466,15 @@ class ChatMessagesService:
     ) -> tuple[bytes, str, str | None]:
         from app.shared.storage import get_file_storage
 
+        att = await self.get_attachment_info(actor, chat_id, message_id, attachment_index)
+        storage_key = att["storage_key"]
+        data, content_type = await get_file_storage().get_bytes(str(storage_key))
+        filename = att.get("filename") or att.get("name")
+        if filename is not None:
+            filename = str(filename)
+        return data, content_type, filename
+
+    async def get_attachment_info(self, actor: User, chat_id: int, message_id: int, attachment_index: int) -> dict:
         ctx = await self._scope_loader.load(actor)
         chat = await self._repo.get_by_id(chat_id)
         if chat is None or not await can_view_chat_async(self._session, ctx, chat):
@@ -487,8 +496,4 @@ class ChatMessagesService:
         if not storage_key:
             raise NotFound(message="Attachment not available")
 
-        data, content_type = await get_file_storage().get_bytes(str(storage_key))
-        filename = att.get("filename") or att.get("name")
-        if filename is not None:
-            filename = str(filename)
-        return data, content_type, filename
+        return att

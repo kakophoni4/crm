@@ -185,13 +185,13 @@ function canRecordPayment(order: OptOrder): boolean {
 }
 
 function commissionBase(order: OptOrder): number {
-  if (order.commission_base != null) return order.commission_base
+  if (order.commission_base != null) return Number(order.commission_base)
   const adjustment = order.commission_adjustment ?? 0
   return order.commission_due - adjustment
 }
 
 function commissionAdjustment(order: OptOrder): number {
-  return order.commission_adjustment ?? 0
+  return Number(order.commission_adjustment ?? 0)
 }
 
 const commissionPreviewDue = computed(() => {
@@ -944,7 +944,10 @@ onUnmounted(() => {
             :aria-selected="selectedOrderId === order.id"
             @click="selectedOrderId = order.id"
           >
-            <span class="opt-orders__tab-no">{{ orderLabel(order) }}</span>
+            <span class="opt-orders__tab-label">
+              <span class="opt-orders__tab-no">{{ orderLabel(order) }}</span>
+              <span v-if="isPage" class="opt-orders__tab-buyer">{{ order.buyer.name || order.buyer.inn || 'Покупатель не указан' }}</span>
+            </span>
             <NTag
               size="tiny"
               :bordered="false"
@@ -1693,17 +1696,18 @@ onUnmounted(() => {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
-  align-items: stretch;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: start;
   gap: 12px;
 }
 
-.opt-orders--page .opt-orders__picker {
+.opt-orders--page.opt-orders--wide .opt-orders__picker {
   display: flex;
   flex-direction: column;
   flex-wrap: nowrap;
   align-content: stretch;
-  max-height: none;
-  height: 100%;
+  max-height: 70vh;
+  height: auto;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 4px;
@@ -1723,6 +1727,8 @@ onUnmounted(() => {
 
 .opt-orders--page .opt-orders__detail {
   min-height: 0;
+  max-height: 100%;
+  box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1747,15 +1753,18 @@ onUnmounted(() => {
 @media (max-width: 900px) {
   .opt-orders--page .opt-orders__workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(96px, 30vh) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    overflow-y: auto;
   }
 
-  .opt-orders--page .opt-orders__picker {
+  .opt-orders--page.opt-orders--wide .opt-orders__picker {
     flex-direction: row;
     flex-wrap: wrap;
     height: auto;
     max-height: 30vh;
   }
+
+  .opt-orders--page .opt-orders__detail { max-height: none; overflow-y: visible; }
 
   .opt-orders--page .opt-orders__tab {
     width: auto;
@@ -1852,7 +1861,9 @@ onUnmounted(() => {
   flex: 0 0 auto;
   min-width: 0;
   min-height: 28px;
-  padding: 3px 8px;
+  padding: 6px 8px;
+  color: var(--app-text);
+  font-family: inherit;
   border: 1px solid var(--app-border);
   border-radius: 999px;
   background: var(--app-surface, transparent);
@@ -1867,6 +1878,11 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--app-accent) 8%, transparent);
 }
 
+.opt-orders__tab-label { min-width: 0; flex: 1; }
+.opt-orders__tab-buyer { display: block; color: var(--app-text-muted); font-size: 0.72rem; overflow-wrap: anywhere; margin-top: 3px; }
+.opt-orders__tab:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.opt-orders__tab:hover { border-color: var(--app-accent); }
+.opt-orders__adjustment { display: block; width: 100%; color: var(--app-text-muted); font-size: 0.75rem; }
 .opt-orders__tab-no {
   font-weight: 600;
   flex: 1 1 auto;
@@ -1927,20 +1943,20 @@ onUnmounted(() => {
   align-items: start;
 }
 
-.opt-orders__facts div {
+.opt-orders__facts > div {
   min-width: 0;
   display: grid;
   grid-template-columns: 1fr;
   gap: 2px;
 }
 
-.opt-orders__facts dt {
+.opt-orders__facts > div > dt {
   margin: 0;
   color: var(--app-text-muted);
   font-size: 0.72rem;
 }
 
-.opt-orders__facts dd {
+.opt-orders__facts > div > dd {
   margin: 2px 0 0;
   min-height: 28px;
   display: flex;

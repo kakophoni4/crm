@@ -98,12 +98,15 @@ describe('MessageAttachment preview', () => {
   })
   it('plays a voice attachment using the authenticated blob', async () => {
     fetchAttachmentBlob.mockResolvedValue({ url: 'blob:test-voice', mime: 'audio/ogg', blob: new Blob(['voice'], {type:'audio/ogg'}) })
-    const wrapper = mount(MessageAttachment, {props:{att:{type:'voice',status:'ready',download_path:'/api/v1/files/77',filename:'voice.ogg',mime:'audio/ogg'},eager:true}})
+    const wrapper = mount(MessageAttachment, {props:{att:{type:'document',status:'ready',download_path:'/api/v1/files/77',filename:'voice.oga',mime:'application/octet-stream'},eager:true}})
     await flushPromises()
     await wrapper.find('button').trigger('click')
     await flushPromises()
     expect(wrapper.find('audio').attributes('src')).toBe('blob:test-voice')
-    expect(wrapper.find('audio').attributes('controls')).toBeDefined()
+    expect(wrapper.find('.voice-play').exists()).toBe(true)
+    expect(wrapper.find('input[type=range]').attributes('aria-label')).toBe('Перемотка голосового')
+    await wrapper.find('.voice-meta button').trigger('click')
+    expect(wrapper.find('.voice-meta button').text()).toBe('1.5×')
     wrapper.unmount()
   })
 
