@@ -84,6 +84,7 @@ import { connectOwnershipRealtime } from '@/shared/realtime/ownership-ws'
 
 import AIChatControls from '@/widgets/chat/AIChatControls.vue'
 import MessageInput from '@/widgets/chat/MessageInput.vue'
+import BlockContactButton from '@/widgets/chat/BlockContactButton.vue'
 
 import MessageList from '@/widgets/chat/MessageList.vue'
 
@@ -803,6 +804,12 @@ onUnmounted(() => {
             </div>
 
             <NSpace v-if="!phoneChatsOnly" vertical :size="6" align="end">
+              <BlockContactButton
+                v-if="auth.user?.permissions?.includes('chats.write')"
+                :key="store.currentChat.id"
+                :chat-id="store.currentChat.id"
+                :contact-name="store.currentChat.contact_name"
+              />
               <NButton
                 v-if="canTransferCard"
                 size="small"

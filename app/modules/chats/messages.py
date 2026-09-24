@@ -231,6 +231,16 @@ class ChatMessagesService:
         if chat is None or not await can_view_chat_async(self._session, ctx, chat):
             raise NotFound(message="Chat not found")
 
+        if chat.bot_id:
+            bot = await BotRepository(self._session).get_by_id(chat.bot_id)
+            contact = await self._session.get(Contact, chat.contact_id)
+            if bot and bot.channel == BotChannel.TELEGRAM and contact and contact.telegram_user_id:
+                from app.modules.chats.blocking import latest_block
+                from app.modules.db.models.enums import BotOutboundStatus
+                blocked = await latest_block(self._session, contact.telegram_user_id)
+                if blocked and blocked.status == BotOutboundStatus.SENT:
+                    raise ValidationError(message="Пользователь заблокирован во всех Telegram-ботах")
+
         takeover = await self._repo.get_active_takeover(chat_id)
         if takeover is not None and takeover.senior_user_id != actor.id:
             raise PermissionDenied(message="Chat is under senior takeover")

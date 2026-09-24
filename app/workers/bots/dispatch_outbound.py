@@ -17,6 +17,23 @@ from app.workers.bots.queue import enqueue
 
 logger = structlog.get_logger(__name__)
 
+class BridgeCommandRejected(Exception):
+    pass
+
+
+def validate_bridge_result(command, payload, result):
+    if isinstance(result, dict) and result.get('error_code') == 'contact_blocked':
+        raise BridgeCommandRejected('contact_blocked')
+    if command == 'block_contact':
+        expected = payload.get('contact', {}).get('telegram_user_id')
+        if not isinstance(result, dict) or not (
+            result.get('status') == 'ok' and result.get('is_access') is False
+            and type(result.get('telegram_user_id')) is int
+            and result['telegram_user_id'] == expected
+        ):
+            raise BridgeCommandRejected('Block not confirmed by bridge')
+
+
 MAX_ATTEMPTS = 5
 BACKOFF_SECONDS = (30, 60, 120, 300, 600)
 
@@ -42,6 +59,18 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
             await session.commit()
             inc_bot_outbound("failed")
             return
+
+        if row.command == 'send_message' and bot.channel == 'telegram':
+            telegram_id = row.payload.get('contact', {}).get('telegram_user_id')
+            if telegram_id:
+                from app.modules.chats.blocking import latest_block
+                blocked = await latest_block(session, telegram_id)
+                if blocked and blocked.status == BotOutboundStatus.SENT:
+                    row.status = BotOutboundStatus.FAILED
+                    row.last_error = 'contact_blocked'
+                    await session.commit()
+                    inc_bot_outbound('failed')
+                    return
 
         from app.modules.ai.delivery import validate_outbox
 
@@ -78,6 +107,8 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                         "X-CRM-Signature": signature,
                     },
                 )
+            if row.command == 'block_contact' and 400 <= response.status_code < 500 and response.status_code != 429:
+                raise BridgeCommandRejected(f'Block rejected by bridge: HTTP {response.status_code}')
             if response.status_code >= 400:
                 raise httpx.HTTPStatusError(
                     "outbound failed",
@@ -85,6 +116,7 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                     response=response,
                 )
             response_payload = response.json()
+            validate_bridge_result(row.command, row.payload, response_payload)
             row.status = BotOutboundStatus.SENT
             if row.request_id.startswith("crm-chat-"):
                 from app.modules.db.models.ai import AIRequest
@@ -92,6 +124,19 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                 ai_request = await session.get(AIRequest, row.request_id)
                 if ai_request:
                     ai_request.status = "delivered"
+            if row.command == 'block_contact':
+                from sqlalchemy import select
+                from app.modules.db.models.contact import Contact
+                from app.modules.audit.service import AuditService
+                from app.modules.db.models.enums import AuditAction
+                contact_id = await session.scalar(select(Contact.id).where(
+                    Contact.telegram_user_id == row.payload['contact']['telegram_user_id']))
+                if contact_id is not None:
+                    await AuditService(session).write(
+                        actor_id=row.payload.get('operator', {}).get('id'),
+                        action=AuditAction.CONTACT_UPDATE, entity_type='contact', entity_id=contact_id,
+                        payload={'action': 'telegram.block.confirmed', 'outbound_log_id': row.id,
+                                 'reason': row.payload.get('reason', ''), 'global': True})
             row.response_payload = response_payload
             row.last_error = None
             await outbound_repo.save(row)
@@ -151,6 +196,7 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                 retry_row.last_error = error_text
                 if (
                     retry_row.request_id.startswith("crm-chat-")
+                    or isinstance(exc, BridgeCommandRejected)
                     or retry_row.attempts >= MAX_ATTEMPTS
                 ):
                     retry_row.status = BotOutboundStatus.FAILED

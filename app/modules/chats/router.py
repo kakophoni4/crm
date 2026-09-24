@@ -45,6 +45,8 @@ from app.modules.rbac.permissions import Permission
 from app.shared.db import get_db
 from app.shared.security.permissions import requires_permission
 
+from app.modules.chats.blocking import BlockContactRequest
+
 router = APIRouter(prefix="/api/v1/chats", tags=["chats"])
 
 
@@ -530,3 +532,24 @@ async def transcribe_message_attachment(
 ) -> dict:
     from app.modules.chats.transcription import attachment_transcription
     return await attachment_transcription(request.method, service, db, actor, chat_id, message_id, attachment_index)
+
+
+@router.get("/{chat_id}/telegram-block")
+async def telegram_block_status(
+    chat_id: int,
+    actor: Annotated[User, Depends(requires_permission(Permission.CHATS_WRITE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.modules.chats.blocking import block_status
+    return await block_status(db, actor, chat_id)
+
+
+@router.post("/{chat_id}/telegram-block", status_code=202)
+async def telegram_block_contact(
+    chat_id: int,
+    body: BlockContactRequest,
+    actor: Annotated[User, Depends(check_chat_message_rate_limit)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.modules.chats.blocking import request_block
+    return await request_block(db, actor, chat_id, body.reason)
