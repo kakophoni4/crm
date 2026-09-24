@@ -32,3 +32,7 @@ API отвечает сразу состоянием задачи, браузе�
 локальные тесты API используют подмену HTTP-сервиса.
 
 Основа распознавания: https://github.com/SYSTRAN/faster-whisper
+
+Обычное обновление VPS: `bash scripts/deploy/vps/update.sh`. Общий helper
+`compose.sh` всегда подключает speech overlay. Обновление собирает speech
+с кешем Docker и проверяет `/health` из API; при недоступности возвращает ошибку.

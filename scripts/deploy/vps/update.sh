@@ -8,8 +8,8 @@ source "$ROOT/scripts/deploy/vps/compose.sh"
 
 bash "$ROOT/scripts/deploy/vps/check-env.sh"
 
-echo "Building api, worker, frontend..."
-compose build api worker frontend
+echo "Building api, worker, frontend, speech..."
+compose build api worker frontend speech
 
 echo "Starting stack..."
 compose up -d
@@ -25,6 +25,28 @@ for i in $(seq 1 90); do
   fi
   sleep 1
 done
+
+echo "Checking speech from API..."
+compose exec -T api python - <<'PYTHON'
+import time
+import httpx
+from app.shared.settings import get_settings
+
+url = get_settings().speech_service_url.rstrip('/') + '/health'
+with httpx.Client(timeout=3, trust_env=False) as client:
+    for attempt in range(30):
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            if response.json().get('ok') is True:
+                print('Speech reachable from API.')
+                break
+        except (httpx.HTTPError, ValueError):
+            pass
+        time.sleep(2)
+    else:
+        raise SystemExit('ERROR: API cannot reach speech. Check Compose networks and speech logs.')
+PYTHON
 
 echo ""
 compose ps

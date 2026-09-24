@@ -15,6 +15,7 @@ COMPOSE=(
   docker compose
   -f docker/docker-compose.staging.yaml
   -f deploy/server/docker-compose.vps.yaml
+  -f docker/docker-compose.speech.yaml
   --env-file "$ENV_FILE"
 )
 
