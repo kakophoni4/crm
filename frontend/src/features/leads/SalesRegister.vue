@@ -45,6 +45,7 @@ watch(selected,v=>{try{localStorage.setItem('sales-register-columns-v2',JSON.str
 const visible=computed(()=>columns.filter(c=>selected.value.includes(c.key)))
 function preset(value:string) {mode.value=value; selected.value=[...presets[value]]}
 function toggle(key:string,checked:boolean) {mode.value='custom';selected.value=checked?[...selected.value,key]:selected.value.filter(k=>k!==key)}
+const compact=ref(true), wrapCells=ref(false)
 const query=ref(''), expanded=ref<number|null>(null), sort=ref(''), descending=ref(false)
 watch(()=>props.serverQuery,v=>{if(v){sort.value=v.sort || '';descending.value=v.descending}}, {immediate:true,deep:true})
 const sortable=(key:string)=>!props.serverQuery || registerFields.some(f=>f.value===key)
@@ -61,7 +62,7 @@ function sortBy(key:string) {if(!sortable(key))return;descending.value=sort.valu
 function total(c:Column) {if(!c.total)return '';const values=rows.value.map(c.total);return values.some(v=>v==null)?'Не определено':money(values.reduce<number>((n,v)=>n+Number(v),0))}
 </script>
 <template>
- <section class="sales-register">
+ <section class="sales-register" :class="{'register-compact':compact,'register-wrap':wrapCells}">
   <div class="register-toolbar">
    <NRadioGroup :value="mode" size="small" aria-label="Колонки таблицы" @update:value="preset">
     <NRadioButton value="sales">Продажи</NRadioButton><NRadioButton value="money">Расчёты</NRadioButton><NRadioButton value="beneficiary">Бенефициар</NRadioButton>
@@ -69,6 +70,8 @@ function total(c:Column) {if(!c.total)return '';const values=rows.value.map(c.to
    <NPopover trigger="click" placement="bottom-end"><template #trigger><NButton size="small">Колонки · {{ visible.length }}</NButton></template>
     <div class="column-picker"><NCheckbox v-for="c in columns" :key="c.key" :checked="selected.includes(c.key)" :disabled="selected.length===1 && selected.includes(c.key)" @update:checked="v=>toggle(c.key,v)">{{ c.label }}</NCheckbox></div>
    </NPopover>
+   <NButton size="small" :aria-pressed="compact" @click="compact=!compact">{{ compact?'Компактно':'Свободно' }}</NButton>
+   <NButton size="small" :aria-pressed="wrapCells" @click="wrapCells=!wrapCells">Перенос строк</NButton>
    <NInput v-model:value="query" clearable size="small" placeholder="Найти на этой странице" aria-label="Найти на этой странице" class="register-search" />
   </div>
   <NPopover trigger="hover"><template #trigger><span class="register-help" tabindex="0">ⓘ Область поиска и итогов</span></template>{{ serverQuery ? "Фильтры колонок и сортировка — по всем доступным заявкам. Быстрый поиск и нижний итог — по текущей странице." : "Поиск, сортировка и нижний итог — по текущей странице." }} Отрицательный долг — переплата.</NPopover>
@@ -114,5 +117,14 @@ tbody tr:hover,.row-selected{background:color-mix(in srgb,var(--app-accent) 8%,t
 tfoot{background:var(--app-surface);font-weight:600}.detail-row td{padding:16px;background:var(--app-surface)}
 .cell-details summary{cursor:pointer;list-style:none}.cell-details summary small{color:var(--app-accent)}
 .cell-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:18px;cursor:help}.register-help{font-size:11px;color:var(--app-text-muted);align-self:flex-end;margin-top:-4px}.numeric{white-space:normal;word-break:normal}.table-wide{min-width:1800px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+tbody td:first-child,thead th:first-child,tfoot th:first-child{position:sticky;left:0;background:var(--app-surface);z-index:1;box-shadow:1px 0 0 var(--app-border)}
+thead th:first-child{z-index:4}
+tfoot th,tfoot td{position:sticky;bottom:0;z-index:2;background:var(--app-surface);box-shadow:0 -1px 0 var(--app-border)}
+tfoot th:first-child{z-index:3}
+.register-compact td{padding:4px 8px}
+.register-compact .cell-text{-webkit-line-clamp:1}
+.register-wrap .cell-text{display:block;-webkit-line-clamp:unset;white-space:pre-line;overflow-wrap:anywhere}
+th button:focus-visible,.order-link:focus-visible,.cell-text:focus-visible{outline:2px solid var(--app-accent);outline-offset:2px}
+th button:disabled{cursor:default}
 @media(max-width:1050px){table{min-width:1050px}.register-search{margin-left:0}}
 </style>

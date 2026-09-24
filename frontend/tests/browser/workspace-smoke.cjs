@@ -13,6 +13,7 @@ async function main() {
     let role = 'user'
     let saved = null
     let registerParams = null
+    let tableRows = 1
     const order = {
       id: 1, order_id: 1, lead_id: 829, order_no: 1, manager_name: 'Менеджер', client_name: 'Тестовый клиент',
       client_inn: '3662221359', client_shop_name: 'ООО «Клиент»', period_code: '2025-Q4',
@@ -32,7 +33,7 @@ async function main() {
       let data = { items: [], total: 0, unread: 0, blink: false }
       if (p.endsWith('/auth/me')) data = { id: 10, role, full_name: 'Тестовый пользователь', permissions: role === 'user' ? ['contacts.read', 'contacts.update', 'tasks.read'] : ['accounting.read', 'tasks.read'], group_id: 1, department_id: 1, group_ids: [1] }
       else if (p.endsWith('/sales-seasons')) data = [{id:1,name:'2-й квартал 2026',is_current:true,is_planned:false,starts_at:'1970-01-01T00:00:00Z'}]
-      else if (p.endsWith('/opt-payment-register')) { registerParams = url.searchParams; data = { items: [order], total: 1, total_volume_sum: order.volume, commission_due_sum: order.due_amount, amount_paid_sum: order.paid_amount } }
+      else if (p.endsWith('/opt-payment-register')) { registerParams = url.searchParams; data = { items: Array.from({length:tableRows},(_,i)=>({...order,id:i+1,order_id:i+1,order_no:i+1})), total: tableRows, total_volume_sum: order.volume, commission_due_sum: order.due_amount, amount_paid_sum: order.paid_amount } }
       else if (p.includes('/settlements/')) { saved = request.postDataJSON(); data = { ok: true } }
       else if (p.endsWith('/lawyer-registry')) data = { items: [{ id: 1, full_name: 'Директор', shops: [{ id: 1, inn: '1111111111', name: 'Назначенная лавка', director_name: 'Директор', kind: 'priority', company_status: 'Действует' }], shop_count: 1 }], orphan_shops: [], pinned_shops: [], total_directors: 1, total_shops: 1, unread_alerts: 0 }
       else if (p.endsWith('/idle-banner')) data = { enabled: false }
@@ -59,6 +60,17 @@ async function main() {
       await page.locator('.sales-register').getByText('Продажи', {exact:true}).click()
       await page.waitForTimeout(350)
       await page.screenshot({path:path.join(os.tmpdir(), `crm-compact-sales-${theme}.png`)})
+      await page.getByRole('button',{name:'На весь экран',exact:true}).click()
+      const fullscreen = page.locator('.applications-page--fullscreen')
+      await fullscreen.waitFor()
+      const fullBox=await fullscreen.boundingBox()
+      assert.equal(fullBox.x,0);assert.equal(fullBox.y,0)
+      assert.equal(fullBox.width,1366);assert.equal(fullBox.height,768)
+      assert.equal(registerParams.get('column_filters'),'{}')
+      await page.screenshot({path:path.join(os.tmpdir(),`crm-fullscreen-${theme}.png`)})
+      await page.getByRole('button',{name:'Перенос строк',exact:true}).click()
+      assert.ok(await page.locator('.sales-register').evaluate(n=>n.classList.contains('register-wrap')))
+      await page.getByRole('button',{name:'Перенос строк',exact:true}).click()
       await page.getByRole('button', {name:'Детали заявки 1, сделка 829',exact:true}).click()
       await page.locator('.n-drawer').waitFor()
       await page.waitForTimeout(400)
@@ -66,6 +78,12 @@ async function main() {
       await page.screenshot({path:path.join(os.tmpdir(), `crm-compact-detail-${theme}.png`)})
       await page.keyboard.press('Escape')
       await page.locator('.n-drawer').waitFor({state:'hidden'})
+      assert.equal(await page.locator('.applications-page--fullscreen').count(),1)
+      await page.keyboard.press('Escape')
+      await page.waitForFunction(()=>!document.querySelector('.applications-page--fullscreen'))
+      await page.getByRole('button',{name:'На весь экран',exact:true}).click()
+      await page.getByRole('button',{name:'Свернуть таблицу',exact:true}).click()
+      assert.equal(await page.locator('.applications-page--fullscreen').count(),0)
       await page.locator('.sales-register').getByText('Бенефициар', {exact:true}).click()
       await page.locator('.sales-register tbody').getByText('Не определена', {exact:true}).first().waitFor()
       await page.locator('.sales-register').getByRole('textbox').fill('нет такой заявки')
@@ -89,6 +107,22 @@ async function main() {
       await Promise.all([page.waitForResponse(r=>r.url().includes('column_filters') && r.url().includes(encodeURIComponent('Менеджер'))),page.getByRole('button',{name:'Применить',exact:true}).click()])
       assert.deepEqual(JSON.parse(registerParams.get('column_filters')),{manager:'Менеджер'})
     }
+    tableRows=40
+    await page.goto(`${origin}/applications`)
+    await page.getByRole('button',{name:'На весь экран',exact:true}).click()
+    await page.locator('.sales-register tbody tr').nth(39).waitFor()
+    const grid=page.locator('.register-grid')
+    await grid.evaluate(n=>{n.scrollTop=500})
+    const gridBox=await grid.boundingBox(), headBox=await grid.locator('thead th').first().boundingBox()
+    assert.ok(Math.abs(headBox.y-gridBox.y)<3)
+    await page.setViewportSize({width:800,height:600})
+    await grid.evaluate(n=>{n.scrollLeft=250})
+    const narrowGrid=await grid.boundingBox(), pinned=await grid.locator('thead th').first().boundingBox()
+    assert.ok(Math.abs(narrowGrid.x-pinned.x)<3)
+    assert.ok(narrowGrid.height>80)
+    await page.getByRole('button',{name:'Свернуть таблицу',exact:true}).click()
+    await page.setViewportSize({width:1366,height:768})
+    tableRows=1
     role='user'
     await page.goto(`${origin}/applications?tab=payments`)
     await page.getByRole('button', { name: 'Детали', exact: true }).click()

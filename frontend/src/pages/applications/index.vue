@@ -14,9 +14,9 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { ClipboardList, MessageSquare } from 'lucide-vue-next'
+import { ClipboardList, MessageSquare, Maximize2, Minimize2 } from 'lucide-vue-next'
 import { watchDebounced } from '@vueuse/core'
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listGroups, type Group } from '@/features/admin/api'
@@ -67,6 +67,22 @@ watch(seasonId, () => { page.value = 1; void load() })
 function openSalesRow(row: OptPaymentRegisterItem) {
   void router.push({name:'application-detail',params:{leadId:String(row.lead_id),orderId:String(row.order_id)}})
 }
+const tableFullscreen = ref(false)
+let fullscreenTrigger: HTMLElement | null = null
+function toggleTableFullscreen() {
+  if (!tableFullscreen.value) fullscreenTrigger = document.activeElement as HTMLElement
+  tableFullscreen.value = !tableFullscreen.value
+  if (!tableFullscreen.value) fullscreenTrigger?.focus()
+}
+function exitTableOnEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !tableFullscreen.value) return
+  // Let dialogs, drawers and dropdowns handle their own Escape first.
+  if (document.querySelector('.n-modal, .n-drawer, .n-base-select-menu, .n-popover')) return
+  tableFullscreen.value = false
+  fullscreenTrigger?.focus()
+}
+onMounted(() => document.addEventListener('keydown', exitTableOnEscape))
+onBeforeUnmount(() => document.removeEventListener('keydown', exitTableOnEscape))
 const loading = ref(false)
 const items = ref<OptOrderRegistryItem[]>([])
 const paymentItems = ref<OptPaymentLedgerItem[]>([])
@@ -675,7 +691,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="applications-page">
+ <Teleport to="body" :disabled="!tableFullscreen">
+  <div class="applications-page" :class="{'applications-page--fullscreen':tableFullscreen}">
     <header class="applications-page__header">
       <div>
         <h1 class="applications-page__title">
@@ -685,6 +702,10 @@ onMounted(() => {
 
       </div>
       <div class="applications-page__header-actions">
+        <NButton size="small" :aria-pressed="tableFullscreen" @click="toggleTableFullscreen">
+          <template #icon><Minimize2 v-if="tableFullscreen" :size="16" /><Maximize2 v-else :size="16" /></template>
+          {{ tableFullscreen ? 'Свернуть таблицу' : 'На весь экран' }}
+        </NButton>
         <NButton size="small" secondary type="error" @click="openBlacklist">Чёрный список</NButton>
         <NButton
           v-if="canSync1c && activeTab === 'orders'"
@@ -1071,9 +1092,23 @@ onMounted(() => {
       </template>
     </NModal>
   </div>
+ </Teleport>
 </template>
 
 <style scoped>
+.applications-page--fullscreen {
+  position:fixed;inset:0;z-index:1000;height:100dvh!important;
+  background:var(--app-bg);color:var(--app-text);padding:12px 18px!important;
+}
+.applications-page--fullscreen .applications-page__title {font-size:17px}
+.applications-page--fullscreen .applications-page__filters {padding:6px 8px}
+.applications-page--fullscreen .applications-page__header {gap:8px}
+.applications-page--fullscreen :deep(.register-grid) {border-radius:4px}
+@media(max-height:600px){
+ .applications-page--fullscreen {gap:4px;padding:6px!important}
+ .applications-page--fullscreen .applications-page__totals {display:none}
+}
+
 .applications-page {
   display: flex;
   flex-direction: column;
