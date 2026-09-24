@@ -22,6 +22,9 @@ export async function listOptOrders(
 }
 
 export async function listOptPaymentRegister(params?: {
+  column_filters?: string
+  sort_by?: string
+  sort_desc?: boolean
   payment_status?: 'paid' | 'unpaid' | 'partial'
   group_id?: number
   period_code?: string

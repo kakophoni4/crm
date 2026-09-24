@@ -2,9 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import { NButton, NRadioGroup, NRadioButton, NEmpty, NPopover, NCheckbox, NInput, NDrawer, NDrawerContent } from 'naive-ui'
 import type { OptPaymentRegisterItem as Order } from './opt-types'
+import { registerFields, type RegisterQuery } from './register-query'
 import PaymentRegisterDetail from './PaymentRegisterDetail.vue'
-const props = defineProps<{ items: Order[] }>()
-const emit = defineEmits<{ open: [Order]; saved: [] }>()
+const props = defineProps<{ items: Order[]; serverQuery?: RegisterQuery }>()
+const emit = defineEmits<{ open: [Order]; saved: []; sort: [string, boolean] }>()
 const fmt = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 })
 const money = (n: number) => fmt.format(n)
 const unique = (values: (string | null | undefined)[]) => [...new Set(values.filter(Boolean))].join('\n') || '—'
@@ -45,6 +46,8 @@ const visible=computed(()=>columns.filter(c=>selected.value.includes(c.key)))
 function preset(value:string) {mode.value=value; selected.value=[...presets[value]]}
 function toggle(key:string,checked:boolean) {mode.value='custom';selected.value=checked?[...selected.value,key]:selected.value.filter(k=>k!==key)}
 const query=ref(''), expanded=ref<number|null>(null), sort=ref(''), descending=ref(false)
+watch(()=>props.serverQuery,v=>{if(v){sort.value=v.sort || '';descending.value=v.descending}}, {immediate:true,deep:true})
+const sortable=(key:string)=>!props.serverQuery || registerFields.some(f=>f.value===key)
 const detailOrder=computed(()=>props.items.find(o=>o.id===expanded.value) ?? null)
 const shortName=(value:string)=>value.replace(/общество с ограниченной ответственностью/gi,'ООО').replace(/индивидуальный предприниматель/gi,'ИП')
 const width=(c:Column)=>['buyer','supplier','comment'].includes(c.key)?'18%':['period','rate','category','benRate'].includes(c.key)?'6%':undefined
@@ -52,9 +55,9 @@ const rows=computed(()=>{
  const q=query.value.trim().toLocaleLowerCase('ru')
  const data=props.items.filter(o=>!q || [o.order_no,o.lead_id,...columns.map(c=>c.value(o))].join(' ').toLocaleLowerCase('ru').includes(q))
  const c=columns.find(c=>c.key===sort.value)
- return c ? data.slice().sort((a,b)=>{const av=c.total?.(a),bv=c.total?.(b);return (av!=null&&bv!=null?av-bv:c.value(a).localeCompare(c.value(b),'ru',{numeric:true}))*(descending.value?-1:1)}) : data
+ return c && !props.serverQuery ? data.slice().sort((a,b)=>{const av=c.total?.(a),bv=c.total?.(b);return (av!=null&&bv!=null?av-bv:c.value(a).localeCompare(c.value(b),'ru',{numeric:true}))*(descending.value?-1:1)}) : data
 })
-function sortBy(key:string) {descending.value=sort.value===key?!descending.value:false;sort.value=key}
+function sortBy(key:string) {if(!sortable(key))return;descending.value=sort.value===key?!descending.value:false;sort.value=key;if(props.serverQuery)emit('sort',key,descending.value)}
 function total(c:Column) {if(!c.total)return '';const values=rows.value.map(c.total);return values.some(v=>v==null)?'Не определено':money(values.reduce<number>((n,v)=>n+Number(v),0))}
 </script>
 <template>
@@ -68,13 +71,13 @@ function total(c:Column) {if(!c.total)return '';const values=rows.value.map(c.to
    </NPopover>
    <NInput v-model:value="query" clearable size="small" placeholder="Найти на этой странице" aria-label="Найти на этой странице" class="register-search" />
   </div>
-  <NPopover trigger="hover"><template #trigger><span class="register-help" tabindex="0">ⓘ По текущей странице</span></template>Поиск, сортировка и нижний итог относятся к текущей странице. Отрицательный долг — переплата.</NPopover>
+  <NPopover trigger="hover"><template #trigger><span class="register-help" tabindex="0">ⓘ Область поиска и итогов</span></template>{{ serverQuery ? "Фильтры колонок и сортировка — по всем доступным заявкам. Быстрый поиск и нижний итог — по текущей странице." : "Поиск, сортировка и нижний итог — по текущей странице." }} Отрицательный долг — переплата.</NPopover>
   <NEmpty v-if="!rows.length" description="Заявок не найдено" />
   <div v-else class="register-grid" tabindex="0" aria-label="Таблица продаж">
    <table :class="{'table-wide':visible.length>11}">
     <colgroup><col style="width:74px"><col v-for="c in visible" :key="c.key" :style="{width:width(c)}"><col style="width:65px"></colgroup>
     <caption class="sr-only">Реестр продаж. Все суммы в рублях.</caption>
-    <thead><tr><th class="order-col">№ заявки</th><th v-for="c in visible" :key="c.key" :class="{numeric:c.numeric}" :aria-sort="sort===c.key?(descending?'descending':'ascending'):'none'"><button @click="sortBy(c.key)">{{ c.label }}<span v-if="sort===c.key"> {{ descending?'↓':'↑' }}</span></button></th><th class="actions-col">Детали</th></tr></thead>
+    <thead><tr><th class="order-col">№ заявки</th><th v-for="c in visible" :key="c.key" :class="{numeric:c.numeric}" :aria-sort="sort===c.key?(descending?'descending':'ascending'):'none'"><button :disabled="!sortable(c.key)" @click="sortBy(c.key)">{{ c.label }}<span v-if="sort===c.key"> {{ descending?'↓':'↑' }}</span></button></th><th class="actions-col">Детали</th></tr></thead>
     <tbody><template v-for="o in rows" :key="o.id">
      <tr :class="{'row-selected':expanded===o.id}"><td class="order-col"><button class="order-link" @click="emit('open',o)">№{{ o.order_no }}</button><small>Сделка {{ o.lead_id }}</small></td>
       <td v-for="c in visible" :key="c.key" :class="{numeric:c.numeric, debt:c.key==='debt' && Number(o.due_amount)>Number(o.paid_amount)}"><NPopover v-if="!c.numeric" trigger="hover" style="max-width:420px;white-space:pre-line;overflow-wrap:anywhere"><template #trigger><span class="cell-text" tabindex="0">{{ shortName(c.value(o)) }}</span></template>{{ c.value(o) }}</NPopover><span v-else>{{ c.value(o) }}</span></td>

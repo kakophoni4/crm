@@ -46,6 +46,8 @@ import { AppError, http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import SeasonPicker from '@/features/leads/SeasonPicker.vue'
 import SalesRegister from '@/features/leads/SalesRegister.vue'
+import RegisterFilters from '@/features/leads/RegisterFilters.vue'
+import type { RegisterQuery } from '@/features/leads/register-query'
 import PaymentRegisterDetail from '@/features/leads/PaymentRegisterDetail.vue'
 import OptPaymentDocuments from '@/widgets/chat/OptPaymentDocuments.vue'
 
@@ -94,6 +96,8 @@ const totalsScopeHint = computed(() => {
   if (auth.isGroupSenior) return 'по вашим группам'
   return 'по вашим заявкам'
 })
+const registerQuery = ref<RegisterQuery>({filters:{},sort:null,descending:true})
+function updateRegisterQuery(value:RegisterQuery) {registerQuery.value=value;page.value=1;void load()}
 const page = ref(1)
 const pageSize = 30
 const paymentStatusFilter = ref<string | null>(null)
@@ -121,7 +125,7 @@ const blacklistSaving = ref(false)
 const canFilterGroup = computed(
   () => auth.isAdmin || auth.isSenior || auth.isGroupSenior,
 )
-const canFilterManager = computed(() => auth.isAdmin || auth.isSenior)
+const canFilterManager = computed(() => auth.isAdmin || auth.isSenior || auth.isGroupSenior)
 const canSync1c = computed(() => auth.isAdmin)
 
 const paymentDetailOpen = ref(false)
@@ -521,6 +525,9 @@ async function load(): Promise<void> {
     if (activeTab.value === 'payments' || (tableView.value && activeTab.value === 'orders')) {
       const data = await listOptPaymentRegister({
         ...common,
+        column_filters: JSON.stringify(registerQuery.value.filters),
+        sort_by: registerQuery.value.sort || undefined,
+        sort_desc: registerQuery.value.descending,
         payment_status: paymentStatusFilter.value === 'paid' || paymentStatusFilter.value === 'unpaid' || paymentStatusFilter.value === 'partial' ? paymentStatusFilter.value : undefined,
       })
       if (request !== loadRequest) return
@@ -778,7 +785,8 @@ onMounted(() => {
     </div>
 
     <NSpin class="applications-page__spin" :show="loading && items.length === 0 && paymentItems.length === 0 && paymentRegisterItems.length === 0">
-      <SalesRegister v-if="tableView && activeTab === 'orders'" :items="paymentRegisterItems" @open="openSalesRow" @saved="load" />
+      <RegisterFilters v-if="(tableView && activeTab === 'orders') || activeTab === 'payments'" :model-value="registerQuery" :allow-manager="canFilterManager" @update:model-value="updateRegisterQuery" />
+      <SalesRegister v-if="tableView && activeTab === 'orders'" :server-query="registerQuery" @sort="(key,descending)=>updateRegisterQuery({...registerQuery,sort:key,descending})" :items="paymentRegisterItems" @open="openSalesRow" @saved="load" />
       <template v-else-if="isOrdersLikeTab">
         <NEmpty
           v-if="!items.length && !loading"

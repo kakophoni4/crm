@@ -916,6 +916,7 @@ class OptOrderService:
         self, actor: User, *, group_id: int | None, period_code: str | None,
         manager_user_id: int | None, q: str | None, offset: int, limit: int,
         payment_status: str | None = None, season_id: int | None = None,
+        column_filters: str | None = None, sort_by: str | None = None, sort_desc: bool = True,
     ) -> OptPaymentRegisterListResponse:
         """Payment register: one row per application, with invoice lines as details."""
         from sqlalchemy import func, or_, select
@@ -964,13 +965,15 @@ class OptOrderService:
             .join(Lead, Lead.id == LeadOptOrder.lead_id)
             .outerjoin(Contact, Contact.id == Lead.contact_id)
             .outerjoin(*manager_join).where(*filters))
+        from app.modules.leads.opt.register_query import apply_register_query
+        orders_query, ordering = apply_register_query(orders_query, column_filters, sort_by, sort_desc)
         stats = (await self._session.execute(orders_query.with_only_columns(
             func.count(), func.coalesce(func.sum(LeadOptOrder.total_volume), 0),
             func.coalesce(func.sum(LeadOptOrder.commission_due), 0),
             func.coalesce(func.sum(LeadOptOrder.amount_paid), 0), maintain_column_froms=True,
         ))).one()
         selected_ids = (await self._session.execute(orders_query.order_by(
-            LeadOptOrder.period_code.desc(), LeadOptOrder.id.desc(),
+            ordering, LeadOptOrder.id.desc(),
         ).offset(offset).limit(limit))).scalars().all()
         base = (select(LeadOptOrderLine, LeadOptOrder, Lead, Contact, ContactGroupAssignment,
                        OptUnit, User)
@@ -988,7 +991,7 @@ class OptOrderService:
         by_order: dict[int, list[tuple[Any, ...]]] = {}
         for row in rows:
             by_order.setdefault(row[1].id, []).append(row)
-        page_orders = list(by_order.values())
+        page_orders = [by_order[oid] for oid in selected_ids if oid in by_order]
         items: list[OptPaymentRegisterItem] = []
         for order_rows in page_orders:
             _line, order, _lead, contact, _assignment, _unit, manager = order_rows[0]

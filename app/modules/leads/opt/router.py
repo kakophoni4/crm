@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile, Query
 from fastapi.responses import Response
 from pydantic import BeforeValidator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -198,6 +198,9 @@ async def list_opt_payment_register(
     q: str | None = None,
     offset: int = 0,
     limit: int = 50,
+    column_filters: str | None = Query(default=None, max_length=6000),
+    sort_by: str | None = None,
+    sort_desc: bool = True,
     payment_status: Literal['paid', 'unpaid', 'partial'] | None = None,
 ) -> OptPaymentRegisterListResponse:
     return await service.list_payment_register(
@@ -205,7 +208,7 @@ async def list_opt_payment_register(
         manager_user_id=manager_user_id, q=(q or "").strip() or None,
         offset=max(0, offset), limit=min(max(1, limit), 100),
         payment_status=payment_status,
-        season_id=season_id,
+        season_id=season_id, column_filters=column_filters, sort_by=sort_by, sort_desc=sort_desc,
     )
 
 

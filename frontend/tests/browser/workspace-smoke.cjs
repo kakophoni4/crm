@@ -12,6 +12,7 @@ async function main() {
     page.on('pageerror', (error) => errors.push(error.message))
     let role = 'user'
     let saved = null
+    let registerParams = null
     const order = {
       id: 1, order_id: 1, lead_id: 829, order_no: 1, manager_name: 'Менеджер', client_name: 'Тестовый клиент',
       client_inn: '3662221359', client_shop_name: 'ООО «Клиент»', period_code: '2025-Q4',
@@ -31,7 +32,7 @@ async function main() {
       let data = { items: [], total: 0, unread: 0, blink: false }
       if (p.endsWith('/auth/me')) data = { id: 10, role, full_name: 'Тестовый пользователь', permissions: role === 'user' ? ['contacts.read', 'contacts.update', 'tasks.read'] : ['accounting.read', 'tasks.read'], group_id: 1, department_id: 1, group_ids: [1] }
       else if (p.endsWith('/sales-seasons')) data = [{id:1,name:'2-й квартал 2026',is_current:true,is_planned:false,starts_at:'1970-01-01T00:00:00Z'}]
-      else if (p.endsWith('/opt-payment-register')) data = { items: [order], total: 1, total_volume_sum: order.volume, commission_due_sum: order.due_amount, amount_paid_sum: order.paid_amount }
+      else if (p.endsWith('/opt-payment-register')) { registerParams = url.searchParams; data = { items: [order], total: 1, total_volume_sum: order.volume, commission_due_sum: order.due_amount, amount_paid_sum: order.paid_amount } }
       else if (p.includes('/settlements/')) { saved = request.postDataJSON(); data = { ok: true } }
       else if (p.endsWith('/lawyer-registry')) data = { items: [{ id: 1, full_name: 'Директор', shops: [{ id: 1, inn: '1111111111', name: 'Назначенная лавка', director_name: 'Директор', kind: 'priority', company_status: 'Действует' }], shop_count: 1 }], orphan_shops: [], pinned_shops: [], total_directors: 1, total_shops: 1, unread_alerts: 0 }
       else if (p.endsWith('/idle-banner')) data = { enabled: false }
@@ -43,6 +44,18 @@ async function main() {
       await page.goto(`${origin}/applications`)
       await page.locator('.sales-register tbody tr').first().waitFor()
       assert.ok(await page.locator('.sales-register').evaluate(node => node.scrollWidth <= node.clientWidth + 1))
+      await page.getByRole('button', {name:'Фильтры колонок · 0',exact:true}).click()
+      assert.equal(await page.locator('.register-filters__picker').getByText('Менеджер',{exact:true}).count(),0)
+      await page.locator('.register-filters__picker').getByText('Клиент',{exact:true}).click()
+      await page.locator('.register-filters__hint').click()
+      await page.getByRole('textbox',{name:'Клиент содержит',exact:true}).fill('Тестовый')
+      await Promise.all([page.waitForResponse(r=>r.url().includes('column_filters') && r.url().includes(encodeURIComponent('Тестовый'))), page.getByRole('button',{name:'Применить',exact:true}).click()])
+      assert.deepEqual(JSON.parse(registerParams.get('column_filters')), {client:'Тестовый'})
+      await page.getByRole('button', {name:'Фильтры колонок · 1',exact:true}).click()
+      await page.locator('.register-filters__picker').getByText('Клиент',{exact:true}).click()
+      await page.locator('.register-filters__hint').click()
+      await page.waitForTimeout(300)
+      assert.deepEqual(JSON.parse(registerParams.get('column_filters')), {})
       await page.locator('.sales-register').getByText('Продажи', {exact:true}).click()
       await page.waitForTimeout(350)
       await page.screenshot({path:path.join(os.tmpdir(), `crm-compact-sales-${theme}.png`)})
@@ -62,8 +75,21 @@ async function main() {
       await page.locator('.sales-register th button').filter({hasText:'Объём'}).click()
       assert.equal(await page.locator('.sales-register th[aria-sort="ascending"]').count(),1)
       await page.waitForTimeout(500)
+      assert.equal(registerParams.get('sort_by'),'volume')
+      assert.equal(registerParams.get('sort_desc'),'false')
       await page.screenshot({path:path.join(os.tmpdir(), `crm-sales-${theme}.png`)})
     }
+    for (const managerRole of ['admin','senior','group_senior']) {
+      role=managerRole
+      await page.goto(`${origin}/applications`)
+      await page.getByRole('button',{name:'Фильтры колонок · 0',exact:true}).click()
+      await page.locator('.register-filters__picker').getByText('Менеджер',{exact:true}).click()
+      await page.locator('.register-filters__hint').click()
+      await page.getByRole('textbox',{name:'Менеджер содержит',exact:true}).fill('Менеджер')
+      await Promise.all([page.waitForResponse(r=>r.url().includes('column_filters') && r.url().includes(encodeURIComponent('Менеджер'))),page.getByRole('button',{name:'Применить',exact:true}).click()])
+      assert.deepEqual(JSON.parse(registerParams.get('column_filters')),{manager:'Менеджер'})
+    }
+    role='user'
     await page.goto(`${origin}/applications?tab=payments`)
     await page.getByRole('button', { name: 'Детали', exact: true }).click()
     await page.getByText('Получено от клиента', { exact: true }).waitFor()

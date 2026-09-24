@@ -10,7 +10,7 @@ import structlog
 from app.modules.bots.hmac_util import outbound_path_from_url, sign_outbound
 from app.modules.bots.repository import BotOutboundLogRepository, BotRepository
 from app.modules.db.models.enums import BotOutboundStatus
-from app.shared.db import get_session_factory
+from app.shared.db import get_session_factory, get_engine
 from app.shared.metrics import inc_bot_outbound
 from app.shared.request_id import generate_ulid
 from app.workers.bots.queue import enqueue
@@ -38,7 +38,27 @@ MAX_ATTEMPTS = 5
 BACKOFF_SECONDS = (30, 60, 120, 300, 600)
 
 
+def attachment_delivery_uncertain(row, exc):
+    # After a request reached the bridge a partial album may already be in Telegram.
+    # Only failures before connecting can safely retry the entire attachment batch.
+    return (row.command == 'send_message' and bool(row.payload.get('attachments'))
+            and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)))
+
+
 async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> None:
+    from sqlalchemy import text
+    # Transaction-scoped lock on a separate connection survives the outbox commits.
+    # Prevents Redis reclaim / multiple worker instances from sending the same row together.
+    async with get_engine().begin() as connection:
+        acquired = await connection.scalar(text(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {'key': f"bot-outbound:{int(payload['outbound_log_id'])}"})
+        if not acquired:
+            return
+        await _dispatch_outbound_command(_job_type, payload)
+
+
+async def _dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> None:
     log_id = int(payload["outbound_log_id"])
     session_factory = get_session_factory()
 
@@ -48,7 +68,15 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
         row = await outbound_repo.get_by_id(log_id)
         if row is None:
             return
-        if row.status == BotOutboundStatus.SENT:
+        if row.status in (BotOutboundStatus.SENT, BotOutboundStatus.FAILED):
+            return
+
+        if (row.command == 'send_message' and row.payload.get('attachments')
+                and row.last_error == 'delivery_in_progress'):
+            row.status = BotOutboundStatus.FAILED
+            row.last_error = 'delivery_uncertain: worker interrupted during attachment delivery; check Telegram before resending'
+            await session.commit()
+            inc_bot_outbound('failed')
             return
 
         bot = await bot_repo.get_by_id(row.bot_id)
@@ -90,13 +118,15 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
         path = outbound_path_from_url(bot.outbound_url)
         signature = sign_outbound("POST", path, timestamp, body, secret)
 
+        if row.command == 'send_message' and row.payload.get('attachments'):
+            row.last_error = 'delivery_in_progress'
         row.attempts += 1
         row.last_attempt_at = datetime.now(UTC)
         await outbound_repo.save(row)
         await session.commit()
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0, pool=10.0)) as client:
                 response = await client.post(
                     bot.outbound_url,
                     content=body,
@@ -174,7 +204,9 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
             await session.commit()
             inc_bot_outbound("sent")
         except Exception as exc:
-            error_text = str(exc)[:2000]
+            uncertain = attachment_delivery_uncertain(row, exc)
+            error_text = ('delivery_uncertain: attachment batch will not be repeated automatically; '
+                          if uncertain else '') + f'{type(exc).__name__}: {str(exc)[:1600]}'
             async with session_factory() as retry_session:
                 retry_row = await BotOutboundLogRepository(retry_session).get_by_id(log_id)
                 if retry_row is None:
@@ -196,6 +228,7 @@ async def dispatch_outbound_command(_job_type: str, payload: dict[str, Any]) -> 
                 retry_row.last_error = error_text
                 if (
                     retry_row.request_id.startswith("crm-chat-")
+                    or uncertain
                     or isinstance(exc, BridgeCommandRejected)
                     or retry_row.attempts >= MAX_ATTEMPTS
                 ):
