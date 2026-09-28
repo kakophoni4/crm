@@ -124,7 +124,7 @@ const { width } = useWindowSize()
 const phoneChatsOnly = usePhoneChatsOnly()
 const isNarrow = computed(() => phoneChatsOnly.value || width.value < CHATS_NARROW_BREAKPOINT)
 const narrowPane = ref<'list' | 'chat'>('list')
-const chatFiltersOpen = ref(false)
+const chatFiltersOpen = ref(true)
 const activeChatFilterCount = computed(() => [
   store.filters.botId != null, store.filters.unreadOnly,
   store.filters.leadStatusId != null, store.filters.leadOpenOnly,
@@ -619,11 +619,11 @@ onUnmounted(() => {
             aria-label="Поиск в списке чатов"
           />
 
-          <NButton v-if="isNarrow" class="chats-page__filter-button" block
+          <NButton v-if="isNarrow" class="chats-page__filter-button" type="primary" secondary block
             :aria-expanded="chatFiltersOpen" aria-controls="chat-list-filters"
             @click="chatFiltersOpen = !chatFiltersOpen">
             <template #icon><SlidersHorizontal :size="16" /></template>
-            Фильтры{{ activeChatFilterCount ? ` · ${activeChatFilterCount}` : '' }}
+            Фильтры и сортировка{{ activeChatFilterCount ? ` · ${activeChatFilterCount}` : '' }}
           </NButton>
           <NSpace v-show="!isNarrow || chatFiltersOpen" id="chat-list-filters"
             class="chats-page__filter-fields" vertical :size="10">
@@ -656,7 +656,7 @@ onUnmounted(() => {
           <NSelect v-model:value="store.filters.sort" :options="chatSortOptions" aria-label="Порядок чатов" />
           <div class="chats-page__filter-footer">
             <NButton :disabled="!activeChatFilterCount" size="small" @click="resetChatFilters">Сбросить</NButton>
-            <NButton v-if="isNarrow" size="small" type="primary" @click="chatFiltersOpen = false">Показать чаты</NButton>
+            <NButton v-if="isNarrow" size="small" type="primary" @click="chatFiltersOpen = false">Свернуть фильтры</NButton>
           </div>
           </NSpace>
         </div>
