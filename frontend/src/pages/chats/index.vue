@@ -37,7 +37,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
 
 import { useWindowSize } from '@vueuse/core'
-import { ArrowLeft, MessageSquare, X } from 'lucide-vue-next'
+import { ArrowLeft, MessageSquare, SlidersHorizontal, X } from 'lucide-vue-next'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -124,6 +124,21 @@ const { width } = useWindowSize()
 const phoneChatsOnly = usePhoneChatsOnly()
 const isNarrow = computed(() => phoneChatsOnly.value || width.value < CHATS_NARROW_BREAKPOINT)
 const narrowPane = ref<'list' | 'chat'>('list')
+const chatFiltersOpen = ref(false)
+const activeChatFilterCount = computed(() => [
+  store.filters.botId != null, store.filters.unreadOnly,
+  store.filters.leadStatusId != null, store.filters.leadOpenOnly,
+  store.filters.sort !== 'last_message_at_desc',
+].filter(Boolean).length)
+const chatSortOptions = [
+  { label: 'Последние сообщения', value: 'last_message_at_desc' },
+  { label: 'Новые чаты', value: 'created_at_desc' },
+  { label: 'Сначала непрочитанные', value: 'unread_first' },
+]
+function resetChatFilters() {
+  Object.assign(store.filters, { botId: null, unreadOnly: false,
+    leadStatusId: null, leadOpenOnly: false, sort: 'last_message_at_desc' })
+}
 
 const message = useMessage()
 const chatListSearchRef = ref<InstanceType<typeof NInput> | null>(null)
@@ -594,7 +609,7 @@ onUnmounted(() => {
 
 
 
-        <NSpace class="chats-page__filters" vertical :size="8">
+        <div class="chats-page__filters">
 
           <NInput
             ref="chatListSearchRef"
@@ -604,33 +619,47 @@ onUnmounted(() => {
             aria-label="Поиск в списке чатов"
           />
 
+          <NButton v-if="isNarrow" class="chats-page__filter-button" block
+            :aria-expanded="chatFiltersOpen" aria-controls="chat-list-filters"
+            @click="chatFiltersOpen = !chatFiltersOpen">
+            <template #icon><SlidersHorizontal :size="16" /></template>
+            Фильтры{{ activeChatFilterCount ? ` · ${activeChatFilterCount}` : '' }}
+          </NButton>
+          <NSpace v-show="!isNarrow || chatFiltersOpen" id="chat-list-filters"
+            class="chats-page__filter-fields" vertical :size="10">
           <NSelect
-            v-if="!phoneChatsOnly"
             v-model:value="store.filters.botId"
             :options="botOptions"
             :loading="botsLoading"
             placeholder="Бот"
+            aria-label="Фильтр по боту" filterable
             clearable
           />
 
           <label class="chats-page__unread-toggle">
             <span>Только непрочитанные</span>
-            <NSwitch v-model:value="store.filters.unreadOnly" size="small" />
+            <NSwitch v-model:value="store.filters.unreadOnly" aria-label="Только непрочитанные" size="small" />
           </label>
 
           <NSelect
-            v-if="!phoneChatsOnly"
             v-model:value="store.filters.leadStatusId"
             :options="leadStatusOptions"
             placeholder="Статус сделки"
+            aria-label="Фильтр по статусу сделки" filterable
             clearable
           />
 
-          <label v-if="!phoneChatsOnly" class="chats-page__unread-toggle">
+          <label class="chats-page__unread-toggle">
             <span>Только с открытой сделкой</span>
-            <NSwitch v-model:value="store.filters.leadOpenOnly" size="small" />
+            <NSwitch v-model:value="store.filters.leadOpenOnly" aria-label="Только с открытой сделкой" size="small" />
           </label>
-        </NSpace>
+          <NSelect v-model:value="store.filters.sort" :options="chatSortOptions" aria-label="Порядок чатов" />
+          <div class="chats-page__filter-footer">
+            <NButton :disabled="!activeChatFilterCount" size="small" @click="resetChatFilters">Сбросить</NButton>
+            <NButton v-if="isNarrow" size="small" type="primary" @click="chatFiltersOpen = false">Показать чаты</NButton>
+          </div>
+          </NSpace>
+        </div>
 
         <div v-if="store.listInitialLoading" class="chats-page__skeleton">
           <NSkeleton v-for="n in 6" :key="n" text :repeat="2" style="margin-bottom: 12px" />
@@ -1151,6 +1180,11 @@ onUnmounted(() => {
 
 }
 
+.chats-page__filters {display:flex;flex-direction:column;gap:8px}
+.chats-page__filter-fields {max-height:45dvh;overflow-y:auto;padding:2px}
+.chats-page__filter-footer {display:flex;justify-content:space-between;gap:8px}
+.chats-page__filter-button {flex-shrink:0}
+.chats-page__split--narrow .chats-page__filters {padding:0 10px;box-sizing:border-box}
 .chats-page__unread-toggle {
   display: flex;
   align-items: center;

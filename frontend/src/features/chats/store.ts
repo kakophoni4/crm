@@ -778,6 +778,7 @@ export const useChatsStore = defineStore('chats', () => {
         filters.value.unreadOnly,
         filters.value.leadStatusId,
         filters.value.leadOpenOnly,
+        filters.value.sort,
       ] as const,
     () => {
       void fetchList()
