@@ -161,11 +161,11 @@ function canRequestDeletion(row: AdminUser): boolean {
 
 function canAdminRemove(row: AdminUser): boolean {
   if (!isAdmin.value) return false
-  return row.role === 'user' && row.status === 'active'
+  return row.id !== auth.user?.id && row.role !== 'admin' && row.status === 'active'
 }
 
 function canAdminApprovePending(row: AdminUser): boolean {
-  return isAdmin.value && pendingByUserId.value.has(row.id)
+  return canAdminRemove(row) && pendingByUserId.value.has(row.id)
 }
 
 const columns = computed<DataTableColumns<AdminUser>>(() => [
@@ -205,8 +205,9 @@ const columns = computed<DataTableColumns<AdminUser>>(() => [
     },
   },
   {
-    title: '',
+    title: 'Действия',
     key: 'actions',
+    fixed: 'right',
     width: isAdmin.value ? 320 : 280,
     render: (row) => {
       const buttons: ReturnType<typeof h>[] = [
@@ -232,7 +233,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => [
                 h(
                   NButton,
                   { size: 'small', type: 'error', quaternary: true },
-                  { default: () => 'Удалить' },
+                  { default: () => 'Запросить отключение' },
                 ),
               default: () => `Отключить ${row.full_name}? Заявка уйдёт администратору.`,
             },
@@ -276,9 +277,9 @@ const columns = computed<DataTableColumns<AdminUser>>(() => [
                 h(
                   NButton,
                   { size: 'small', type: 'error', quaternary: true },
-                  { default: () => 'Удалить' },
+                  { default: () => 'Отключить' },
                 ),
-              default: () => `Отключить ${row.full_name}?`,
+              default: () => `Отключить ${row.full_name}? Доступ будет закрыт, карточки перераспределены. История сохранится.`,
             },
           ),
         )
@@ -534,10 +535,11 @@ async function onRejectDeletion(requestId: number): Promise<void> {
 async function onAdminRemove(row: AdminUser): Promise<void> {
   try {
     await adminRemoveUser(row.id)
-    message.success('Пользователь отключён, карточки распределены по группе')
+    message.success('Пользователь отключён, карточки перераспределены')
+    if (editing.value?.id === row.id) showModal.value = false
     await load()
   } catch (err) {
-    message.error(err instanceof AppError ? err.message : 'Не удалось удалить пользователя')
+    message.error(err instanceof AppError ? err.message : 'Не удалось отключить пользователя')
   }
 }
 
@@ -555,6 +557,7 @@ onMounted(() => void load())
       <NDataTable
         :columns="columns"
         :data="rows"
+        :scroll-x="1200"
         :row-key="(r: AdminUser) => r.id"
         virtual-scroll
         :max-height="VIRTUAL_DATA_TABLE_MAX_HEIGHT"
@@ -624,6 +627,11 @@ onMounted(() => void load())
       </NForm>
       <template #footer>
         <NSpace justify="end">
+          <NPopconfirm v-if="editing && canAdminRemove(editing) && !pendingByUserId.has(editing.id)"
+            positive-text="Отключить" negative-text="Отмена" @positive-click="onAdminRemove(editing!)">
+            <template #trigger><NButton type="error" secondary>Отключить пользователя</NButton></template>
+            Отключить {{ editing.full_name }}? Доступ будет закрыт, карточки перераспределены. История сохранится.
+          </NPopconfirm>
           <NButton @click="showModal = false">Отмена</NButton>
           <NButton type="primary" @click="onSave">Сохранить</NButton>
         </NSpace>

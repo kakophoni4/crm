@@ -270,19 +270,31 @@ class UserDeletionRequestService:
         target.status = UserStatus.DISABLED
         await self._auth.revoke_all_refresh_tokens_for_user(target.id)
 
+    @staticmethod
+    def _assert_admin_disable_target(actor: User, target: User) -> None:
+        if actor.id == target.id:
+            raise ValidationError(message="Нельзя отключить свою учётную запись")
+        if target.role == UserRole.ADMIN:
+            raise PermissionDenied(message="Отключение администраторов через эту операцию запрещено")
+
     async def admin_remove_user(self, actor: User, target_user_id: int) -> User:
         if self._actor_role(actor) != UserRole.ADMIN:
             raise PermissionDenied(message="Only admin can remove users directly")
 
-        target = await self._session.get(User, target_user_id)
+        target = await self._session.get(User, target_user_id, with_for_update=True, populate_existing=True)
         if target is None:
             raise NotFound(message="User not found", details={"id": target_user_id})
 
-        t_role = target.role if isinstance(target.role, UserRole) else UserRole(str(target.role))
-        if t_role != UserRole.USER:
-            raise PermissionDenied(message="Can only remove operators")
+        self._assert_admin_disable_target(actor, target)
 
         await self._disable_user_and_rebalance(target)
+        from app.modules.audit.service import AuditService
+        from app.modules.db.models.enums import AuditAction
+        await AuditService(self._session).write(
+            actor_id=actor.id, action=AuditAction.USER_UPDATE,
+            entity_type="user", entity_id=target.id,
+            payload={"action": "user.disabled", "status": "disabled", "role": str(target.role)},
+        )
         await self._repo.commit()
         await self._session.refresh(target)
         return target
@@ -295,7 +307,7 @@ class UserDeletionRequestService:
         if req.state != UserDeletionRequestState.PENDING:
             raise Conflict(message="Request is not pending")
 
-        target = await self._session.get(User, req.target_user_id)
+        target = await self._session.get(User, req.target_user_id, with_for_update=True, populate_existing=True)
         if target is None:
             req.state = UserDeletionRequestState.REJECTED
             req.admin_comment = "User no longer exists"
@@ -304,6 +316,7 @@ class UserDeletionRequestService:
             await self._repo.commit()
             raise Conflict(message="Target user no longer exists")
 
+        self._assert_admin_disable_target(actor, target)
         try:
             await self._disable_user_and_rebalance(target)
         except Conflict:
