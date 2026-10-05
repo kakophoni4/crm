@@ -70,6 +70,11 @@ def main():
                 if validation.returncode:
                     raise RuntimeError('Mihomo rejected exported configuration')
                 print('Mihomo configuration validation passed', flush=True)
+                if '--additional-methods' in sys.argv:
+                    names = {proxy['name'] for proxy in proxies if proxy.get('test-profile')}
+                    choices = [choice for choice in choices if choice in names]
+                    if not choices:
+                        raise RuntimeError('No additional methods selected')
                 with (directory / 'mihomo.log').open('w') as log:
                     process = subprocess.Popen(['/opt/crm-vpn/bin/mihomo', '-d', str(directory), '-f', str(config)], stdout=log, stderr=log)
                     try:
@@ -150,13 +155,16 @@ def main():
                         try: process.wait(timeout=5)
                         except subprocess.TimeoutExpired: process.kill(); process.wait()
             if '--mihomo' not in sys.argv and '--happ-only' not in sys.argv:
+                selected = [proxy for proxy in proxies if proxy.get('test-profile')] if '--additional-methods' in sys.argv else proxies
+                if not selected:
+                    raise RuntimeError('No endpoints selected')
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1 if '--sequential' in sys.argv else 7) as pool:
-                    list(pool.map(check, enumerate(proxies)))
+                    list(pool.map(check, enumerate(selected)))
             if '--failover' in sys.argv or '--happ-only' in sys.argv:
                 test_happ_failover(control, directory, proxies, automatic, row['token'])
             # Re-read node counters after actual traffic; both protocols must be visible.
             usage_totals = {'up': 0, 'down': 0, 'hy_up': 0, 'hy_down': 0}
-            required_metrics = ('up', 'down') if '--happ-only' in sys.argv else tuple(usage_totals)
+            required_metrics = ('up', 'down') if '--happ-only' in sys.argv or '--additional-methods' in sys.argv else tuple(usage_totals)
             for attempt in range(16):
                 usage_totals = dict.fromkeys(usage_totals, 0)
                 for node in control.NODES:
@@ -191,6 +199,7 @@ def main():
     if failures:
         raise SystemExit('Failed checks: ' + ', '.join(failures))
     print('All published Happ profiles and traffic checks passed' if '--happ-only' in sys.argv else
+          'All selected VPN relays and traffic checks passed' if '--additional-methods' in sys.argv else
           'All published VPN relays and per-protocol counters passed', flush=True)
 
 
@@ -209,8 +218,7 @@ def test_happ_failover(control, directory, proxies, automatic, subscription_toke
             raise RuntimeError('Published Happ profile validation failed')
     # Country profiles must carry all methods of that country and relay traffic,
     # rather than silently selecting one fixed endpoint during compaction.
-    mode_names = ('⚡ Автовыбор', '🛡️ Автовыбор · белые списки')
-    countries_profiles = [profile for profile in profiles if profile['remarks'] not in mode_names]
+    countries_profiles = [profile for profile in profiles if profile['remarks'] != '⚡ Автовыбор']
     for index, profile in enumerate(countries_profiles):
         config = copy.deepcopy(profile); config['inbounds'][0]['port'] = 19371
         path = directory / ('happ-country-' + str(index) + '.json')
@@ -223,32 +231,14 @@ def test_happ_failover(control, directory, proxies, automatic, subscription_toke
                     '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True, timeout=25)
                 if result.returncode or result.stdout != '204':
                     raise RuntimeError('Happ country relay failed: ' + profile['remarks'])
-                kind = 'happ_test' if profile['remarks'].startswith('🧪 Тест') else 'happ_country'
-                print(json.dumps({kind: profile['remarks'], 'relay_ok': True}), flush=True)
+                print(json.dumps({'happ_country': profile['remarks'], 'relay_ok': True}), flush=True)
             finally:
                 process.terminate()
                 try: process.wait(timeout=5)
                 except subprocess.TimeoutExpired: process.kill(); process.wait()
-    regular_names, restricted_names = control.split_automatic(proxies, automatic)
-    if restricted_names:
-        restricted = next(profile for profile in profiles if profile['remarks'] == mode_names[1])
-        config = copy.deepcopy(restricted); config['inbounds'][0]['port'] = 19371
-        path = directory / 'happ-restricted.json'
-        path.write_text(json.dumps(config)); path.chmod(0o600)
-        with (directory / 'happ-restricted.log').open('w') as log:
-            process = subprocess.Popen(['/opt/crm-vpn/bin/xray', 'run', '-c', str(path)], stdout=log, stderr=log, env=environment)
-            try:
-                time.sleep(7)
-                result = subprocess.run(['curl', '-sS', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19371',
-                    '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True, timeout=25)
-                if result.returncode or result.stdout != '204':
-                    raise RuntimeError('Happ restricted mode relay failed')
-                print(json.dumps({'happ_mode': 'restricted', 'relay_ok': True}), flush=True)
-            finally:
-                process.terminate()
-                try: process.wait(timeout=5)
-                except subprocess.TimeoutExpired: process.kill(); process.wait()
-    regular = next(profile for profile in profiles if profile['remarks'] == mode_names[0])
+    allowed = set(automatic)
+    regular_names = [proxy['name'] for proxy in proxies if proxy['name'] in allowed]
+    regular = next(profile for profile in profiles if profile['remarks'] == '⚡ Автовыбор')
     countries = list(dict.fromkeys(name.split(' · ')[0] for name in regular_names))
     for scenario in ('normal', 'udp_blocked', 'three_countries_blocked'):
         if scenario == 'three_countries_blocked' and len(countries) <= 3:
@@ -276,6 +266,13 @@ def test_happ_failover(control, directory, proxies, automatic, subscription_toke
                 if result.returncode or result.stdout != '204':
                     raise RuntimeError('Happ automatic failover failed: ' + scenario)
                 print(json.dumps({'happ_failover': scenario, 'relay_ok': True}), flush=True)
+                if scenario == 'normal':
+                    http = next(inbound for inbound in config['inbounds'] if inbound['protocol'] == 'http')
+                    result = subprocess.run(['curl', '-sS', '--max-time', '20', '--proxy', 'http://127.0.0.1:' + str(http['port']),
+                        '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True, timeout=25)
+                    if result.returncode or result.stdout != '204':
+                        raise RuntimeError('Happ HTTP inbound relay failed')
+                    print(json.dumps({'happ_http_inbound': True, 'relay_ok': True}), flush=True)
             finally:
                 process.terminate()
                 try: process.wait(timeout=5)

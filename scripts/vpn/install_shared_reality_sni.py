@@ -40,7 +40,13 @@ def main_shared(plan):
     targets=[original_name,*plan['targets'].values()]
     if any(not re.fullmatch(r'[a-z0-9.-]{1,253}',host) for host in targets):raise RuntimeError('invalid_tls_name')
     for host in targets:
-        for _ in range(3):target_ok(host)
+        for _ in range(3):
+            for attempt in range(3):
+                try:
+                    target_ok(host);break
+                except (OSError,ssl.SSLError):
+                    if attempt==2:raise RuntimeError('preflight_tls_failed:'+host) from None
+                    time.sleep(.5)
     unit=Path('/etc/systemd/system/crm-vpn-reality-target.service')
     ha=Path('/etc/haproxy/crm-vpn-reality.cfg')
     if (unit.exists() or ha.exists()) and not existing:raise RuntimeError('existing_router_requires_review')
@@ -76,7 +82,8 @@ def main_shared(plan):
             lines += ['    acl origin_'+str(index)+' req.ssl_sni -i '+host,
                       '    use_backend tls_'+str(index)+' if origin_'+str(index)]
         for index,host in enumerate(targets):
-            lines += ['backend tls_'+str(index),'    server origin '+host+':443 resolvers system_dns resolve-prefer ipv4 init-addr last,libc,none']
+            # Resolve asynchronously; libc startup resolution can stall binding.
+            lines += ['backend tls_'+str(index),'    server origin '+host+':443 resolvers system_dns resolve-prefer ipv4 init-addr none']
         ha.parent.mkdir(parents=True,exist_ok=True)
         candidate=ha.with_suffix('.new');candidate.write_text('\n'.join(lines)+'\n');candidate.chmod(0o644)
         validated=subprocess.run(['/usr/sbin/haproxy','-c','-f',str(candidate)],capture_output=True,text=True,timeout=10)
@@ -97,9 +104,15 @@ def main_shared(plan):
         # Validate every SNI through the router before changing the live entry.
         context=ssl.create_default_context();context.minimum_version=ssl.TLSVersion.TLSv1_3;context.set_alpn_protocols(['h2'])
         for host in targets:
-            with socket.create_connection(('127.0.0.1',14443),timeout=5) as raw:
-                with context.wrap_socket(raw,server_hostname=host) as stream:
-                    if stream.version()!='TLSv1.3' or stream.selected_alpn_protocol()!='h2':raise RuntimeError('router_tls_validation_failed')
+            for attempt in range(10):
+                try:
+                    with socket.create_connection(('127.0.0.1',14443),timeout=5) as raw:
+                        with context.wrap_socket(raw,server_hostname=host) as stream:
+                            if stream.version()!='TLSv1.3' or stream.selected_alpn_protocol()!='h2':raise RuntimeError('router_tls_validation_failed')
+                    break
+                except (OSError,ssl.SSLError):
+                    if attempt==9:raise RuntimeError('router_tls_validation_failed') from None
+                    time.sleep(.3)
         payload=copy.deepcopy(original);updated=payload['streamSettings']['realitySettings']
         updated['target']='127.0.0.1:14443';updated.pop('dest',None);updated['serverNames']=targets
         changed=True
@@ -140,13 +153,17 @@ def main_shared(plan):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True, help='One inventory node for a separately verified pilot')
+    parser.add_argument('--exclude-target', action='append', choices=list(TARGETS.values()), default=[])
     args = parser.parse_args()
     nodes = json.loads(Path('/etc/crm-vpn/nodes.json').read_text())['nodes']
     node = next((node for node in nodes if node['id'] == args.node), None)
     if not node:
         parser.error('Unknown inventory node')
     plan = {key: node[key] for key in ('id', 'ips')}
-    plan.update(targets=TARGETS, agent=base64.b64encode(Path('/opt/crm-vpn/node_agent.py').read_bytes()).decode())
+    selected={brand:host for brand,host in TARGETS.items() if host not in args.exclude_target}
+    if not selected:
+        parser.error('At least one TLS target is required')
+    plan.update(targets=selected, agent=base64.b64encode(Path('/opt/crm-vpn/node_agent.py').read_bytes()).decode())
     source = NODE_SCRIPT + SHARED_NODE_SCRIPT + '\nmain_shared(' + repr(plan) + ')\n'
     result = subprocess.run(['ssh', '-F', '/etc/crm-vpn/ssh_config', 'vpn-' + node['id'], 'python3', '-'],
                             input=source, capture_output=True, text=True, timeout=300)
@@ -156,7 +173,10 @@ def main():
                    'original_parameters_changed', 'shared_router_restore_requires_review', 'shared_router_rolled_back')
         import re
         rollback = re.search(r'shared_router_rolled_back:([a-zA-Z0-9_]{1,80})', result.stderr)
-        reason = 'shared_router_rolled_back:' + rollback[1] if rollback else next((value for value in reasons if value in result.stderr), 'remote_operation_failed')
+        preflight = re.search(r'preflight_tls_failed:([a-z0-9.-]{1,253})', result.stderr)
+        reason = ('preflight_tls_failed:' + preflight[1] if preflight else
+                  'shared_router_rolled_back:' + rollback[1] if rollback else
+                  next((value for value in reasons if value in result.stderr), 'remote_operation_failed'))
         raise SystemExit('Shared TLS pilot failed on ' + node['id'] + ': ' + reason)
     print(result.stdout.strip(), flush=True)
 

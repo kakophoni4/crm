@@ -282,9 +282,12 @@ def main():
     variants.add_argument('--gaming',action='store_true',help='Add every surveyed gaming TLS variant on every selected node')
     variants.add_argument('--restricted-network',action='store_true',help='Add surveyed Russian TLS targets; does not guarantee IP allowlist access')
     variants.add_argument('--restricted-tcp',action='store_true',help='Pilot TCP/REALITY with public Russian TLS names; requires --node')
+    parser.add_argument('--exclude-target',action='append',choices=[value['target'] for value in RESTRICTED_TCP_TARGETS.values()],default=[])
     args=parser.parse_args()
     if args.restricted_tcp and not args.node:
         parser.error('--restricted-tcp requires --node for a separately verified pilot')
+    if args.exclude_target and not args.restricted_tcp:
+        parser.error('--exclude-target is supported only with --restricted-tcp')
     nodes=json.loads(Path('/etc/crm-vpn/nodes.json').read_text())['nodes']
     if args.node:
         nodes=[node for node in nodes if node['id']==args.node]
@@ -296,7 +299,8 @@ def main():
         plan.update(agent=agent,target='www.apple.com' if node['id'] in ('ee','ch','kz') else 'www.microsoft.com')
         if args.restricted_tcp:
             plan.update(restricted=True,restricted_tcp=True)
-            source=NODE_SCRIPT+GAMING_NODE_SCRIPT+'\nplan='+repr(plan)+'\nfor brand,options in '+repr(list(RESTRICTED_TCP_TARGETS.items()))+':\n main_gaming({**plan,"brand":brand,**options})\n'
+            selected=[(brand,options) for brand,options in RESTRICTED_TCP_TARGETS.items() if options['target'] not in args.exclude_target]
+            source=NODE_SCRIPT+GAMING_NODE_SCRIPT+'\nplan='+repr(plan)+'\nfor brand,options in '+repr(selected)+':\n main_gaming({**plan,"brand":brand,**options})\n'
         elif args.gaming or args.restricted_network:
             plan['restricted']=args.restricted_network
             targets=RESTRICTED_TARGETS if args.restricted_network else GAMING_TARGETS

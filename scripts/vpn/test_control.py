@@ -198,18 +198,15 @@ class ControlTests(unittest.TestCase):
             proxies, links, automatic = self.control.connection_configs(row, db)
         happ = self.control.happ_configs(proxies, automatic)
         clash = self.control.clash_configs(proxies, automatic)
-        self.assertEqual(len(happ), 9)
-        self.assertEqual(len(clash['proxy-groups'][0]['proxies']), 9)
+        self.assertEqual(len(happ), 8)
+        self.assertEqual(len(clash['proxy-groups'][0]['proxies']), 8)
         self.assertEqual(len(proxies), 56)
         self.assertEqual(len(automatic), 56)
         self.assertEqual(len({proxy['name'] for proxy in proxies}), 56)
-        self.assertEqual(len(happ[0]['outbounds']), 15)  # ordinary methods and direct
-        self.assertEqual(len(happ[1]['outbounds']), 43)  # restricted methods and direct
+        self.assertEqual(len(happ[0]['outbounds']), 57)  # all methods and direct
         groups = {group['name']: group for group in clash['proxy-groups']}
-        self.assertEqual(len(groups['AUTO']['proxies']), 14)
-        self.assertEqual(len(groups['AUTO · белые списки']['proxies']), 42)
-        self.assertTrue(groups['AUTO · белые списки']['lazy'])
-        self.assertFalse(set(groups['AUTO']['proxies']) & set(groups['AUTO · белые списки']['proxies']))
+        self.assertEqual(len(groups['AUTO']['proxies']), 56)
+        self.assertNotIn('AUTO · белые списки', groups)
         for node in self.control.NODES:
             country = next(profile for profile in happ if profile['remarks'] == self.control.country_label(node['name']))
             for brand, target in RESTRICTED_TARGETS.items():
@@ -234,14 +231,9 @@ class ControlTests(unittest.TestCase):
             proxies, links, automatic = self.control.connection_configs(row, db)
         happ = self.control.happ_configs(proxies, automatic)
         clash = self.control.clash_configs(proxies, automatic)
-        self.assertEqual(len(happ), 12)
+        self.assertEqual(len(happ), 8)
         self.assertEqual(len(clash['proxy-groups'][0]['proxies']), 8)
-        tests = [profile for profile in happ if profile['remarks'].startswith('🧪 Тест')]
-        self.assertEqual(len(tests), 3)
-        self.assertTrue(all(len(profile['outbounds']) == 2 and 'observatory' not in profile for profile in tests))
-        regular, restricted = self.control.split_automatic(proxies, automatic)
-        self.assertEqual(len(restricted), 3)
-        self.assertFalse(set(regular) & set(restricted))
+        self.assertFalse(any(profile['remarks'].startswith('🧪 Тест') for profile in happ))
         for brand, options in RESTRICTED_TCP_TARGETS.items():
             label = node['name'] + ' · БС · ' + brand
             self.assertFalse(any(p['name'] == label for p in clash['proxies']))
@@ -262,7 +254,7 @@ class ControlTests(unittest.TestCase):
             self.assertNotIn('xhttpSettings', outbound['streamSettings'])
         self.assertTrue(all(p['client-fingerprint'] == 'chrome' for p in proxies if p.get('network') == 'xhttp'))
 
-    def test_happ_test_feed_is_individual_private_and_respects_revocation(self):
+    def test_verified_pilots_join_main_auto_and_countries_without_test_sections(self):
         from scripts.vpn.install_operator_fallbacks import RESTRICTED_TCP_TARGETS
         from scripts.vpn.install_shared_reality_sni import TARGETS
         value = self.create(); self.ready(value['id'])
@@ -280,34 +272,34 @@ class ControlTests(unittest.TestCase):
         base = 'http://127.0.0.1:' + str(server.server_port)
         path = '/sub/' + value['subscription_url'].split('/sub/')[1]
         try:
-            with urllib.request.urlopen(base + path + '?format=happ&view=tests') as response:
-                profiles = json.load(response)
-                self.assertEqual(__import__('base64').b64decode(response.headers['profile-title'][7:]).decode(), 'BTT · Проверка')
-                self.assertEqual(response.headers['ping-type'], 'proxy')
-            self.assertEqual(len(profiles), 6)
-            self.assertEqual(len({profile['remarks'] for profile in profiles}), 6)
-            self.assertTrue(all(profile['remarks'].startswith('🧪 ') for profile in profiles))
-            for profile in profiles:
-                self.assertNotIn('observatory', profile)
-                self.assertNotIn('balancers', profile['routing'])
-                tunnels = [item for item in profile['outbounds'] if item['protocol'] != 'freedom']
-                self.assertEqual(len(tunnels), 1)
-                self.assertEqual(tunnels[0]['streamSettings']['realitySettings']['fingerprint'], 'chrome')
-                self.assertEqual(profile['routing']['rules'][-1]['outboundTag'], tunnels[0]['tag'])
-            self.assertEqual(sum('HTTPS 443' in profile['remarks'] for profile in profiles), 3)
             with urllib.request.urlopen(base + path + '?format=happ') as response:
-                main_profiles = json.load(response)
-                self.assertEqual(len(main_profiles), 15)
-                self.assertEqual([profile for profile in main_profiles if profile['remarks'].startswith('🧪 Тест')], profiles)
+                profiles = json.load(response)
+                self.assertEqual(response.headers['ping-type'], 'proxy')
+            self.assertEqual(len(profiles), 8)
+            self.assertEqual(profiles[0]['remarks'], '⚡ Автовыбор')
+            self.assertEqual(len(profiles[0]['outbounds']), 21)
+            self.assertEqual(len(profiles[1]['outbounds']), 9)
+            for profile in profiles:
+                self.assertNotIn('белые списки', profile['remarks'])
+                self.assertNotIn('Тест', profile['remarks'])
+                self.assertIn('observatory', profile)
+                self.assertEqual(profile['routing']['rules'][-1]['balancerTag'], 'auto')
+                self.assertEqual({item['protocol'] for item in profile['inbounds']}, {'socks', 'http'})
+                self.assertTrue(all(item['listen'] == '127.0.0.1' for item in profile['inbounds']))
+            with urllib.request.urlopen(base + path + '?format=clash') as response:
+                clash = json.load(response)
+            self.assertEqual(len(clash['proxies']), 20)
+            self.assertEqual(len(clash['proxy-groups'][0]['proxies']), 8)
+            groups = {group['name']: group for group in clash['proxy-groups']}
+            self.assertEqual(len(groups['AUTO']['proxies']), 20)
+            self.assertEqual(len(groups[self.control.country_label(node['name'])]['proxies']), 8)
+            self.assertFalse(any('test-profile' in proxy for proxy in clash['proxies']))
             with self.assertRaises(urllib.error.HTTPError) as denied:
-                urllib.request.urlopen(base + path + '?format=clash&view=tests')
-            self.assertEqual(denied.exception.code, 400)
-            with self.assertRaises(urllib.error.HTTPError) as denied:
-                urllib.request.urlopen(base + '/sub/' + 'z' * 40 + '?format=happ&view=tests')
+                urllib.request.urlopen(base + '/sub/' + 'z' * 40 + '?format=happ')
             self.assertEqual(denied.exception.code, 404)
             self.control.mutate(value['id'], {'action': 'revoke', 'actor_id': 5})
             with self.assertRaises(urllib.error.HTTPError) as denied:
-                urllib.request.urlopen(base + path + '?format=happ&view=tests')
+                urllib.request.urlopen(base + path + '?format=happ')
             self.assertEqual(denied.exception.code, 403)
         finally:
             server.shutdown(); server.server_close(); thread.join()
@@ -496,7 +488,8 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(response.headers['Referrer-Policy'], 'no-referrer')
                 page = response.read().decode()
                 self.assertIn(value['happ_url'], page)
-                self.assertIn('🧪 Тест', page)
+                self.assertNotIn('🧪 Тест', page)
+                self.assertNotIn('Автовыбор · белые списки', page)
                 self.assertIn(value['v2rayng_url'], page)
             with urllib.request.urlopen(base + '/apps') as response:
                 self.assertNotIn(value['subscription_url'], response.read().decode())

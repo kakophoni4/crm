@@ -518,30 +518,21 @@ def country_label(country):
     return (flags.get(node.get('id'), '') + ' ' + country).strip()
 
 
-def split_automatic(proxies, automatic):
-    allowed = set(automatic)
-    regular = []; restricted = []
-    for proxy in proxies:
-        if proxy['name'] in allowed:
-            (restricted if ' · БС · ' in proxy['name'] else regular).append(proxy['name'])
-    return regular, restricted
-
-
 def clash_configs(proxies, automatic, expanded=False):
-    # New variants are trialled in Happ before publishing to other clients.
-    proxies = [proxy for proxy in proxies if not proxy.get('test-profile') and not (
+    # Legacy QQ pilots failed on the tested Mihomo core. Verified Chrome
+    # variants participate in ordinary selection, including former pilots.
+    proxies = [{key: value for key, value in proxy.items() if key != 'test-profile'} for proxy in proxies if not (
                proxy['type'] == 'vless' and proxy.get('client-fingerprint') == 'qq' and ' · БС · ' in proxy['name'])]
     countries = country_connections(proxies)
-    regular, restricted = split_automatic(proxies, automatic)
-    modes = (['AUTO'] if regular else []) + (['AUTO · белые списки'] if restricted else [])
+    allowed = set(automatic)
+    selected = [proxy['name'] for proxy in proxies if proxy['name'] in allowed]
+    modes = ['AUTO'] if selected else []
     choices = [proxy['name'] for proxy in proxies] if expanded else [country_label(country) for country in countries]
     groups = [{'name': 'VPN', 'type': 'select', 'proxies': modes + choices}]
     probe = {'type': 'url-test', 'url': 'https://www.gstatic.com/generate_204',
              'interval': 30, 'tolerance': 30, 'lazy': False}
-    if regular:
-        groups.append({**probe, 'name': 'AUTO', 'proxies': regular, 'hidden': not expanded})
-    if restricted:
-        groups.append({**probe, 'name': 'AUTO · белые списки', 'proxies': restricted, 'hidden': not expanded, 'lazy': True})
+    if selected:
+        groups.append({**probe, 'name': 'AUTO', 'proxies': selected, 'hidden': not expanded})
     if not expanded:
         for country, members in countries.items():
             groups.append({**probe, 'name': country_label(country), 'proxies': [proxy['name'] for proxy in members],
@@ -554,20 +545,7 @@ def clash_configs(proxies, automatic, expanded=False):
                 'GEOSITE,category-ru,DIRECT', 'GEOIP,RU,DIRECT', 'GEOIP,LAN,DIRECT', 'MATCH,VPN']}
 
 
-def happ_test_proxies(proxies):
-    """Expose experimental entries individually, without changing the main list."""
-    return [proxy for proxy in proxies if proxy['type'] == 'vless' and ' · БС · ' in proxy['name']
-            and (proxy.get('test-profile') or proxy.get('client-fingerprint') == 'qq')]
-
-
-def happ_test_label(proxy):
-    country, brand = proxy['name'].split(' · БС · ', 1)
-    transport = 'HTTPS' if proxy['network'] == 'xhttp' else 'TCP'
-    brand = brand.removesuffix(' TCP QQ').removesuffix(' HTTPS QQ')
-    return '🧪 Тест · ' + country_label(country) + ' · ' + brand + ' · ' + transport + ' ' + str(proxy['port'])
-
-
-def happ_configs(proxies, automatic, expanded=False, testing=False):
+def happ_configs(proxies, automatic, expanded=False):
     def outbound(proxy, tag):
         if proxy['type'] == 'hysteria2':
             return {'tag': tag, 'protocol': 'hysteria',
@@ -590,7 +568,9 @@ def happ_configs(proxies, automatic, expanded=False, testing=False):
                  {'type': 'field', 'network': 'tcp,udp', **({'balancerTag': 'auto'} if balanced else {'outboundTag': 'vpn-0'})}]
         config = {'remarks': name, 'log': {'loglevel': 'warning'},
                   'inbounds': [{'tag': 'socks', 'listen': '127.0.0.1', 'port': 10808, 'protocol': 'socks', 'settings': {'auth': 'noauth', 'udp': True},
-                                'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True}}],
+                                'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True}},
+                               {'tag': 'http', 'listen': '127.0.0.1', 'port': 10809, 'protocol': 'http', 'settings': {'allowTransparent': False},
+                                'sniffing': {'enabled': True, 'destOverride': ['http', 'tls'], 'routeOnly': True}}],
                   'outbounds': outbounds + [{'tag': 'direct', 'protocol': 'freedom'}],
                   'dns': {'hosts': {'cloudflare-dns.com': '1.1.1.1', 'dns.quad9.net': '9.9.9.9', 'common.dot.dns.yandex.net': '77.88.8.8'},
                           'servers': [{'address': 'https+local://common.dot.dns.yandex.net/dns-query',
@@ -602,19 +582,12 @@ def happ_configs(proxies, automatic, expanded=False, testing=False):
             config['observatory'] = {'subjectSelector': ['vpn-'], 'probeUrl': 'https://www.gstatic.com/generate_204', 'probeInterval': '30s', 'enableConcurrency': True}
         return config
     supported = [proxy for proxy in proxies if proxy['type'] in ('vless', 'hysteria2')]
-    if testing:
-        return [profile(happ_test_label(proxy), [proxy]) for proxy in happ_test_proxies(supported)]
-    regular, restricted = split_automatic(supported, automatic)
-    automatic_profile = []
-    for name, names in (('⚡ Автовыбор', regular), ('🛡️ Автовыбор · белые списки', restricted)):
-        if names:
-            selected = [proxy for proxy in supported if proxy['name'] in names]
-            automatic_profile.append(profile(name, selected, True))
+    allowed = set(automatic)
+    selected = [proxy for proxy in supported if proxy['name'] in allowed]
+    automatic_profile = [profile('⚡ Автовыбор', selected, True)] if selected else []
     if expanded:
         return automatic_profile + [profile(proxy['name'], [proxy]) for proxy in supported]
-    return (automatic_profile
-            + [profile(country_label(country), members, True) for country, members in country_connections(supported).items()]
-            + [profile(happ_test_label(proxy), [proxy]) for proxy in happ_test_proxies(supported)])
+    return automatic_profile + [profile(country_label(country), members, True) for country, members in country_connections(supported).items()]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -712,18 +685,11 @@ class Handler(BaseHTTPRequestHandler):
                 agent = self.headers.get('User-Agent', '').lower()
                 format_name = 'clash' if any(name in agent for name in ('clash', 'mihomo', 'stash', 'koala')) else 'happ' if 'happ' in agent else 'base64'
             expanded = query.get('view', [''])[0] == 'all'
-            testing = query.get('view', [''])[0] == 'tests'
-            if testing and format_name != 'happ':
-                raise ValueError('unsupported_test_format')
             if format_name == 'clash':
                 config = clash_configs(proxies, automatic, expanded)
                 return self.reply(200, json.dumps(config, ensure_ascii=False, indent=2), 'application/yaml', headers)
             if format_name == 'happ':
-                profiles = happ_configs(proxies, automatic, expanded, testing)
-                if testing:
-                    if not profiles:
-                        return self.reply(503, {'error': 'test_profiles_unavailable'})
-                    headers['profile-title'] = 'base64:' + base64.b64encode('BTT · Проверка'.encode()).decode()
+                profiles = happ_configs(proxies, automatic, expanded)
                 routing = happ_routing_profile()
                 headers['routing'] = 'happ://routing/onadd/' + base64.b64encode(json.dumps(routing, ensure_ascii=False).encode()).decode()
                 # Measure actual tunnel availability, including UDP-only entries;

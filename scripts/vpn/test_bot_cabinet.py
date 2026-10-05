@@ -214,7 +214,7 @@ class CabinetTests(unittest.TestCase):
             for button in row:
                 if 'copy_text' in button: self.assertLessEqual(len(button['copy_text']['text']), 256)
 
-    def test_happ_testing_uses_main_subscription_without_an_extra_copy_link(self):
+    def test_client_connection_screen_keeps_one_copy_link_without_test_instructions(self):
         value = self.subscription()
         with self.control.database() as db:
             view = self.control.subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone(), db)
@@ -224,7 +224,8 @@ class CabinetTests(unittest.TestCase):
             tests = [url for url in copies if '&view=tests' in url]
             self.assertEqual(tests, [])
             self.assertEqual(len(copies), 1)
-            self.assertEqual('🧪 Тест' in text, client == 'happ')
+            self.assertNotIn('🧪 Тест', text)
+            self.assertNotIn('белые списки', text)
 
 
 if __name__ == '__main__':
