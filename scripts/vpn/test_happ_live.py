@@ -28,6 +28,21 @@ def main():
             if result.returncode:
                 raise RuntimeError('Happ configuration validation failed: ' + result.stderr.decode()[-300:])
         print('All Happ profiles validated with RU geodata', flush=True)
+        for index, config in enumerate(profiles[1:], 1):
+            if config['outbounds'][0]['protocol'] != 'hysteria':
+                continue
+            path = directory / (str(index) + '.json')
+            with (directory / 'hysteria.log').open('w') as log:
+                process = subprocess.Popen(['/opt/crm-vpn/bin/xray', 'run', '-c', str(path)], env=environment, stdout=log, stderr=log)
+                try:
+                    time.sleep(1)
+                    result = subprocess.run(['curl', '-sS', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19361', '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True)
+                    assert result.returncode == 0 and result.stdout == '204', 'Hysteria2 failed: ' + config['remarks']
+                    print('Hysteria2 connection passed: ' + config['remarks'], flush=True)
+                finally:
+                    process.terminate()
+                    try: process.wait(timeout=5)
+                    except subprocess.TimeoutExpired: process.kill(); process.wait()
         for failover in (False, True):
             config = profiles[0]
             if failover:

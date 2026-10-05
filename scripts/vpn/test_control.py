@@ -122,7 +122,18 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('GEOIP,RU,DIRECT', config['rules'])
             with urllib.request.urlopen(base + '/sub/' + path + '?format=happ') as response:
                 profiles = json.load(response)
-                self.assertEqual(len(profiles), 8)
+                self.assertEqual(len(profiles), 15)
+                hysteria = [p['outbounds'][0] for p in profiles[1:] if p['outbounds'][0]['protocol'] == 'hysteria']
+                self.assertEqual(len(hysteria), 7)
+                for outbound in hysteria:
+                    self.assertEqual(outbound['settings']['version'], 2)
+                    stream = outbound['streamSettings']
+                    self.assertEqual(stream['tlsSettings']['pinnedPeerCertSha256'], 'ab' * 32)
+                    self.assertEqual(stream['finalmask']['udp'][0]['settings']['password'], 'test-obfs')
+                    with self.control.database() as db:
+                        credential = db.execute('SELECT id,password FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+                    self.assertEqual(stream['hysteriaSettings']['auth'], credential['id'] + ':' + credential['password'])
+                self.assertTrue(any(p['protocol'] == 'hysteria' for p in profiles[0]['outbounds']))
                 self.assertIn('Автовыбор', profiles[0]['remarks'])
                 self.assertEqual(profiles[0]['routing']['balancers'][0]['strategy']['type'], 'leastPing')
                 self.assertIn('geoip:ru', profiles[0]['routing']['rules'][1]['ip'])

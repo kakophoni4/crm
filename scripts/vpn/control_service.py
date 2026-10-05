@@ -377,6 +377,13 @@ def happ_routing_profile():
 
 def happ_configs(proxies, automatic):
     def outbound(proxy, tag):
+        if proxy['type'] == 'hysteria2':
+            return {'tag': tag, 'protocol': 'hysteria',
+                    'settings': {'version': 2, 'address': proxy['server'], 'port': proxy['port']},
+                    'streamSettings': {'network': 'hysteria', 'security': 'tls',
+                        'tlsSettings': {'serverName': proxy['sni'], 'pinnedPeerCertSha256': proxy['fingerprint']},
+                        'hysteriaSettings': {'version': 2, 'auth': proxy['password']},
+                        'finalmask': {'udp': [{'type': 'salamander', 'settings': {'password': proxy['obfs-password']}}]}}}
         stream = {'network': proxy['network'], 'security': 'reality',
                   'realitySettings': {'serverName': proxy['servername'], 'fingerprint': 'chrome',
                                       'publicKey': proxy['reality-opts']['public-key'], 'shortId': proxy['reality-opts']['short-id']}}
@@ -402,9 +409,9 @@ def happ_configs(proxies, automatic):
             config['routing']['balancers'] = [{'tag': 'auto', 'selector': ['vpn-'], 'fallbackTag': 'vpn-0', 'strategy': {'type': 'leastPing'}}]
             config['observatory'] = {'subjectSelector': ['vpn-'], 'probeUrl': 'https://www.gstatic.com/generate_204', 'probeInterval': '60s', 'enableConcurrency': True}
         return config
-    vless = [proxy for proxy in proxies if proxy['type'] == 'vless']
-    selected = [proxy for proxy in vless if proxy['name'] in automatic]
-    return ([profile('⚡ Автовыбор · RU напрямую', selected, True)] if selected else []) + [profile(proxy['name'], [proxy]) for proxy in vless]
+    supported = [proxy for proxy in proxies if proxy['type'] in ('vless', 'hysteria2')]
+    selected = [proxy for proxy in supported if proxy['name'] in automatic]
+    return ([profile('⚡ Автовыбор · RU напрямую', selected, True)] if selected else []) + [profile(proxy['name'], [proxy]) for proxy in supported]
 
 
 class Handler(BaseHTTPRequestHandler):

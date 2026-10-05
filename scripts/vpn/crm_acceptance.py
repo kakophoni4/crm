@@ -40,7 +40,7 @@ async def main():
                 assert len(raw.text.strip().splitlines()) == 21
                 happ = await public.get(value['happ_url']); happ.raise_for_status()
                 happ_profiles = happ.json()
-                assert len(happ_profiles) == 15 and 'Автовыбор' in happ_profiles[0]['remarks']
+                assert len(happ_profiles) == 22 and 'Автовыбор' in happ_profiles[0]['remarks']
                 assert happ_profiles[0]['routing']['balancers'][0]['strategy']['type'] == 'leastPing'
                 assert happ.headers['routing'].startswith('happ://routing/onadd/')
                 guide = await public.get(value['guide_url']); guide.raise_for_status()
