@@ -6,6 +6,8 @@ import { http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
 import BotSettings from './BotSettings.vue'
 import VpnRequests from './VpnRequests.vue'
+import VpnPeriodPicker from '@/features/vpn/VpnPeriodPicker.vue'
+import { subscriptionKindLabels, validPeriod } from '@/features/vpn/period'
 
 interface Node {
   id: string; name: string; host: string; status: string; vpn_ready: boolean
@@ -33,15 +35,15 @@ const visibleSubscriptions = computed(() => subscriptions.value.filter(value => 
 const nodes = ref<Node[]>([]), subscriptions = ref<Subscription[]>([]), loading = ref(false)
 const selectedContact = ref<number | null>(Number(route.query.contact_id) || null)
 const contacts = ref<{ label: string; value: number }[]>([]), bots = ref<Bot[]>([])
-const selectedBot = ref<number | null>(null), days = ref<number>(30), creating = ref(false)
-const kind = ref<'gift' | 'purchase'>('gift'), detail = ref<Subscription | null>(null)
+const selectedBot = ref<number | null>(null), days = ref<number | null>(30), creating = ref(false)
+const kind = ref<'gift' | 'purchase' | 'trial'>('gift'), detail = ref<Subscription | null>(null)
 const requestCount = ref(0)
 const stale = ref(true), botUsername = ref(''), error = ref(''), pendingAction = ref('')
 const editNode = ref<Node | null>(null), capacity = ref<number | null>(null), savingNode = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined, searchSequence = 0
-const kindOptions = [{ label: 'Подарок от менеджера', value: 'gift' }, { label: 'Покупка (оплата подтверждена менеджером)', value: 'purchase' }]
+const kindOptions = [{ label: 'Подарок от менеджера', value: 'gift' }, { label: 'Покупка (оплата подтверждена менеджером)', value: 'purchase' }, { label: 'Пробный период', value: 'trial' }]
 const labels: Record<string, string> = { active: 'Активна', provisioning: 'Настраивается', expired: 'Истекла', revoked: 'Отключена' }
-const eventLabels: Record<string, string> = { gift: 'Выдан подарок', purchase: 'Оформлена покупка', renew: 'Продлена подписка', revoke: 'Отключён доступ', resume: 'Включён доступ', rotate_link: 'Заменена ссылка', delete: 'Удалена подписка' }
+const eventLabels: Record<string, string> = { trial: 'Выдан пробный период', gift: 'Выдан подарок', purchase: 'Оформлена покупка', renew: 'Продлена подписка', revoke: 'Отключён доступ', resume: 'Включён доступ', rotate_link: 'Заменена ссылка', delete: 'Удалена подписка' }
 const reasons: Record<string, string> = { high_cpu: 'Высокая загрузка CPU', high_memory: 'Мало свободной памяти', high_network: 'Загружен канал', disk_full: 'Заполнен диск', high_cpu_steal: 'Загрузка хоста провайдера', warming_up: 'Сбор первого замера', telemetry_unavailable: 'Нет связи', stale_telemetry: 'Устарели метрики', vpn_service_unavailable: 'VPN-сервис недоступен' }
 const date = (value: number) => new Date(value * 1000).toLocaleString('ru-RU')
 const gb = (value: number) => (value / 1024 ** 3).toFixed(2) + ' ГБ'
@@ -83,7 +85,7 @@ async function refresh() {
   finally { loading.value = false }
 }
 async function create() {
-  if (!selectedContact.value || !days.value) return
+  if (!selectedContact.value || !validPeriod(days.value) || creating.value) return
   creating.value = true
   try {
     await http.post('/vpn/subscriptions', { contact_id: selectedContact.value, days: days.value, kind: kind.value, source_bot_id: selectedBot.value })
@@ -91,7 +93,7 @@ async function create() {
   } catch (e) { message.error(failure(e)) }
   finally { creating.value = false }
 }
-async function action(value: Subscription, action: string, period = days.value) {
+async function action(value: Subscription, action: string, period: number | null = days.value) {
   pendingAction.value = value.id
   try {
     await http.post(`/vpn/subscriptions/${value.id}/action`, { action, days: action === 'renew' ? period : undefined })
@@ -125,6 +127,7 @@ function nodeTraffic(value: Subscription, node: string) {
 }
 watch(() => route.query.tab, value => { if (typeof value === 'string') activeTab.value = value })
 watch(selectedContact, contactChanged)
+watch(kind, value => { days.value = value === 'trial' ? 3 : 30 })
 watch(() => route.query.contact_id, value => { selectedContact.value = Number(value) || null })
 onMounted(async () => { await contactChanged(); if (!selectedContact.value) await searchContacts(''); timer = setInterval(refresh, 30_000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
@@ -150,7 +153,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <NSpin :show="loading && !subscriptions.length"><div class="subscriptions">
         <NCard v-for="value in visibleSubscriptions" :key="value.id" size="small">
           <div class="toolbar"><NButton text @click="router.push({ name: 'contact-detail', params: { id: value.contact_id } })">{{ value.contact_name }}</NButton><NTag :type="value.status === 'active' ? 'success' : 'warning'">{{ labels[value.status] }}</NTag></div>
-          <p>{{ value.kind === 'gift' ? 'Подарок' : 'Покупка' }} · {{ value.source_bot_name || 'Менеджер CRM' }}<span v-if="value.telegram_username"> · @{{ value.telegram_username }}</span></p>
+          <p>{{ subscriptionKindLabels[value.kind] || 'Подписка' }} · {{ value.source_bot_name || 'Менеджер CRM' }}<span v-if="value.telegram_username"> · @{{ value.telegram_username }}</span></p>
           <p>До {{ date(value.expires_at) }}</p>
           <p>Отправлено {{ gb(value.upload_bytes) }} · Получено {{ gb(value.download_bytes) }}</p>
           <div class="actions"><NButton :disabled="value.status !== 'active'" @click="copy(value.happ_url)">Happ</NButton><NButton :disabled="value.status !== 'active'" @click="copy(value.clash_url)">Koala Clash</NButton><NButton :disabled="value.status !== 'active'" @click="copy(value.v2rayng_url)">v2rayNG</NButton><NButton :disabled="value.status !== 'active'" @click="copy(value.guide_url)">Инструкция и APK</NButton><NButton @click="showDetail(value)">Детали и история</NButton><NButton :loading="pendingAction === value.id" @click="renewalTarget = value; renewalDays = 30">Продлить</NButton><NButton v-if="value.enabled" type="error" secondary :loading="pendingAction === value.id" @click="action(value, 'revoke')">Отключить</NButton><NButton v-else :disabled="value.expires_at <= Date.now() / 1000" @click="action(value, 'resume')">Включить</NButton><NButton quaternary type="error" @click="deleteSubscription(value)">Удалить</NButton></div>
@@ -179,16 +182,16 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <NSelect v-model:value="selectedContact" :options="contacts" filterable remote clearable placeholder="Найти контакт по имени или Telegram" @search="searchContacts" />
         <NSelect v-model:value="kind" :options="kindOptions" />
         <NSelect v-model:value="selectedBot" :options="bots.map(bot => ({ label: bot.bot_name, value: bot.bot_id }))" clearable placeholder="Бот, через который оформлена подписка" />
-        <label>Срок, дней<NInputNumber v-model:value="days" :min="1" :max="3650" /></label>
-        <NButton type="primary" :disabled="!selectedContact" :loading="creating" @click="create">{{ kind === 'gift' ? 'Подарить VPN' : 'Выдать подписку' }}</NButton>
+        <VpnPeriodPicker v-model="days" :trial="kind === 'trial'" :disabled="creating" />
+        <NButton type="primary" :disabled="!selectedContact || !validPeriod(days)" :loading="creating" @click="create">{{ kind === 'trial' ? 'Выдать пробный VPN' : kind === 'gift' ? 'Подарить VPN' : 'Выдать подписку' }}</NButton>
       </div>
       <p class="muted">Telegram берётся из карточки контакта. В кабинете пользователь видит только свои подписки. Источник покупки сохраняется в истории.</p>
     </NCard>
     </NModal>
     <NModal :show="!!renewalTarget" preset="card" title="Продлить подписку" style="width: min(440px, 95vw)" @update:show="value => { if (!value) renewalTarget = null }">
       <p>{{ renewalTarget?.contact_name }}</p>
-      <label>Срок продления, дней<NInputNumber v-model:value="renewalDays" :min="1" :max="3650" /></label>
-      <NButton style="margin-top: 16px" type="primary" :disabled="!renewalDays" :loading="!!pendingAction" @click="async () => { if (renewalTarget && renewalDays) { await action(renewalTarget, 'renew', renewalDays); renewalTarget = null } }">Продлить</NButton>
+      <VpnPeriodPicker v-model="renewalDays" :expires-at="renewalTarget?.expires_at" :disabled="!!pendingAction" />
+      <NButton style="margin-top: 16px" type="primary" :disabled="!validPeriod(renewalDays)" :loading="!!pendingAction" @click="async () => { if (renewalTarget && validPeriod(renewalDays)) { await action(renewalTarget, 'renew', renewalDays); renewalTarget = null } }">Продлить</NButton>
     </NModal>
     <NModal :show="!!detail" preset="card" title="Подписка VPN" style="width: min(800px, 95vw)" @update:show="value => { if (!value) detail = null }">
       <template v-if="detail"><p>{{ detail.contact_name }} · {{ labels[detail.status] }} · до {{ date(detail.expires_at) }}</p>

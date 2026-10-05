@@ -24,8 +24,14 @@ async def main():
         try:
             response = await api.post('/api/v1/contacts', json={'full_name': '[VPN QA] Integration acceptance', 'source': 'vpn_acceptance_test'})
             response.raise_for_status(); contact_id = response.json()['id']
-            response = await api.post('/api/v1/vpn/subscriptions', json={'contact_id': contact_id, 'kind': 'gift', 'days': 1})
+            creation = {'contact_id': contact_id, 'kind': 'trial', 'days': 3, 'idempotency_key': str(uuid.uuid4())}
+            response = await api.post('/api/v1/vpn/subscriptions', json=creation)
             response.raise_for_status(); identity = response.json()['id']
+            assert response.json()['kind'] == 'trial'
+            repeated = await api.post('/api/v1/vpn/subscriptions', json=creation)
+            repeated.raise_for_status(); assert repeated.json()['id'] == identity
+            listing = await api.get('/api/v1/vpn/subscriptions', params={'contact_id': contact_id})
+            listing.raise_for_status(); assert len(listing.json()['items']) == 1
             async def ready():
                 for attempt in range(60):
                     response = await api.get('/api/v1/vpn/subscriptions/' + identity)
@@ -34,7 +40,7 @@ async def main():
                     await asyncio.sleep(2)
                 raise RuntimeError('Provisioning did not reach all seven nodes')
             value = await ready()
-            print('CRM gift provisioned on seven nodes', flush=True)
+            print('CRM trial provisioned; retry creates no duplicate', flush=True)
             async with httpx.AsyncClient(timeout=20) as public:
                 raw = await public.get(value['raw_url']); raw.raise_for_status()
                 assert len(raw.text.strip().splitlines()) == 21
@@ -54,8 +60,11 @@ async def main():
                 assert len(next(group for group in config['proxy-groups'] if group['name'] == 'AUTO')['proxies']) <= 9
                 assert 'password' not in value
                 print('HTTPS subscription formats and personal connection guide passed', flush=True)
-                response = await api.post('/api/v1/vpn/subscriptions/' + identity + '/action', json={'action': 'renew', 'days': 7})
-                response.raise_for_status(); assert response.json()['expires_at'] == value['expires_at'] + 7 * 86400
+                expires_at = value['expires_at']
+                for days in (7, 14, 21):
+                    response = await api.post('/api/v1/vpn/subscriptions/' + identity + '/action', json={'action': 'renew', 'days': days})
+                    response.raise_for_status(); expires_at += days * 86400
+                    assert response.json()['expires_at'] == expires_at
                 response = await api.post('/api/v1/vpn/subscriptions/' + identity + '/action', json={'action': 'rotate_link'})
                 response.raise_for_status(); rotated = response.json()
                 old = await public.get(value['subscription_url']); assert old.status_code == 404

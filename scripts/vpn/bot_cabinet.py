@@ -1,5 +1,6 @@
 """Private Telegram cabinet and durable migration notifications. No tokens in logs."""
 import json
+import math
 import threading
 import time
 import urllib.error
@@ -56,8 +57,9 @@ def handle(control, update, token):
             control.telegram('sendMessage', {'chat_id': user_id, 'text': '🔐 Ваши VPN-подписки' if action == 'subscriptions' else '📊 Срок и использование VPN', 'reply_markup': markup}, token)
             for value in views[:20]:
                 labels = {'active': '🟢 Активна', 'provisioning': '🟡 Настраивается', 'expired': '⌛ Истекла', 'revoked': '⛔ Отключена'}
-                remaining = max(0, int((value['expires_at'] - time.time()) / 86400))
-                text = f"{labels[value['status']]} · {'Подарок' if value['kind'] == 'gift' else 'Покупка'}\nДо {time.strftime('%d.%m.%Y %H:%M UTC', time.gmtime(value['expires_at']))} · осталось {remaining} дн.\nОтправлено: {value['upload_bytes'] / 1024**3:.2f} ГБ\nПолучено: {value['download_bytes'] / 1024**3:.2f} ГБ"
+                remaining = max(0, math.ceil((value['expires_at'] - time.time()) / 86400))
+                kind_label = {'gift': 'Подарок', 'purchase': 'Покупка', 'trial': 'Пробный период'}.get(value['kind'], 'Подписка')
+                text = f"{labels[value['status']]} · {kind_label}\nДо {time.strftime('%d.%m.%Y %H:%M UTC', time.gmtime(value['expires_at']))} · осталось {remaining} дн.\nОтправлено: {value['upload_bytes'] / 1024**3:.2f} ГБ\nПолучено: {value['download_bytes'] / 1024**3:.2f} ГБ"
                 if action == 'subscriptions' and value['status'] == 'active':
                     text += '\n\nHapp:\n' + value['happ_url'] + '\n\nKoala Clash / Clash Meta:\n' + value['clash_url'] + '\n\nv2rayNG:\n' + value['v2rayng_url'] + '\n\nСкачивание и инструкция с вашей ссылкой:\n' + value['guide_url'] + '\n\nНе передавайте ссылку подписки другим людям.'
                 buttons = [[{'text': 'Продлить эту подписку', 'callback_data': 'renew:' + value['id']}], [{'text': 'Как подключиться', 'callback_data': 'instructions'}, {'text': 'Меню', 'callback_data': 'home'}]]

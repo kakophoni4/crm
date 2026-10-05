@@ -33,7 +33,8 @@ Database = Annotated[AsyncSession, Depends(get_db)]
 class CreateSubscription(BaseModel):
     contact_id: int = Field(gt=0)
     days: int = Field(default=30, ge=1, le=3650)
-    kind: Literal["gift", "purchase"] = "gift"
+    kind: Literal["gift", "purchase", "trial"] = "gift"
+    idempotency_key: UUID | None = None
     source_bot_id: int | None = Field(default=None, gt=0)
     source_chat_id: int | None = Field(default=None, gt=0)
 
@@ -249,7 +250,7 @@ async def create_subscription(body: CreateSubscription, actor: Writer, db: Datab
         "POST",
         "/internal/subscriptions",
         {
-            **body.model_dump(),
+            **body.model_dump(mode="json"),
             "actor_id": actor.id,
             "contact_name": contact.full_name,
             "telegram_user_id": contact.telegram_user_id,

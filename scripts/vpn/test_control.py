@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -50,6 +51,42 @@ class ControlTests(unittest.TestCase):
         self.assertNotIn('token', first)
         self.assertEqual(first['ready_nodes'], 0)
         self.assertEqual(first['status'], 'provisioning')
+
+    def test_trial_creation_retry_preserves_subscription_and_audit(self):
+        body = {'contact_id': 12, 'contact_name': 'Test contact', 'days': 3, 'kind': 'trial',
+                'actor_id': 5, 'source_chat_id': 42, 'idempotency_key': str(uuid.uuid4())}
+        first = self.control.create(body)
+        second = self.control.create(body)
+        self.assertEqual(first['id'], second['id'])
+        self.assertEqual(first['expires_at'], second['expires_at'])
+        self.assertNotIn('create_request_key', first)
+        with self.control.database() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM subscriptions').fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM events WHERE action='trial'").fetchone()[0], 1)
+        with self.assertRaises(ValueError):
+            self.control.create({**body, 'contact_id': 99})
+
+    def test_selected_periods_and_expired_trial_renewal(self):
+        for days in (1, 3, 7, 14, 21):
+            with self.subTest(days=days):
+                with patch.object(self.control.time, 'time', return_value=1000000):
+                    value = self.control.create({'contact_id': 12, 'contact_name': 'Test contact', 'days': days, 'kind': 'trial', 'actor_id': 5})
+                self.assertEqual(value['expires_at'], 1000000 + days * 86400)
+                with patch.object(self.control.time, 'time', return_value=9000000):
+                    renewed = self.control.mutate(value['id'], {'action': 'renew', 'days': days, 'actor_id': 5})
+                self.assertEqual(renewed['expires_at'], 9000000 + days * 86400)
+                self.assertTrue(renewed['enabled'])
+
+    def test_one_day_trial_is_named_correctly_in_telegram_status(self):
+        from scripts.vpn import bot_cabinet
+        with patch.object(self.control.time, 'time', return_value=1000000):
+            self.control.create({'contact_id': 12, 'contact_name': 'Test contact', 'days': 1,
+                                 'kind': 'trial', 'actor_id': 5, 'telegram_user_id': 555})
+        update = {'message': {'chat': {'type': 'private', 'id': 555}, 'from': {'id': 555}, 'text': '/status'}}
+        with patch.object(self.control.time, 'time', return_value=1000001), patch.object(self.control, 'telegram') as telegram:
+            bot_cabinet.handle(self.control, update, 'test-placeholder')
+        texts = [call.args[1].get('text', '') for call in telegram.call_args_list if call.args[0] == 'sendMessage']
+        self.assertTrue(any('Пробный период' in text and 'осталось 1 дн.' in text for text in texts))
 
     def test_all_countries_and_balanced_auto(self):
         value = self.create(); self.ready(value['id'])

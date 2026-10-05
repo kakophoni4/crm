@@ -1,5 +1,6 @@
 """VPN API contact scope and role regression checks without external services."""
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,6 +38,30 @@ class ScopeTests(unittest.TestCase):
     def test_foreign_contact_cannot_receive_gift(self):
         self.scope.side_effect = NotFound()
         response = self.client.post('/api/v1/vpn/subscriptions', json={'contact_id': 12, 'days': 30, 'kind': 'gift'})
+        self.assertEqual(response.status_code, 404); self.control.assert_not_awaited()
+
+    def test_trial_is_bound_to_authorized_chat_contact_and_actor(self):
+        self.scope.return_value = {'linked_bots': [{'bot_id': 5, 'bot_name': 'Linked bot'}]}
+        self.db.get.return_value = SimpleNamespace(full_name='Visible contact', telegram_user_id=123, telegram_username='visible')
+        self.control.return_value = {'id': self.identity, 'kind': 'trial', 'telegram_user_id': 123}
+        request_key = str(uuid.uuid4())
+        with patch('app.modules.vpn.router.ChatService.get_chat', new_callable=AsyncMock) as chat:
+            chat.return_value = {'contact_id': 12, 'bot_id': 5}
+            response = self.client.post('/api/v1/vpn/subscriptions', json={
+                'contact_id': 12, 'kind': 'trial', 'days': 3, 'source_chat_id': 42,
+                'source_bot_id': 5, 'idempotency_key': request_key})
+        self.assertEqual(response.status_code, 201)
+        body = self.control.await_args.args[2]
+        self.assertEqual(body['actor_id'], 7)
+        self.assertEqual(body['telegram_user_id'], 123)
+        self.assertEqual(body['source_chat_id'], 42)
+        self.assertEqual(body['days'], 3)
+        self.assertEqual(body['idempotency_key'], request_key)
+        self.assertNotIn('telegram_user_id', response.json())
+
+    def test_foreign_contact_cannot_receive_trial(self):
+        self.scope.side_effect = NotFound()
+        response = self.client.post('/api/v1/vpn/subscriptions', json={'contact_id': 99, 'days': 1, 'kind': 'trial'})
         self.assertEqual(response.status_code, 404); self.control.assert_not_awaited()
 
     def test_foreign_contact_subscription_cannot_be_revoked(self):

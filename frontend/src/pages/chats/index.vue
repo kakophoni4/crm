@@ -103,6 +103,8 @@ const ChatPaymentsSidePanel = defineAsyncComponent(
 )
 const ContactVpnPanel = defineAsyncComponent(() => import('@/widgets/chat/ContactVpnPanel.vue'))
 const vpnOpen = ref(false)
+const TrialVpnDialog = defineAsyncComponent(() => import('@/widgets/chat/TrialVpnDialog.vue'))
+const trialVpnOpen = ref(false)
 const ChatClientRequirementPanel = defineAsyncComponent(
   () => import('@/widgets/chat/ChatClientRequirementPanel.vue'),
 )
@@ -493,6 +495,7 @@ watch(isNarrow, (narrow) => {
 watch(
   () => store.currentChatId,
   (chatId) => {
+    trialVpnOpen.value = false
     replyToMessage.value = null
     void loadReferral(chatId)
     if (chatId != null) {
@@ -837,6 +840,7 @@ onUnmounted(() => {
 
             <NSpace v-if="!phoneChatsOnly" vertical :size="6" align="end">
               <NButton v-if="auth.user?.permissions?.includes('contacts.update')" size="small" secondary @click="isNarrow ? vpnOpen = true : rightPaneTab = 'vpn'">VPN клиента</NButton>
+              <NButton v-if="auth.user?.permissions?.includes('contacts.update') && auth.user?.permissions?.includes('chats.write')" size="small" type="primary" secondary @click="trialVpnOpen = true">Отправить пробный VPN</NButton>
               <BlockContactButton
                 v-if="auth.user?.permissions?.includes('chats.write')"
                 :key="store.currentChat.id"
@@ -1040,6 +1044,7 @@ onUnmounted(() => {
   <NModal v-model:show="vpnOpen" preset="card" title="VPN клиента" style="width: min(560px, 95vw)">
     <ContactVpnPanel v-if="vpnOpen && store.currentChat" :key="store.currentChat.id" :contact-id="store.currentChat.contact_id" :bot-id="store.currentChat.bot_id" :chat-id="store.currentChat.id" />
   </NModal>
+  <TrialVpnDialog v-if="store.currentChat" :key="`trial-${store.currentChat.id}`" v-model:show="trialVpnOpen" :contact-id="store.currentChat.contact_id" :bot-id="store.currentChat.bot_id" :chat-id="store.currentChat.id" />
 </template>
 
 

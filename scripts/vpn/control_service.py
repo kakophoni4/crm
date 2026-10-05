@@ -103,6 +103,9 @@ def initialize():
             db.execute('ALTER TABLE subscriptions ADD COLUMN source_chat_id INTEGER')
         if 'deleted_at' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
             db.execute('ALTER TABLE subscriptions ADD COLUMN deleted_at REAL')
+        if 'create_request_key' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
+            db.execute('ALTER TABLE subscriptions ADD COLUMN create_request_key TEXT')
+        db.execute('CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_request ON subscriptions(create_request_key)')
     (HOME / 'control.sqlite').chmod(0o600)
 
 
@@ -163,6 +166,7 @@ def ranked_nodes(identity, metrics):
 def subscription_view(row, db):
     value = dict(row)
     value.pop('password'); value.pop('token')
+    value.pop('create_request_key', None)
     deliveries = [dict(item) for item in db.execute('SELECT node_id,version,status,checked_at FROM deliveries WHERE subscription_id=?', (row['id'],))]
     ready = sum(item['status'] == 'synced' and item['version'] == row['version'] for item in deliveries)
     value['delivery'] = deliveries
@@ -191,10 +195,20 @@ def event(db, identity, actor, action, details):
 
 def create(body):
     days = int(body['days'])
-    if not 1 <= days <= 3650 or body['kind'] not in ('gift', 'purchase') or int(body['contact_id']) <= 0:
+    if not 1 <= days <= 3650 or body['kind'] not in ('gift', 'purchase', 'trial') or int(body['contact_id']) <= 0:
         raise ValueError('invalid_subscription')
+    request_key = str(uuid.UUID(body['idempotency_key'])) if body.get('idempotency_key') else None
     identity = str(uuid.uuid4()); now = time.time()
     with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if request_key:
+            existing = db.execute('SELECT * FROM subscriptions WHERE create_request_key=?', (request_key,)).fetchone()
+            if existing:
+                if (existing['created_by'] != int(body['actor_id']) or existing['contact_id'] != int(body['contact_id'])
+                        or existing['kind'] != body['kind'] or existing['source_chat_id'] != body.get('source_chat_id')
+                        or existing['deleted_at'] is not None):
+                    raise ValueError('creation_request_mismatch')
+                return subscription_view(existing, db)
         db.execute('''INSERT INTO subscriptions(id,contact_id,contact_name,telegram_user_id,telegram_username,source_bot_id,source_bot_name,
                     kind,created_by,expires_at,enabled,token,password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                    (identity, int(body['contact_id']), str(body['contact_name'])[:300], body.get('telegram_user_id'),
@@ -204,6 +218,7 @@ def create(body):
         for node in NODES:
             db.execute('INSERT INTO deliveries(subscription_id,node_id) VALUES(?,?)', (identity, node['id']))
         db.execute('UPDATE subscriptions SET source_chat_id=? WHERE id=?', (body.get('source_chat_id'), identity))
+        db.execute('UPDATE subscriptions SET create_request_key=? WHERE id=?', (request_key, identity))
         event(db, identity, body['actor_id'], body['kind'], {'days': days, 'source_bot_id': body.get('source_bot_id'), 'source_chat_id': body.get('source_chat_id')})
         value = subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone(), db)
     WAKE.set()
