@@ -99,8 +99,6 @@ const TransferCardDialog = defineAsyncComponent(
 )
 
 
-const TrialVpnDialog = defineAsyncComponent(() => import('@/widgets/chat/TrialVpnDialog.vue'))
-const trialVpnOpen = ref(false)
 
 const NewWhatsappChatDialog = defineAsyncComponent(
   () => import('@/widgets/chat/NewWhatsappChatDialog.vue'),
@@ -497,7 +495,6 @@ watch(isNarrow, (narrow) => {
 watch(
   () => store.currentChatId,
   (chatId) => {
-    trialVpnOpen.value = false
     replyToMessage.value = null
     void loadReferral(chatId)
     if (chatId != null) {
@@ -847,8 +844,6 @@ onUnmounted(() => {
 
             <div class="chats-page__chat-actions">
               <NButton v-if="isNarrow" size="small" secondary @click="transferInboxOpen = true">Карточка клиента</NButton>
-              <NButton v-if="auth.user?.permissions?.includes('contacts.read')" size="small" secondary @click="rightPaneTab = 'vpn'; if (isNarrow) transferInboxOpen = true">VPN клиента</NButton>
-              <NButton v-if="auth.user?.permissions?.includes('contacts.update') && auth.user?.permissions?.includes('chats.write')" size="small" type="primary" secondary title="Отправить пробный VPN в этот чат" @click="trialVpnOpen = true">Пробный VPN</NButton>
               <NPopover v-if="!phoneChatsOnly && (canTransferCard || referral.enabled || auth.user?.permissions?.includes('chats.write'))" trigger="click" placement="bottom-end" display-directive="show">
                 <template #trigger><NButton size="small" quaternary>Действия<template #icon><ChevronDown :size="14" /></template></NButton></template>
                 <div class="chat-contact-menu">
@@ -962,7 +957,6 @@ onUnmounted(() => {
 
   </section>
 
-  <TrialVpnDialog v-if="store.currentChat" :key="`trial-${store.currentChat.id}`" v-model:show="trialVpnOpen" :contact-id="store.currentChat.contact_id" :bot-id="store.currentChat.bot_id" :chat-id="store.currentChat.id" />
 </template>
 
 
