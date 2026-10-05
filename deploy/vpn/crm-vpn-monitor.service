@@ -1,0 +1,22 @@
+[Unit]
+Description=CRM VPN fleet telemetry over restricted SSH
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=crm-vpn
+Group=crm-vpn
+ExecStart=/usr/bin/python3 /opt/crm-vpn/collector.py
+Restart=on-failure
+RestartSec=5
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/crm-vpn/state
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

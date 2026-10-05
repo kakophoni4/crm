@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up CRM VPN subscriptions and credentials
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/crm-vpn/backup.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

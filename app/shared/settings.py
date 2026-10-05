@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     ai_service_reply_key: SecretStr = SecretStr("")
     ai_service_admin_key: SecretStr = SecretStr("")
     ai_auto_replies_enabled: bool = False
+    vpn_control_url: str = "http://host.docker.internal:19191"
+    vpn_control_token: SecretStr = SecretStr("")
 
     app_env: str = "dev"
     app_debug: bool = True

@@ -1,0 +1,5 @@
+networks:
+  speech-private:
+    external: true
+    name: crm-staging_speech-private
+    internal: !reset null

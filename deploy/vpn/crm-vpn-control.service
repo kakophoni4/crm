@@ -1,0 +1,23 @@
+[Unit]
+Description=CRM VPN subscriptions and Telegram cabinet
+After=network-online.target crm-vpn-monitor.service
+Wants=network-online.target
+
+[Service]
+User=crm-vpn-control
+Group=crm-vpn-control
+EnvironmentFile=/etc/crm-vpn/bot.env
+EnvironmentFile=/etc/crm-vpn/control.env
+ExecStart=/usr/bin/python3 /opt/crm-vpn/control_service.py
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/crm-vpn-control
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

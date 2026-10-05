@@ -16,6 +16,7 @@ from app.modules.accounting.router import router as accounting_router
 from app.modules.accounting.shop_cards import router as accounting_cards_router
 from app.modules.auth.router import router as auth_router
 from app.modules.bots.router import router as bots_router
+from app.modules.vpn.router import router as vpn_router
 from app.modules.chats.router import router as chats_router
 from app.modules.contacts.contact_transfers_router import router as contact_transfers_router
 from app.modules.contacts.router import router as contacts_router
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router)
     app.include_router(statuses_router)
     app.include_router(bots_router)
+    app.include_router(vpn_router)
     app.include_router(telephony_router)
     app.include_router(files_router)
     app.include_router(bot_outbound_router)

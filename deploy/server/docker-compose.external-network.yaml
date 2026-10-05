@@ -1,0 +1,6 @@
+# Migrated deployments share this network with Caddy, Asterisk and existing data services.
+# Compose must never recreate or remove it when rebuilding CRM containers.
+networks:
+  crm-staging-net:
+    external: true
+    name: crm-staging-net

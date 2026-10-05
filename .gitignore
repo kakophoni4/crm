@@ -33,3 +33,26 @@ scripts/fixtures/opt-test-crm.xlsx
 
 # Private AI service connection
 crm-ai-connection.env
+
+# VPN deployment inventory, credentials and generated client data
+scripts/vpn/nodes.json
+*.env
+.env.*
+!.env.example
+!*.env.example
+.ssh/
+id_ed25519*
+id_rsa*
+known_hosts
+*.key
+*.pem
+*.sqlite
+*.sqlite3
+*.db
+*.apk
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.bak
+*.backup

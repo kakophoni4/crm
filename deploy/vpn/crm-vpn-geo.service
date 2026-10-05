@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh verified VPN routing databases
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/crm-vpn/update_geo.py
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/crm-vpn/geo

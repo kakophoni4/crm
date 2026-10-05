@@ -19,9 +19,29 @@ COMPOSE=(
   --env-file "$ENV_FILE"
 )
 
+# A migrated shared network may belong to another project. Preserve that network.
+if docker network inspect crm-staging-net >/dev/null 2>&1; then
+  CRM_NETWORK_OWNER="$(docker network inspect crm-staging-net --format '{{index .Labels "com.docker.compose.project"}}')"
+  if [[ "$CRM_NETWORK_OWNER" != "crm-staging" ]]; then
+    COMPOSE+=(-f deploy/server/docker-compose.external-network.yaml)
+  fi
+fi
+
+if docker network inspect crm-staging_speech-private >/dev/null 2>&1; then
+  CRM_SPEECH_NETWORK_LABEL="$(docker network inspect crm-staging_speech-private --format '{{index .Labels "com.docker.compose.network"}}')"
+  if [[ "$CRM_SPEECH_NETWORK_LABEL" != "speech-private" ]]; then
+    COMPOSE+=(-f deploy/server/docker-compose.external-speech.yaml)
+  fi
+fi
+
 AI_ENV_FILE="${AI_ENV_FILE:-/root/crm-ai-connection.env}"
 if [[ -f "$AI_ENV_FILE" ]]; then
   COMPOSE+=(--env-file "$AI_ENV_FILE")
+fi
+
+VPN_ENV_FILE="${VPN_ENV_FILE:-/etc/crm-vpn/crm.env}"
+if [[ -f "$VPN_ENV_FILE" ]]; then
+  COMPOSE+=(--env-file "$VPN_ENV_FILE")
 fi
 
 compose() {
