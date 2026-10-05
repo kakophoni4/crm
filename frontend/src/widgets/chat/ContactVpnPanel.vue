@@ -17,7 +17,7 @@ const items = ref<Subscription[]>([]), days = ref<number | null>(30), loading = 
 const kind = ref<'gift' | 'purchase' | 'trial'>('gift'), sourceBot = ref<number | null>(null), bots = ref<{ label: string; value: number }[]>([])
 const trialVisible = ref(false), renewalTarget = ref<Subscription | null>(null), renewalDays = ref<number | null>(30)
 const labels: Record<string, string> = { active: 'Активна', provisioning: 'Настраивается', expired: 'Истекла', revoked: 'Отключена' }
-const requests = ref<{ id: number; kind: string; state: string; created_at: number }[]>([])
+const requests = ref<{ id: number; kind: string; state: string; created_at: number; requested_days?: number | null }[]>([])
 const requestLabels: Record<string, string> = { buy: 'Покупка VPN', renew: 'Продление VPN', support: 'Помощь с VPN' }
 async function closeRequest(id: number) {
   try { await http.post(`/vpn/bot/requests/${id}`, { state: 'done' }); await refresh() }
@@ -109,6 +109,7 @@ onUnmounted(() => { disposed = true; ++generation; ++setupSequence; if (timer) c
     <TrialVpnDialog :key="`${contactId}-${chatId || 0}`" v-model:show="trialVisible" :contact-id="contactId" :bot-id="chatId ? botId : sourceBot" :chat-id="chatId" @created="refresh" />
     <NCard v-for="request in requests.filter(item => item.state === 'open')" :key="request.id" size="small" :title="`Заявка из бота №${request.id}`">
       <p>{{ requestLabels[request.kind] }} · {{ date(request.created_at) }}</p>
+      <p v-if="request.requested_days">Клиент выбрал {{ request.requested_days }} дн.</p>
       <NButton size="small" @click="closeRequest(request.id)">Отметить обработанной</NButton>
     </NCard>
     <NCard v-if="auth.user?.permissions?.includes('contacts.update')" size="small" title="Выдать подписку">

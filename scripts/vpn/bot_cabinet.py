@@ -1,120 +1,142 @@
-"""Private Telegram cabinet and durable migration notifications. No tokens in logs."""
+"""Private Telegram cabinet with one persistent screen per user and bot."""
 import json
-import math
 import threading
 import time
 import urllib.error
 
 try:
-    from scripts.vpn import client_guides
+    from scripts.vpn import bot_ui
 except ImportError:
-    import client_guides
+    import bot_ui
 
 
-def keyboard():
-    return {'inline_keyboard': [
-        [{'text': '🔐 Мои подписки', 'callback_data': 'subscriptions'}, {'text': '📊 Статус и трафик', 'callback_data': 'status'}],
-        [{'text': '📲 Скачать приложения', 'callback_data': 'apps'}, {'text': '📱 Как подключиться', 'callback_data': 'instructions'}],
-        [{'text': '🌍 Страны и AUTO', 'callback_data': 'countries'}],
-        [{'text': '🛒 Купить VPN', 'callback_data': 'buy'}, {'text': '💬 Помощь', 'callback_data': 'support'}],
-        [{'text': '🪪 Мой Telegram ID', 'callback_data': 'identity'}]]}
-
-
-def request(control, user_id, kind, identity=None):
+def request(control, user_id, kind, identity=None, days=None):
+    if kind not in ('renew', 'buy', 'support') or (days is not None and days not in bot_ui.PERIODS):
+        raise ValueError('invalid_bot_request')
     with control.database() as db:
-        subscription = db.execute('SELECT id,contact_id FROM subscriptions WHERE id=? AND telegram_user_id=? AND deleted_at IS NULL', (identity, user_id)).fetchone() if identity else db.execute('SELECT id,contact_id FROM subscriptions WHERE telegram_user_id=? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1', (user_id,)).fetchone()
-        if identity and not subscription:
-            return 'Эта подписка недоступна. Откройте «Мои подписки».'
+        db.execute('BEGIN IMMEDIATE')
+        subscription = db.execute('SELECT id,contact_id FROM subscriptions WHERE id=? AND telegram_user_id=? AND deleted_at IS NULL', (identity, user_id)).fetchone() if identity else db.execute('SELECT id,contact_id FROM subscriptions WHERE telegram_user_id=? AND deleted_at IS NULL ORDER BY expires_at DESC LIMIT 1', (user_id,)).fetchone()
+        if (identity or kind == 'renew') and not subscription:
+            return 'Подписка недоступна. Вернитесь в «Мой VPN».'
         contact_id = subscription['contact_id'] if subscription else None
-        subscription_id = subscription['id'] if subscription and kind == 'renew' else None
-        existing = db.execute("SELECT id FROM bot_requests WHERE user_id=? AND kind=? AND state='open' AND subscription_id IS ?", (user_id, kind, subscription_id)).fetchone()
+        subscription_id = subscription['id'] if subscription and kind != 'buy' else None
+        existing = db.execute("SELECT * FROM bot_requests WHERE user_id=? AND kind=? AND state='open' AND subscription_id IS ?", (user_id, kind, subscription_id)).fetchone()
         if existing:
-            return f'Заявка №{existing[0]} уже ожидает ответа менеджера. Повторно создавать её не нужно.'
-        cursor = db.execute('INSERT INTO bot_requests(contact_id,subscription_id,user_id,kind,created_at) VALUES(?,?,?,?,?)', (contact_id, subscription_id, user_id, kind, time.time()))
-        return f'Заявка №{cursor.lastrowid} сохранена в CRM. Менеджер увидит её и поможет с {"продлением" if kind == "renew" else "покупкой" if kind == "buy" else "подключением"}. Деньги не списаны.'
+            return 'Заявка уже ожидает менеджера. Повторно отправлять её не нужно.'
+        db.execute('INSERT INTO bot_requests(contact_id,subscription_id,user_id,kind,created_at,requested_days) VALUES(?,?,?,?,?,?)', (contact_id, subscription_id, user_id, kind, time.time(), days))
+        return 'Заявка сохранена. Менеджер поможет с ' + ('продлением' if kind == 'renew' else 'подключением' if kind == 'buy' else 'VPN') + '.'
+
+
+def error_description(exc):
+    try:
+        return str(json.loads(exc.read(4096)).get('description', '')).lower()
+    except (ValueError, OSError, AttributeError):
+        return ''
+
+
+def publish(control, user_id, text, markup, token, state, selected, callback_message=None, bot_id=None):
+    """Edit the canonical menu; create a replacement only if it was deleted."""
+    callback_message = callback_message or {}
+    bot_id = control.BOT_ID if bot_id is None else bot_id
+    old_id = callback_message.get('message_id') if callback_message.get('from', {}).get('id', bot_id) == bot_id else None
+    message_id = state['message_id'] if state else old_id
+    body = {'chat_id': user_id, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True, 'reply_markup': markup}
+    if message_id:
+        try:
+            control.telegram('editMessageText', {**body, 'message_id': message_id}, token)
+        except urllib.error.HTTPError as exc:
+            description = error_description(exc)
+            if exc.code == 400 and 'message is not modified' in description:
+                pass
+            elif exc.code == 400 and any(reason in description for reason in ('message to edit not found', "message can't be edited", 'message_id_invalid')):
+                message_id = None
+            else:
+                raise
+    if not message_id:
+        result = control.telegram('sendMessage', body, token)
+        message_id = result.get('message_id')
+        if not isinstance(message_id, int) or message_id <= 0:
+            raise RuntimeError('telegram_message_missing')
+    with control.database() as db:
+        db.execute('INSERT INTO bot_screens(bot_id,user_id,message_id,subscription_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(bot_id,user_id) DO UPDATE SET message_id=excluded.message_id,subscription_id=excluded.subscription_id,updated_at=excluded.updated_at', (bot_id, user_id, message_id, selected['id'] if selected else None, time.time()))
+    if old_id and old_id != message_id:
+        try:
+            control.telegram('deleteMessage', {'chat_id': user_id, 'message_id': old_id}, token)
+        except Exception:
+            # Old Telegram messages may no longer be deletable. Never retry a completed action for cleanup.
+            pass
 
 
 def handle(control, update, token):
     callback = update.get('callback_query')
     message = callback.get('message', {}) if callback else update.get('message', {})
     sender = callback.get('from', {}) if callback else message.get('from', {})
-    if message.get('chat', {}).get('type') != 'private' or sender.get('is_bot') or not sender.get('id'):
+    user_id = sender.get('id')
+    if message.get('chat', {}).get('type') != 'private' or sender.get('is_bot') or not user_id or message['chat'].get('id') != user_id:
         return
-    user_id = sender['id']
+    bot_id = control.BOT_ID
     if callback:
-        control.telegram('answerCallbackQuery', {'callback_query_id': callback['id']}, token)
+        try:
+            control.telegram('answerCallbackQuery', {'callback_query_id': callback['id']}, token)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 400:
+                raise
+            # Expired callback acknowledgements must not prevent a valid menu action.
     action = callback.get('data', 'home') if callback else message.get('text', '').split(' ', 1)[0].split('@', 1)[0]
-    action = {'/start': 'home', '/menu': 'home', '/status': 'status', '/subscription': 'subscriptions', '/help': 'instructions', '/buy': 'buy', '/support': 'support', 'Статус': 'status', 'Моя': 'subscriptions'}.get(action, action)
+    action = {'/start': 'home', '/menu': 'home', '/status': 'home', '/subscription': 'subscriptions', '/help': 'support', '/buy': 'buy', '/support': 'support', 'status': 'home', 'instructions': 'connect', 'countries': 'support', 'Статус': 'home', 'Моя': 'subscriptions'}.get(action, action)
     with control.database() as db:
-        db.execute('INSERT INTO bot_users VALUES(?,?,?,?) ON CONFLICT(bot_id,user_id) DO UPDATE SET last_seen=excluded.last_seen', (control.BOT_ID, user_id, time.time(), time.time()))
-        rows = db.execute('SELECT * FROM subscriptions WHERE telegram_user_id=? AND deleted_at IS NULL ORDER BY expires_at DESC', (user_id,)).fetchall()
-        views = [control.subscription_view(row, db) for row in rows]
-    markup = keyboard()
-    if action in ('subscriptions', 'status'):
-        if not views:
-            text = f'🔐 Подписок пока нет.\nЕсли VPN уже выдан, сообщите менеджеру Telegram ID: {user_id}. Он привяжет подписку к вашему контакту.\nДля новой подписки нажмите «Купить VPN».'
+        db.execute('INSERT INTO bot_users VALUES(?,?,?,?) ON CONFLICT(bot_id,user_id) DO UPDATE SET last_seen=excluded.last_seen', (bot_id, user_id, time.time(), time.time()))
+        views = [control.subscription_view(row, db) for row in db.execute('SELECT * FROM subscriptions WHERE telegram_user_id=? AND deleted_at IS NULL ORDER BY expires_at DESC', (user_id,))]
+        state_row = db.execute('SELECT * FROM bot_screens WHERE bot_id=? AND user_id=?', (bot_id, user_id)).fetchone()
+        state = dict(state_row) if state_row else None
+        requests = [dict(row) for row in db.execute("SELECT * FROM bot_requests WHERE user_id=? AND state='open' ORDER BY created_at DESC", (user_id,))]
+    selected = bot_ui.choose(views, state['subscription_id'] if state else None)
+    notice = ''
+    if action.startswith(('select:', 'renew:', 'confirm_renew:', 'ask_renew:')):
+        identity = action.split(':')[1]
+        selected_target = next((value for value in views if value['id'] == identity), None)
+        if not selected_target:
+            action, notice = 'home', 'Подписка недоступна. Обновите кабинет.'
         else:
-            control.telegram('sendMessage', {'chat_id': user_id, 'text': '🔐 Ваши VPN-подписки' if action == 'subscriptions' else '📊 Срок и использование VPN', 'reply_markup': markup}, token)
-            for value in views[:20]:
-                labels = {'active': '🟢 Активна', 'provisioning': '🟡 Настраивается', 'expired': '⌛ Истекла', 'revoked': '⛔ Отключена'}
-                remaining = max(0, math.ceil((value['expires_at'] - time.time()) / 86400))
-                kind_label = {'gift': 'Подарок', 'purchase': 'Покупка', 'trial': 'Пробный период'}.get(value['kind'], 'Подписка')
-                text = f"{labels[value['status']]} · {kind_label}\nДо {time.strftime('%d.%m.%Y %H:%M UTC', time.gmtime(value['expires_at']))} · осталось {remaining} дн.\nОтправлено: {value['upload_bytes'] / 1024**3:.2f} ГБ\nПолучено: {value['download_bytes'] / 1024**3:.2f} ГБ"
-                if action == 'subscriptions' and value['status'] == 'active':
-                    text += '\n\nHapp:\n' + value['happ_url'] + '\n\nKoala Clash / Clash Meta:\n' + value['clash_url'] + '\n\nv2rayNG:\n' + value['v2rayng_url'] + '\n\nСкачивание и инструкция с вашей ссылкой:\n' + value['guide_url'] + '\n\nНе передавайте ссылку подписки другим людям.'
-                buttons = [[{'text': 'Продлить эту подписку', 'callback_data': 'renew:' + value['id']}], [{'text': 'Как подключиться', 'callback_data': 'instructions'}, {'text': 'Меню', 'callback_data': 'home'}]]
-                control.telegram('sendMessage', {'chat_id': user_id, 'text': text, 'disable_web_page_preview': True, 'reply_markup': {'inline_keyboard': buttons}}, token)
-            return
-    elif action.startswith('renew:'):
-        identity = action.split(':', 1)[1]
-        if not any(value['id'] == identity for value in views):
-            text = 'Подписка недоступна.'
+            selected = selected_target
+    if action.startswith(('ask_renew:', 'ask_buy:')) or action in ('confirm_buy', 'confirm_support', 'ask_support') or action.startswith('confirm_renew:'):
+        kind = 'renew' if action.startswith(('ask_renew:', 'confirm_renew:')) else 'buy' if action.startswith('ask_buy:') or action == 'confirm_buy' else 'support'
+        days = None
+        if action.startswith(('ask_renew:', 'ask_buy:')):
+            try:
+                days = int(action.rsplit(':', 1)[1])
+                if days not in bot_ui.PERIODS:
+                    raise ValueError('invalid_days')
+            except ValueError:
+                action, notice = 'home', 'Выберите срок кнопками в меню.'
+        if action != 'home':
+            notice = request(control, user_id, kind, selected['id'] if selected else None, days)
+            with control.database() as db:
+                requests = [dict(row) for row in db.execute("SELECT * FROM bot_requests WHERE user_id=? AND state='open' ORDER BY created_at DESC", (user_id,))]
+            if 'недоступна' not in notice:
+                notice = ''  # Pending status on the home screen is the acknowledgement.
+            action = 'home'
+    if action.startswith('renew:'):
+        text, markup = bot_ui.periods('renew', selected, requests)
+    elif action == 'buy':
+        text, markup = bot_ui.periods('buy', selected, requests)
+    elif action.startswith('list:') or action == 'subscriptions' and len(views) > 1:
+        try: page = int(action.split(':', 1)[1]) if ':' in action else 0
+        except ValueError: page = 0
+        text, markup = bot_ui.subscriptions(views, page)
+    elif action == 'support':
+        text, markup = bot_ui.help_screen(requests)
+    elif action == 'apps' and selected and selected['status'] == 'active':
+        text, markup = bot_ui.apps()
+    elif action == 'connect' or action.startswith('client:'):
+        key = action.split(':', 1)[1] if ':' in action else 'happ'
+        if selected and selected['status'] == 'active' and key in bot_ui.client_guides.CLIENTS:
+            text, markup = bot_ui.connect(selected, control.PUBLIC, key)
         else:
-            text = 'Отправить менеджеру заявку на продление этой подписки? Цена и срок согласуются с менеджером.'
-            markup = {'inline_keyboard': [[{'text': 'Да, запросить продление', 'callback_data': 'confirm_renew:' + identity}], [{'text': 'Отмена', 'callback_data': 'home'}]]}
-    elif action.startswith('confirm_renew:'):
-        text = request(control, user_id, 'renew', action.split(':', 1)[1])
-    elif action in ('buy', 'support'):
-        text = 'Хотите оформить новую VPN-подписку?' if action == 'buy' else 'Не удаётся подключиться? Сначала обновите подписку в приложении, переключите страну и проверьте подключение через мобильную сеть. Если это не помогло, отправьте заявку менеджеру.'
-        markup = {'inline_keyboard': [[{'text': 'Отправить заявку менеджеру', 'callback_data': 'confirm_' + action}], [{'text': 'Назад', 'callback_data': 'home'}]]}
-    elif action in ('confirm_buy', 'confirm_support'):
-        text = request(control, user_id, action.removeprefix('confirm_'))
-    elif action == 'identity':
-        text = f'🪪 Ваш Telegram ID: {user_id}\nСообщите его менеджеру для привязки VPN. ID берётся из Telegram и не вводится вручную в боте.'
-    elif action in ('instructions', 'apps'):
-        text = '📱 Выберите приложение\n\nНа Android рекомендуем Happ. Устанавливать всё сразу не нужно. Нажмите на приложение: появятся APK, подробные шаги и ваша ссылка.\n\n' + client_guides.KOALA_ANDROID
-        markup = {'inline_keyboard': [[{'text': client['name'], 'callback_data': 'client:' + key}] for key, client in client_guides.CLIENTS.items()] + [[{'text': 'Все инструкции на сайте', 'url': control.PUBLIC + '/apps'}], [{'text': 'Меню', 'callback_data': 'home'}]]}
-    elif action.startswith('client:'):
-        key = action.removeprefix('client:')
-        if key not in client_guides.CLIENTS:
-            return
-        client = next(item for item in client_guides.catalog(control.PUBLIC) if item['id'] == key)
-        text = '📱 ' + client_guides.guide_text(key)
-        if key == 'koala':
-            text = client_guides.KOALA_ANDROID + '\n\n' + text
-        else:
-            text = client_guides.INSTALL + '\n\n' + text
-        buttons = []
-        if client.get('download_url'):
-            buttons.append([{'text': '📥 Скачать APK · ' + client['name'], 'url': client['download_url']}])
-            if key == 'v2rayng':
-                buttons.append([{'text': 'APK для старого телефона', 'url': control.PUBLIC + '/downloads/v2rayng-arm7.apk'}])
-        else:
-            buttons.append([{'text': 'Официальные релизы', 'url': client['source']}])
-        active = [value for value in views if value['status'] == 'active']
-        for value in active[:5]:
-            url = value['subscription_url'] + '?format=' + client['format']
-            text += '\n\nВаша ссылка (до ' + time.strftime('%d.%m.%Y', time.gmtime(value['expires_at'])) + '):\n' + url
-            buttons.append([{'text': 'Инструкция с моей ссылкой', 'url': value['guide_url'] + '#' + key}])
-        if not active:
-            text += '\n\nАктивной подписки пока нет. Откройте «Мои подписки» или запросите покупку/продление.'
-        buttons += [[{'text': 'Другие приложения', 'callback_data': 'apps'}, {'text': 'Мои подписки', 'callback_data': 'subscriptions'}], [{'text': 'Помощь', 'callback_data': 'support'}, {'text': 'Меню', 'callback_data': 'home'}]]
-        markup = {'inline_keyboard': buttons}
-    elif action == 'countries':
-        text = '🌍 Польша · Сербия · Эстония · Финляндия · Швейцария · Румыния · Казахстан\n\nВ Happ выберите «Автовыбор · RU напрямую», в Koala Clash и Clash Meta — AUTO. Приложение проверяет задержку с вашего устройства среди персонально распределённых серверов. Страну можно выбрать вручную. Скорость зависит также от вашей сети.'
+            text, markup = bot_ui.home(selected, views, requests, user_id, time.time(), 'Для подключения нужна активная подписка.')
     else:
-        text = '🔐 VPN — личный кабинет\n\nЗдесь можно получить ссылки подключения, проверить срок и трафик, узнать как подключиться и запросить покупку или продление.\n\nВыберите действие ниже 👇'
-    control.telegram('sendMessage', {'chat_id': user_id, 'text': text, 'disable_web_page_preview': True, 'reply_markup': markup}, token)
+        text, markup = bot_ui.home(selected, views, requests, user_id, time.time(), notice)
+    publish(control, user_id, text, markup, token, state, selected, message if callback else None, bot_id=bot_id)
 
 
 def deliver_notifications(control):
@@ -159,10 +181,17 @@ def run(control):
                 with control.BOT_LOCK:
                     if token != control.BOT_TOKEN: continue
                     control.BOT_USERNAME, control.BOT_ID = bot['username'], bot['id']
-                control.telegram('setMyCommands', {'commands': [{'command': 'start', 'description': 'Личный кабинет VPN'}, {'command': 'subscription', 'description': 'Мои подписки и ссылки'}, {'command': 'status', 'description': 'Срок и трафик'}, {'command': 'help', 'description': 'Инструкция подключения'}, {'command': 'buy', 'description': 'Купить VPN'}, {'command': 'support', 'description': 'Помощь менеджера'}]}, token)
+                control.telegram('setMyCommands', {'commands': [{'command': 'start', 'description': 'Открыть мой VPN'}]}, token)
+                control.telegram('setChatMenuButton', {'menu_button': {'type': 'commands'}}, token)
                 initialized = token
+            offset_key = 'telegram_offset:' + str(control.BOT_ID)
             with control.database() as db:
-                offset = db.execute("SELECT value FROM settings WHERE key='telegram_offset'").fetchone()
+                offset = db.execute('SELECT value FROM settings WHERE key=?', (offset_key,)).fetchone()
+                if not offset:
+                    offset = db.execute("SELECT value FROM settings WHERE key='telegram_offset'").fetchone()
+                    if offset:
+                        db.execute('INSERT INTO settings VALUES(?,?)', (offset_key, offset[0]))
+                        db.execute("DELETE FROM settings WHERE key='telegram_offset'")
             updates = control.telegram('getUpdates', {'offset': int(offset[0]) if offset else 0, 'timeout': 25, 'allowed_updates': ['message', 'callback_query']}, token)
             for update in updates:
                 if token != control.BOT_TOKEN: break
@@ -176,7 +205,7 @@ def run(control):
                 with control.BOT_LOCK:
                     if token != control.BOT_TOKEN: break
                     with control.database() as db:
-                        db.execute("INSERT INTO settings VALUES('telegram_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(update['update_id'] + 1),))
+                        db.execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (offset_key, str(update['update_id'] + 1)))
         except Exception:
             control.log.warning('Telegram cabinet retry')
             time.sleep(10)

@@ -83,10 +83,10 @@ class ControlTests(unittest.TestCase):
             self.control.create({'contact_id': 12, 'contact_name': 'Test contact', 'days': 1,
                                  'kind': 'trial', 'actor_id': 5, 'telegram_user_id': 555})
         update = {'message': {'chat': {'type': 'private', 'id': 555}, 'from': {'id': 555}, 'text': '/status'}}
-        with patch.object(self.control.time, 'time', return_value=1000001), patch.object(self.control, 'telegram') as telegram:
+        with patch.object(self.control.time, 'time', return_value=1000001), patch.object(self.control, 'telegram', return_value={'message_id': 200}) as telegram:
             bot_cabinet.handle(self.control, update, 'test-placeholder')
         texts = [call.args[1].get('text', '') for call in telegram.call_args_list if call.args[0] == 'sendMessage']
-        self.assertTrue(any('Пробный период' in text and 'осталось 1 дн.' in text for text in texts))
+        self.assertTrue(any('Пробный период' in text and 'осталось 24 ч.' in text for text in texts))
 
     def test_all_countries_and_balanced_auto(self):
         value = self.create(); self.ready(value['id'])
@@ -237,7 +237,7 @@ class ControlTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT COUNT(*) FROM bot_requests').fetchone()[0], 1)
         update = {'callback_query': {'id': 'callback-test', 'from': {'id': 666},
             'data': 'confirm_renew:' + value['id'], 'message': {'chat': {'type': 'private', 'id': 666}}}}
-        with patch.object(self.control, 'telegram', return_value={}) as telegram:
+        with patch.object(self.control, 'telegram', return_value={'message_id': 200}) as telegram:
             cabinet.handle(self.control, update, 'test-token')
         self.assertIn('недоступна', telegram.call_args.args[1]['text'])
         self.assertNotIn(value['subscription_url'], telegram.call_args.args[1]['text'])
@@ -246,13 +246,14 @@ class ControlTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT user_id FROM bot_users').fetchone()[0], 666)
         self.ready(value['id'])
         update['callback_query']['data'] = 'client:happ'
-        with patch.object(self.control, 'telegram', return_value={}) as telegram:
+        with patch.object(self.control, 'telegram', return_value={'message_id': 200}) as telegram:
             cabinet.handle(self.control, update, 'test-token')
         self.assertNotIn(value['subscription_url'], telegram.call_args.args[1]['text'])
         update['callback_query']['from']['id'] = 555
-        with patch.object(self.control, 'telegram', return_value={}) as telegram:
+        update['callback_query']['message']['chat']['id'] = 555
+        with patch.object(self.control, 'telegram', return_value={'message_id': 200}) as telegram:
             cabinet.handle(self.control, update, 'test-token')
-        self.assertIn(value['subscription_url'], telegram.call_args.args[1]['text'])
+        self.assertIn(value['subscription_url'], json.dumps(telegram.call_args.args[1]))
 
     def test_personal_guide_revocation_and_download_path_isolation(self):
         value = self.create(); self.ready(value['id'])

@@ -91,6 +91,8 @@ def initialize():
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS bot_users (bot_id INTEGER, user_id INTEGER, first_seen REAL,
             last_seen REAL, PRIMARY KEY(bot_id,user_id));
+        CREATE TABLE IF NOT EXISTS bot_screens (bot_id INTEGER, user_id INTEGER, message_id INTEGER,
+            subscription_id TEXT, updated_at REAL NOT NULL, PRIMARY KEY(bot_id,user_id));
         CREATE TABLE IF NOT EXISTS bot_requests (id INTEGER PRIMARY KEY, contact_id INTEGER,
             subscription_id TEXT, user_id INTEGER NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open',
             created_at REAL NOT NULL, handled_at REAL, handled_by INTEGER);
@@ -106,6 +108,8 @@ def initialize():
         if 'create_request_key' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
             db.execute('ALTER TABLE subscriptions ADD COLUMN create_request_key TEXT')
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_request ON subscriptions(create_request_key)')
+        if 'requested_days' not in {row[1] for row in db.execute('PRAGMA table_info(bot_requests)')}:
+            db.execute('ALTER TABLE bot_requests ADD COLUMN requested_days INTEGER')
     (HOME / 'control.sqlite').chmod(0o600)
 
 

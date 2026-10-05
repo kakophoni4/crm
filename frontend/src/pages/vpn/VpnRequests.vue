@@ -6,7 +6,7 @@ import { http } from '@/shared/api/http'
 import VpnPeriodPicker from '@/features/vpn/VpnPeriodPicker.vue'
 import { validPeriod } from '@/features/vpn/period'
 
-interface Request { id: number; contact_id: number | null; contact_name?: string; telegram_username?: string; user_id?: number; subscription_id?: string; kind: string; state: string; created_at: number }
+interface Request { id: number; contact_id: number | null; contact_name?: string; telegram_username?: string; user_id?: number; subscription_id?: string; kind: string; state: string; created_at: number; requested_days?: number | null }
 const router = useRouter(), dialog = useDialog(), message = useMessage()
 const emit = defineEmits<{ count: [value: number] }>()
 const items = ref<Request[]>([]), loading = ref(false), error = ref(''), search = ref('')
@@ -50,7 +50,7 @@ async function renew() {
   finally { busy.value = false }
 }
 async function openRenewal(item: Request) {
-  renewal.value = item; days.value = 30; confirmed.value = false; renewalExpiresAt.value = undefined
+  renewal.value = item; days.value = item.requested_days || 30; confirmed.value = false; renewalExpiresAt.value = undefined
   try {
     const { data } = await http.get<{ expires_at: number }>(`/vpn/subscriptions/${item.subscription_id}`)
     if (renewal.value?.id === item.id) renewalExpiresAt.value = data.expires_at
@@ -71,6 +71,7 @@ onUnmounted(() => { disposed = true; ++generation; if (timer) clearInterval(time
         <div class="toolbar"><strong>{{ labels[item.kind] || item.kind }}</strong><NTag :type="item.state === 'open' ? 'error' : 'default'">{{ statuses[item.state] || item.state }}</NTag></div>
         <p class="contact"><NButton v-if="item.contact_id" text type="primary" @click="router.push({ name: 'contact-detail', params: { id: item.contact_id } })">{{ item.contact_name || 'Открыть контакт' }}</NButton><span v-else>Контакт ещё не привязан</span><span v-if="item.telegram_username"> · @{{ item.telegram_username }}</span><span v-else-if="!item.contact_id && item.user_id"> · Telegram ID {{ item.user_id }}</span></p>
         <p class="muted">{{ date(item.created_at) }} · Заявка №{{ item.id }}</p>
+        <p v-if="item.requested_days" class="muted">Клиент выбрал {{ item.requested_days }} дн.</p>
         <div v-if="item.state === 'open'" class="actions"><NButton v-if="item.kind === 'renew' && item.subscription_id && item.contact_id" type="primary" @click="openRenewal(item)">Продлить</NButton><NButton v-if="item.contact_id" @click="router.push({ name: 'vpn', query: { contact_id: item.contact_id, tab: 'subscriptions' } })">Подписки контакта</NButton><NButton @click="close(item, 'done')">Обработана</NButton><NButton quaternary type="error" @click="close(item, 'dismissed')">Отклонить</NButton></div>
       </NCard></div>
       <NEmpty v-if="!loading && !error && !visible.length" description="Заявок не найдено" />
