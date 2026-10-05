@@ -1964,6 +1964,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .opt-orders__period-select {

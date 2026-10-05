@@ -1068,6 +1068,12 @@ async function saveLeadComment(): Promise<void> {
   min-height: 0;
   padding: 12px;
   overflow: hidden;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+@container (max-width: 330px) {
+  .deal-side__field { grid-template-columns: minmax(0, 1fr); gap: 5px; }
 }
 
 .deal-side__scroll {
@@ -1097,6 +1103,7 @@ async function saveLeadComment(): Promise<void> {
   gap: 8px;
   flex-shrink: 0;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .deal-side__title {
@@ -1117,6 +1124,7 @@ async function saveLeadComment(): Promise<void> {
   justify-content: space-between;
   gap: 8px;
   font-weight: 700;
+  flex-wrap: wrap;
 }
 
 .deal-side__section {
@@ -1257,6 +1265,7 @@ async function saveLeadComment(): Promise<void> {
   margin: 2px 0 0;
   font-size: 0.9rem;
   font-weight: 650;
+  overflow-wrap: anywhere;
 }
 
 .deal-side__pay-list {

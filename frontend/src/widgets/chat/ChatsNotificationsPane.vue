@@ -156,7 +156,7 @@ onUnmounted(() => {
 
 .chats-notifications-pane__row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   align-items: flex-start;
   width: 100%;
@@ -196,6 +196,7 @@ onUnmounted(() => {
 .chats-notifications-pane__line {
   font-size: 0.8125rem;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .chats-notifications-pane__row--unread .chats-notifications-pane__line {

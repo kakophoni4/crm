@@ -8,11 +8,13 @@ import VpnPeriodPicker from '@/features/vpn/VpnPeriodPicker.vue'
 import { subscriptionKindLabels, validPeriod, vpnDeliveryText } from '@/features/vpn/period'
 import TrialVpnDialog from './TrialVpnDialog.vue'
 import { useAuthStore } from '@/shared/store/auth'
+import { usePhoneChatsOnly } from '@/shared/lib/phone-mode'
 
 const props = defineProps<{ contactId: number; botId?: number | null; chatId?: number }>()
 interface Subscription { id: string; status: string; kind: string; expires_at: number; enabled: boolean; ready_nodes: number; total_nodes: number; source_bot_name?: string; happ_url: string; clash_url: string; guide_url: string; v2rayng_url: string; upload_bytes: number; download_bytes: number }
 const router = useRouter(), message = useMessage(), dialog = useDialog()
 const auth = useAuthStore()
+const phoneChatsOnly = usePhoneChatsOnly()
 const items = ref<Subscription[]>([]), days = ref<number | null>(30), loading = ref(false), busy = ref(false), error = ref('')
 const kind = ref<'gift' | 'purchase' | 'trial'>('gift'), sourceBot = ref<number | null>(null), bots = ref<{ label: string; value: number }[]>([])
 const trialVisible = ref(false), renewalTarget = ref<Subscription | null>(null), renewalDays = ref<number | null>(30)
@@ -110,7 +112,7 @@ onUnmounted(() => { disposed = true; ++generation; ++setupSequence; if (timer) c
     <NCard v-for="request in requests.filter(item => item.state === 'open')" :key="request.id" size="small" :title="`Заявка из бота №${request.id}`">
       <p>{{ requestLabels[request.kind] }} · {{ date(request.created_at) }}</p>
       <p v-if="request.requested_days">Клиент выбрал {{ request.requested_days }} дн.</p>
-      <NButton size="small" @click="closeRequest(request.id)">Отметить обработанной</NButton>
+      <NButton v-if="auth.user?.permissions?.includes('contacts.update')" size="small" @click="closeRequest(request.id)">Отметить обработанной</NButton>
     </NCard>
     <NCard v-if="auth.user?.permissions?.includes('contacts.update')" size="small" title="Выдать подписку">
       <div class="form">
@@ -126,10 +128,21 @@ onUnmounted(() => { disposed = true; ++generation; ++setupSequence; if (timer) c
         <header><b>{{ subscriptionKindLabels[item.kind] || 'Подписка' }}</b><NTag :type="item.status === 'active' ? 'success' : 'warning'">{{ labels[item.status] }}</NTag></header>
         <p>До {{ date(item.expires_at) }}</p>
         <p>{{ item.source_bot_name || 'Менеджер CRM' }} · {{ ((item.upload_bytes + item.download_bytes) / 1024 ** 3).toFixed(2) }} ГБ</p>
-        <div class="actions"><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.happ_url)">Happ</NButton><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.clash_url)">Koala Clash</NButton><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.v2rayng_url)">v2rayNG</NButton><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.guide_url)">Инструкция и APK</NButton><NButton v-if="chatId" size="small" type="primary" secondary :disabled="item.status !== 'active' || busy" @click="deliver(item)">Отправить в чат</NButton><NButton size="small" :disabled="busy" @click="renewalTarget = item; renewalDays = 30">Продлить</NButton><NButton v-if="item.enabled" size="small" type="error" secondary :disabled="busy" @click="action(item, 'revoke')">Отключить</NButton><NButton size="small" quaternary type="error" :disabled="busy" @click="action(item, 'delete')">Удалить</NButton></div>
+        <div class="subscription-links">
+          <span class="subscription-links__label">Скопировать ссылку</span>
+          <div class="actions"><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.happ_url)">Happ</NButton><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.clash_url)">Koala Clash</NButton><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.v2rayng_url)">v2rayNG</NButton><NButton size="small" :disabled="item.status !== 'active'" @click="copy(item.guide_url)">Инструкция и APK</NButton></div>
+        </div>
+        <div class="actions subscription-actions">
+          <NButton v-if="chatId && auth.user?.permissions?.includes('chats.write')" size="small" type="primary" secondary :disabled="item.status !== 'active' || busy" @click="deliver(item)">Отправить в чат</NButton>
+          <template v-if="auth.user?.permissions?.includes('contacts.update')">
+            <NButton size="small" :disabled="busy" @click="renewalTarget = item; renewalDays = 30">Продлить</NButton>
+            <NButton v-if="item.enabled" size="small" type="error" secondary :disabled="busy" @click="action(item, 'revoke')">Отключить</NButton>
+            <NButton size="small" quaternary type="error" :disabled="busy" @click="action(item, 'delete')">Удалить</NButton>
+          </template>
+        </div>
       </NCard>
     </NSpin>
-    <NButton text @click="router.push({ name: 'vpn', query: { contact_id: contactId } })">Открыть историю и управление VPN →</NButton>
+    <NButton v-if="!phoneChatsOnly" text @click="router.push({ name: 'vpn', query: { contact_id: contactId } })">Открыть историю и управление VPN →</NButton>
     <NModal :show="!!renewalTarget" preset="card" title="Продлить VPN" style="width: min(480px, 95vw)" :mask-closable="!busy" :closable="!busy" @update:show="value => { if (!value && !busy) renewalTarget = null }">
       <VpnPeriodPicker v-model="renewalDays" :expires-at="renewalTarget?.expires_at" :disabled="busy" />
       <NButton style="margin-top: 18px" type="primary" :loading="busy" :disabled="!validPeriod(renewalDays)" @click="renew">Продлить на {{ renewalDays || '…' }} дн.</NButton>
@@ -138,9 +151,13 @@ onUnmounted(() => { disposed = true; ++generation; ++setupSequence; if (timer) c
 </template>
 
 <style scoped>
-.contact-vpn { display: grid; gap: 14px; padding: 16px; min-width: 0; overflow: auto; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-h3 { margin: 0 0 4px; } header span, p { color: var(--text-secondary, #8a93a3); font-size: 13px; }
+.contact-vpn { display: flex; flex-direction: column; gap: 12px; padding: 12px; min-width: 0; overflow: auto; overscroll-behavior: contain; }
+.contact-vpn > * { flex-shrink: 0; min-width: 0; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+h3 { margin: 0 0 4px; font-size: 1rem; } header span, p { color: var(--app-text-muted); font-size: 13px; overflow-wrap: anywhere; }
 .form { display: grid; gap: 12px; } .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .n-card + .n-card { margin-top: 12px; }
+.subscription-links { display: grid; gap: 8px; margin-top: 12px; }
+.subscription-links__label { color: var(--app-text-muted); font-size: 12px; }
+.subscription-actions { border-top: 1px solid var(--app-border); margin-top: 12px; padding-top: 12px; }
 </style>

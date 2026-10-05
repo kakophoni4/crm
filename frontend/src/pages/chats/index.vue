@@ -5,7 +5,9 @@ import {
   NBadge,
 
   NButton,
-  NModal,
+  NPopover,
+  NDrawer,
+  NDrawerContent,
 
   NEmpty,
 
@@ -37,8 +39,8 @@ import { formatDistanceToNow } from 'date-fns'
 
 import { ru } from 'date-fns/locale'
 
-import { useWindowSize } from '@vueuse/core'
-import { ArrowLeft, MessageSquare, SlidersHorizontal, X } from 'lucide-vue-next'
+import { useElementSize, useWindowSize } from '@vueuse/core'
+import { ArrowLeft, ChevronDown, MessageSquare, SlidersHorizontal } from 'lucide-vue-next'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -69,7 +71,7 @@ import type { StatusOption } from '@/features/leads/types'
 import { useStatusesStore } from '@/features/statuses/store'
 
 import { useChatNotificationsStore } from '@/features/chats/notifications-store'
-import ChatsNotificationsPane from '@/widgets/chat/ChatsNotificationsPane.vue'
+import ChatSidePane from '@/widgets/chat/ChatSidePane.vue'
 
 import { AppError } from '@/shared/api/http'
 import { usePhoneChatsOnly } from '@/shared/lib/phone-mode'
@@ -95,19 +97,11 @@ import TakeoverBadge from '@/widgets/chat/TakeoverBadge.vue'
 const TransferCardDialog = defineAsyncComponent(
   () => import('@/features/contacts/transfer-card/TransferCardDialog.vue'),
 )
-const ChatDealSidePanel = defineAsyncComponent(
-  () => import('@/widgets/chat/ChatDealSidePanel.vue'),
-)
-const ChatPaymentsSidePanel = defineAsyncComponent(
-  () => import('@/widgets/chat/ChatPaymentsSidePanel.vue'),
-)
-const ContactVpnPanel = defineAsyncComponent(() => import('@/widgets/chat/ContactVpnPanel.vue'))
-const vpnOpen = ref(false)
+
+
 const TrialVpnDialog = defineAsyncComponent(() => import('@/widgets/chat/TrialVpnDialog.vue'))
 const trialVpnOpen = ref(false)
-const ChatClientRequirementPanel = defineAsyncComponent(
-  () => import('@/widgets/chat/ChatClientRequirementPanel.vue'),
-)
+
 const NewWhatsappChatDialog = defineAsyncComponent(
   () => import('@/widgets/chat/NewWhatsappChatDialog.vue'),
 )
@@ -126,8 +120,10 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const { width } = useWindowSize()
+const workspaceRef = ref<HTMLElement | null>(null)
+const { width: workspaceWidth } = useElementSize(workspaceRef)
 const phoneChatsOnly = usePhoneChatsOnly()
-const isNarrow = computed(() => phoneChatsOnly.value || width.value < CHATS_NARROW_BREAKPOINT)
+const isNarrow = computed(() => phoneChatsOnly.value || width.value < CHATS_NARROW_BREAKPOINT || (workspaceWidth.value > 0 && workspaceWidth.value < 940))
 const narrowPane = ref<'list' | 'chat'>('list')
 const chatFiltersOpen = ref(true)
 const activeChatFilterCount = computed(() => [
@@ -219,14 +215,16 @@ const referral = ref<ChatReferralInfo>(emptyReferral())
 const referralBusy = ref(false)
 
 async function loadReferral(chatId: number | null): Promise<void> {
+  referral.value = emptyReferral()
   if (chatId == null) {
     referral.value = emptyReferral()
     return
   }
   try {
-    referral.value = await getChatReferral(chatId)
+    const loaded = await getChatReferral(chatId)
+    if (store.currentChatId === chatId) referral.value = loaded
   } catch {
-    referral.value = emptyReferral()
+    if (store.currentChatId === chatId) referral.value = emptyReferral()
   }
 }
 
@@ -489,7 +487,11 @@ function backToChatList(): void {
 }
 
 watch(isNarrow, (narrow) => {
-  if (!narrow) narrowPane.value = 'list'
+  if (narrow) narrowPane.value = store.currentChatId != null ? 'chat' : 'list'
+  else {
+    narrowPane.value = 'list'
+    transferInboxOpen.value = false
+  }
 })
 
 watch(
@@ -502,9 +504,11 @@ watch(
       if (isNarrow.value) narrowPane.value = 'chat'
       rightPaneTab.value = 'deal'
     } else {
+      transferInboxOpen.value = false
       rightPaneTab.value = 'notifications'
     }
   },
+  { immediate: true },
 )
 
 onMounted(() => {
@@ -565,7 +569,7 @@ onUnmounted(() => {
 
 <template>
 
-  <section class="chats-page">
+  <section ref="workspaceRef" class="chats-page">
 
     <div
       class="chats-page__split"
@@ -603,7 +607,7 @@ onUnmounted(() => {
               v-if="isNarrow"
               quaternary
               size="small"
-              @click="transferInboxOpen = true"
+              @click="rightPaneTab = 'notifications'; transferInboxOpen = true"
             >
               Увед.
               <template v-if="notifications.unreadCount">
@@ -799,11 +803,12 @@ onUnmounted(() => {
                   v-if="!phoneChatsOnly"
                   type="button"
                   class="chats-page__contact-name"
+                  :title="store.currentChat.contact_name"
                   @click="goToContact"
                 >
                   <h2>{{ store.currentChat.contact_name }}</h2>
                 </button>
-                <h2 v-else class="chats-page__contact-name chats-page__contact-name--static">
+                <h2 v-else class="chats-page__contact-name chats-page__contact-name--static" :title="store.currentChat.contact_name">
                   {{ store.currentChat.contact_name }}
                 </h2>
 
@@ -838,36 +843,25 @@ onUnmounted(() => {
 
             </div>
 
-            <NSpace v-if="!phoneChatsOnly" vertical :size="6" align="end">
-              <NButton v-if="auth.user?.permissions?.includes('contacts.update')" size="small" secondary @click="isNarrow ? vpnOpen = true : rightPaneTab = 'vpn'">VPN клиента</NButton>
-              <NButton v-if="auth.user?.permissions?.includes('contacts.update') && auth.user?.permissions?.includes('chats.write')" size="small" type="primary" secondary @click="trialVpnOpen = true">Отправить пробный VPN</NButton>
-              <BlockContactButton
-                v-if="auth.user?.permissions?.includes('chats.write')"
-                :key="store.currentChat.id"
-                :chat-id="store.currentChat.id"
-                :contact-name="store.currentChat.contact_name"
-              />
-              <NButton
-                v-if="canTransferCard"
-                size="small"
-                @click="transferCardVisible = true"
-              >
-                Передать карточку
-              </NButton>
-              <div v-if="referral.enabled" class="chats-page__referral">
-                <NButton
-                  size="small"
-                  :loading="referralBusy"
-                  @click="copyReferralLink"
-                >
-                  Скопировать реф. ссылку
-                </NButton>
-                <span class="chats-page__referral-count" :title="'Рефералов: ' + referral.count">
-                  {{ referral.count }}
-                </span>
-              </div>
-            </NSpace>
+            </div>
 
+            <div class="chats-page__chat-actions">
+              <NButton v-if="isNarrow" size="small" secondary @click="transferInboxOpen = true">Карточка клиента</NButton>
+              <NButton v-if="auth.user?.permissions?.includes('contacts.read')" size="small" secondary @click="rightPaneTab = 'vpn'; if (isNarrow) transferInboxOpen = true">VPN клиента</NButton>
+              <NButton v-if="auth.user?.permissions?.includes('contacts.update') && auth.user?.permissions?.includes('chats.write')" size="small" type="primary" secondary title="Отправить пробный VPN в этот чат" @click="trialVpnOpen = true">Пробный VPN</NButton>
+              <NPopover v-if="!phoneChatsOnly && (canTransferCard || referral.enabled || auth.user?.permissions?.includes('chats.write'))" trigger="click" placement="bottom-end" display-directive="show">
+                <template #trigger><NButton size="small" quaternary>Действия<template #icon><ChevronDown :size="14" /></template></NButton></template>
+                <div class="chat-contact-menu">
+                  <NButton v-if="canTransferCard" size="small" quaternary @click="transferCardVisible = true">Передать карточку</NButton>
+                  <template v-if="referral.enabled">
+                    <NButton size="small" quaternary :loading="referralBusy" @click="copyReferralLink">Скопировать реф. ссылку</NButton>
+                    <span class="chat-contact-menu__hint">Рефералов: {{ referral.count }}</span>
+                  </template>
+                  <div v-if="auth.user?.permissions?.includes('chats.write')" class="chat-contact-menu__danger">
+                    <BlockContactButton :key="store.currentChat.id" :chat-id="store.currentChat.id" :contact-name="store.currentChat.contact_name" />
+                  </div>
+                </div>
+              </NPopover>
             </div>
 
           </header>
@@ -927,89 +921,16 @@ onUnmounted(() => {
       </main>
 
       <aside v-if="!isNarrow" class="chats-page__inbox-pane">
-        <NTabs
-          v-if="store.currentChat"
-          v-model:value="rightPaneTab"
-          type="line"
-          size="medium"
-          class="chats-page__right-tabs"
-        >
-          <NTab name="deal" tab="Сделки" />
-          <NTab name="payments" tab="Оплаты" />
-          <NTab v-if="auth.user?.permissions?.includes('contacts.read')" name="vpn" tab="VPN" />
-          <NTab name="client_req" tab="От клиента" />
-          <NTab name="notifications">
-            <template #default>
-              <span class="chats-page__right-tab-label">
-                Уведомления
-                <span
-                  v-if="notifications.unreadCount"
-                  class="chats-page__right-tab-badge"
-                >
-                  {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
-                </span>
-              </span>
-            </template>
-          </NTab>
-        </NTabs>
-        <ContactVpnPanel
-          v-if="store.currentChat && rightPaneTab === 'vpn'"
-          :key="`vpn-${store.currentChatId}`"
-          :contact-id="store.currentChat.contact_id"
-          :bot-id="store.currentChat.bot_id"
-          :chat-id="store.currentChat.id"
-        />
-        <ChatDealSidePanel
-          v-else-if="store.currentChat && rightPaneTab === 'deal'"
-          :key="`deal-${store.currentChatId}`"
-          :chat="store.currentChat"
-          :bots="bots"
-          :lead-status-options="leadStatusOptions"
-          :won-status-id="wonStatusId"
-          :lost-status-id="lostStatusId"
-        />
-        <ChatPaymentsSidePanel
-          v-else-if="store.currentChat && rightPaneTab === 'payments'"
-          :key="`pay-${store.currentChatId}`"
-          :chat="store.currentChat"
-        />
-        <ChatClientRequirementPanel
-          v-else-if="store.currentChat && rightPaneTab === 'client_req'"
-          :key="`creq-${store.currentChatId}`"
-          :chat="store.currentChat"
-        />
-        <ChatsNotificationsPane
-          v-else
-          embedded
-          :hide-title="!!store.currentChat"
-        />
+        <ChatSidePane v-model="rightPaneTab" :chat="store.currentChat" :bots="bots" :lead-status-options="leadStatusOptions" :won-status-id="wonStatusId" :lost-status-id="lostStatusId" />
       </aside>
 
     </div>
 
-    <div
-      v-if="isNarrow && transferInboxOpen && !phoneChatsOnly"
-      class="chats-page__inbox-drawer"
-      role="dialog"
-      aria-label="Уведомления"
-    >
-      <div class="chats-page__inbox-drawer-backdrop" @click="transferInboxOpen = false" />
-      <aside class="chats-page__inbox-drawer-panel">
-        <NButton
-          quaternary
-          circle
-          size="small"
-          class="chats-page__inbox-close"
-          aria-label="Закрыть"
-          @click="transferInboxOpen = false"
-        >
-          <X :size="18" />
-        </NButton>
-        <ChatsNotificationsPane embedded />
-      </aside>
-    </div>
-
-
+    <NDrawer :show="isNarrow && transferInboxOpen" width="min(460px, 100vw)" placement="right" @update:show="transferInboxOpen = $event">
+      <NDrawerContent :title="store.currentChat ? 'Карточка клиента' : 'Уведомления'" closable :native-scrollbar="false" :body-content-style="{ display: 'flex', height: '100%', padding: '0', overflow: 'hidden' }">
+        <ChatSidePane v-model="rightPaneTab" :chat="store.currentChat" :bots="bots" :lead-status-options="leadStatusOptions" :won-status-id="wonStatusId" :lost-status-id="lostStatusId" />
+      </NDrawerContent>
+    </NDrawer>
 
     <NewWhatsappChatDialog
       v-if="!phoneChatsOnly"
@@ -1041,9 +962,6 @@ onUnmounted(() => {
 
   </section>
 
-  <NModal v-model:show="vpnOpen" preset="card" title="VPN клиента" style="width: min(560px, 95vw)">
-    <ContactVpnPanel v-if="vpnOpen && store.currentChat" :key="store.currentChat.id" :contact-id="store.currentChat.contact_id" :bot-id="store.currentChat.bot_id" :chat-id="store.currentChat.id" />
-  </NModal>
   <TrialVpnDialog v-if="store.currentChat" :key="`trial-${store.currentChat.id}`" v-model:show="trialVpnOpen" :contact-id="store.currentChat.contact_id" :bot-id="store.currentChat.bot_id" :chat-id="store.currentChat.id" />
 </template>
 
@@ -1123,7 +1041,7 @@ onUnmounted(() => {
 
   display: grid;
 
-  grid-template-columns: minmax(260px, 300px) 1fr minmax(380px, 440px);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(340px, 400px);
 
   gap: 0;
 
@@ -1138,7 +1056,7 @@ onUnmounted(() => {
 }
 
 .chats-page__split--deal-open {
-  grid-template-columns: minmax(220px, 260px) 1fr minmax(400px, 460px);
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(340px, 400px);
 }
 
 
@@ -1157,7 +1075,11 @@ onUnmounted(() => {
   font-size: 1.1rem;
   font-weight: 700;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
+
+.chats-page__contact-name h2,
+.chats-page__contact-name--static { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 
 .chats-page__contact-link:hover,
 .chats-page__contact-name:hover {
@@ -1338,6 +1260,7 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
+  flex: 1;
 }
 
 .chats-page__back {
@@ -1395,6 +1318,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   background: var(--app-bg);
 }
@@ -1426,87 +1350,12 @@ onUnmounted(() => {
 
 }
 
-.chats-page__right-tabs {
-  flex-shrink: 0;
-  padding: 10px 10px 0;
-  border-bottom: 1px solid var(--app-border);
-  min-width: 0;
-}
-
-.chats-page__right-tabs :deep(.n-tabs-nav) {
-  width: 100%;
-}
-
-.chats-page__right-tabs :deep(.n-tabs-nav-scroll-wrapper),
-.chats-page__right-tabs :deep(.n-tabs-nav-scroll-content),
-.chats-page__right-tabs :deep(.n-tabs-wrapper) {
-  width: 100%;
-}
-
-.chats-page__right-tabs :deep(.n-tabs-tab-pad) {
-  display: none;
-}
-
-.chats-page__right-tabs :deep(.n-tabs-tab) {
-  flex: 1 1 0;
-  justify-content: center;
-  align-items: center;
-  min-width: 0;
-  padding: 8px 6px 10px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
-.chats-page__right-tabs :deep(.n-tabs-tab .n-tabs-tab__label) {
-  display: flex;
-  justify-content: center;
-  width: 100%;
-  max-width: 100%;
-  white-space: normal;
-  text-align: center;
-  overflow: visible;
-}
-
-.chats-page__right-tab-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  max-width: 100%;
-  text-align: center;
-}
-
-.chats-page__right-tab-badge {
-  flex-shrink: 0;
-  min-width: 1.25rem;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--app-accent, #2080f0);
-  color: #fff;
-  font-size: 0.75rem;
-  font-weight: 700;
-  line-height: 1.35rem;
-  text-align: center;
-}
-
-.chats-page__inbox-pane > :not(.chats-page__right-tabs) {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-
-
 .chats-page__chat-header {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--app-border);
 }
 
@@ -1518,19 +1367,12 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.chats-page__referral {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.chats-page__referral-count {
-  min-width: 1.4rem;
-  text-align: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--app-text-muted);
-}
+.chats-page__chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.chat-contact-menu { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: min(240px, 80vw); }
+.chat-contact-menu :deep(.n-button) { justify-content: flex-start; }
+.chat-contact-menu__hint { padding: 0 10px 6px; font-size: 12px; color: var(--app-text-muted); }
+.chat-contact-menu__danger { border-top: 1px solid var(--app-border); margin-top: 4px; padding-top: 6px; }
+.chat-contact-menu__danger :deep(.block-contact) { align-items: stretch; }
 
 .chats-page__chat-identity {
   min-width: 0;
@@ -1746,60 +1588,23 @@ onUnmounted(() => {
   }
 }
 
-@media (max-width: 1023px) {
-  .chats-page__split {
-    grid-template-columns: 1fr;
-  }
-
-  .chats-page__split--narrow .chats-page__list-pane,
-  .chats-page__split--narrow .chats-page__chat-pane {
-    display: none;
-  }
-
-  .chats-page__split--narrow.chats-page__split--show-list .chats-page__list-pane {
-    display: flex;
-    border-right: none;
-  }
-
-  .chats-page__split--narrow.chats-page__split--show-chat .chats-page__chat-pane {
-    display: flex;
-  }
-
-  .chats-page__inbox-pane {
-    display: none;
-  }
+.chats-page__split--narrow {
+  grid-template-columns: 1fr;
 }
 
-.chats-page__inbox-drawer {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
+.chats-page__split--narrow .chats-page__list-pane,
+.chats-page__split--narrow .chats-page__chat-pane {
+  display: none;
 }
 
-.chats-page__inbox-drawer-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.chats-page__inbox-drawer-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
+.chats-page__split--narrow.chats-page__split--show-list .chats-page__list-pane {
   display: flex;
-  flex-direction: column;
-  width: min(360px, 92vw);
-  height: 100%;
-  background: var(--app-surface);
-  padding: 12px;
-  overflow: hidden;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+  border-right: none;
 }
 
-.chats-page__inbox-close {
-  flex-shrink: 0;
-  margin: 0 0 8px auto;
+.chats-page__split--narrow.chats-page__split--show-chat .chats-page__chat-pane {
   display: flex;
 }
+
 
 </style>

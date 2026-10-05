@@ -538,6 +538,8 @@ onMounted(() => {
   min-height: 0;
   padding: 12px;
   overflow: hidden;
+  min-width: 0;
+  container-type: inline-size;
 }
 
 .payments-side__header {
@@ -588,6 +590,14 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.payments-side__card-top > div { min-width: 0; overflow-wrap: anywhere; }
+.payments-side__facts > div { min-width: 0; }
+.payments-side__facts dd { overflow-wrap: anywhere; }
+@container (max-width: 340px) {
+  .payments-side__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .payments-side__card-top strong {
@@ -697,11 +707,14 @@ onMounted(() => {
   justify-content: space-between;
   gap: 8px;
   font-size: 0.8rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .payments-side__modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
 }
 </style>

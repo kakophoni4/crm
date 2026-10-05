@@ -251,7 +251,11 @@ function statusLabel(status: string): string {
   gap: 10px;
   height: 100%;
   overflow: auto;
+  min-width: 0;
+  overscroll-behavior: contain;
 }
+
+.client-req :deep(.n-upload-file-info__name) { overflow: hidden; text-overflow: ellipsis; }
 .client-req__title {
   margin: 0;
   font-size: 1.05rem;
