@@ -214,6 +214,18 @@ class CabinetTests(unittest.TestCase):
             for button in row:
                 if 'copy_text' in button: self.assertLessEqual(len(button['copy_text']['text']), 256)
 
+    def test_happ_testing_uses_main_subscription_without_an_extra_copy_link(self):
+        value = self.subscription()
+        with self.control.database() as db:
+            view = self.control.subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone(), db)
+        for client in ('happ', 'clashmeta', 'v2rayng', 'koala'):
+            text, markup = bot_ui.connect(view, self.control.PUBLIC, client)
+            copies = [button['copy_text']['text'] for row in markup['inline_keyboard'] for button in row if 'copy_text' in button]
+            tests = [url for url in copies if '&view=tests' in url]
+            self.assertEqual(tests, [])
+            self.assertEqual(len(copies), 1)
+            self.assertEqual('🧪 Тест' in text, client == 'happ')
+
 
 if __name__ == '__main__':
     unittest.main()

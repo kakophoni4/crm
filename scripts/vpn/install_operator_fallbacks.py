@@ -23,6 +23,25 @@ GAMING_TARGETS = {
     'Ubisoft': 'staticctf.ubisoft.com',
 }
 
+# Passed three TLS 1.3/h2 probes from every inventory node. These are camouflage
+# variants, not evidence that a mobile operator permits our destination IPs.
+RESTRICTED_TARGETS = {
+    'Yandex': 'yandex.ru',
+    'Yandex ID': 'passport.yandex.ru',
+    'VK': 'vk.com',
+    'VK Video': 'vkvideo.ru',
+    'Ozon': 'www.ozon.ru',
+    'Wildberries': 'www.wildberries.ru',
+}
+
+# Public transport characteristics only; no third-party subscription credentials.
+# Pilot these independently from XHTTP before extending the selected nodes.
+RESTRICTED_TCP_TARGETS = {
+    'MAX TCP QQ': {'target': 'max.ru', 'port': 5269},
+    'Tilda TCP QQ': {'target': 'video.tilda.cc', 'port': 5222},
+    'VK CDN TCP QQ': {'target': 'sun9-64.userapi.com', 'port': 6443},
+}
+
 
 NODE_SCRIPT = r"""
 import base64,copy,datetime,hashlib,importlib.machinery,ipaddress,json,os,re,shutil,socket,sqlite3,ssl,subprocess,time
@@ -160,7 +179,11 @@ def main_gaming(plan):
     compile(agent_bytes,str(agent_path),'exec')
     agent=importlib.machinery.SourceFileLoader('gaming_agent',str(agent_path)).load_module()
     host=str(ipaddress.IPv4Address(plan['ips'][0]))
-    tag='crm-game-'+plan['brand'].lower().replace(' ','-').replace('.','-')
+    restricted=plan.get('restricted',False)
+    raw=plan.get('restricted_tcp',False)
+    if raw and not restricted:raise RuntimeError('raw_variant_requires_restricted_mode')
+    metadata_key='restricted_inbounds' if restricted else 'gaming_inbounds'
+    tag=('crm-restricted-' if restricted else 'crm-game-')+plan['brand'].lower().replace(' ','-').replace('.','-')
     for _ in range(3):target_ok(plan['target'])
     run(['systemctl','is-active','--quiet','x-ui'])
     firewall=run(['iptables','-S','INPUT']).stdout.strip()
@@ -169,14 +192,14 @@ def main_gaming(plan):
     if firewall!='-P INPUT ACCEPT' and not ufw_active:
         raise RuntimeError('gaming_port_requires_firewall_review')
     existing=agent.panel('inbounds/list')
-    gaming_ports=(8443,*range(8445,8465))
+    gaming_ports=(int(plan['port']),) if raw else (8443,*range(8445,8500))
     entry=next((item for item in existing if item.get('tag')==tag or
-                (item.get('tag')=='crm-game-fallback' and
+                (not restricted and item.get('tag')=='crm-game-fallback' and
                  item.get('streamSettings',{}).get('realitySettings',{}).get('serverNames')==[plan['target']])),None)
     if entry:
         port=entry['port']
         reality=entry.get('streamSettings',{}).get('realitySettings',{})
-        if entry['listen']!=host or port not in gaming_ports or reality.get('serverNames')!=[plan['target']]:
+        if entry['listen']!=host or port not in gaming_ports or reality.get('serverNames')!=[plan['target']] or (raw and entry['streamSettings'].get('network')!='tcp'):
             raise RuntimeError('existing_gaming_entry_does_not_match_plan')
     else:
         used={item['port'] for item in existing if item.get('listen') in (host,'','0.0.0.0','::')}
@@ -200,7 +223,7 @@ def main_gaming(plan):
     changed=agent_path.read_bytes()!=agent_bytes
     created_id=None
     firewall_added=False
-    firewall_rule=['allow','in','to',host,'port',str(port),'proto','tcp','comment','crm-vpn-games']
+    firewall_rule=['allow','in','to',host,'port',str(port),'proto','tcp','comment','crm-vpn-restricted' if restricted else 'crm-vpn-games']
     try:
         if ufw_active:
             before=run(['ufw','show','added']).stdout
@@ -217,15 +240,20 @@ def main_gaming(plan):
             reality['privateKey']=parsed['PrivateKey'];reality['shortIds']=[os.urandom(8).hex()]
             reality['target']=plan['target']+':443';reality.pop('dest',None);reality['serverNames']=[plan['target']]
             reality.setdefault('settings',{})['publicKey']=parsed.get('Password (PublicKey)',parsed.get('PublicKey'))
-            payload['streamSettings']['network']='xhttp'
-            payload['streamSettings']['xhttpSettings']={'path':'/assets/'+os.urandom(12).hex(),'mode':'auto'}
+            payload['streamSettings']['network']='tcp' if raw else 'xhttp'
+            if raw:
+                payload['streamSettings'].pop('xhttpSettings',None)
+                payload['streamSettings']['tcpSettings']={}
+            else:
+                payload['streamSettings']['xhttpSettings']={'path':'/assets/'+os.urandom(12).hex(),'mode':'auto'}
             entry=agent.panel('inbounds/add',payload)
             if not entry or not entry.get('id'):
                 entry=next(item for item in agent.panel('inbounds/list') if item.get('tag')==tag)
             created_id=entry['id']
         config=json.loads((state/'agent.json').read_text())
         if entry['id'] not in config['inbound_ids']:config['inbound_ids'].append(entry['id'])
-        config.setdefault('gaming_inbounds',{})[str(entry['id'])]={'brand':plan['brand'],'target':plan['target']}
+        config.setdefault(metadata_key,{})[str(entry['id'])]={'brand':plan['brand'],'target':plan['target']}
+        if raw:config[metadata_key][str(entry['id'])].update(fingerprint='chrome',test_profile=True)
         candidate=(state/'agent.json').with_suffix('.new')
         candidate.write_text(json.dumps(config));candidate.chmod(0o600);os.replace(candidate,state/'agent.json')
         candidate=agent_path.with_suffix('.new')
@@ -237,7 +265,7 @@ def main_gaming(plan):
             managed=db.execute("SELECT COUNT(*) FROM clients WHERE email LIKE 'crm-vpn-%'").fetchone()[0]
             attached=db.execute("SELECT COUNT(*) FROM client_inbounds ci JOIN clients c ON c.id=ci.client_id WHERE ci.inbound_id=? AND c.email LIKE 'crm-vpn-%'",(entry['id'],)).fetchone()[0]
         if attached!=managed:raise RuntimeError('gaming_missing_managed_clients')
-        print(json.dumps({'node':plan['id'],'gaming_tls_target':plan['target'],'brand':plan['brand'],'tcp_port':port,'managed_clients_attached':True}),flush=True)
+        print(json.dumps({'node':plan['id'],'tls_target':plan['target'],'brand':plan['brand'],'tcp_port':port,'managed_clients_attached':True}),flush=True)
     except Exception as error:
         if created_id is not None:agent.panel('inbounds/del/'+str(created_id),{})
         if firewall_added:run(['ufw','--force','delete',*firewall_rule],check=False)
@@ -250,8 +278,13 @@ def main_gaming(plan):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--node',help='Install only this inventory node first')
-    parser.add_argument('--gaming',action='store_true',help='Add every surveyed gaming TLS variant on every selected node')
+    variants=parser.add_mutually_exclusive_group()
+    variants.add_argument('--gaming',action='store_true',help='Add every surveyed gaming TLS variant on every selected node')
+    variants.add_argument('--restricted-network',action='store_true',help='Add surveyed Russian TLS targets; does not guarantee IP allowlist access')
+    variants.add_argument('--restricted-tcp',action='store_true',help='Pilot TCP/REALITY with public Russian TLS names; requires --node')
     args=parser.parse_args()
+    if args.restricted_tcp and not args.node:
+        parser.error('--restricted-tcp requires --node for a separately verified pilot')
     nodes=json.loads(Path('/etc/crm-vpn/nodes.json').read_text())['nodes']
     if args.node:
         nodes=[node for node in nodes if node['id']==args.node]
@@ -261,11 +294,16 @@ def main():
     for node in nodes:
         plan={key:node[key] for key in ('id','ips')}
         plan.update(agent=agent,target='www.apple.com' if node['id'] in ('ee','ch','kz') else 'www.microsoft.com')
-        if args.gaming:
-            source=NODE_SCRIPT+GAMING_NODE_SCRIPT+'\nplan='+repr(plan)+'\nfor brand,target in '+repr(list(GAMING_TARGETS.items()))+':\n main_gaming({**plan,"brand":brand,"target":target})\n'
+        if args.restricted_tcp:
+            plan.update(restricted=True,restricted_tcp=True)
+            source=NODE_SCRIPT+GAMING_NODE_SCRIPT+'\nplan='+repr(plan)+'\nfor brand,options in '+repr(list(RESTRICTED_TCP_TARGETS.items()))+':\n main_gaming({**plan,"brand":brand,**options})\n'
+        elif args.gaming or args.restricted_network:
+            plan['restricted']=args.restricted_network
+            targets=RESTRICTED_TARGETS if args.restricted_network else GAMING_TARGETS
+            source=NODE_SCRIPT+GAMING_NODE_SCRIPT+'\nplan='+repr(plan)+'\nfor brand,target in '+repr(list(targets.items()))+':\n main_gaming({**plan,"brand":brand,"target":target})\n'
         else:
             source=NODE_SCRIPT+'\nmain('+repr(plan)+')\n'
-        process=subprocess.run(['ssh','-F','/etc/crm-vpn/ssh_config','vpn-'+node['id'],'python3','-'],input=source,text=True,capture_output=True,timeout=90)
+        process=subprocess.run(['ssh','-F','/etc/crm-vpn/ssh_config','vpn-'+node['id'],'python3','-'],input=source,text=True,capture_output=True,timeout=180)
         if process.returncode:
             # Exceptions have fixed public messages; never echo unfiltered remote output.
             public = ('gaming_port_requires_firewall_review', 'existing_gaming_entry_does_not_match_plan',

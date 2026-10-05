@@ -39,6 +39,26 @@ TARGETS = {
     'Final Fantasy XIV': ['www.finalfantasyxiv.com'],
 }
 
+# Candidate TLS targets, not a claim that their addresses are allowed by a
+# particular operator. Only a probe from that operator can establish this.
+RESTRICTED_NETWORK_TARGETS = {
+    'Yandex': ['yandex.ru'],
+    'Yandex ID': ['passport.yandex.ru'],
+    'Yandex Maps': ['maps.yandex.ru'],
+    'VK': ['vk.com'],
+    'VK Video': ['vkvideo.ru'],
+    'OK': ['ok.ru'],
+    'Mail': ['mail.ru'],
+    'Ozon': ['www.ozon.ru'],
+    'Wildberries': ['www.wildberries.ru'],
+    'Sber': ['www.sberbank.ru'],
+    'T-Bank': ['www.tbank.ru'],
+    'VTB': ['www.vtb.ru'],
+    'Alfa-Bank': ['alfabank.ru'],
+    '2GIS': ['2gis.ru'],
+    'MAX': ['max.ru'],
+}
+
 NODE_SCRIPT = r'''
 import concurrent.futures,json,socket,ssl,time
 def check(item):
@@ -53,14 +73,17 @@ def check(item):
  except Exception as error:
   return {'brand':brand,'host':host,'valid':False,'error':type(error).__name__}
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
- for item in pool.map(check,TARGETS):print(json.dumps(item),flush=True)
+ for item in pool.map(check,TARGETS*REPEATS):print(json.dumps(item),flush=True)
 '''
 
 
-def check_node(node, targets):
-    source = 'TARGETS=' + repr(targets) + '\n' + NODE_SCRIPT
-    result = subprocess.run(['ssh', '-F', '/etc/crm-vpn/ssh_config', 'vpn-' + node['id'], 'python3', '-'],
-                            input=source, text=True, capture_output=True, timeout=150)
+def check_node(node, targets, repeats=1):
+    source = 'TARGETS=' + repr(targets) + '\nREPEATS=' + str(repeats) + '\n' + NODE_SCRIPT
+    try:
+        result = subprocess.run(['ssh', '-F', '/etc/crm-vpn/ssh_config', 'vpn-' + node['id'], 'python3', '-'],
+                                input=source, text=True, capture_output=True, timeout=150 * repeats)
+    except subprocess.TimeoutExpired:
+        return {'node': node['id'], 'error': 'target_survey_timeout'}
     if result.returncode:
         return {'node': node['id'], 'error': 'target_survey_failed'}
     try:
@@ -72,17 +95,22 @@ def check_node(node, targets):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--node')
-    parser.add_argument('--brand', action='append', choices=list(TARGETS))
+    parser.add_argument('--preset', choices=('gaming', 'restricted-network'), default='gaming')
+    parser.add_argument('--brand', action='append')
+    parser.add_argument('--repeat', type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
+    catalogue = TARGETS if args.preset == 'gaming' else RESTRICTED_NETWORK_TARGETS
+    if args.brand and any(brand not in catalogue for brand in args.brand):
+        parser.error('Unknown brand for selected preset')
     nodes = json.loads(Path('/etc/crm-vpn/nodes.json').read_text())['nodes']
     if args.node:
         nodes = [node for node in nodes if node['id'] == args.node]
         if not nodes:
             raise SystemExit('Unknown inventory node')
-    targets = [(brand, host) for brand, hosts in TARGETS.items()
+    targets = [(brand, host) for brand, hosts in catalogue.items()
                if not args.brand or brand in args.brand for host in hosts]
     with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
-        for result in pool.map(lambda node: check_node(node, targets), nodes):
+        for result in pool.map(lambda node: check_node(node, targets, args.repeat), nodes):
             print(json.dumps(result), flush=True)
 
 

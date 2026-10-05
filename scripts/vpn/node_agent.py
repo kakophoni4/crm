@@ -376,6 +376,19 @@ def metadata():
         gaming = config.get('gaming_inbounds', {}).get(str(identity))
         if gaming and gaming.get('target') == reality['serverNames'][0]:
             endpoints[-1]['game_brand'] = gaming['brand']
+        restricted = config.get('restricted_inbounds', {}).get(str(identity))
+        if restricted and restricted.get('target') == reality['serverNames'][0]:
+            endpoints[-1]['service_brand'] = restricted['brand']
+            if restricted.get('test_profile'):
+                endpoints[-1]['test_profile'] = True
+            if restricted.get('fingerprint') in ('chrome', 'qq'):
+                endpoints[-1]['fingerprint'] = restricted['fingerprint']
+        shared = config.get('restricted_shared_inbounds', {}).get(str(identity), {})
+        original = dict(endpoints[-1])
+        for variant in shared.get('variants', []):
+            if variant.get('target') in reality['serverNames'] and variant.get('fingerprint') in ('chrome', 'qq'):
+                endpoints.append({**original, 'sni': variant['target'], 'service_brand': variant['brand'],
+                                  'fingerprint': variant['fingerprint'], 'test_profile': True})
     db.close()
     hy = yaml.safe_load(Path('/etc/hysteria/config-8444.yaml').read_text())
     cert = Path(hy['tls']['cert']).read_text()

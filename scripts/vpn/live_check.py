@@ -2,6 +2,8 @@
 """Exercise all published real endpoints with an ephemeral identity; always remove it.
 
 Run as crm-vpn-control on CRM. No subscriptions, passwords or tokens are printed.
+Use --happ-only to exercise published Happ profiles and failover without walking
+every standalone transport or testing Mihomo.
 """
 import concurrent.futures
 import importlib.util
@@ -19,8 +21,11 @@ from pathlib import Path
 
 
 def main():
+    if '--happ-only' in sys.argv and '--mihomo' in sys.argv:
+        raise SystemExit('Choose --happ-only or --mihomo')
     spec = importlib.util.spec_from_file_location('vpn_check_control', '/opt/crm-vpn/control_service.py')
     control = importlib.util.module_from_spec(spec); spec.loader.exec_module(control)
+    cleanup_nodes = list(control.NODES)
     if '--node' in sys.argv:
         node_id = sys.argv[sys.argv.index('--node') + 1]
         control.NODES = [node for node in control.NODES if node['id'] == node_id]
@@ -58,7 +63,9 @@ def main():
                     data = json.load(response)
                 choices = next(group['proxies'] for group in data['proxy-groups'] if group['name'] == 'VPN')
                 data.update({'mixed-port': 19351, 'external-controller': '127.0.0.1:19350', 'secret': secret})
-                config.write_text(json.dumps(data)); config.chmod(0o600)
+                # Mihomo reads JSON through YAML: escaped UTF-16 surrogate pairs
+                # for flag emoji are rejected, whereas actual UTF-8 is valid.
+                config.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8'); config.chmod(0o600)
                 validation = subprocess.run(['/opt/crm-vpn/bin/mihomo', '-t', '-d', str(directory), '-f', str(config)], capture_output=True, text=True, timeout=30)
                 if validation.returncode:
                     raise RuntimeError('Mihomo rejected exported configuration')
@@ -81,7 +88,6 @@ def main():
                             if not ok:
                                 failures.append(choice)
                                 print('Mihomo curl diagnostic:', result.returncode, result.stderr[:300], flush=True)
-                                break
                     finally:
                         process.terminate()
                         try: process.wait(timeout=5)
@@ -99,7 +105,7 @@ def main():
                 config = directory / ('client-' + str(index) + '.json')
                 if proxy['type'] == 'vless':
                     stream = {'network': proxy['network'], 'security': 'reality',
-                              'realitySettings': {'serverName': proxy['servername'], 'fingerprint': 'chrome',
+                              'realitySettings': {'serverName': proxy['servername'], 'fingerprint': proxy.get('client-fingerprint', 'chrome'),
                                                   'publicKey': proxy['reality-opts']['public-key'], 'shortId': proxy['reality-opts']['short-id']}}
                     if proxy['network'] == 'xhttp':
                         stream['xhttpSettings'] = proxy['xhttp-opts']
@@ -143,30 +149,32 @@ def main():
                         process.terminate()
                         try: process.wait(timeout=5)
                         except subprocess.TimeoutExpired: process.kill(); process.wait()
-            if '--mihomo' not in sys.argv:
+            if '--mihomo' not in sys.argv and '--happ-only' not in sys.argv:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1 if '--sequential' in sys.argv else 7) as pool:
                     list(pool.map(check, enumerate(proxies)))
-            if '--failover' in sys.argv:
+            if '--failover' in sys.argv or '--happ-only' in sys.argv:
                 test_happ_failover(control, directory, proxies, automatic, row['token'])
             # Re-read node counters after actual traffic; both protocols must be visible.
             usage_totals = {'up': 0, 'down': 0, 'hy_up': 0, 'hy_down': 0}
+            required_metrics = ('up', 'down') if '--happ-only' in sys.argv else tuple(usage_totals)
             for attempt in range(16):
                 usage_totals = dict.fromkeys(usage_totals, 0)
                 for node in control.NODES:
                     usage = control.node_call(node['id'], {'operation': 'usage'})['users'].get(identity, {})
                     for metric in usage_totals:
                         usage_totals[metric] += usage.get(metric, 0)
-                if all(value > 0 for value in usage_totals.values()):
+                if all(usage_totals[metric] > 0 for metric in required_metrics):
                     break
                 # The panel persists Xray traffic on its own periodic schedule.
                 time.sleep(2)
             print(json.dumps({'traffic_recorded': {key: value > 0 for key, value in usage_totals.items()}}), flush=True)
-            if not all(value > 0 for value in usage_totals.values()):
+            if not all(usage_totals[metric] > 0 for metric in required_metrics):
                 failures.append('usage')
         finally:
             control.mutate(identity, {'action': 'revoke', 'actor_id': 0})
             cleanup_failed = []
-            for node in control.NODES:
+            # The live reconciler may provision a test identity beyond --node.
+            for node in cleanup_nodes:
                 try:
                     control.node_call(node['id'], {'operation': 'sync', 'id': identity, 'password': row['password'], 'expires_at': row['expires_at'], 'enabled': False})
                     control.node_call(node['id'], {'operation': 'delete', 'id': identity})
@@ -182,7 +190,8 @@ def main():
                     db.execute('DELETE FROM subscriptions WHERE id=?', (identity,))
     if failures:
         raise SystemExit('Failed checks: ' + ', '.join(failures))
-    print('All published VPN relays and per-protocol counters passed', flush=True)
+    print('All published Happ profiles and traffic checks passed' if '--happ-only' in sys.argv else
+          'All published VPN relays and per-protocol counters passed', flush=True)
 
 
 def test_happ_failover(control, directory, proxies, automatic, subscription_token):
@@ -200,7 +209,9 @@ def test_happ_failover(control, directory, proxies, automatic, subscription_toke
             raise RuntimeError('Published Happ profile validation failed')
     # Country profiles must carry all methods of that country and relay traffic,
     # rather than silently selecting one fixed endpoint during compaction.
-    for index, profile in enumerate(profiles[1:]):
+    mode_names = ('⚡ Автовыбор', '🛡️ Автовыбор · белые списки')
+    countries_profiles = [profile for profile in profiles if profile['remarks'] not in mode_names]
+    for index, profile in enumerate(countries_profiles):
         config = copy.deepcopy(profile); config['inbounds'][0]['port'] = 19371
         path = directory / ('happ-country-' + str(index) + '.json')
         path.write_text(json.dumps(config)); path.chmod(0o600)
@@ -212,18 +223,39 @@ def test_happ_failover(control, directory, proxies, automatic, subscription_toke
                     '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True, timeout=25)
                 if result.returncode or result.stdout != '204':
                     raise RuntimeError('Happ country relay failed: ' + profile['remarks'])
-                print(json.dumps({'happ_country': profile['remarks'], 'relay_ok': True}), flush=True)
+                kind = 'happ_test' if profile['remarks'].startswith('🧪 Тест') else 'happ_country'
+                print(json.dumps({kind: profile['remarks'], 'relay_ok': True}), flush=True)
             finally:
                 process.terminate()
                 try: process.wait(timeout=5)
                 except subprocess.TimeoutExpired: process.kill(); process.wait()
-    countries = list(dict.fromkeys(name.split(' · ')[0] for name in automatic))
+    regular_names, restricted_names = control.split_automatic(proxies, automatic)
+    if restricted_names:
+        restricted = next(profile for profile in profiles if profile['remarks'] == mode_names[1])
+        config = copy.deepcopy(restricted); config['inbounds'][0]['port'] = 19371
+        path = directory / 'happ-restricted.json'
+        path.write_text(json.dumps(config)); path.chmod(0o600)
+        with (directory / 'happ-restricted.log').open('w') as log:
+            process = subprocess.Popen(['/opt/crm-vpn/bin/xray', 'run', '-c', str(path)], stdout=log, stderr=log, env=environment)
+            try:
+                time.sleep(7)
+                result = subprocess.run(['curl', '-sS', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19371',
+                    '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True, timeout=25)
+                if result.returncode or result.stdout != '204':
+                    raise RuntimeError('Happ restricted mode relay failed')
+                print(json.dumps({'happ_mode': 'restricted', 'relay_ok': True}), flush=True)
+            finally:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: process.kill(); process.wait()
+    regular = next(profile for profile in profiles if profile['remarks'] == mode_names[0])
+    countries = list(dict.fromkeys(name.split(' · ')[0] for name in regular_names))
     for scenario in ('normal', 'udp_blocked', 'three_countries_blocked'):
         if scenario == 'three_countries_blocked' and len(countries) <= 3:
             print(json.dumps({'happ_failover': scenario, 'skipped': 'requires_at_least_four_countries'}), flush=True)
             continue
-        config = copy.deepcopy(profiles[0]); config['inbounds'][0]['port'] = 19371
-        for name, outbound in zip(automatic, config['outbounds']):
+        config = copy.deepcopy(regular); config['inbounds'][0]['port'] = 19371
+        for name, outbound in zip(regular_names, config['outbounds']):
             blocked = (scenario == 'udp_blocked' and outbound['protocol'] == 'hysteria') or (
                 scenario == 'three_countries_blocked' and name.split(' · ')[0] in countries[:3])
             if blocked:

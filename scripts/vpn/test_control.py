@@ -165,13 +165,13 @@ class ControlTests(unittest.TestCase):
         clash = self.control.clash_configs(proxies, automatic)
         self.assertEqual(len(clash['proxies']), 63)
         groups = {group['name']: group for group in clash['proxy-groups']}
-        self.assertEqual(groups['VPN']['proxies'], ['AUTO'] + [node['name'] for node in self.control.NODES])
+        self.assertEqual(groups['VPN']['proxies'], ['AUTO'] + [self.control.country_label(node['name']) for node in self.control.NODES])
         self.assertEqual(len(groups['AUTO']['proxies']), 63)
         self.assertTrue(all(group.get('hidden') for name, group in groups.items() if name != 'VPN'))
         for node in self.control.NODES:
-            country = next(profile for profile in happ if profile['remarks'] == node['name'])
+            country = next(profile for profile in happ if profile['remarks'] == self.control.country_label(node['name']))
             self.assertEqual(len(country['outbounds']), 10)  # nine methods and direct
-            self.assertEqual(len(groups[node['name']]['proxies']), 9)
+            self.assertEqual(len(groups[self.control.country_label(node['name'])]['proxies']), 9)
             self.assertEqual(country['routing']['balancers'][0]['strategy']['type'], 'leastPing')
             for index, (brand, target) in enumerate(GAMING_TARGETS.items()):
                 name = node['name'] + ' · ' + brand
@@ -184,6 +184,134 @@ class ControlTests(unittest.TestCase):
                 self.assertTrue(any(outbound.get('streamSettings', {}).get('realitySettings', {}).get('serverName') == target
                                     for outbound in country['outbounds']))
 
+    def test_restricted_network_variants_stay_inside_compact_country_profiles(self):
+        from scripts.vpn.install_operator_fallbacks import RESTRICTED_TARGETS
+        from urllib.parse import unquote
+        value = self.create(); self.ready(value['id'])
+        with self.control.database() as db:
+            for node in self.control.NODES:
+                stored = json.loads(db.execute('SELECT data FROM endpoints WHERE node_id=?', (node['id'],)).fetchone()[0])
+                for index, (brand, target) in enumerate(RESTRICTED_TARGETS.items()):
+                    stored.append({**stored[0], 'port': 8460 + index, 'sni': target, 'service_brand': brand})
+                db.execute('UPDATE endpoints SET data=? WHERE node_id=?', (json.dumps(stored), node['id']))
+            row = db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+            proxies, links, automatic = self.control.connection_configs(row, db)
+        happ = self.control.happ_configs(proxies, automatic)
+        clash = self.control.clash_configs(proxies, automatic)
+        self.assertEqual(len(happ), 9)
+        self.assertEqual(len(clash['proxy-groups'][0]['proxies']), 9)
+        self.assertEqual(len(proxies), 56)
+        self.assertEqual(len(automatic), 56)
+        self.assertEqual(len({proxy['name'] for proxy in proxies}), 56)
+        self.assertEqual(len(happ[0]['outbounds']), 15)  # ordinary methods and direct
+        self.assertEqual(len(happ[1]['outbounds']), 43)  # restricted methods and direct
+        groups = {group['name']: group for group in clash['proxy-groups']}
+        self.assertEqual(len(groups['AUTO']['proxies']), 14)
+        self.assertEqual(len(groups['AUTO · белые списки']['proxies']), 42)
+        self.assertTrue(groups['AUTO · белые списки']['lazy'])
+        self.assertFalse(set(groups['AUTO']['proxies']) & set(groups['AUTO · белые списки']['proxies']))
+        for node in self.control.NODES:
+            country = next(profile for profile in happ if profile['remarks'] == self.control.country_label(node['name']))
+            for brand, target in RESTRICTED_TARGETS.items():
+                name = node['name'] + ' · БС · ' + brand
+                self.assertTrue(any(proxy['name'] == name and proxy.get('servername') == target for proxy in clash['proxies']))
+                self.assertTrue(any(unquote(link).endswith('#' + name) for link in links))
+                self.assertTrue(any(outbound.get('streamSettings', {}).get('realitySettings', {}).get('serverName') == target
+                                    for outbound in country['outbounds']))
+
+    def test_tcp_qq_pilot_reaches_happ_and_uri_without_breaking_clash(self):
+        from scripts.vpn.install_operator_fallbacks import RESTRICTED_TCP_TARGETS
+        from urllib.parse import parse_qs, unquote, urlsplit
+        value = self.create(); self.ready(value['id'])
+        node = self.control.NODES[0]
+        with self.control.database() as db:
+            stored = json.loads(db.execute('SELECT data FROM endpoints WHERE node_id=?', (node['id'],)).fetchone()[0])
+            for brand, options in RESTRICTED_TCP_TARGETS.items():
+                stored.append({**stored[0], 'network': 'tcp', 'xhttp': {}, 'port': options['port'],
+                               'sni': options['target'], 'service_brand': brand, 'fingerprint': 'qq'})
+            db.execute('UPDATE endpoints SET data=? WHERE node_id=?', (json.dumps(stored), node['id']))
+            row = db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+            proxies, links, automatic = self.control.connection_configs(row, db)
+        happ = self.control.happ_configs(proxies, automatic)
+        clash = self.control.clash_configs(proxies, automatic)
+        self.assertEqual(len(happ), 12)
+        self.assertEqual(len(clash['proxy-groups'][0]['proxies']), 8)
+        tests = [profile for profile in happ if profile['remarks'].startswith('🧪 Тест')]
+        self.assertEqual(len(tests), 3)
+        self.assertTrue(all(len(profile['outbounds']) == 2 and 'observatory' not in profile for profile in tests))
+        regular, restricted = self.control.split_automatic(proxies, automatic)
+        self.assertEqual(len(restricted), 3)
+        self.assertFalse(set(regular) & set(restricted))
+        for brand, options in RESTRICTED_TCP_TARGETS.items():
+            label = node['name'] + ' · БС · ' + brand
+            self.assertFalse(any(p['name'] == label for p in clash['proxies']))
+            proxy = next(p for p in proxies if p['name'] == label)
+            self.assertEqual(proxy['network'], 'tcp')
+            self.assertEqual(proxy['client-fingerprint'], 'qq')
+            self.assertNotIn('xhttp-opts', proxy)
+            uri = next(urlsplit(link) for link in links if unquote(urlsplit(link).fragment) == label)
+            self.assertEqual(uri.port, options['port'])
+            query = parse_qs(uri.query)
+            self.assertEqual(query['type'], ['tcp'])
+            self.assertEqual(query['fp'], ['qq'])
+            self.assertEqual(query['sni'], [options['target']])
+            self.assertNotIn('path', query)
+            outbound = next(o for o in happ[1]['outbounds'] if o.get('streamSettings', {}).get('realitySettings', {}).get('serverName') == options['target'])
+            self.assertEqual(outbound['streamSettings']['network'], 'tcp')
+            self.assertEqual(outbound['streamSettings']['realitySettings']['fingerprint'], 'qq')
+            self.assertNotIn('xhttpSettings', outbound['streamSettings'])
+        self.assertTrue(all(p['client-fingerprint'] == 'chrome' for p in proxies if p.get('network') == 'xhttp'))
+
+    def test_happ_test_feed_is_individual_private_and_respects_revocation(self):
+        from scripts.vpn.install_operator_fallbacks import RESTRICTED_TCP_TARGETS
+        from scripts.vpn.install_shared_reality_sni import TARGETS
+        value = self.create(); self.ready(value['id'])
+        node = self.control.NODES[0]
+        with self.control.database() as db:
+            stored = json.loads(db.execute('SELECT data FROM endpoints WHERE node_id=?', (node['id'],)).fetchone()[0])
+            for brand, options in RESTRICTED_TCP_TARGETS.items():
+                stored.append({**stored[0], 'network': 'tcp', 'xhttp': {}, 'port': options['port'],
+                               'sni': options['target'], 'service_brand': brand, 'fingerprint': 'chrome', 'test_profile': True})
+            for brand, target in TARGETS.items():
+                stored.append({**stored[0], 'port': 443, 'sni': target, 'service_brand': brand, 'fingerprint': 'chrome', 'test_profile': True})
+            db.execute('UPDATE endpoints SET data=? WHERE node_id=?', (json.dumps(stored), node['id']))
+        server = self.control.ThreadingHTTPServer(('127.0.0.1', 0), self.control.Handler)
+        thread = threading.Thread(target=server.serve_forever); thread.start()
+        base = 'http://127.0.0.1:' + str(server.server_port)
+        path = '/sub/' + value['subscription_url'].split('/sub/')[1]
+        try:
+            with urllib.request.urlopen(base + path + '?format=happ&view=tests') as response:
+                profiles = json.load(response)
+                self.assertEqual(__import__('base64').b64decode(response.headers['profile-title'][7:]).decode(), 'BTT · Проверка')
+                self.assertEqual(response.headers['ping-type'], 'proxy')
+            self.assertEqual(len(profiles), 6)
+            self.assertEqual(len({profile['remarks'] for profile in profiles}), 6)
+            self.assertTrue(all(profile['remarks'].startswith('🧪 ') for profile in profiles))
+            for profile in profiles:
+                self.assertNotIn('observatory', profile)
+                self.assertNotIn('balancers', profile['routing'])
+                tunnels = [item for item in profile['outbounds'] if item['protocol'] != 'freedom']
+                self.assertEqual(len(tunnels), 1)
+                self.assertEqual(tunnels[0]['streamSettings']['realitySettings']['fingerprint'], 'chrome')
+                self.assertEqual(profile['routing']['rules'][-1]['outboundTag'], tunnels[0]['tag'])
+            self.assertEqual(sum('HTTPS 443' in profile['remarks'] for profile in profiles), 3)
+            with urllib.request.urlopen(base + path + '?format=happ') as response:
+                main_profiles = json.load(response)
+                self.assertEqual(len(main_profiles), 15)
+                self.assertEqual([profile for profile in main_profiles if profile['remarks'].startswith('🧪 Тест')], profiles)
+            with self.assertRaises(urllib.error.HTTPError) as denied:
+                urllib.request.urlopen(base + path + '?format=clash&view=tests')
+            self.assertEqual(denied.exception.code, 400)
+            with self.assertRaises(urllib.error.HTTPError) as denied:
+                urllib.request.urlopen(base + '/sub/' + 'z' * 40 + '?format=happ&view=tests')
+            self.assertEqual(denied.exception.code, 404)
+            self.control.mutate(value['id'], {'action': 'revoke', 'actor_id': 5})
+            with self.assertRaises(urllib.error.HTTPError) as denied:
+                urllib.request.urlopen(base + path + '?format=happ&view=tests')
+            self.assertEqual(denied.exception.code, 403)
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
+
     def test_compact_countries_stay_available_when_excluded_from_global_auto(self):
         value = self.create(); self.ready(value['id'])
         self.metrics['nodes'][0]['eligible_for_new_users'] = False
@@ -193,12 +321,12 @@ class ControlTests(unittest.TestCase):
         country = self.control.NODES[0]['name']
         happ = self.control.happ_configs(proxies, automatic)
         self.assertEqual(len(happ), 8)
-        self.assertTrue(any(profile['remarks'] == country for profile in happ))
+        self.assertTrue(any(profile['remarks'] == self.control.country_label(country) for profile in happ))
         self.assertEqual(len(happ[0]['outbounds']), 13)  # only healthy exits and direct
         groups = {group['name']: group for group in self.control.clash_configs(proxies, automatic)['proxy-groups']}
-        self.assertIn(country, groups['VPN']['proxies'])
+        self.assertIn(self.control.country_label(country), groups['VPN']['proxies'])
         self.assertFalse(any(name.startswith(country + ' · ') for name in groups['AUTO']['proxies']))
-        self.assertEqual(len(groups[country]['proxies']), 2)
+        self.assertEqual(len(groups[self.control.country_label(country)]['proxies']), 2)
         empty_auto = self.control.happ_configs(proxies, [])
         self.assertEqual(len(empty_auto), 7)
         self.assertTrue(all(profile.get('observatory') for profile in empty_auto))
@@ -252,7 +380,7 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(len(config['proxies']), 14)
                 self.assertIn('GEOIP,RU,DIRECT', config['rules'])
                 choices = config['proxy-groups'][0]['proxies']
-                self.assertEqual(choices, ['AUTO'] + [node['name'] for node in self.control.NODES])
+                self.assertEqual(choices, ['AUTO'] + [self.control.country_label(node['name']) for node in self.control.NODES])
             with urllib.request.urlopen(base + '/sub/' + path + '?format=happ') as response:
                 profiles = json.load(response)
                 self.assertEqual(response.headers['ping-type'], 'proxy')
@@ -368,6 +496,7 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(response.headers['Referrer-Policy'], 'no-referrer')
                 page = response.read().decode()
                 self.assertIn(value['happ_url'], page)
+                self.assertIn('🧪 Тест', page)
                 self.assertIn(value['v2rayng_url'], page)
             with urllib.request.urlopen(base + '/apps') as response:
                 self.assertNotIn(value['subscription_url'], response.read().decode())
