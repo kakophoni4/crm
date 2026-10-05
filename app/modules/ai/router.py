@@ -87,12 +87,18 @@ async def get_request(request_id: str, actor: Admin, db: DB) -> Any:
 
 @router.get("/journal")
 async def journal(actor: Admin, db: DB) -> Any:
-    rows = await db.scalars(select(AIAudit).order_by(AIAudit.id.desc()).limit(100))
+    rows = (await db.scalars(select(AIAudit).order_by(AIAudit.id.desc()).limit(100))).all()
+    ids = {row.actor_id for row in rows}
+    users = await db.execute(
+        select(User.id, User.username, User.full_name).where(User.id.in_(ids))
+    )
+    names = {user.id: user.username or user.full_name or "Без имени" for user in users.all()}
     return {
         "items": [
             {
                 "id": r.id,
                 "actor_id": r.actor_id,
+                "actor_name": names.get(r.actor_id, "Удалённый сотрудник"),
                 "action": r.action,
                 "status": r.status,
                 "data": r.data,

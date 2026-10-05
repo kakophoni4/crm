@@ -1246,7 +1246,7 @@ onBeforeUnmount(() => {
       <article v-for="item in items" :key="item.id">
         <h3>{{ item.action }}</h3>
         <p>
-          {{ item.created_at }} · сотрудник #{{ item.actor_id }} ·
+          {{ item.created_at }} · {{ item.actor_name || 'Сотрудник' }} ·
           {{ labels[item.status] || item.status }}
         </p>
         <p>{{ item.data }}</p>
