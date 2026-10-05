@@ -494,7 +494,36 @@ def happ_routing_profile():
             'DirectIp': ['geoip:ru', 'geoip:private'], 'DomainStrategy': 'IPIfNonMatch', 'FakeDNS': 'false'}
 
 
-def happ_configs(proxies, automatic):
+def country_connections(proxies):
+    """Keep a stable country order while retaining every transport variant."""
+    groups = {node['name']: [] for node in NODES}
+    for proxy in proxies:
+        country = proxy['name'].split(' · ', 1)[0]
+        groups.setdefault(country, []).append(proxy)
+    return {country: members for country, members in groups.items() if members}
+
+
+def clash_configs(proxies, automatic, expanded=False):
+    countries = country_connections(proxies)
+    choices = [proxy['name'] for proxy in proxies] if expanded else list(countries)
+    groups = [{'name': 'VPN', 'type': 'select', 'proxies': (['AUTO'] if automatic else []) + choices}]
+    probe = {'type': 'url-test', 'url': 'https://www.gstatic.com/generate_204',
+             'interval': 30, 'tolerance': 30, 'lazy': False}
+    if automatic:
+        groups.append({**probe, 'name': 'AUTO', 'proxies': automatic, 'hidden': not expanded})
+    if not expanded:
+        for country, members in countries.items():
+            groups.append({**probe, 'name': country, 'proxies': [proxy['name'] for proxy in members],
+                           'hidden': True, 'lazy': True})
+        # GLOBAL otherwise expands every raw proxy even in a compact profile.
+        groups.append({'name': 'GLOBAL', 'type': 'select', 'proxies': ['VPN'], 'hidden': True})
+    return {'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'proxies': proxies,
+            'geodata-mode': True, 'geox-url': {'geoip': PUBLIC + '/geo/geoip.dat', 'geosite': PUBLIC + '/geo/geosite.dat'},
+            'proxy-groups': groups, 'rules': ['DOMAIN-SUFFIX,ru,DIRECT', 'DOMAIN-SUFFIX,su,DIRECT', 'DOMAIN-SUFFIX,xn--p1ai,DIRECT',
+                'GEOSITE,category-ru,DIRECT', 'GEOIP,RU,DIRECT', 'GEOIP,LAN,DIRECT', 'MATCH,VPN']}
+
+
+def happ_configs(proxies, automatic, expanded=False):
     def outbound(proxy, tag):
         if proxy['type'] == 'hysteria2':
             return {'tag': tag, 'protocol': 'hysteria',
@@ -530,7 +559,10 @@ def happ_configs(proxies, automatic):
         return config
     supported = [proxy for proxy in proxies if proxy['type'] in ('vless', 'hysteria2')]
     selected = [proxy for proxy in supported if proxy['name'] in automatic]
-    return ([profile('⚡ Автовыбор · RU напрямую', selected, True)] if selected else []) + [profile(proxy['name'], [proxy]) for proxy in supported]
+    automatic_profile = [profile('⚡ Автовыбор', selected, True)] if selected else []
+    if expanded:
+        return automatic_profile + [profile(proxy['name'], [proxy]) for proxy in supported]
+    return automatic_profile + [profile(country, members, True) for country, members in country_connections(supported).items()]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -627,14 +659,9 @@ class Handler(BaseHTTPRequestHandler):
             if not format_name:
                 agent = self.headers.get('User-Agent', '').lower()
                 format_name = 'clash' if any(name in agent for name in ('clash', 'mihomo', 'stash', 'koala')) else 'happ' if 'happ' in agent else 'base64'
+            expanded = query.get('view', [''])[0] == 'all'
             if format_name == 'clash':
-                manual = [proxy['name'] for proxy in proxies]
-                groups = [{'name': 'VPN', 'type': 'select', 'proxies': (['AUTO'] if automatic else []) + manual}]
-                if automatic:
-                    groups.append({'name': 'AUTO', 'type': 'url-test', 'proxies': automatic, 'url': 'https://www.gstatic.com/generate_204', 'interval': 30, 'tolerance': 30, 'lazy': False})
-                config = {'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'proxies': proxies,
-                          'geodata-mode': True, 'geox-url': {'geoip': PUBLIC + '/geo/geoip.dat', 'geosite': PUBLIC + '/geo/geosite.dat'},
-                          'proxy-groups': groups, 'rules': ['DOMAIN-SUFFIX,ru,DIRECT', 'DOMAIN-SUFFIX,su,DIRECT', 'DOMAIN-SUFFIX,xn--p1ai,DIRECT', 'GEOSITE,category-ru,DIRECT', 'GEOIP,RU,DIRECT', 'GEOIP,LAN,DIRECT', 'MATCH,VPN']}
+                config = clash_configs(proxies, automatic, expanded)
                 return self.reply(200, json.dumps(config, ensure_ascii=False, indent=2), 'application/yaml', headers)
             if format_name == 'happ':
                 routing = happ_routing_profile()
@@ -643,7 +670,7 @@ class Handler(BaseHTTPRequestHandler):
                 # ICMP/TCP ping alone does not test a Hysteria connection.
                 headers.update({'ping-type': 'proxy', 'check-url-via-proxy': 'https://www.gstatic.com/generate_204',
                                 'subscription-ping-onopen-enabled': '1'})
-                return self.reply(200, happ_configs(proxies, automatic), headers=headers)
+                return self.reply(200, happ_configs(proxies, automatic, expanded), headers=headers)
             if format_name not in ('raw', 'base64', 'happ-legacy', 'v2rayng'):
                 raise ValueError('unsupported_format')
             if format_name in ('happ-legacy', 'v2rayng'):

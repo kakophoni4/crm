@@ -160,8 +160,19 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(len(automatic), 63)
         self.assertEqual(len(set(automatic)), 63)
         happ = self.control.happ_configs(proxies, automatic)
-        self.assertEqual(len(happ), 64)
+        self.assertEqual(len(happ), 8)
+        self.assertEqual(len(self.control.happ_configs(proxies, automatic, expanded=True)), 64)
+        clash = self.control.clash_configs(proxies, automatic)
+        self.assertEqual(len(clash['proxies']), 63)
+        groups = {group['name']: group for group in clash['proxy-groups']}
+        self.assertEqual(groups['VPN']['proxies'], ['AUTO'] + [node['name'] for node in self.control.NODES])
+        self.assertEqual(len(groups['AUTO']['proxies']), 63)
+        self.assertTrue(all(group.get('hidden') for name, group in groups.items() if name != 'VPN'))
         for node in self.control.NODES:
+            country = next(profile for profile in happ if profile['remarks'] == node['name'])
+            self.assertEqual(len(country['outbounds']), 10)  # nine methods and direct
+            self.assertEqual(len(groups[node['name']]['proxies']), 9)
+            self.assertEqual(country['routing']['balancers'][0]['strategy']['type'], 'leastPing')
             for index, (brand, target) in enumerate(GAMING_TARGETS.items()):
                 name = node['name'] + ' · ' + brand
                 proxy = next(proxy for proxy in proxies if proxy['name'] == name)
@@ -170,7 +181,27 @@ class ControlTests(unittest.TestCase):
                 self.assertTrue(any(unquote(link).endswith('#' + name) for link in links))
                 self.assertTrue(any(outbound.get('streamSettings', {}).get('realitySettings', {}).get('serverName') == target
                                     for outbound in happ[0]['outbounds']))
-                self.assertTrue(any(profile['remarks'] == name for profile in happ[1:]))
+                self.assertTrue(any(outbound.get('streamSettings', {}).get('realitySettings', {}).get('serverName') == target
+                                    for outbound in country['outbounds']))
+
+    def test_compact_countries_stay_available_when_excluded_from_global_auto(self):
+        value = self.create(); self.ready(value['id'])
+        self.metrics['nodes'][0]['eligible_for_new_users'] = False
+        with self.control.database() as db:
+            row = db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+            proxies, _, automatic = self.control.connection_configs(row, db)
+        country = self.control.NODES[0]['name']
+        happ = self.control.happ_configs(proxies, automatic)
+        self.assertEqual(len(happ), 8)
+        self.assertTrue(any(profile['remarks'] == country for profile in happ))
+        self.assertEqual(len(happ[0]['outbounds']), 13)  # only healthy exits and direct
+        groups = {group['name']: group for group in self.control.clash_configs(proxies, automatic)['proxy-groups']}
+        self.assertIn(country, groups['VPN']['proxies'])
+        self.assertFalse(any(name.startswith(country + ' · ') for name in groups['AUTO']['proxies']))
+        self.assertEqual(len(groups[country]['proxies']), 2)
+        empty_auto = self.control.happ_configs(proxies, [])
+        self.assertEqual(len(empty_auto), 7)
+        self.assertTrue(all(profile.get('observatory') for profile in empty_auto))
 
     def test_revocation_renewal_and_rotated_link(self):
         value = self.create(); self.ready(value['id'])
@@ -220,12 +251,14 @@ class ControlTests(unittest.TestCase):
                 config = json.load(response)
                 self.assertEqual(len(config['proxies']), 14)
                 self.assertIn('GEOIP,RU,DIRECT', config['rules'])
+                choices = config['proxy-groups'][0]['proxies']
+                self.assertEqual(choices, ['AUTO'] + [node['name'] for node in self.control.NODES])
             with urllib.request.urlopen(base + '/sub/' + path + '?format=happ') as response:
                 profiles = json.load(response)
                 self.assertEqual(response.headers['ping-type'], 'proxy')
                 self.assertEqual(response.headers['subscription-ping-onopen-enabled'], '1')
-                self.assertEqual(len(profiles), 15)
-                hysteria = [p['outbounds'][0] for p in profiles[1:] if p['outbounds'][0]['protocol'] == 'hysteria']
+                self.assertEqual(len(profiles), 8)
+                hysteria = [outbound for profile in profiles[1:] for outbound in profile['outbounds'] if outbound['protocol'] == 'hysteria']
                 self.assertEqual(len(hysteria), 7)
                 for outbound in hysteria:
                     self.assertEqual(outbound['settings']['version'], 2)
@@ -241,6 +274,10 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('geoip:ru', profiles[0]['routing']['rules'][1]['ip'])
                 profile = json.loads(__import__('base64').b64decode(response.headers['routing'].removeprefix('happ://routing/onadd/')))
                 self.assertIn('geosite:category-ru', profile['DirectSites'])
+            with urllib.request.urlopen(base + '/sub/' + path + '?format=happ&view=all') as response:
+                self.assertEqual(len(json.load(response)), 15)
+            with urllib.request.urlopen(base + '/sub/' + path + '?format=clash&view=all') as response:
+                self.assertEqual(len(json.load(response)['proxy-groups'][0]['proxies']), 15)
             self.control.mutate(value['id'], {'action': 'revoke', 'actor_id': 5})
             with self.assertRaises(urllib.error.HTTPError) as denied:
                 urllib.request.urlopen(base + '/sub/' + path)

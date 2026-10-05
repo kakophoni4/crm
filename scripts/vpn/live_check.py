@@ -53,8 +53,10 @@ def main():
             if '--mihomo' in sys.argv:
                 secret = secrets.token_urlsafe(32)
                 config = directory / 'mihomo.json'
-                with urllib.request.urlopen(control.PUBLIC + '/sub/' + row['token'] + '?format=clash', timeout=15) as response:
+                suffix = '&view=all' if '--expanded' in sys.argv else ''
+                with urllib.request.urlopen(control.PUBLIC + '/sub/' + row['token'] + '?format=clash' + suffix, timeout=15) as response:
                     data = json.load(response)
+                choices = next(group['proxies'] for group in data['proxy-groups'] if group['name'] == 'VPN')
                 data.update({'mixed-port': 19351, 'external-controller': '127.0.0.1:19350', 'secret': secret})
                 config.write_text(json.dumps(data)); config.chmod(0o600)
                 validation = subprocess.run(['/opt/crm-vpn/bin/mihomo', '-t', '-d', str(directory), '-f', str(config)], capture_output=True, text=True, timeout=30)
@@ -68,27 +70,18 @@ def main():
                             try:
                                 with socket.create_connection(('127.0.0.1', 19350), timeout=.2): break
                             except OSError: time.sleep(.2)
-                        for proxy in proxies:
-                            request = urllib.request.Request('http://127.0.0.1:19350/proxies/VPN', method='PUT', data=json.dumps({'name': proxy['name']}).encode(),
+                        for choice in choices:
+                            request = urllib.request.Request('http://127.0.0.1:19350/proxies/VPN', method='PUT', data=json.dumps({'name': choice}).encode(),
                                 headers={'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json'})
                             with urllib.request.urlopen(request, timeout=5): pass
                             result = subprocess.run(['curl', '--silent', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19351',
                                 '--output', '/dev/null', '--write-out', '%{http_code}', 'https://www.gstatic.com/generate_204'],capture_output=True,text=True,timeout=25)
                             ok = result.returncode == 0 and result.stdout == '204'
-                            print(json.dumps({'mihomo_endpoint': proxy['name'], 'relay_ok': ok}),flush=True)
+                            print(json.dumps({'mihomo_choice': choice, 'relay_ok': ok}),flush=True)
                             if not ok:
-                                failures.append(proxy['name'])
+                                failures.append(choice)
                                 print('Mihomo curl diagnostic:', result.returncode, result.stderr[:300], flush=True)
                                 break
-                        if not failures and automatic:
-                            request = urllib.request.Request('http://127.0.0.1:19350/proxies/VPN', method='PUT',
-                                data=json.dumps({'name': 'AUTO'}).encode(), headers={'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json'})
-                            with urllib.request.urlopen(request, timeout=5): pass
-                            result = subprocess.run(['curl', '--silent', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19351',
-                                '--output', '/dev/null', '--write-out', '%{http_code}', 'https://www.gstatic.com/generate_204'],capture_output=True,text=True,timeout=25)
-                            if result.returncode or result.stdout != '204':
-                                failures.append('mihomo_auto')
-                            print(json.dumps({'mihomo_auto': True, 'relay_ok': not failures}), flush=True)
                     finally:
                         process.terminate()
                         try: process.wait(timeout=5)
@@ -154,7 +147,7 @@ def main():
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1 if '--sequential' in sys.argv else 7) as pool:
                     list(pool.map(check, enumerate(proxies)))
             if '--failover' in sys.argv:
-                test_happ_failover(control, directory, proxies, automatic)
+                test_happ_failover(control, directory, proxies, automatic, row['token'])
             # Re-read node counters after actual traffic; both protocols must be visible.
             usage_totals = {'up': 0, 'down': 0, 'hy_up': 0, 'hy_down': 0}
             for attempt in range(16):
@@ -192,11 +185,12 @@ def main():
     print('All published VPN relays and per-protocol counters passed', flush=True)
 
 
-def test_happ_failover(control, directory, proxies, automatic):
+def test_happ_failover(control, directory, proxies, automatic, subscription_token):
     """Real direct relays must survive blocked UDP and three unavailable countries."""
     import copy
     environment = {**os.environ, 'XRAY_LOCATION_ASSET': '/opt/crm-vpn/geo'}
-    profiles = control.happ_configs(proxies, automatic)
+    with urllib.request.urlopen(control.PUBLIC + '/sub/' + subscription_token + '?format=happ', timeout=15) as response:
+        profiles = json.load(response)
     for index, profile in enumerate(profiles):
         path = directory / ('happ-validate-' + str(index) + '.json')
         path.write_text(json.dumps(profile)); path.chmod(0o600)
@@ -204,6 +198,25 @@ def test_happ_failover(control, directory, proxies, automatic):
                                  capture_output=True, env=environment, timeout=30)
         if checked.returncode:
             raise RuntimeError('Published Happ profile validation failed')
+    # Country profiles must carry all methods of that country and relay traffic,
+    # rather than silently selecting one fixed endpoint during compaction.
+    for index, profile in enumerate(profiles[1:]):
+        config = copy.deepcopy(profile); config['inbounds'][0]['port'] = 19371
+        path = directory / ('happ-country-' + str(index) + '.json')
+        path.write_text(json.dumps(config)); path.chmod(0o600)
+        with (directory / ('happ-country-' + str(index) + '.log')).open('w') as log:
+            process = subprocess.Popen(['/opt/crm-vpn/bin/xray', 'run', '-c', str(path)], stdout=log, stderr=log, env=environment)
+            try:
+                time.sleep(3)
+                result = subprocess.run(['curl', '-sS', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19371',
+                    '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'], capture_output=True, text=True, timeout=25)
+                if result.returncode or result.stdout != '204':
+                    raise RuntimeError('Happ country relay failed: ' + profile['remarks'])
+                print(json.dumps({'happ_country': profile['remarks'], 'relay_ok': True}), flush=True)
+            finally:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: process.kill(); process.wait()
     countries = list(dict.fromkeys(name.split(' · ')[0] for name in automatic))
     for scenario in ('normal', 'udp_blocked', 'three_countries_blocked'):
         if scenario == 'three_countries_blocked' and len(countries) <= 3:
