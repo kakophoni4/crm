@@ -1016,6 +1016,7 @@ class OptOrderService:
                     actual_margin=paid-ben_paid, planned_margin=due-ben_amount, beneficiary_paid_amount=ben_paid,
                 ))
             items.append(OptPaymentRegisterItem(id=order.id, order_id=order.id, lead_id=order.lead_id,
+                created_at=order.created_at,
                 order_no=order.order_no, manager_name=(manager.full_name if manager else None),
                 client_name=(contact.full_name if contact else order.buyer_name), client_inn=order.buyer_inn,
                 client_okved=order.buyer_okved,

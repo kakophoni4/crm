@@ -228,6 +228,7 @@ class OptPaymentRegisterLine(BaseModel):
 
 
 class OptPaymentRegisterItem(BaseModel):
+    created_at: datetime | None = None
     id: int
     order_id: int
     lead_id: int

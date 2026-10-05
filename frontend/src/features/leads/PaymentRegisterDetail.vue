@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { formatCreationDate } from '@/shared/lib/creation-date'
 import OrderOkvedField from './OrderOkvedField.vue'
 import { NButton, NForm, NFormItem, NInput, NInputNumber, NTag, useMessage } from 'naive-ui'
 import { http, AppError } from '@/shared/api/http'
@@ -50,6 +51,7 @@ async function save() {
       <NTag :type="order.is_paid ? 'success' : 'warning'" :bordered="false">{{ order.is_paid ? 'Заявка оплачена' : 'Заявка не оплачена полностью' }}</NTag>
     </div>
     <dl class="settlement__meta">
+      <div><dt>Сформирована</dt><dd><time :datetime="order.created_at || undefined">{{ formatCreationDate(order.created_at) }}</time></dd></div>
       <div><dt>Сделка</dt><dd>№{{ order.lead_id }}</dd></div>
       <div><dt>Период</dt><dd>{{ order.period_code ? formatOptPeriodLabel(order.period_code) : 'Не указан' }}</dd></div>
       <div><dt>Менеджер</dt><dd>{{ order.manager_name || 'Не назначен' }}</dd></div>

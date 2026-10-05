@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { formatCreationDate } from '@/shared/lib/creation-date'
 import { NButton, NRadioGroup, NRadioButton, NEmpty, NPopover, NCheckbox, NInput, NDrawer, NDrawerContent } from 'naive-ui'
 import type { OptPaymentRegisterItem as Order } from './opt-types'
 import { registerFields, type RegisterQuery } from './register-query'
@@ -78,17 +79,18 @@ function total(c:Column) {if(!c.total)return '';const values=rows.value.map(c.to
   <NEmpty v-if="!rows.length" description="Заявок не найдено" />
   <div v-else class="register-grid" tabindex="0" aria-label="Таблица продаж">
    <table :class="{'table-wide':visible.length>11}">
-    <colgroup><col style="width:74px"><col v-for="c in visible" :key="c.key" :style="{width:width(c)}"><col style="width:65px"></colgroup>
+    <colgroup><col style="width:74px"><col style="width:175px"><col v-for="c in visible" :key="c.key" :style="{width:width(c)}"><col style="width:65px"></colgroup>
     <caption class="sr-only">Реестр продаж. Все суммы в рублях.</caption>
-    <thead><tr><th class="order-col">№ заявки</th><th v-for="c in visible" :key="c.key" :class="{numeric:c.numeric}" :aria-sort="sort===c.key?(descending?'descending':'ascending'):'none'"><button :disabled="!sortable(c.key)" @click="sortBy(c.key)">{{ c.label }}<span v-if="sort===c.key"> {{ descending?'↓':'↑' }}</span></button></th><th class="actions-col">Детали</th></tr></thead>
+    <thead><tr><th class="order-col">№ заявки</th><th class="date-col">Сформирована</th><th v-for="c in visible" :key="c.key" :class="{numeric:c.numeric}" :aria-sort="sort===c.key?(descending?'descending':'ascending'):'none'"><button :disabled="!sortable(c.key)" @click="sortBy(c.key)">{{ c.label }}<span v-if="sort===c.key"> {{ descending?'↓':'↑' }}</span></button></th><th class="actions-col">Детали</th></tr></thead>
     <tbody><template v-for="o in rows" :key="o.id">
      <tr :class="{'row-selected':expanded===o.id}"><td class="order-col"><button class="order-link" @click="emit('open',o)">№{{ o.order_no }}</button><small>Сделка {{ o.lead_id }}</small></td>
+      <td class="date-col"><time :datetime="o.created_at || undefined">{{ formatCreationDate(o.created_at) }}</time></td>
       <td v-for="c in visible" :key="c.key" :class="{numeric:c.numeric, debt:c.key==='debt' && Number(o.due_amount)>Number(o.paid_amount)}"><NPopover v-if="!c.numeric" trigger="hover" style="max-width:420px;white-space:pre-line;overflow-wrap:anywhere"><template #trigger><span class="cell-text" tabindex="0">{{ shortName(c.value(o)) }}</span></template>{{ c.value(o) }}</NPopover><span v-else>{{ c.value(o) }}</span></td>
       <td><NButton size="tiny" quaternary :aria-expanded="expanded===o.id" :aria-label="`Детали заявки ${o.order_no}, сделка ${o.lead_id}`" @click="expanded=expanded===o.id?null:o.id">{{ expanded===o.id?'Скрыть':'Открыть' }}</NButton></td>
      </tr>
 
     </template></tbody>
-    <tfoot><tr><th>Итого<small>{{ rows.length }} заявок</small></th><td v-for="c in visible" :key="c.key" :class="{numeric:c.numeric}">{{ total(c) }}</td><td /></tr></tfoot>
+    <tfoot><tr><th>Итого<small>{{ rows.length }} заявок</small></th><td /><td v-for="c in visible" :key="c.key" :class="{numeric:c.numeric}">{{ total(c) }}</td><td /></tr></tfoot>
    </table>
   </div>
   <NDrawer :show="detailOrder!==null" width="min(760px, 96vw)" placement="right" @update:show="v=>{if(!v)expanded=null}">
@@ -109,7 +111,7 @@ table{width:100%;table-layout:fixed;border-spacing:0;font-size:12px;line-height:
 th,td{padding:6px 8px;border-right:1px solid var(--app-border);border-bottom:1px solid var(--app-border);vertical-align:top;text-align:left;overflow-wrap:anywhere;white-space:pre-line}
 thead th{position:sticky;top:0;background:var(--app-surface);z-index:2;vertical-align:middle}
 th button{border:0;background:none;color:inherit;font:inherit;font-weight:600;cursor:pointer;text-align:inherit;padding:0;width:100%}
-.order-col{width:78px}.actions-col{width:66px}.order-link{border:0;background:none;color:var(--app-accent);font:inherit;font-weight:600;padding:0;cursor:pointer}
+.date-col{white-space:nowrap;font-variant-numeric:tabular-nums}.order-col{width:78px}.actions-col{width:66px}.order-link{border:0;background:none;color:var(--app-accent);font:inherit;font-weight:600;padding:0;cursor:pointer}
 small{display:block;color:var(--app-text-muted);font-size:10px;margin-top:3px}
 .numeric{text-align:right;font-variant-numeric:tabular-nums}.debt{color:var(--app-danger,#d03050)}
 tbody tr:nth-child(even){background:color-mix(in srgb,var(--app-text) 3%,transparent)}

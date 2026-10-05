@@ -208,6 +208,7 @@ export interface OptPaymentRegisterLine {
 }
 
 export interface OptPaymentRegisterItem {
+  created_at?: string | null
   id: number
   order_id: number
   lead_id: number

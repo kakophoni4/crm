@@ -41,6 +41,7 @@ import {
   uploadOptApplication,
 } from '@/features/leads/opt-api'
 import { OPT_PERIOD_OPTIONS, optVatRateForPeriod } from '@/features/leads/order-fields'
+import { formatCreationDate } from '@/shared/lib/creation-date'
 import {
   invalidateOrderDocsAvailability,
   loadOrderDocsAvailability,
@@ -986,6 +987,7 @@ onUnmounted(() => {
           </p>
 
           <dl class="opt-orders__facts">
+            <div><dt>Сформирована</dt><dd><time :datetime="selectedOrder.created_at">{{ formatCreationDate(selectedOrder.created_at) }}</time></dd></div>
             <div>
               <dt>Объём</dt>
               <dd>{{ formatMoney(selectedOrder.total_volume) }} ₽</dd>

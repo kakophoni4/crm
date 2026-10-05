@@ -41,6 +41,7 @@ import {
   optPaymentTypeLabel,
 } from '@/features/leads/opt-types'
 import { formatOptPeriodLabel, OPT_PERIOD_OPTIONS } from '@/features/leads/order-fields'
+import { formatCreationDate } from '@/shared/lib/creation-date'
 import { VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
 import { AppError, http } from '@/shared/api/http'
 import { useAuthStore } from '@/shared/store/auth'
@@ -307,6 +308,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
 
       render: (row) => `Сделка №${row.lead_id} · №${row.order_no}`,
     },
+    { title: 'Сформирована', key: 'created_at', width: 175, render: (row) => formatCreationDate(row.created_at) },
     {
       title: 'Период',
       key: 'period_code',
@@ -385,6 +387,7 @@ const columns = computed<DataTableColumns<OptOrderRegistryItem>>(() => {
 
 const paymentRegisterColumns = computed<DataTableColumns<OptPaymentRegisterItem>>(() => [
   { title: 'Сделка', key: 'order', width: 116, render: (r) => `№${r.lead_id} / ${r.order_no}` },
+  { title: 'Сформирована', key: 'created_at', width: 175, render: (r) => formatCreationDate(r.created_at) },
   { title: 'Клиент', key: 'client', minWidth: 190,  render: (r) => r.client_name || r.client_shop_name || `ИНН ${r.client_inn}` },
   { title: 'Лавок', key: 'shops', width: 90, render: (r) => `${new Set(r.lines.map((line) => line.supplier_inn)).size}` },
   { title: 'Период', key: 'period', width: 110, render: (r) => formatOptPeriodLabel(r.period_code) },
@@ -823,7 +826,7 @@ onMounted(() => {
             :row-props="rowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="1200"
+            :scroll-x="1375"
             virtual-scroll
             :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
@@ -845,7 +848,7 @@ onMounted(() => {
             :row-props="paymentRegisterRowProps"
             :bordered="false"
             :pagination="false"
-            :scroll-x="1100"
+            :scroll-x="1275"
             virtual-scroll
             :min-row-height="VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT"
           />
