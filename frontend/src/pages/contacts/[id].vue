@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
+const ContactVpnPanel = defineAsyncComponent(() => import('@/widgets/chat/ContactVpnPanel.vue'))
 import type { DataTableColumns } from 'naive-ui'
 import {
   NButton,
@@ -358,6 +359,7 @@ watch(
   <section class="contact-detail">
     <NSpace align="center" class="contact-detail__toolbar">
       <NButton quaternary @click="router.push({ name: 'contacts' })">← К списку</NButton>
+      <NButton secondary @click="router.push({ name: 'vpn', query: { contact_id: id } })">Подарить / настроить VPN</NButton>
       <h1 class="contact-detail__title">
         {{ contact?.full_name ?? `Контакт #${id}` }}
       </h1>
@@ -442,6 +444,9 @@ watch(
           </NForm>
         </NTabPane>
 
+        <NTabPane name="vpn" tab="VPN">
+          <ContactVpnPanel v-if="contact" :contact-id="id" />
+        </NTabPane>
         <NTabPane name="history" tab="История">
           <NSpin :show="historyLoading">
             <div class="contact-detail__table-wrap contact-detail__table-wrap--history">

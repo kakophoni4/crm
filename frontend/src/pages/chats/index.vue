@@ -5,6 +5,7 @@ import {
   NBadge,
 
   NButton,
+  NModal,
 
   NEmpty,
 
@@ -100,6 +101,8 @@ const ChatDealSidePanel = defineAsyncComponent(
 const ChatPaymentsSidePanel = defineAsyncComponent(
   () => import('@/widgets/chat/ChatPaymentsSidePanel.vue'),
 )
+const ContactVpnPanel = defineAsyncComponent(() => import('@/widgets/chat/ContactVpnPanel.vue'))
+const vpnOpen = ref(false)
 const ChatClientRequirementPanel = defineAsyncComponent(
   () => import('@/widgets/chat/ChatClientRequirementPanel.vue'),
 )
@@ -177,7 +180,7 @@ const contactClientLabel = computed(() =>
   formatContactClientLabel(store.currentChat?.contact_client_label),
 )
 
-type RightPaneTab = 'deal' | 'payments' | 'client_req' | 'notifications'
+type RightPaneTab = 'deal' | 'payments' | 'client_req' | 'notifications' | 'vpn'
 const rightPaneTab = ref<RightPaneTab>('notifications')
 
 /** Short labels always — fits list pane with WhatsApp action in one row. */
@@ -833,6 +836,7 @@ onUnmounted(() => {
             </div>
 
             <NSpace v-if="!phoneChatsOnly" vertical :size="6" align="end">
+              <NButton v-if="auth.user?.permissions?.includes('contacts.update')" size="small" secondary @click="isNarrow ? vpnOpen = true : rightPaneTab = 'vpn'">VPN клиента</NButton>
               <BlockContactButton
                 v-if="auth.user?.permissions?.includes('chats.write')"
                 :key="store.currentChat.id"
@@ -928,6 +932,7 @@ onUnmounted(() => {
         >
           <NTab name="deal" tab="Сделки" />
           <NTab name="payments" tab="Оплаты" />
+          <NTab v-if="auth.user?.permissions?.includes('contacts.read')" name="vpn" tab="VPN" />
           <NTab name="client_req" tab="От клиента" />
           <NTab name="notifications">
             <template #default>
@@ -943,8 +948,15 @@ onUnmounted(() => {
             </template>
           </NTab>
         </NTabs>
+        <ContactVpnPanel
+          v-if="store.currentChat && rightPaneTab === 'vpn'"
+          :key="`vpn-${store.currentChatId}`"
+          :contact-id="store.currentChat.contact_id"
+          :bot-id="store.currentChat.bot_id"
+          :chat-id="store.currentChat.id"
+        />
         <ChatDealSidePanel
-          v-if="store.currentChat && rightPaneTab === 'deal'"
+          v-else-if="store.currentChat && rightPaneTab === 'deal'"
           :key="`deal-${store.currentChatId}`"
           :chat="store.currentChat"
           :bots="bots"
@@ -1025,6 +1037,9 @@ onUnmounted(() => {
 
   </section>
 
+  <NModal v-model:show="vpnOpen" preset="card" title="VPN клиента" style="width: min(560px, 95vw)">
+    <ContactVpnPanel v-if="vpnOpen && store.currentChat" :key="store.currentChat.id" :contact-id="store.currentChat.contact_id" :bot-id="store.currentChat.bot_id" :chat-id="store.currentChat.id" />
+  </NModal>
 </template>
 
 

@@ -28,6 +28,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchTaskAlerts } from '@/features/tasks/api'
 import { listTelephonyAccounts } from '@/features/telephony/api'
 import { useAuthStore } from '@/shared/store/auth'
+import { http } from '@/shared/api/http'
 import BrandMark from './BrandMark.vue'
 
 defineProps<{
@@ -68,6 +69,13 @@ async function refreshTelephonyVisibility(): Promise<void> {
 
 const tasksBlink = ref(false)
 const accountingBlink = ref(false)
+const vpnRequests = ref(0)
+let vpnTimer: ReturnType<typeof setInterval> | null = null
+async function refreshVpnAlerts(): Promise<void> {
+  if (!auth.user?.permissions?.includes('contacts.read')) { vpnRequests.value = 0; return }
+  if (document.visibilityState === 'hidden') return
+  try { vpnRequests.value = (await http.get<{ open: number }>('/vpn/bot/requests/count')).data.open } catch {}
+}
 let alertsTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshAlerts(): Promise<void> {
@@ -83,7 +91,7 @@ async function refreshAlerts(): Promise<void> {
     : Promise.resolve().then(() => {
         tasksBlink.value = false
       })
-  await tasksP
+  await Promise.all([tasksP, refreshVpnAlerts()])
 }
 
 function blinkIcon(icon: unknown, blink: boolean) {
@@ -165,7 +173,7 @@ const menuOptions = computed(() => {
     return lawyerItems
   }
 
-  const items = [
+  const items: MenuOption[] = [
   {
     label: 'Чаты',
     key: 'chats',
@@ -190,6 +198,13 @@ const menuOptions = computed(() => {
     label: 'Задачи',
     key: 'tasks',
     icon: blinkIcon(CheckSquare, tasksBlink.value),
+  },
+  {
+    label: () => h('span', { class: vpnRequests.value ? 'vpn-alert-label' : undefined }, [
+      'VPN', vpnRequests.value ? h('span', { class: 'vpn-request-count' }, String(vpnRequests.value)) : null,
+    ]),
+    key: 'vpn',
+    icon: blinkIcon(Shield, vpnRequests.value > 0),
   },
   {
     label: 'Уведомления',
@@ -305,6 +320,7 @@ watch(
 )
 
 const activeKey = computed(() => {
+  if (route.name === 'vpn') return 'vpn'
   if (route.name === 'chats') return 'chats'
   if (route.name === 'contacts' || route.name === 'contact-detail') return 'contacts'
   if (route.name === 'applications' || route.name === 'application-detail') return 'applications'
@@ -331,6 +347,7 @@ const activeKey = computed(() => {
 })
 
 function onMenuUpdate(key: string): void {
+  if (key === 'vpn') { void router.push({ name: 'vpn', query: vpnRequests.value ? { tab: 'requests' } : {} }); emit('closeDrawer'); return }
   if (key === 'ai-management') { void router.push({name:'ai-management'}); emit('closeDrawer'); return }
   if (key === 'cashroom') {
     void router.push({ name: 'cashroom' })
@@ -451,11 +468,15 @@ onMounted(() => {
   alertsTimer = setInterval(() => {
     void refreshAlerts()
   }, 90_000)
+  vpnTimer = setInterval(() => { void refreshVpnAlerts() }, 30_000)
+  window.addEventListener('vpn-requests-changed', refreshVpnAlerts)
   window.addEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
 })
 
 onBeforeUnmount(() => {
   if (alertsTimer) clearInterval(alertsTimer)
+  if (vpnTimer) clearInterval(vpnTimer)
+  window.removeEventListener('vpn-requests-changed', refreshVpnAlerts)
   window.removeEventListener('telephony-accounts-changed', refreshTelephonyVisibility)
 })
 
@@ -566,6 +587,8 @@ watch(
   min-height: 100%;
 }
 
+:deep(.vpn-alert-label){color:#dc2626;animation:sidebar-due-pulse 1.6s ease-in-out infinite}
+:deep(.vpn-request-count){display:inline-block;background:#dc2626;color:white;border-radius:9px;padding:0 6px;font-size:11px;margin-left:8px;line-height:18px}
 :deep(.sidebar-blink) {
   color: #dc2626 !important;
   animation: sidebar-due-pulse 1.6s ease-in-out infinite;

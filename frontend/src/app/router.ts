@@ -95,6 +95,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
 
     children: [
+      { path: 'vpn', name: 'vpn', component: () => import('@/pages/vpn/index.vue') },
       { path: 'ai', name: 'ai-management', component: () => import('@/pages/ai/index.vue'), meta: { requiresAdmin: true } },
 
       {
