@@ -32,7 +32,8 @@ class ControlTests(unittest.TestCase):
         self.mock.stop(); self.temporary.cleanup()
 
     def create(self):
-        return self.control.create({'contact_id': 12, 'contact_name': 'Test contact', 'days': 30, 'kind': 'gift', 'actor_id': 5})
+        self.contact_sequence = getattr(self, 'contact_sequence', 11) + 1
+        return self.control.create({'contact_id': self.contact_sequence, 'contact_name': 'Test contact', 'days': 30, 'kind': 'gift', 'actor_id': 5})
 
     def ready(self, identity):
         with self.control.database() as db:
@@ -70,7 +71,7 @@ class ControlTests(unittest.TestCase):
         for days in (1, 3, 7, 14, 21):
             with self.subTest(days=days):
                 with patch.object(self.control.time, 'time', return_value=1000000):
-                    value = self.control.create({'contact_id': 12, 'contact_name': 'Test contact', 'days': days, 'kind': 'trial', 'actor_id': 5})
+                    value = self.control.create({'contact_id': 12 + days, 'contact_name': 'Test contact', 'days': days, 'kind': 'trial', 'actor_id': 5})
                 self.assertEqual(value['expires_at'], 1000000 + days * 86400)
                 with patch.object(self.control.time, 'time', return_value=9000000):
                     renewed = self.control.mutate(value['id'], {'action': 'renew', 'days': days, 'actor_id': 5})

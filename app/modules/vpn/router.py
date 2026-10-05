@@ -33,6 +33,7 @@ Database = Annotated[AsyncSession, Depends(get_db)]
 class CreateSubscription(BaseModel):
     contact_id: int = Field(gt=0)
     days: int = Field(default=30, ge=1, le=3650)
+    device_limit: int = Field(default=3, ge=3, le=8, strict=True)
     kind: Literal["gift", "purchase", "trial"] = "gift"
     idempotency_key: UUID | None = None
     source_bot_id: int | None = Field(default=None, gt=0)
@@ -40,8 +41,9 @@ class CreateSubscription(BaseModel):
 
 
 class SubscriptionAction(BaseModel):
-    action: Literal["renew", "revoke", "resume", "rotate_link", "delete"]
+    action: Literal["renew", "revoke", "resume", "rotate_link", "delete", "set_device_limit"]
     days: int | None = Field(default=None, ge=1, le=3650)
+    device_limit: int | None = Field(default=None, ge=3, le=8, strict=True)
 
 
 class NodeSettings(BaseModel):
@@ -183,6 +185,12 @@ async def control(method: str, path: str, body: dict[str, Any] | None = None) ->
         if result.status_code == 404:
             raise NotFound(message="VPN-подписка не найдена")
         if result.status_code == 400:
+            reason = result.json().get('error')
+            messages = {'active_subscription_exists': 'У клиента уже есть подписка. Продлите её вместо выдачи новой.',
+                        'trial_already_used': 'Клиент уже использовал пробный период.',
+                        'invalid_device_limit': 'Лимит подключений должен быть от 3 до 8.'}
+            if reason in messages:
+                raise ValidationError(message=messages[reason])
             raise ValidationError(message="Операция недоступна для этой подписки")
         result.raise_for_status()
         return result.json()
@@ -220,8 +228,12 @@ async def subscriptions(
         raise PermissionDenied(message="Выберите контакт для просмотра его VPN-подписок")
     if contact_id is not None:
         await ContactService(db).get_contact(actor, contact_id)
+    contact = await db.get(Contact, contact_id) if contact_id is not None else None
+    query = f"?contact_id={contact_id}" if contact_id else ""
+    if contact is not None and contact.telegram_user_id:
+        query += f"&telegram_user_id={int(contact.telegram_user_id)}"
     data = await control(
-        "GET", "/internal/subscriptions" + (f"?contact_id={contact_id}" if contact_id else "")
+        "GET", "/internal/subscriptions" + query
     )
     data["items"] = [redact(item, actor) for item in data["items"]]
     return data
@@ -289,6 +301,8 @@ async def subscription_action(
     await authorized_subscription(identity, actor, db)
     if body.action == "renew" and body.days is None:
         raise ValidationError(message="Укажите срок продления")
+    if body.action == "set_device_limit" and body.device_limit is None:
+        raise ValidationError(message="Укажите лимит подключений от 3 до 8")
     return redact(
         await control(
             "POST",

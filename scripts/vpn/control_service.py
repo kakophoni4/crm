@@ -10,6 +10,7 @@ import base64
 import concurrent.futures
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import math
@@ -103,6 +104,12 @@ def initialize():
         ''')
         if 'source_chat_id' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
             db.execute('ALTER TABLE subscriptions ADD COLUMN source_chat_id INTEGER')
+        if 'device_limit' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
+            db.execute('ALTER TABLE subscriptions ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 3 CHECK(device_limit BETWEEN 3 AND 8)')
+        db.execute('''CREATE TABLE IF NOT EXISTS connection_leases (
+            lease_id TEXT PRIMARY KEY,node_id TEXT NOT NULL,subscription_id TEXT NOT NULL,
+            ip TEXT NOT NULL,created_at REAL NOT NULL,expires_at REAL NOT NULL)''')
+        db.execute('CREATE INDEX IF NOT EXISTS leases_subscription ON connection_leases(subscription_id,expires_at)')
         if 'deleted_at' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
             db.execute('ALTER TABLE subscriptions ADD COLUMN deleted_at REAL')
         if 'create_request_key' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
@@ -189,7 +196,62 @@ def subscription_view(row, db):
     value['download_bytes'] = sum(item['total'] for item in counters if item['metric'] in ('down', 'hy_down'))
     value['usage_by_node'] = counters
     value['online'] = [dict(item) for item in db.execute('SELECT * FROM usage_state WHERE subscription_id=?', (row['id'],))]
+    value['connections'] = [dict(item) for item in db.execute('''SELECT ip,MIN(created_at) AS connected_at,
+        GROUP_CONCAT(DISTINCT node_id) AS nodes FROM connection_leases
+        WHERE subscription_id=? AND expires_at>? GROUP BY ip ORDER BY connected_at,ip''', (row['id'], time.time()))]
+    value['occupied_slots'] = len(value['connections'])
     return value
+
+
+def issuance_state(db, contact_id, telegram_user_id=None):
+    condition = 'contact_id=?'
+    parameters = [int(contact_id)]
+    if telegram_user_id is not None:
+        condition += ' OR telegram_user_id=?'
+        parameters.append(int(telegram_user_id))
+    rows = db.execute('SELECT * FROM subscriptions WHERE ' + condition + ' ORDER BY created_at DESC', parameters).fetchall()
+    existing = [row for row in rows if row['deleted_at'] is None]
+    current = next((row for row in existing if row['enabled'] and row['expires_at'] > time.time()), existing[0] if existing else None)
+    used = any(row['kind'] == 'trial' for row in rows)
+    return {'can_create': current is None, 'trial_available': current is None and not used,
+            'trial_used': used, 'current_subscription_id': current['id'] if current else None}
+
+
+def connection_lease(node_id, body):
+    """Atomic admission shared by every node and both VPN protocols. Never bans an IP globally."""
+    lease_id = str(uuid.UUID(body['lease_id']))
+    action = body['action']
+    if action not in ('acquire', 'renew', 'release'):
+        raise ValueError('invalid_lease_action')
+    now = time.time()
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        prior = db.execute('SELECT * FROM connection_leases WHERE lease_id=?', (lease_id,)).fetchone()
+        if prior and prior['node_id'] != node_id:
+            raise ValueError('lease_owner_mismatch')
+        if action == 'release':
+            db.execute('DELETE FROM connection_leases WHERE lease_id=? AND node_id=?', (lease_id, node_id))
+            return {'allowed': False}
+        identity = str(uuid.UUID(body['subscription_id']))
+        address = ipaddress.ip_address(body['ip'])
+        ip = str(address.ipv4_mapped or address) if isinstance(address, ipaddress.IPv6Address) else str(address)
+        if prior and (prior['subscription_id'] != identity or prior['ip'] != ip):
+            raise ValueError('lease_identity_mismatch')
+        if action == 'renew' and (not prior or prior['expires_at'] <= now):
+            return {'allowed': False}
+        db.execute('DELETE FROM connection_leases WHERE expires_at<=?', (now,))
+        row = db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone()
+        allowed = bool(row and row['enabled'] and row['deleted_at'] is None and row['expires_at'] > now)
+        if allowed:
+            active = [item[0] for item in db.execute('''SELECT ip FROM connection_leases WHERE subscription_id=?
+                AND expires_at>? GROUP BY ip ORDER BY MIN(created_at),ip''', (identity, now))]
+            allowed = ip in active[:row['device_limit']] or (ip not in active and len(active) < row['device_limit'])
+        if not allowed:
+            db.execute('DELETE FROM connection_leases WHERE lease_id=?', (lease_id,))
+            return {'allowed': False}
+        db.execute('''INSERT INTO connection_leases VALUES(?,?,?,?,?,?) ON CONFLICT(lease_id)
+            DO UPDATE SET expires_at=excluded.expires_at''', (lease_id, node_id, identity, ip, now, now + 45))
+        return {'allowed': True, 'ttl': 45}
 
 
 def event(db, identity, actor, action, details):
@@ -197,7 +259,14 @@ def event(db, identity, actor, action, details):
                (identity, actor, action, time.time(), json.dumps(details)))
 
 
+def checked_device_limit(value):
+    if type(value) is not int or not 3 <= value <= 8:
+        raise ValueError('invalid_device_limit')
+    return value
+
+
 def create(body):
+    limit = checked_device_limit(body.get('device_limit', 3))
     days = int(body['days'])
     if not 1 <= days <= 3650 or body['kind'] not in ('gift', 'purchase', 'trial') or int(body['contact_id']) <= 0:
         raise ValueError('invalid_subscription')
@@ -213,6 +282,11 @@ def create(body):
                         or existing['deleted_at'] is not None):
                     raise ValueError('creation_request_mismatch')
                 return subscription_view(existing, db)
+        eligibility = issuance_state(db, body['contact_id'], body.get('telegram_user_id'))
+        if not eligibility['can_create']:
+            raise ValueError('active_subscription_exists')
+        if body['kind'] == 'trial' and not eligibility['trial_available']:
+            raise ValueError('trial_already_used')
         db.execute('''INSERT INTO subscriptions(id,contact_id,contact_name,telegram_user_id,telegram_username,source_bot_id,source_bot_name,
                     kind,created_by,expires_at,enabled,token,password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                    (identity, int(body['contact_id']), str(body['contact_name'])[:300], body.get('telegram_user_id'),
@@ -223,6 +297,7 @@ def create(body):
             db.execute('INSERT INTO deliveries(subscription_id,node_id) VALUES(?,?)', (identity, node['id']))
         db.execute('UPDATE subscriptions SET source_chat_id=? WHERE id=?', (body.get('source_chat_id'), identity))
         db.execute('UPDATE subscriptions SET create_request_key=? WHERE id=?', (request_key, identity))
+        db.execute('UPDATE subscriptions SET device_limit=? WHERE id=?', (limit, identity))
         event(db, identity, body['actor_id'], body['kind'], {'days': days, 'source_bot_id': body.get('source_bot_id'), 'source_chat_id': body.get('source_chat_id')})
         value = subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone(), db)
     WAKE.set()
@@ -239,6 +314,9 @@ def mutate(identity, body):
             raise ValueError('subscription_deleted')
         action = body['action']; now = time.time()
         if action == 'renew':
+            current = issuance_state(db, row['contact_id'], row['telegram_user_id'])['current_subscription_id']
+            if current and current != identity:
+                raise ValueError('active_subscription_exists')
             days = int(body['days'])
             if not 1 <= days <= 3650:
                 raise ValueError('invalid_days')
@@ -247,14 +325,21 @@ def mutate(identity, body):
         elif action in ('revoke', 'resume'):
             if action == 'resume' and row['expires_at'] <= now:
                 raise ValueError('subscription_expired')
+            if action == 'resume':
+                current = issuance_state(db, row['contact_id'], row['telegram_user_id'])['current_subscription_id']
+                if current and current != identity:
+                    raise ValueError('active_subscription_exists')
             db.execute('UPDATE subscriptions SET enabled=?,version=version+1,updated_at=? WHERE id=?', (int(action == 'resume'), now, identity))
         elif action == 'rotate_link':
             db.execute('UPDATE subscriptions SET token=?,updated_at=? WHERE id=?', (secrets.token_urlsafe(32), now, identity))
         elif action == 'delete':
             db.execute('UPDATE subscriptions SET enabled=0,deleted_at=?,version=version+1,updated_at=? WHERE id=?', (now, now, identity))
+        elif action == 'set_device_limit':
+            limit = checked_device_limit(body.get('device_limit'))
+            db.execute('UPDATE subscriptions SET device_limit=?,updated_at=? WHERE id=?', (limit, now, identity))
         else:
             raise ValueError('invalid_action')
-        event(db, identity, body['actor_id'], action, {'days': body.get('days')})
+        event(db, identity, body['actor_id'], action, {'days': body.get('days'), **({'device_limit': limit, 'previous_device_limit': row['device_limit']} if action == 'set_device_limit' else {})})
         value = subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone(), db)
     WAKE.set()
     return value
@@ -276,6 +361,9 @@ def renew_request(identity, body):
         row = db.execute('SELECT * FROM subscriptions WHERE id=?', (request['subscription_id'],)).fetchone()
         if request['state'] != 'open' or not row or row['deleted_at'] is not None or row['contact_id'] != request['contact_id'] or row['telegram_user_id'] != request['user_id']:
             raise ValueError('request_unavailable')
+        current = issuance_state(db, row['contact_id'], row['telegram_user_id'])['current_subscription_id']
+        if current and current != row['id']:
+            raise ValueError('active_subscription_exists')
         now = time.time()
         db.execute('UPDATE subscriptions SET expires_at=?,enabled=1,version=version+1,updated_at=? WHERE id=?',
                    (max(now, row['expires_at']) + days * 86400, now, row['id']))
@@ -460,6 +548,22 @@ class Handler(BaseHTTPRequestHandler):
         global BOT_TOKEN, BOT_USERNAME, BOT_ID
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path; query = urllib.parse.parse_qs(parsed.query)
+        if path.startswith('/node/lease/') and self.command == 'POST':
+            node_id = path.removeprefix('/node/lease/')
+            if node_id not in {node['id'] for node in NODES}:
+                raise LookupError('not_found')
+            with database() as db:
+                credential = db.execute('SELECT value FROM settings WHERE key=?', ('lease_token:' + node_id,)).fetchone()
+            if not credential or not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + credential['value']):
+                return self.reply(403, {'error': 'forbidden'})
+            body = self.body()
+            if body.get('action') == 'heartbeat':
+                leases = body.get('leases')
+                if not isinstance(leases, list) or len(leases) > 64:
+                    raise ValueError('invalid_leases')
+                denied = [entry['lease_id'] for entry in leases if not connection_lease(node_id, {**entry, 'action': 'renew'})['allowed']]
+                return self.reply(200, {'denied': denied, 'ttl': 45})
+            return self.reply(200, connection_lease(node_id, body))
         if path.startswith('/downloads/') and self.command == 'GET':
             filename = path.removeprefix('/downloads/')
             allowed = {'happ.apk', 'clashmeta.apk', 'v2rayng.apk', 'v2rayng-arm7.apk'}
@@ -634,7 +738,9 @@ class Handler(BaseHTTPRequestHandler):
             with database() as db:
                 contact = query.get('contact_id', [None])[0]
                 rows = db.execute('SELECT * FROM subscriptions WHERE contact_id=? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500', (int(contact),)) if contact else db.execute('SELECT * FROM subscriptions WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 500')
-                return self.reply(200, {'items': [subscription_view(row, db) for row in rows]})
+                items = [subscription_view(row, db) for row in rows]
+                eligibility = issuance_state(db, int(contact), query.get('telegram_user_id', [None])[0]) if contact else None
+                return self.reply(200, {'items': items, 'eligibility': eligibility})
         if path.startswith('/internal/subscriptions/'):
             identity = str(uuid.UUID(path.removeprefix('/internal/subscriptions/')))
             if self.command == 'POST':
@@ -655,8 +761,9 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except LookupError:
             self.reply(404, {'error': 'not_found'})
-        except (ValueError, KeyError, TypeError):
-            self.reply(400, {'error': 'invalid_request'})
+        except (ValueError, KeyError, TypeError) as exc:
+            reason = str(exc)
+            self.reply(400, {'error': reason if reason in ('active_subscription_exists', 'trial_already_used', 'invalid_device_limit') else 'invalid_request'})
         except Exception:
             log.exception('Control request failed')
             self.reply(500, {'error': 'internal_error'})

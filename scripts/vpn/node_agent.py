@@ -11,6 +11,7 @@ import sqlite3
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -19,6 +20,100 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 STATE = Path('/etc/crm-vpn')
+LEASE_LOCK = threading.RLock()
+LEASES = {}
+
+
+def central_lease(body):
+    config = json.loads((STATE / 'agent.json').read_text())
+    request = urllib.request.Request(config['lease_url'], data=json.dumps(body).encode(),
+        headers={'Authorization': 'Bearer ' + config['lease_token'], 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return json.load(response)
+
+
+def guard_acquire(body, protocol='xray'):
+    import ipaddress
+    identity = str(uuid.UUID(body['subscription_id']))
+    address = ipaddress.ip_address(body['ip'])
+    ip = str(address.ipv4_mapped or address) if isinstance(address, ipaddress.IPv6Address) else str(address)
+    lease_id = str(uuid.UUID(body['lease_id']))
+    entry = {'lease_id': lease_id, 'subscription_id': identity, 'ip': ip}
+    result = central_lease({**entry, 'action': 'acquire'})
+    if result.get('allowed'):
+        with LEASE_LOCK:
+            LEASES[lease_id] = {**entry, 'protocol': protocol, 'valid_until': time.time() + 40, 'created_at': time.time(), 'last_checked': time.time()}
+    return {'allowed': bool(result.get('allowed'))}
+
+
+def guard_release(lease_id):
+    with LEASE_LOCK:
+        entry = LEASES.pop(lease_id, None)
+    if entry:
+        try:
+            central_lease({'action': 'release', 'lease_id': lease_id})
+        except Exception:
+            pass  # The central lease expires automatically even after a network failure.
+
+
+def guard_heartbeat():
+    while True:
+        try:
+            try:
+                online = hy_request('/online')
+            except Exception:
+                online = None
+            # Reconcile authenticated HY sessions after an auth-daemon restart.
+            for client_id, count in (online or {}).items():
+                identity, separator, address = client_id.partition('@')
+                if not count or not re.fullmatch(r'[0-9a-f-]{36}', identity):
+                    continue
+                with database() as connection:
+                    client = connection.execute('SELECT expiry,enabled FROM clients WHERE id=?', (identity,)).fetchone()
+                if not client:
+                    continue
+                if not separator or not client[1] or client[0] <= time.time():
+                    hy_request('/kick', [client_id]); continue
+                lease_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'hysteria2:' + client_id))
+                with LEASE_LOCK:
+                    known = lease_id in LEASES
+                if not known and not guard_acquire({'lease_id': lease_id, 'subscription_id': identity, 'ip': address}, 'hysteria2')['allowed']:
+                    hy_request('/kick', [client_id])
+            with LEASE_LOCK:
+                entries = [dict(entry) for entry in LEASES.values()]
+            active = []
+            for entry in entries:
+                abandoned_xray = entry['protocol'] == 'xray' and time.time() - entry['last_checked'] > 25
+                disconnected_hy = entry['protocol'] == 'hysteria2' and online is not None and not online.get(entry['subscription_id'] + '@' + entry['ip']) and time.time() - entry['created_at'] > 15
+                if abandoned_xray or disconnected_hy:
+                    guard_release(entry['lease_id'])
+                else:
+                    active.append(entry)
+            for offset in range(0, len(active), 64):
+                batch = active[offset:offset + 64]
+                result = central_lease({'action': 'heartbeat', 'leases': [{k: entry[k] for k in ('lease_id', 'subscription_id', 'ip')} for entry in batch]})
+                denied = set(result['denied'])
+                for entry in batch:
+                    if entry['lease_id'] in denied:
+                        guard_release(entry['lease_id'])
+                        if entry['protocol'] == 'hysteria2':
+                            hy_request('/kick', [entry['subscription_id'] + '@' + entry['ip']])
+                    else:
+                        with LEASE_LOCK:
+                            if entry['lease_id'] in LEASES:
+                                LEASES[entry['lease_id']]['valid_until'] = time.time() + 40
+        except Exception:
+            pass  # Existing admissions have a short validity; never create new ones offline.
+        with LEASE_LOCK:
+            expired = [dict(entry) for entry in LEASES.values() if entry['valid_until'] <= time.time()]
+        for entry in expired:
+            guard_release(entry['lease_id'])
+            if entry['protocol'] == 'hysteria2':
+                try:
+                    hy_request('/kick', [entry['subscription_id'] + '@' + entry['ip']])
+                except Exception:
+                    pass
+        time.sleep(10)
 
 
 class ManagedConnection(sqlite3.Connection):
@@ -111,13 +206,18 @@ def usage():
     traffic = hy_request('/traffic')
     online = hy_request('/online')
     for identity, values in traffic.items():
+        identity = identity.partition('@')[0]
         if not re.fullmatch(r'[0-9a-f-]{36}', identity):
             continue
         row = result.setdefault(identity, {'up': 0, 'down': 0, 'last_online': 0})
         # Keep independent protocol counters so an HY restart cannot cancel an Xray delta.
-        row['hy_up'] = values.get('tx', 0)
-        row['hy_down'] = values.get('rx', 0)
-        row['hy_online'] = online.get(identity, 0)
+        row['hy_up'] = row.get('hy_up', 0) + values.get('tx', 0)
+        row['hy_down'] = row.get('hy_down', 0) + values.get('rx', 0)
+    for identity, count in online.items():
+        identity = identity.partition('@')[0]
+        if re.fullmatch(r'[0-9a-f-]{36}', identity):
+            row = result.setdefault(identity, {'up': 0, 'down': 0, 'last_online': 0})
+            row['hy_online'] = row.get('hy_online', 0) + count
     return {'users': result}
 
 
@@ -128,9 +228,25 @@ class AuthHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if self.path != '/auth' or not 0 < size <= 8192:
+            if self.path not in ('/auth', '/guard') or not 0 < size <= 8192:
                 raise ValueError('invalid_request')
             body = json.loads(self.rfile.read(size))
+            if self.path == '/guard':
+                lease_id = str(uuid.UUID(body['lease_id']))
+                action = body['action']
+                if action == 'acquire':
+                    result = guard_acquire(body)
+                elif action == 'release':
+                    guard_release(lease_id); result = {'allowed': False}
+                elif action == 'check':
+                    with LEASE_LOCK:
+                        entry = LEASES.get(lease_id)
+                        if entry:
+                            entry['last_checked'] = time.time()
+                        result = {'allowed': bool(entry and entry['valid_until'] > time.time())}
+                else:
+                    raise ValueError('invalid_guard_action')
+                return self.reply(result)
             credential = str(body.get('auth', ''))
             config = json.loads((STATE / 'agent.json').read_text())
             legacy = config.get('legacy_auth', {})
@@ -140,6 +256,12 @@ class AuthHandler(BaseHTTPRequestHandler):
                 row = connection.execute('SELECT password,expiry,enabled FROM clients WHERE id=?', (identity,)).fetchone()
             if row and separator:
                 allowed = bool(row[2]) and row[1] > time.time() and hmac.compare_digest(row[0], password)
+                if allowed:
+                    import ipaddress
+                    remote_ip = str(ipaddress.ip_address(str(body['addr']).rsplit(':', 1)[0].strip('[]')))
+                    lease_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'hysteria2:' + identity + '@' + remote_ip))
+                    allowed = guard_acquire({'lease_id': lease_id, 'subscription_id': identity, 'ip': remote_ip}, 'hysteria2')['allowed']
+                    identity += '@' + remote_ip
             if not allowed:
                 if legacy.get('type') == 'password' and hmac.compare_digest(str(legacy.get('password', '')), credential):
                     allowed, identity = True, 'legacy'
@@ -147,14 +269,17 @@ class AuthHandler(BaseHTTPRequestHandler):
                     stored = legacy.get('userpass', {}).get(identity)
                     allowed = bool(stored) and hmac.compare_digest(str(stored), password)
                     identity = 'legacy-' + identity
-            encoded = json.dumps({'ok': allowed, 'id': identity if allowed else ''}).encode()
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
+            self.reply({'ok': allowed, 'id': identity if allowed else ''})
         except Exception:
-            self.send_error(400)
+            self.reply({'ok': False, 'allowed': False, 'id': ''})
+
+    def reply(self, value):
+        encoded = json.dumps(value).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
 
 
 def install():
@@ -234,6 +359,7 @@ if __name__ == '__main__':
     if sys.argv[1:] == ['--install']:
         install()
     elif sys.argv[1:] == ['--auth']:
+        threading.Thread(target=guard_heartbeat, daemon=True).start()
         ThreadingHTTPServer(('127.0.0.1', 9898), AuthHandler).serve_forever()
     else:
         try:

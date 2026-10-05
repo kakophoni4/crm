@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
-import { NButton, NCheckbox, NPopover, NTag } from 'naive-ui'
+import { NButton, NCheckbox, NModal, NTag } from 'naive-ui'
 import { http } from '@/shared/api/http'
 const modeLabels: Record<string, string> = {
   OFF: 'ИИ выключен',
@@ -22,6 +22,8 @@ type AIState = {
 const state = ref<AIState | null>(null),
   busy = ref(false),
   error = ref('')
+const controlsVisible = ref(false)
+defineExpose({ open: () => { controlsVisible.value = true } })
 let revision = 0
 async function load() {
   const id = props.chatId
@@ -56,6 +58,7 @@ watch(
     busy.value = false
     error.value = ''
     state.value = null
+    controlsVisible.value = false
     void load()
   },
   { immediate: true },
@@ -69,12 +72,23 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <div v-if="state" class="ai-controls">
+  <div v-if="state?.global_enabled && (state.mode === 'ASSISTANT' || (state.mode === 'MANAGER' && state.data.fallback_enabled))" class="ai-controls">
     <NTag>{{ modeLabels[state.mode] }}</NTag
     ><span v-if="state.manager">{{ state.manager }}</span
-    ><span v-if="!state.global_enabled">Автоответы выключены на сервере</span
-    ><NPopover trigger="click" placement="bottom-start" display-directive="show">
-      <template #trigger><NButton size="tiny" quaternary>Управление ИИ</NButton></template>
+    ><NButton size="tiny" quaternary @click="controlsVisible = true">Управление ИИ</NButton>
+    <span v-if="state.mode === 'MANAGER' && state.data.fallback_enabled"
+      >Подстраховка включена</span
+    >
+    <span v-if="state.data.first_unanswered_at && !state.data.fallback_done"
+      >Ожидание с {{ new Date(state.data.first_unanswered_at).toLocaleTimeString() }}</span
+    ><span v-if="error || state.data.error" class="error">{{
+      error || state.data.error?.message
+    }}</span>
+  </div>
+  <NModal v-model:show="controlsVisible" preset="card" title="Управление ИИ" style="width: min(420px, 95vw)">
+    <template v-if="state">
+      <p>{{ modeLabels[state.mode] }}</p>
+      <p v-if="!state.global_enabled">Автоответы выключены на сервере</p>
       <div class="ai-controls__menu">
         <NButton
           v-if="state.mode !== 'ASSISTANT'"
@@ -97,17 +111,11 @@ onBeforeUnmount(() => {
           @update:checked="(v) => set('MANAGER', v)"
           >Подстраховка через 15 минут</NCheckbox
         >
-      </div></NPopover
-    >
-    <span v-if="state.mode === 'MANAGER' && state.data.fallback_enabled"
-      >Подстраховка включена</span
-    >
-    <span v-if="state.data.first_unanswered_at && !state.data.fallback_done"
-      >Ожидание с {{ new Date(state.data.first_unanswered_at).toLocaleTimeString() }}</span
-    ><span v-if="error || state.data.error" class="error">{{
-      error || state.data.error?.message
-    }}</span>
-  </div>
+      </div>
+      <p v-if="error || state.data.error" class="error">{{ error || state.data.error?.message }}</p>
+    </template>
+    <p v-else>Настройки ИИ недоступны. Попробуйте позже.</p>
+  </NModal>
 </template>
 <style scoped>
 .ai-controls {

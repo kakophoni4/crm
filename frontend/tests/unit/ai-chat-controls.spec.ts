@@ -14,7 +14,7 @@ vi.mock('naive-ui', async () => {
   })
   return {
     NTag: slot,
-    NPopover: slot,
+    NModal: defineComponent({ props: ['show'], setup: (props, { slots }) => () => props.show ? h('div', slots.default?.()) : null }),
     NCheckbox: slot,
     NButton: defineComponent({
       props: ['disabled'],
@@ -33,6 +33,18 @@ describe('chat AI controls', () => {
   })
   afterEach(() => vi.useRealTimers())
 
+
+  it('hides the status bar while AI is off but exposes the settings on demand', async () => {
+    api.get.mockResolvedValue(state('OFF'))
+    const wrapper = mount(AIChatControls, { props: { chatId: 10 } })
+    await flushPromises()
+    expect(wrapper.find('.ai-controls').exists()).toBe(false)
+    expect(wrapper.text()).toBe('')
+    wrapper.vm.open(); await flushPromises()
+    expect(wrapper.text()).toContain('Включить ИИ')
+    wrapper.unmount()
+  })
+
   it('does not apply a previous chat mutation to the newly opened chat', async () => {
     api.get.mockResolvedValueOnce(state('MANAGER')).mockResolvedValueOnce(state('OFF'))
     let finish!: (value: ReturnType<typeof state>) => void
@@ -42,6 +54,8 @@ describe('chat AI controls', () => {
       }),
     )
     const wrapper = mount(AIChatControls, { props: { chatId: 10 } })
+    await flushPromises()
+    wrapper.vm.open()
     await flushPromises()
     await wrapper
       .findAll('button')
@@ -55,7 +69,7 @@ describe('chat AI controls', () => {
     await flushPromises()
     finish(state('ASSISTANT'))
     await flushPromises()
-    expect(wrapper.text()).toContain('ИИ выключен')
+    expect(wrapper.text()).not.toContain('ИИ выключен')
     expect(wrapper.text()).not.toContain('Отвечает ИИ')
     expect(
       wrapper.findAll('button').some((button) => button.attributes('disabled') !== undefined),
@@ -76,6 +90,8 @@ describe('chat AI controls', () => {
     await wrapper.setProps({ chatId: 20 })
     await flushPromises()
     fail(new Error('Old request failed'))
+    await flushPromises()
+    wrapper.vm.open()
     await flushPromises()
     expect(wrapper.text()).toContain('Работает менеджер')
     wrapper.unmount()

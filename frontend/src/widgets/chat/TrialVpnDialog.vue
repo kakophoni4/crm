@@ -30,8 +30,8 @@ async function submit() {
     message.success(chatId ? 'Пробный VPN выдан и отправлен в чат' : 'Пробный VPN выдан контакту')
     emit('update:show', false)
     created.value = null; submittedDays.value = null; requestKey.value = crypto.randomUUID(); deliveryKey.value = crypto.randomUUID()
-  } catch {
-    error.value = created.value ? 'Подписка создана, но сообщение не отправлено. Нажмите «Повторить отправку» — новая подписка не создастся.' : 'Не удалось выдать пробный VPN. Попробуйте ещё раз.'
+  } catch (e) {
+    error.value = created.value ? 'Подписка создана, но сообщение не отправлено. Нажмите «Повторить отправку» — новая подписка не создастся.' : e instanceof Error ? e.message : 'Не удалось выдать пробный VPN. Попробуйте ещё раз.'
   } finally { busy.value = false }
 }
 </script>

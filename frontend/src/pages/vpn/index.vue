@@ -7,6 +7,10 @@ import { useAuthStore } from '@/shared/store/auth'
 import BotSettings from './BotSettings.vue'
 import VpnRequests from './VpnRequests.vue'
 import VpnPeriodPicker from '@/features/vpn/VpnPeriodPicker.vue'
+import VpnDeviceLimitEditor from '@/features/vpn/VpnDeviceLimitEditor.vue'
+import VpnSubscriptionActions from '@/features/vpn/VpnSubscriptionActions.vue'
+import VpnConnections from '@/features/vpn/VpnConnections.vue'
+import type { ConnectionSlot, IssuanceEligibility } from '@/features/vpn/device-limit'
 import { subscriptionKindLabels, validPeriod } from '@/features/vpn/period'
 
 interface Node {
@@ -16,6 +20,7 @@ interface Node {
   eligible_for_new_users: boolean; placement_block_reasons: string[]; drained?: boolean
 }
 interface Subscription {
+  device_limit: number; occupied_slots: number; connections: ConnectionSlot[]
   id: string; contact_id: number; contact_name: string; kind: string; status: string
   telegram_username?: string; source_bot_name?: string; created_by: number
   expires_at: number; ready_nodes: number; total_nodes: number; enabled: boolean
@@ -37,13 +42,14 @@ const selectedContact = ref<number | null>(Number(route.query.contact_id) || nul
 const contacts = ref<{ label: string; value: number }[]>([]), bots = ref<Bot[]>([])
 const selectedBot = ref<number | null>(null), days = ref<number | null>(30), creating = ref(false)
 const kind = ref<'gift' | 'purchase' | 'trial'>('gift'), detail = ref<Subscription | null>(null)
+const eligibility = ref<IssuanceEligibility | null>(null)
 const requestCount = ref(0)
 const stale = ref(true), botUsername = ref(''), error = ref(''), pendingAction = ref('')
 const editNode = ref<Node | null>(null), capacity = ref<number | null>(null), savingNode = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined, searchSequence = 0
-const kindOptions = [{ label: 'Подарок от менеджера', value: 'gift' }, { label: 'Покупка (оплата подтверждена менеджером)', value: 'purchase' }, { label: 'Пробный период', value: 'trial' }]
+const kindOptions = computed(() => [{ label: 'Подарок от менеджера', value: 'gift' }, { label: 'Покупка (оплата подтверждена менеджером)', value: 'purchase' }, ...(eligibility.value?.trial_available ? [{ label: 'Пробный период', value: 'trial' }] : [])])
 const labels: Record<string, string> = { active: 'Активна', provisioning: 'Настраивается', expired: 'Истекла', revoked: 'Отключена' }
-const eventLabels: Record<string, string> = { trial: 'Выдан пробный период', gift: 'Выдан подарок', purchase: 'Оформлена покупка', renew: 'Продлена подписка', revoke: 'Отключён доступ', resume: 'Включён доступ', rotate_link: 'Заменена ссылка', delete: 'Удалена подписка' }
+const eventLabels: Record<string, string> = { trial: 'Выдан пробный период', gift: 'Выдан подарок', purchase: 'Оформлена покупка', renew: 'Продлена подписка', revoke: 'Отключён доступ', resume: 'Включён доступ', rotate_link: 'Заменена ссылка', delete: 'Удалена подписка', set_device_limit: 'Изменён лимит подключений' }
 const reasons: Record<string, string> = { high_cpu: 'Высокая загрузка CPU', high_memory: 'Мало свободной памяти', high_network: 'Загружен канал', disk_full: 'Заполнен диск', high_cpu_steal: 'Загрузка хоста провайдера', warming_up: 'Сбор первого замера', telemetry_unavailable: 'Нет связи', stale_telemetry: 'Устарели метрики', vpn_service_unavailable: 'VPN-сервис недоступен' }
 const date = (value: number) => new Date(value * 1000).toLocaleString('ru-RU')
 const gb = (value: number) => (value / 1024 ** 3).toFixed(2) + ' ГБ'
@@ -58,6 +64,7 @@ async function searchContacts(query: string) {
   } catch (e) { message.error(failure(e)) }
 }
 async function contactChanged() {
+  eligibility.value = null
   bots.value = []; selectedBot.value = null
   if (selectedContact.value) {
     try {
@@ -75,8 +82,10 @@ async function refresh() {
     const { data } = await http.get<{ nodes: Node[]; stale: boolean; bot_username: string }>('/vpn/fleet')
     nodes.value = data.nodes; stale.value = data.stale; botUsername.value = data.bot_username
     if (selectedContact.value || auth.isAdmin) {
-      const response = await http.get<{ items: Subscription[] }>('/vpn/subscriptions', { params: selectedContact.value ? { contact_id: selectedContact.value } : {} })
+      const response = await http.get<{ items: Subscription[]; eligibility: IssuanceEligibility | null }>('/vpn/subscriptions', { params: selectedContact.value ? { contact_id: selectedContact.value } : {} })
       subscriptions.value = response.data.items
+      eligibility.value = response.data.eligibility
+      if (!eligibility.value?.trial_available && kind.value === 'trial') kind.value = 'gift'
       if (detail.value) detail.value = (await http.get<Subscription>(`/vpn/subscriptions/${detail.value.id}`)).data
     } else subscriptions.value = []
     requestCount.value = (await http.get<{ open: number }>('/vpn/bot/requests/count')).data.open
@@ -85,7 +94,7 @@ async function refresh() {
   finally { loading.value = false }
 }
 async function create() {
-  if (!selectedContact.value || !validPeriod(days.value) || creating.value) return
+  if (!selectedContact.value || !validPeriod(days.value) || creating.value || !eligibility.value?.can_create || (kind.value === 'trial' && !eligibility.value.trial_available)) return
   creating.value = true
   try {
     await http.post('/vpn/subscriptions', { contact_id: selectedContact.value, days: days.value, kind: kind.value, source_bot_id: selectedBot.value })
@@ -135,7 +144,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
 <template>
   <main class="vpn-page">
-    <header class="toolbar"><div><h1>VPN</h1><p>Подписки, подключения и управление</p></div><div class="actions"><NButton :loading="loading" @click="refresh">Обновить</NButton><NButton type="primary" @click="createVisible = true">Новая подписка</NButton></div></header>
+    <header class="toolbar"><div><h1>VPN</h1><p>Подписки, подключения и управление</p></div><div class="actions"><NButton :loading="loading" @click="refresh">Обновить</NButton><NButton v-if="!selectedContact || eligibility?.can_create" type="primary" @click="createVisible = true">Новая подписка</NButton></div></header>
     <NAlert v-if="error" type="error">{{ error }}</NAlert>
 
     <NTabs v-model:value="activeTab" type="line" animated>
@@ -154,9 +163,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <NCard v-for="value in visibleSubscriptions" :key="value.id" size="small">
           <div class="toolbar"><NButton text @click="router.push({ name: 'contact-detail', params: { id: value.contact_id } })">{{ value.contact_name }}</NButton><NTag :type="value.status === 'active' ? 'success' : 'warning'">{{ labels[value.status] }}</NTag></div>
           <p>{{ subscriptionKindLabels[value.kind] || 'Подписка' }} · {{ value.source_bot_name || 'Менеджер CRM' }}<span v-if="value.telegram_username"> · @{{ value.telegram_username }}</span></p>
-          <p>До {{ date(value.expires_at) }}</p>
-          <p>Отправлено {{ gb(value.upload_bytes) }} · Получено {{ gb(value.download_bytes) }}</p>
-          <div class="actions"><NButton :disabled="value.status !== 'active'" @click="copy(value.happ_url)">Happ</NButton><NButton :disabled="value.status !== 'active'" @click="copy(value.clash_url)">Koala Clash</NButton><NButton :disabled="value.status !== 'active'" @click="copy(value.v2rayng_url)">v2rayNG</NButton><NButton :disabled="value.status !== 'active'" @click="copy(value.guide_url)">Инструкция и APK</NButton><NButton @click="showDetail(value)">Детали и история</NButton><NButton :loading="pendingAction === value.id" @click="renewalTarget = value; renewalDays = 30">Продлить</NButton><NButton v-if="value.enabled" type="error" secondary :loading="pendingAction === value.id" @click="action(value, 'revoke')">Отключить</NButton><NButton v-else :disabled="value.expires_at <= Date.now() / 1000" @click="action(value, 'resume')">Включить</NButton><NButton quaternary type="error" @click="deleteSubscription(value)">Удалить</NButton></div>
+          <div class="subscription-summary"><span>До {{ new Date(value.expires_at * 1000).toLocaleDateString('ru-RU') }}</span><span>{{ value.occupied_slots }} / {{ value.device_limit }} подключений</span><span>{{ gb(value.upload_bytes + value.download_bytes) }}</span></div>
+          <VpnSubscriptionActions :subscription="value" :can-manage="!!auth.user?.permissions?.includes('contacts.update')" show-manage :busy="pendingAction === value.id" @copy="copy" @manage="showDetail(value)" @renew="renewalTarget = value; renewalDays = 30" @action="name => name === 'delete' ? deleteSubscription(value) : action(value, name)" />
         </NCard>
       </div><NEmpty v-if="!loading && !visibleSubscriptions.length && (selectedContact || auth.isAdmin)" description="Подписки не найдены" /></NSpin>
     </section>
@@ -180,11 +188,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     <NCard title="Выдать VPN контакту">
       <div class="create-form">
         <NSelect v-model:value="selectedContact" :options="contacts" filterable remote clearable placeholder="Найти контакт по имени или Telegram" @search="searchContacts" />
-        <NSelect v-model:value="kind" :options="kindOptions" />
+        <NSelect v-model:value="kind" :options="kindOptions" :disabled="!eligibility?.can_create" />
         <NSelect v-model:value="selectedBot" :options="bots.map(bot => ({ label: bot.bot_name, value: bot.bot_id }))" clearable placeholder="Бот, через который оформлена подписка" />
         <VpnPeriodPicker v-model="days" :trial="kind === 'trial'" :disabled="creating" />
-        <NButton type="primary" :disabled="!selectedContact || !validPeriod(days)" :loading="creating" @click="create">{{ kind === 'trial' ? 'Выдать пробный VPN' : kind === 'gift' ? 'Подарить VPN' : 'Выдать подписку' }}</NButton>
+        <NButton type="primary" :disabled="!selectedContact || !validPeriod(days) || !eligibility?.can_create" :loading="creating" @click="create">{{ kind === 'trial' ? 'Выдать пробный VPN' : kind === 'gift' ? 'Подарить VPN' : 'Выдать подписку' }}</NButton>
       </div>
+      <NAlert v-if="eligibility && !eligibility.can_create" type="info" style="margin-top: 12px">У контакта уже есть подписка. Продлите её или измените лимит подключений в её карточке.</NAlert>
+      <p v-if="eligibility?.trial_used" class="muted">Пробный период уже использован.</p>
       <p class="muted">Telegram берётся из карточки контакта. В кабинете пользователь видит только свои подписки. Источник покупки сохраняется в истории.</p>
     </NCard>
     </NModal>
@@ -195,6 +205,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     </NModal>
     <NModal :show="!!detail" preset="card" title="Подписка VPN" style="width: min(800px, 95vw)" @update:show="value => { if (!value) detail = null }">
       <template v-if="detail"><p>{{ detail.contact_name }} · {{ labels[detail.status] }} · до {{ date(detail.expires_at) }}</p>
+        <VpnConnections :occupied-slots="detail.occupied_slots" :device-limit="detail.device_limit" :connections="detail.connections" />
+        <VpnDeviceLimitEditor v-if="auth.user?.permissions?.includes('contacts.update')" :subscription-id="detail.id" :device-limit="detail.device_limit" @saved="refresh" />
         <p class="link-text">{{ detail.subscription_url }}</p><div class="actions"><NButton @click="copy(detail.subscription_url)">Копировать</NButton><NButton @click="action(detail, 'rotate_link')">Заменить ссылку подписки</NButton></div>
         <p class="muted">Замена ссылки закрывает старый URL. Для отключения VPN на устройствах используйте «Отключить».</p>
         <table><thead><tr><th>Сервер</th><th>Выдача</th><th>Трафик</th><th>Последняя активность</th></tr></thead><tbody><tr v-for="delivery in detail.delivery" :key="delivery.node_id"><td>{{ nodes.find(node => node.id === delivery.node_id)?.name || delivery.node_id }}</td><td>{{ delivery.status === 'synced' ? 'Синхронизирован' : 'Ожидает повтора' }}</td><td>{{ nodeTraffic(detail, delivery.node_id) }}</td><td>{{ detail.online.find(item => item.node_id === delivery.node_id)?.last_online ? date(detail.online.find(item => item.node_id === delivery.node_id)!.last_online) : '—' }}</td></tr></tbody></table>
@@ -210,5 +222,5 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </template>
 
 <style scoped>
-.vpn-page{padding:24px;display:grid;gap:20px}.toolbar,.summary,.actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h1,h2,p{margin:0 0 10px}h1{font-size:28px}.muted{color:#7b8495;font-size:13px;margin-top:10px}.fleet{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}dl{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:13px}dd{margin:0}.warning{color:#b78103;font-size:12px}.create-form{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}.filters{display:grid;grid-template-columns:1.5fr 1.5fr 1fr;gap:12px;margin:8px 0 20px}.subscriptions{display:grid;gap:12px}.actions{justify-content:flex-start}.link-text{overflow-wrap:anywhere;padding:12px;background:rgba(120,130,150,.1)}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:13px}td,th{text-align:left;padding:8px;border-bottom:1px solid rgba(120,130,150,.2)}@media(max-width:1100px){.create-form{grid-template-columns:1fr 1fr}}@media(max-width:600px){.vpn-page{padding:12px}.create-form,.filters{grid-template-columns:1fr}}
+.vpn-page{padding:24px;display:grid;gap:20px}.toolbar,.summary,.actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h1,h2,p{margin:0 0 10px}h1{font-size:28px}.muted{color:#7b8495;font-size:13px;margin-top:10px}.fleet{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}dl{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:13px}dd{margin:0}.warning{color:#b78103;font-size:12px}.create-form{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}.filters{display:grid;grid-template-columns:1.5fr 1.5fr 1fr;gap:12px;margin:8px 0 20px}.subscriptions{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:12px}.subscription-summary{display:flex;flex-wrap:wrap;gap:8px 14px;margin:10px 0 14px;color:var(--app-text-muted);font-size:12px}.subscriptions .toolbar :deep(.n-button){min-width:0;white-space:normal;text-align:left}.subscriptions p{font-size:12px;overflow-wrap:anywhere}.actions{justify-content:flex-start}.link-text{overflow-wrap:anywhere;padding:12px;background:rgba(120,130,150,.1)}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:13px}td,th{text-align:left;padding:8px;border-bottom:1px solid rgba(120,130,150,.2)}@media(max-width:1100px){.create-form{grid-template-columns:1fr 1fr}}@media(max-width:600px){.vpn-page{padding:12px}.create-form,.filters{grid-template-columns:1fr}}
 </style>

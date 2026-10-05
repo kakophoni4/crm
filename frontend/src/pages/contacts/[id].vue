@@ -359,7 +359,6 @@ watch(
   <section class="contact-detail">
     <NSpace align="center" class="contact-detail__toolbar">
       <NButton quaternary @click="router.push({ name: 'contacts' })">← К списку</NButton>
-      <NButton secondary @click="router.push({ name: 'vpn', query: { contact_id: id } })">Подарить / настроить VPN</NButton>
       <h1 class="contact-detail__title">
         {{ contact?.full_name ?? `Контакт #${id}` }}
       </h1>

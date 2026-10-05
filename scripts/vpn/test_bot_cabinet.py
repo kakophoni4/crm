@@ -60,7 +60,11 @@ class CabinetTests(unittest.TestCase):
         self.transport.stop(); self.snapshot.stop(); self.temporary.cleanup()
 
     def subscription(self, user=555, days=30):
-        value = self.control.create({'contact_id': 12, 'contact_name': 'Test contact', 'days': days, 'kind': 'trial', 'actor_id': 5, 'telegram_user_id': user})
+        # Seed historical duplicate subscriptions to exercise backwards-compatible cabinet isolation.
+        self.contact_sequence = getattr(self, 'contact_sequence', 100) + 1
+        value = self.control.create({'contact_id': self.contact_sequence, 'contact_name': 'Test contact', 'days': days, 'kind': 'trial', 'actor_id': 5})
+        with self.control.database() as db:
+            db.execute('UPDATE subscriptions SET contact_id=12,telegram_user_id=? WHERE id=?', (user, value['id']))
         with self.control.database() as db:
             db.execute("UPDATE deliveries SET status='synced',version=1 WHERE subscription_id=?", (value['id'],))
         return value

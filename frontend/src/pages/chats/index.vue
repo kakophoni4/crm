@@ -86,6 +86,7 @@ import { connectLeadsRealtime } from '@/shared/realtime/leads-ws'
 import { connectOwnershipRealtime } from '@/shared/realtime/ownership-ws'
 
 import AIChatControls from '@/widgets/chat/AIChatControls.vue'
+const aiControlsRef = ref<InstanceType<typeof AIChatControls> | null>(null)
 import MessageInput from '@/widgets/chat/MessageInput.vue'
 import BlockContactButton from '@/widgets/chat/BlockContactButton.vue'
 
@@ -847,6 +848,7 @@ onUnmounted(() => {
               <NPopover v-if="!phoneChatsOnly && (canTransferCard || referral.enabled || auth.user?.permissions?.includes('chats.write'))" trigger="click" placement="bottom-end" display-directive="show">
                 <template #trigger><NButton size="small" quaternary>Действия<template #icon><ChevronDown :size="14" /></template></NButton></template>
                 <div class="chat-contact-menu">
+                  <NButton v-if="auth.user?.permissions?.includes('chats.write')" size="small" quaternary @click="aiControlsRef?.open()">Управление ИИ</NButton>
                   <NButton v-if="canTransferCard" size="small" quaternary @click="transferCardVisible = true">Передать карточку</NButton>
                   <template v-if="referral.enabled">
                     <NButton size="small" quaternary :loading="referralBusy" @click="copyReferralLink">Скопировать реф. ссылку</NButton>
@@ -863,7 +865,7 @@ onUnmounted(() => {
 
 
 
-          <AIChatControls :chat-id="store.currentChat.id" />
+          <AIChatControls ref="aiControlsRef" :chat-id="store.currentChat.id" />
           <TakeoverBadge
 
             :takeover="store.activeTakeover"
@@ -1347,13 +1349,15 @@ onUnmounted(() => {
 .chats-page__chat-header {
   flex-shrink: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--app-border);
 }
 
 .chats-page__chat-header-top {
+  flex: 1;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -1361,7 +1365,7 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.chats-page__chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.chats-page__chat-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
 .chat-contact-menu { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: min(240px, 80vw); }
 .chat-contact-menu :deep(.n-button) { justify-content: flex-start; }
 .chat-contact-menu__hint { padding: 0 10px 6px; font-size: 12px; color: var(--app-text-muted); }

@@ -19,6 +19,7 @@ class ScopeTests(unittest.TestCase):
         app = FastAPI(); app.include_router(router); register_exception_handlers(app)
         self.actor = SimpleNamespace(id=7, role=UserRole.USER)
         self.db = AsyncMock()
+        self.db.get.return_value = None
         app.dependency_overrides[current_user] = lambda: self.actor
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
@@ -39,6 +40,32 @@ class ScopeTests(unittest.TestCase):
         self.scope.side_effect = NotFound()
         response = self.client.post('/api/v1/vpn/subscriptions', json={'contact_id': 12, 'days': 30, 'kind': 'gift'})
         self.assertEqual(response.status_code, 404); self.control.assert_not_awaited()
+
+    def test_device_limit_range_is_checked_before_control_call(self):
+        for limit in (2, 9, '8', True, 3.0):
+            response = self.client.post(f'/api/v1/vpn/subscriptions/{self.identity}/action', json={'action': 'set_device_limit', 'device_limit': limit})
+            self.assertEqual(response.status_code, 422)
+        self.control.assert_not_awaited()
+
+    def test_device_limit_change_keeps_contact_scope(self):
+        self.control.return_value = {'id': self.identity, 'contact_id': 99}
+        self.scope.side_effect = NotFound()
+        response = self.client.post(f'/api/v1/vpn/subscriptions/{self.identity}/action', json={'action': 'set_device_limit', 'device_limit': 8})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.control.await_count, 1)
+
+    def test_manager_can_change_visible_subscription_limit(self):
+        self.control.return_value = {'id': self.identity, 'contact_id': 12, 'device_limit': 8}
+        response = self.client.post(f'/api/v1/vpn/subscriptions/{self.identity}/action', json={'action': 'set_device_limit', 'device_limit': 8})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.control.await_args.args[2]['device_limit'], 8)
+        self.assertEqual(self.control.await_args.args[2]['actor_id'], 7)
+
+    def test_limit_change_requires_a_value(self):
+        self.control.return_value = {'id': self.identity, 'contact_id': 12}
+        response = self.client.post(f'/api/v1/vpn/subscriptions/{self.identity}/action', json={'action': 'set_device_limit'})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.control.await_count, 1)
 
     def test_trial_is_bound_to_authorized_chat_contact_and_actor(self):
         self.scope.return_value = {'linked_bots': [{'bot_id': 5, 'bot_name': 'Linked bot'}]}
@@ -125,6 +152,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_source_bot_must_belong_to_contact(self):
         self.scope.return_value = {'linked_bots': [{'bot_id': 5, 'bot_name': 'Linked bot'}]}
+        self.db.get.return_value = SimpleNamespace(full_name='Visible contact', telegram_user_id=None)
         response = self.client.post('/api/v1/vpn/subscriptions', json={'contact_id': 12, 'source_bot_id': 6})
         self.assertEqual(response.status_code, 422); self.control.assert_not_awaited()
 

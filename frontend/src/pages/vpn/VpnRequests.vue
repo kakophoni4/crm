@@ -63,7 +63,8 @@ onUnmounted(() => { disposed = true; ++generation; if (timer) clearInterval(time
 
 <template>
   <section class="request-list">
-    <div class="toolbar"><div><h2>Заявки на VPN</h2><p class="muted">Продления, покупки и помощь — без открытия чата.</p></div><NButton :loading="loading" @click="refresh">Обновить заявки</NButton></div>
+    <div class="toolbar"><h2>Заявки на VPN</h2><NButton :loading="loading" @click="refresh">Обновить заявки</NButton></div>
+
     <div class="filters"><NInput v-model:value="search" clearable placeholder="Поиск по контакту, нику или типу заявки" /><NSelect v-model:value="state" :options="[{ label: 'Открытые', value: 'open' }, { label: 'Обработанные', value: 'done' }, { label: 'Отклонённые', value: 'dismissed' }]" /></div>
     <NAlert v-if="error" type="error">{{ error }}</NAlert>
     <NSpin :show="loading && !items.length">

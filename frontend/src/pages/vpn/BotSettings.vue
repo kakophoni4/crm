@@ -32,7 +32,6 @@ async function confirm() {
 </script>
 <template>
   <NCard size="small" title="Telegram-кабинет VPN">
-    <p>Сменить токен или подключить другого бота может только администратор. Подписки привязаны к Telegram ID клиентов.</p>
     <NButton @click="reset(); open = true">Изменить токен бота</NButton>
     <NButton style="margin-left: 8px" @click="refresh">Обновить статус рассылки</NButton>
     <p v-if="Object.keys(delivery).length">Рассылка: отправлено {{ delivery.sent || 0 }} · ожидает {{ delivery.pending || 0 }} · ошибок {{ delivery.failed || 0 }}</p>
