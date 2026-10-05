@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import re
 import sqlite3
 import ssl
@@ -22,6 +23,27 @@ from pathlib import Path
 STATE = Path('/etc/crm-vpn')
 LEASE_LOCK = threading.RLock()
 LEASES = {}
+DIAGNOSTIC_LAST = {}
+DIAGNOSTIC_LOCK = threading.Lock()
+
+
+def note_failure(category, error=None):
+    """Rate-limit public error categories; never log identities, IPs or credentials."""
+    kind = type(error).__name__ if error is not None else 'Denied'
+    key = (category, kind)
+    with DIAGNOSTIC_LOCK:
+        now = time.monotonic()
+        if now - DIAGNOSTIC_LAST.get(key, -60) < 60:
+            return
+        DIAGNOSTIC_LAST[key] = now
+    logging.getLogger('crm-vpn-auth').warning('VPN authorization %s (%s)', category, kind)
+
+
+def hysteria_lease_id(client_id):
+    # One identity/IP can use several nodes at once. Central leases are owned by
+    # their node, so a UUID derived from client_id alone collides across servers.
+    config = json.loads((STATE / 'agent.json').read_text())
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, config['lease_url'] + '/hysteria2/' + client_id))
 
 
 def central_lease(body):
@@ -39,7 +61,13 @@ def guard_acquire(body, protocol='xray'):
     ip = str(address.ipv4_mapped or address) if isinstance(address, ipaddress.IPv6Address) else str(address)
     lease_id = str(uuid.UUID(body['lease_id']))
     entry = {'lease_id': lease_id, 'subscription_id': identity, 'ip': ip}
-    result = central_lease({**entry, 'action': 'acquire'})
+    try:
+        result = central_lease({**entry, 'action': 'acquire'})
+    except Exception as error:
+        note_failure('central_unavailable', error)
+        raise
+    if not result.get('allowed'):
+        note_failure('admission_denied')
     if result.get('allowed'):
         with LEASE_LOCK:
             LEASES[lease_id] = {**entry, 'protocol': protocol, 'valid_until': time.time() + 40, 'created_at': time.time(), 'last_checked': time.time()}
@@ -74,7 +102,7 @@ def guard_heartbeat():
                     continue
                 if not separator or not client[1] or client[0] <= time.time():
                     hy_request('/kick', [client_id]); continue
-                lease_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'hysteria2:' + client_id))
+                lease_id = hysteria_lease_id(client_id)
                 with LEASE_LOCK:
                     known = lease_id in LEASES
                 if not known and not guard_acquire({'lease_id': lease_id, 'subscription_id': identity, 'ip': address}, 'hysteria2')['allowed']:
@@ -102,8 +130,8 @@ def guard_heartbeat():
                         with LEASE_LOCK:
                             if entry['lease_id'] in LEASES:
                                 LEASES[entry['lease_id']]['valid_until'] = time.time() + 40
-        except Exception:
-            pass  # Existing admissions have a short validity; never create new ones offline.
+        except Exception as error:
+            note_failure('lease_renewal_failed', error)
         with LEASE_LOCK:
             expired = [dict(entry) for entry in LEASES.values() if entry['valid_until'] <= time.time()]
         for entry in expired:
@@ -259,7 +287,7 @@ class AuthHandler(BaseHTTPRequestHandler):
                 if allowed:
                     import ipaddress
                     remote_ip = str(ipaddress.ip_address(str(body['addr']).rsplit(':', 1)[0].strip('[]')))
-                    lease_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'hysteria2:' + identity + '@' + remote_ip))
+                    lease_id = hysteria_lease_id(identity + '@' + remote_ip)
                     allowed = guard_acquire({'lease_id': lease_id, 'subscription_id': identity, 'ip': remote_ip}, 'hysteria2')['allowed']
                     identity += '@' + remote_ip
             if not allowed:
@@ -270,7 +298,8 @@ class AuthHandler(BaseHTTPRequestHandler):
                     allowed = bool(stored) and hmac.compare_digest(str(stored), password)
                     identity = 'legacy-' + identity
             self.reply({'ok': allowed, 'id': identity if allowed else ''})
-        except Exception:
+        except Exception as error:
+            note_failure('request_failed', error)
             self.reply({'ok': False, 'allowed': False, 'id': ''})
 
     def reply(self, value):
@@ -344,14 +373,24 @@ def metadata():
         endpoints.append({'type': 'vless', 'server': host, 'port': port, 'public_key': public,
                           'sni': reality['serverNames'][0], 'short_id': reality['shortIds'][0],
                           'network': stream['network'], 'xhttp': stream.get('xhttpSettings', {})})
+        gaming = config.get('gaming_inbounds', {}).get(str(identity))
+        if gaming and gaming.get('target') == reality['serverNames'][0]:
+            endpoints[-1]['game_brand'] = gaming['brand']
     db.close()
     hy = yaml.safe_load(Path('/etc/hysteria/config-8444.yaml').read_text())
     cert = Path(hy['tls']['cert']).read_text()
     der = base64.b64decode(''.join(cert.strip().splitlines()[1:-1]))
     host, port = hy['listen'].rsplit(':', 1)
-    endpoints.append({'type': 'hysteria2', 'server': host, 'port': int(port),
-                      'obfs': hy.get('obfs', {}).get('salamander', {}).get('password', ''),
-                      'pin': hashlib.sha256(der).hexdigest()})
+    hy_endpoint = {'type': 'hysteria2', 'server': host, 'port': int(port),
+                   'obfs': hy.get('obfs', {}).get('salamander', {}).get('password', ''),
+                   'pin': hashlib.sha256(der).hexdigest()}
+    alias_file = STATE / 'hysteria-443.json'
+    if alias_file.is_file():
+        alias = json.loads(alias_file.read_text())
+        if alias.get('ip') == host and alias.get('target_port') == int(port) and alias.get('public_port') == 443:
+            endpoints.append({**hy_endpoint, 'port': 443})
+            hy_endpoint['variant'] = 'fallback'
+    endpoints.append(hy_endpoint)
     return {'endpoints': endpoints}
 
 
@@ -359,6 +398,8 @@ if __name__ == '__main__':
     if sys.argv[1:] == ['--install']:
         install()
     elif sys.argv[1:] == ['--auth']:
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger('crm-vpn-auth').info('VPN auth source SHA256 %s', hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
         threading.Thread(target=guard_heartbeat, daemon=True).start()
         ThreadingHTTPServer(('127.0.0.1', 9898), AuthHandler).serve_forever()
     else:

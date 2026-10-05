@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Exercise all 21 real endpoints with an ephemeral identity; always revoke/remove it.
+"""Exercise all published real endpoints with an ephemeral identity; always remove it.
 
 Run as crm-vpn-control on CRM. No subscriptions, passwords or tokens are printed.
 """
@@ -21,13 +21,19 @@ from pathlib import Path
 def main():
     spec = importlib.util.spec_from_file_location('vpn_check_control', '/opt/crm-vpn/control_service.py')
     control = importlib.util.module_from_spec(spec); spec.loader.exec_module(control)
+    if '--node' in sys.argv:
+        node_id = sys.argv[sys.argv.index('--node') + 1]
+        control.NODES = [node for node in control.NODES if node['id'] == node_id]
+        if not control.NODES:
+            raise SystemExit('Unknown inventory node')
     original_home = control.HOME
     failures = []
     with tempfile.TemporaryDirectory(prefix='live-check-', dir=original_home) as work:
         directory = Path(work); directory.chmod(0o700)
-        (directory / '.ssh').symlink_to(original_home / '.ssh', target_is_directory=True)
-        control.HOME = directory; control.initialize()
-        value = control.create({'contact_id': 1, 'contact_name': 'Ephemeral VPN test', 'days': 1, 'kind': 'gift', 'actor_id': 1})
+        # Admission is shared across nodes: the identity must exist in the central
+        # database, rather than an isolated test DB. No CRM contact is created.
+        value = control.create({'contact_id': 2000000000 + secrets.randbelow(100000),
+                                'contact_name': 'Ephemeral VPN test', 'days': 1, 'kind': 'gift', 'actor_id': 0})
         identity = value['id']
         with control.database() as db:
             row = db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone()
@@ -39,17 +45,17 @@ def main():
                     row = db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone()
                     view = control.subscription_view(row, db)
                     proxies, links, automatic = control.connection_configs(row, db)
-                if view['ready_nodes'] == 7 and len(proxies) == 21: break
+                if view['ready_nodes'] == len(control.NODES) and len(proxies) >= 3 * len(control.NODES): break
                 time.sleep(2)
-            if view['ready_nodes'] != 7 or len(proxies) != 21:
-                raise RuntimeError('Not all 21 endpoints were provisioned')
-            print(json.dumps({'all_countries': 7, 'endpoints': len(proxies), 'provisioning': 'ok'}), flush=True)
+            if view['ready_nodes'] != len(control.NODES) or len(proxies) < 3 * len(control.NODES):
+                raise RuntimeError('Not all endpoints were provisioned')
+            print(json.dumps({'all_countries': len(control.NODES), 'endpoints': len(proxies), 'provisioning': 'ok'}), flush=True)
             if '--mihomo' in sys.argv:
                 secret = secrets.token_urlsafe(32)
                 config = directory / 'mihomo.json'
-                data = {'mixed-port': 19351, 'external-controller': '127.0.0.1:19350', 'secret': secret,
-                        'mode': 'rule', 'log-level': 'warning', 'proxies': proxies,
-                        'proxy-groups': [{'name': 'VPN', 'type': 'select', 'proxies': [proxy['name'] for proxy in proxies]}], 'rules': ['MATCH,VPN']}
+                with urllib.request.urlopen(control.PUBLIC + '/sub/' + row['token'] + '?format=clash', timeout=15) as response:
+                    data = json.load(response)
+                data.update({'mixed-port': 19351, 'external-controller': '127.0.0.1:19350', 'secret': secret})
                 config.write_text(json.dumps(data)); config.chmod(0o600)
                 validation = subprocess.run(['/opt/crm-vpn/bin/mihomo', '-t', '-d', str(directory), '-f', str(config)], capture_output=True, text=True, timeout=30)
                 if validation.returncode:
@@ -74,6 +80,15 @@ def main():
                                 failures.append(proxy['name'])
                                 print('Mihomo curl diagnostic:', result.returncode, result.stderr[:300], flush=True)
                                 break
+                        if not failures and automatic:
+                            request = urllib.request.Request('http://127.0.0.1:19350/proxies/VPN', method='PUT',
+                                data=json.dumps({'name': 'AUTO'}).encode(), headers={'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json'})
+                            with urllib.request.urlopen(request, timeout=5): pass
+                            result = subprocess.run(['curl', '--silent', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19351',
+                                '--output', '/dev/null', '--write-out', '%{http_code}', 'https://www.gstatic.com/generate_204'],capture_output=True,text=True,timeout=25)
+                            if result.returncode or result.stdout != '204':
+                                failures.append('mihomo_auto')
+                            print(json.dumps({'mihomo_auto': True, 'relay_ok': not failures}), flush=True)
                     finally:
                         process.terminate()
                         try: process.wait(timeout=5)
@@ -123,24 +138,40 @@ def main():
                         print(json.dumps({'endpoint': proxy['name'], 'relay_ok': ok, 'http_status': result.stdout}), flush=True)
                         if not ok:
                             failures.append(proxy['name'])
+                            text = log_file.read_text().lower()
+                            flags = {marker: marker in text for marker in ('authentication failed', 'no recent network activity', 'timeout', 'certificate', 'connection refused', 'failed to initialize')}
+                            print(json.dumps({'endpoint_diagnostic': proxy['name'], 'client_exit': process.poll(),
+                                              'curl_exit': result.returncode, 'flags': flags}), flush=True)
+                            retained = original_home / ('live-endpoint-' + str(index) + '-error.log')
+                            for sensitive in (identity, row['password'], proxy.get('obfs-password', '')):
+                                if sensitive: text = text.replace(sensitive.lower(), '[redacted]')
+                            retained.write_text(text); retained.chmod(0o600)
                     finally:
                         process.terminate()
                         try: process.wait(timeout=5)
                         except subprocess.TimeoutExpired: process.kill(); process.wait()
             if '--mihomo' not in sys.argv:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1 if '--sequential' in sys.argv else 7) as pool:
                     list(pool.map(check, enumerate(proxies)))
+            if '--failover' in sys.argv:
+                test_happ_failover(control, directory, proxies, automatic)
             # Re-read node counters after actual traffic; both protocols must be visible.
             usage_totals = {'up': 0, 'down': 0, 'hy_up': 0, 'hy_down': 0}
-            for node in control.NODES:
-                usage = control.node_call(node['id'], {'operation': 'usage'})['users'].get(identity, {})
-                for metric in usage_totals:
-                    usage_totals[metric] += usage.get(metric, 0)
+            for attempt in range(16):
+                usage_totals = dict.fromkeys(usage_totals, 0)
+                for node in control.NODES:
+                    usage = control.node_call(node['id'], {'operation': 'usage'})['users'].get(identity, {})
+                    for metric in usage_totals:
+                        usage_totals[metric] += usage.get(metric, 0)
+                if all(value > 0 for value in usage_totals.values()):
+                    break
+                # The panel persists Xray traffic on its own periodic schedule.
+                time.sleep(2)
             print(json.dumps({'traffic_recorded': {key: value > 0 for key, value in usage_totals.items()}}), flush=True)
             if not all(value > 0 for value in usage_totals.values()):
                 failures.append('usage')
         finally:
-            revoked = control.mutate(identity, {'action': 'revoke', 'actor_id': 1})
+            control.mutate(identity, {'action': 'revoke', 'actor_id': 0})
             cleanup_failed = []
             for node in control.NODES:
                 try:
@@ -151,9 +182,59 @@ def main():
             print(json.dumps({'test_identity_removed': not cleanup_failed, 'cleanup_failed_nodes': cleanup_failed}), flush=True)
             if cleanup_failed:
                 failures.append('cleanup')
+            else:
+                with control.database() as db:
+                    for table in ('connection_leases', 'events', 'deliveries', 'counters', 'usage_state'):
+                        db.execute('DELETE FROM ' + table + ' WHERE subscription_id=?', (identity,))
+                    db.execute('DELETE FROM subscriptions WHERE id=?', (identity,))
     if failures:
         raise SystemExit('Failed checks: ' + ', '.join(failures))
-    print('All 21 VPN relays and per-protocol counters passed', flush=True)
+    print('All published VPN relays and per-protocol counters passed', flush=True)
+
+
+def test_happ_failover(control, directory, proxies, automatic):
+    """Real direct relays must survive blocked UDP and three unavailable countries."""
+    import copy
+    environment = {**os.environ, 'XRAY_LOCATION_ASSET': '/opt/crm-vpn/geo'}
+    profiles = control.happ_configs(proxies, automatic)
+    for index, profile in enumerate(profiles):
+        path = directory / ('happ-validate-' + str(index) + '.json')
+        path.write_text(json.dumps(profile)); path.chmod(0o600)
+        checked = subprocess.run(['/opt/crm-vpn/bin/xray', 'run', '-test', '-c', str(path)],
+                                 capture_output=True, env=environment, timeout=30)
+        if checked.returncode:
+            raise RuntimeError('Published Happ profile validation failed')
+    countries = list(dict.fromkeys(name.split(' · ')[0] for name in automatic))
+    for scenario in ('normal', 'udp_blocked', 'three_countries_blocked'):
+        if scenario == 'three_countries_blocked' and len(countries) <= 3:
+            print(json.dumps({'happ_failover': scenario, 'skipped': 'requires_at_least_four_countries'}), flush=True)
+            continue
+        config = copy.deepcopy(profiles[0]); config['inbounds'][0]['port'] = 19371
+        for name, outbound in zip(automatic, config['outbounds']):
+            blocked = (scenario == 'udp_blocked' and outbound['protocol'] == 'hysteria') or (
+                scenario == 'three_countries_blocked' and name.split(' · ')[0] in countries[:3])
+            if blocked:
+                if outbound['protocol'] == 'vless':
+                    outbound['settings']['vnext'][0].update(address='127.0.0.1', port=1)
+                else:
+                    outbound['settings'].update(address='127.0.0.1', port=1)
+        path = directory / ('happ-auto-' + scenario + '.json')
+        path.write_text(json.dumps(config)); path.chmod(0o600)
+        with (directory / ('happ-auto-' + scenario + '.log')).open('w') as log:
+            process = subprocess.Popen(['/opt/crm-vpn/bin/xray', 'run', '-c', str(path)],
+                                       stdout=log, stderr=log, env=environment)
+            try:
+                time.sleep(7)
+                result = subprocess.run(['curl', '-sS', '--max-time', '20', '--socks5-hostname', '127.0.0.1:19371',
+                                         '-o', '/dev/null', '-w', '%{http_code}', 'https://www.gstatic.com/generate_204'],
+                                        capture_output=True, text=True, timeout=25)
+                if result.returncode or result.stdout != '204':
+                    raise RuntimeError('Happ automatic failover failed: ' + scenario)
+                print(json.dumps({'happ_failover': scenario, 'relay_ok': True}), flush=True)
+            finally:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: process.kill(); process.wait()
 
 
 if __name__ == '__main__':

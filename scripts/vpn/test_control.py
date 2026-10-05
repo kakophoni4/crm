@@ -96,10 +96,15 @@ class ControlTests(unittest.TestCase):
             proxies, links, automatic = self.control.connection_configs(row, db)
         self.assertEqual(len(proxies), 14)
         self.assertEqual(len(links), 14)
-        self.assertEqual(len(automatic), 6)  # two protocols on three assigned countries
+        self.assertEqual(len(automatic), 14)  # every healthy country is probed from the client
         self.assertEqual({proxy['server'] for proxy in proxies if proxy['type'] == 'vless'}, {node['host'] for node in self.control.NODES})
         self.metrics['nodes'][0]['eligible_for_new_users'] = False
         self.assertNotIn('pl', self.control.ranked_nodes(value['id'], self.metrics))
+        with self.control.database() as db:
+            proxies, links, automatic = self.control.connection_configs(row, db)
+        self.assertEqual(len(proxies), 14)  # manual profiles stay available
+        self.assertEqual(len(automatic), 12)
+        self.assertFalse(any(name.startswith(self.control.NODES[0]['name'] + ' ·') for name in automatic))
 
     def test_distribution_and_overload_weight(self):
         counts = dict.fromkeys([node['id'] for node in self.control.NODES], 0)
@@ -109,6 +114,63 @@ class ControlTests(unittest.TestCase):
         self.metrics['nodes'][0]['cpu_percent'] = 80
         loaded = sum(self.control.ranked_nodes(str(number), self.metrics)[0] == 'pl' for number in range(1400))
         self.assertLess(loaded, 40)
+
+    def test_transport_and_port_fallbacks_keep_distinct_profiles(self):
+        value = self.create(); self.ready(value['id'])
+        with self.control.database() as db:
+            node = self.control.NODES[0]
+            stored = json.loads(db.execute('SELECT data FROM endpoints WHERE node_id=?', (node['id'],)).fetchone()[0])
+            first, hy = stored
+            second = {**first, 'server': node['ips'][1]}
+            endpoints = [first, second, {**hy, 'port': 443}, {**hy, 'variant': 'fallback'}]
+            db.execute('UPDATE endpoints SET data=? WHERE node_id=?', (json.dumps(endpoints), node['id']))
+            row = db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+            proxies, links, automatic = self.control.connection_configs(row, db)
+        local = [proxy for proxy in proxies if proxy['name'].startswith(node['name'] + ' ·')]
+        self.assertEqual([proxy['xhttp-opts']['mode'] for proxy in local[:2]], ['auto', 'packet-up'])
+        self.assertEqual([proxy['port'] for proxy in local[2:]], [443, 8444])
+        self.assertEqual(len({proxy['name'] for proxy in proxies}), len(proxies))
+        self.assertTrue(any('mode=packet-up' in link for link in links))
+        self.assertEqual(len(automatic), len(proxies))
+        auto = self.control.happ_configs(proxies, automatic)[0]
+        self.assertEqual(auto['observatory']['probeInterval'], '30s')
+        self.assertIn('https://dns.quad9.net/dns-query', auto['dns']['servers'])
+        # A fixed server mode must never be changed to an incompatible client mode.
+        endpoints[1]['xhttp'] = {'path': '/test', 'mode': 'stream-up'}
+        with self.control.database() as db:
+            db.execute('UPDATE endpoints SET data=? WHERE node_id=?', (json.dumps(endpoints), node['id']))
+            proxies, _, _ = self.control.connection_configs(row, db)
+        second = next(proxy for proxy in proxies if proxy['server'] == node['ips'][1] and proxy['type'] == 'vless')
+        self.assertEqual(second['xhttp-opts']['mode'], 'stream-up')
+
+    def test_gaming_variants_are_named_and_available_in_every_format(self):
+        from scripts.vpn.install_operator_fallbacks import GAMING_TARGETS
+        from urllib.parse import unquote
+        value = self.create(); self.ready(value['id'])
+        with self.control.database() as db:
+            for node in self.control.NODES:
+                stored = json.loads(db.execute('SELECT data FROM endpoints WHERE node_id=?', (node['id'],)).fetchone()[0])
+                for index, (brand, target) in enumerate(GAMING_TARGETS.items()):
+                    gaming = {**stored[0], 'port': 8450 + index, 'sni': target, 'game_brand': brand}
+                    stored.append(gaming)
+                db.execute('UPDATE endpoints SET data=? WHERE node_id=?', (json.dumps(stored), node['id']))
+            row = db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+            proxies, links, automatic = self.control.connection_configs(row, db)
+        self.assertEqual(len(proxies), 63)
+        self.assertEqual(len(automatic), 63)
+        self.assertEqual(len(set(automatic)), 63)
+        happ = self.control.happ_configs(proxies, automatic)
+        self.assertEqual(len(happ), 64)
+        for node in self.control.NODES:
+            for index, (brand, target) in enumerate(GAMING_TARGETS.items()):
+                name = node['name'] + ' · ' + brand
+                proxy = next(proxy for proxy in proxies if proxy['name'] == name)
+                self.assertEqual(proxy['servername'], target)
+                self.assertEqual(proxy['port'], 8450 + index)
+                self.assertTrue(any(unquote(link).endswith('#' + name) for link in links))
+                self.assertTrue(any(outbound.get('streamSettings', {}).get('realitySettings', {}).get('serverName') == target
+                                    for outbound in happ[0]['outbounds']))
+                self.assertTrue(any(profile['remarks'] == name for profile in happ[1:]))
 
     def test_revocation_renewal_and_rotated_link(self):
         value = self.create(); self.ready(value['id'])
@@ -160,6 +222,8 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('GEOIP,RU,DIRECT', config['rules'])
             with urllib.request.urlopen(base + '/sub/' + path + '?format=happ') as response:
                 profiles = json.load(response)
+                self.assertEqual(response.headers['ping-type'], 'proxy')
+                self.assertEqual(response.headers['subscription-ping-onopen-enabled'], '1')
                 self.assertEqual(len(profiles), 15)
                 hysteria = [p['outbounds'][0] for p in profiles[1:] if p['outbounds'][0]['protocol'] == 'hysteria']
                 self.assertEqual(len(hysteria), 7)

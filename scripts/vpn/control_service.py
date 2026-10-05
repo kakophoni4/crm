@@ -429,11 +429,14 @@ def reconcile():
 
 def connection_configs(row, db):
     delivery = {item['node_id']: item for item in db.execute('SELECT * FROM deliveries WHERE subscription_id=?', (row['id'],))}
-    order = ranked_nodes(row['id'], snapshot())
+    healthy = ranked_nodes(row['id'], snapshot())
+    order = list(healthy)
     order += [node['id'] for node in NODES if node['id'] not in order]
     names = {node['id']: node['name'] for node in NODES}
     proxies = []; links = []; automatic = []
-    eligible = set(ranked_nodes(row['id'], snapshot())[:3])
+    # A server reachable from CRM may be blocked in the customer's network.
+    # Keep every healthy exit available to the client's actual latency probes.
+    eligible = set(healthy)
     for node_id in order:
         delivered = delivery.get(node_id)
         if not delivered or delivered['version'] != row['version'] or delivered['status'] != 'synced':
@@ -443,6 +446,10 @@ def connection_configs(row, db):
             continue
         for index, endpoint in enumerate(json.loads(metadata['data'])):
             label = names[node_id] + ' · ' + ('VLESS ' + str(index + 1) if endpoint['type'] == 'vless' else 'Hysteria2')
+            if endpoint['type'] == 'vless' and endpoint.get('game_brand') in ('Steam', 'Riot', 'Roblox', 'Epic Games', 'Battle.net', 'EA', 'Ubisoft'):
+                label = names[node_id] + ' · ' + endpoint['game_brand']
+            if endpoint.get('variant') == 'fallback':
+                label += ' · резерв'
             proxy = {'name': label, 'type': endpoint['type'], 'server': endpoint['server'], 'port': endpoint['port'], 'udp': True}
             if endpoint['type'] == 'vless':
                 xhttp = endpoint.get('xhttp', {})
@@ -452,11 +459,16 @@ def connection_configs(row, db):
                                                  'support-x25519mlkem768': True}})
                 if endpoint['network'] == 'xhttp':
                     proxy['alpn'] = ['h2']
-                    proxy['xhttp-opts'] = {'path': xhttp.get('path', '/'), 'mode': xhttp.get('mode', 'auto')}
+                    mode = xhttp.get('mode', 'auto')
+                    # Server auto accepts all modes. Preserve the first fast path;
+                    # give the second address an independently compatible upload.
+                    if index == 1 and mode == 'auto':
+                        mode = 'packet-up'
+                    proxy['xhttp-opts'] = {'path': xhttp.get('path', '/'), 'mode': mode}
                 query = {'encryption': 'none', 'security': 'reality', 'type': endpoint['network'], 'sni': endpoint['sni'],
                          'fp': 'chrome', 'pbk': endpoint['public_key'], 'sid': endpoint['short_id']}
                 if endpoint['network'] == 'xhttp':
-                    query.update(path=xhttp.get('path', '/'), mode=xhttp.get('mode', 'auto'))
+                    query.update(path=proxy['xhttp-opts']['path'], mode=proxy['xhttp-opts']['mode'])
                 uri = 'vless://' + row['id'] + '@' + endpoint['server'] + ':' + str(endpoint['port'])
             else:
                 credential = row['id'] + ':' + row['password']
@@ -507,14 +519,14 @@ def happ_configs(proxies, automatic):
                   'inbounds': [{'tag': 'socks', 'listen': '127.0.0.1', 'port': 10808, 'protocol': 'socks', 'settings': {'auth': 'noauth', 'udp': True},
                                 'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True}}],
                   'outbounds': outbounds + [{'tag': 'direct', 'protocol': 'freedom'}],
-                  'dns': {'hosts': {'cloudflare-dns.com': '1.1.1.1', 'common.dot.dns.yandex.net': '77.88.8.8'},
+                  'dns': {'hosts': {'cloudflare-dns.com': '1.1.1.1', 'dns.quad9.net': '9.9.9.9', 'common.dot.dns.yandex.net': '77.88.8.8'},
                           'servers': [{'address': 'https+local://common.dot.dns.yandex.net/dns-query',
                                        'domains': ['geosite:category-ru', 'domain:ru', 'domain:su', 'domain:xn--p1ai'], 'skipFallback': True},
-                                      'https://cloudflare-dns.com/dns-query'], 'queryStrategy': 'UseIPv4'},
+                                      'https://cloudflare-dns.com/dns-query', 'https://dns.quad9.net/dns-query'], 'queryStrategy': 'UseIPv4'},
                   'routing': {'domainStrategy': 'IPIfNonMatch', 'rules': rules}}
         if balanced:
             config['routing']['balancers'] = [{'tag': 'auto', 'selector': ['vpn-'], 'fallbackTag': 'vpn-0', 'strategy': {'type': 'leastPing'}}]
-            config['observatory'] = {'subjectSelector': ['vpn-'], 'probeUrl': 'https://www.gstatic.com/generate_204', 'probeInterval': '60s', 'enableConcurrency': True}
+            config['observatory'] = {'subjectSelector': ['vpn-'], 'probeUrl': 'https://www.gstatic.com/generate_204', 'probeInterval': '30s', 'enableConcurrency': True}
         return config
     supported = [proxy for proxy in proxies if proxy['type'] in ('vless', 'hysteria2')]
     selected = [proxy for proxy in supported if proxy['name'] in automatic]
@@ -619,7 +631,7 @@ class Handler(BaseHTTPRequestHandler):
                 manual = [proxy['name'] for proxy in proxies]
                 groups = [{'name': 'VPN', 'type': 'select', 'proxies': (['AUTO'] if automatic else []) + manual}]
                 if automatic:
-                    groups.append({'name': 'AUTO', 'type': 'url-test', 'proxies': automatic, 'url': 'https://www.gstatic.com/generate_204', 'interval': 120, 'tolerance': 50, 'lazy': False})
+                    groups.append({'name': 'AUTO', 'type': 'url-test', 'proxies': automatic, 'url': 'https://www.gstatic.com/generate_204', 'interval': 30, 'tolerance': 30, 'lazy': False})
                 config = {'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'proxies': proxies,
                           'geodata-mode': True, 'geox-url': {'geoip': PUBLIC + '/geo/geoip.dat', 'geosite': PUBLIC + '/geo/geosite.dat'},
                           'proxy-groups': groups, 'rules': ['DOMAIN-SUFFIX,ru,DIRECT', 'DOMAIN-SUFFIX,su,DIRECT', 'DOMAIN-SUFFIX,xn--p1ai,DIRECT', 'GEOSITE,category-ru,DIRECT', 'GEOIP,RU,DIRECT', 'GEOIP,LAN,DIRECT', 'MATCH,VPN']}
@@ -627,6 +639,10 @@ class Handler(BaseHTTPRequestHandler):
             if format_name == 'happ':
                 routing = happ_routing_profile()
                 headers['routing'] = 'happ://routing/onadd/' + base64.b64encode(json.dumps(routing, ensure_ascii=False).encode()).decode()
+                # Measure actual tunnel availability, including UDP-only entries;
+                # ICMP/TCP ping alone does not test a Hysteria connection.
+                headers.update({'ping-type': 'proxy', 'check-url-via-proxy': 'https://www.gstatic.com/generate_204',
+                                'subscription-ping-onopen-enabled': '1'})
                 return self.reply(200, happ_configs(proxies, automatic), headers=headers)
             if format_name not in ('raw', 'base64', 'happ-legacy', 'v2rayng'):
                 raise ValueError('unsupported_format')
