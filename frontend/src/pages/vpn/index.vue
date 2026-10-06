@@ -10,7 +10,7 @@ import VpnPeriodPicker from '@/features/vpn/VpnPeriodPicker.vue'
 import VpnDeviceLimitEditor from '@/features/vpn/VpnDeviceLimitEditor.vue'
 import VpnSubscriptionActions from '@/features/vpn/VpnSubscriptionActions.vue'
 import VpnConnections from '@/features/vpn/VpnConnections.vue'
-import type { ConnectionSlot, IssuanceEligibility } from '@/features/vpn/device-limit'
+import type { IssuanceEligibility } from '@/features/vpn/device-limit'
 import { subscriptionKindLabels, validPeriod } from '@/features/vpn/period'
 
 interface Node {
@@ -20,7 +20,7 @@ interface Node {
   eligible_for_new_users: boolean; placement_block_reasons: string[]; drained?: boolean
 }
 interface Subscription {
-  device_limit: number; occupied_slots: number; connections: ConnectionSlot[]
+  device_limit: number; occupied_slots: number
   id: string; contact_id: number; contact_name: string; kind: string; status: string
   telegram_username?: string; source_bot_name?: string; created_by: number
   expires_at: number; ready_nodes: number; total_nodes: number; enabled: boolean
@@ -205,7 +205,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     </NModal>
     <NModal :show="!!detail" preset="card" title="Подписка VPN" style="width: min(800px, 95vw)" @update:show="value => { if (!value) detail = null }">
       <template v-if="detail"><p>{{ detail.contact_name }} · {{ labels[detail.status] }} · до {{ date(detail.expires_at) }}</p>
-        <VpnConnections :occupied-slots="detail.occupied_slots" :device-limit="detail.device_limit" :connections="detail.connections" />
+        <VpnConnections :occupied-slots="detail.occupied_slots" :device-limit="detail.device_limit" />
         <VpnDeviceLimitEditor v-if="auth.user?.permissions?.includes('contacts.update')" :subscription-id="detail.id" :device-limit="detail.device_limit" @saved="refresh" />
         <p class="link-text">{{ detail.subscription_url }}</p><div class="actions"><NButton @click="copy(detail.subscription_url)">Копировать</NButton><NButton @click="action(detail, 'rotate_link')">Заменить ссылку подписки</NButton></div>
         <p class="muted">Замена ссылки закрывает старый URL. Для отключения VPN на устройствах используйте «Отключить».</p>

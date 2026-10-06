@@ -18,6 +18,15 @@ CLIENTS = {
 INSTALL = 'Откройте скачанный APK → «Установить». Если Android попросит разрешение, нажмите «Настройки» → разрешите установку для этого браузера/Telegram → вернитесь к APK и нажмите «Установить». После установки это разрешение можно выключить. Устанавливать все приложения не нужно — выберите одно. Одновременно включайте только один VPN.'
 HELP = 'Если не открываются сайты: выключите другой VPN, обновите подписку, переподключитесь и попробуйте Wi-Fi вместо мобильной сети или наоборот. В Happ сначала используйте «Автовыбор». «н/д» при проверке пинга само по себе не означает, что подключение не работает. Проверьте срок в боте; для продления или помощи нажмите «Помощь». При разрывах в фоне разрешите выбранному приложению работу без ограничений батареи в настройках Android.'
 KOALA_ANDROID = 'Официальный APK Koala Clash для Android пока не опубликован в GitHub Releases автора. Для Android можно выбрать Happ, Clash Meta for Android или v2rayNG. Koala Clash для компьютера доступна по официальной ссылке.'
+HAPP_IOS = {
+    'id': 'happ-ios', 'name': 'Happ', 'format': 'happ',
+    'source': 'https://apps.apple.com/us/app/happ-proxy-utility/id6504287215',
+    'steps': ['Установите Happ из App Store.', 'Скопируйте ссылку своей подписки.',
+              'Откройте Happ, нажмите «+» и выберите добавление из буфера обмена. Разрешите вставку, если iPhone спросит.',
+              'Дождитесь загрузки подписки и выберите «Автовыбор» или нужную страну.',
+              'Нажмите кнопку подключения. Разрешите добавление конфигурации VPN и подтвердите действие код-паролем или Face ID.',
+              'Откройте нужный сайт. Для отключения снова нажмите кнопку подключения в Happ.'],
+}
 
 
 def catalog(public):
@@ -43,17 +52,19 @@ def guide_text(key):
 def page(public, subscription=None, bot_username=''):
     esc = html.escape
     bot_url = 'https://t.me/' + bot_username if bot_username else None
-    descriptions = {'happ': ('H', 'Рекомендуем · автовыбор'), 'clashmeta': ('C', 'Гибкие настройки'), 'v2rayng': ('V', 'Ручной выбор сервера'), 'koala': ('K', 'Windows · macOS · Linux')}
+    descriptions = {'happ': ('H', 'Рекомендуем · автовыбор'), 'happ-ios': ('H', 'iPhone · iPad · автовыбор'), 'clashmeta': ('C', 'Гибкие настройки'), 'v2rayng': ('V', 'Ручной выбор сервера'), 'koala': ('K', 'Windows · macOS · Linux')}
     buttons, panels = [], []
-    for item in catalog(public):
+    for item in [*catalog(public), HAPP_IOS]:
         key = item['id']
         active = key == 'happ'
         icon, description = descriptions[key]
-        device = 'desktop' if key == 'koala' else 'android'
+        device = 'ios' if key == 'happ-ios' else 'desktop' if key == 'koala' else 'android'
         short_name = 'Clash Meta' if key == 'clashmeta' else item['name']
-        buttons.append(f'<button type="button" class="app" id="choose-{key}" data-client="{key}" data-device="{device}" aria-controls="{key}" aria-pressed="{str(active).lower()}"' + (' hidden' if key == 'koala' else '') + f'><span class="app-icon" aria-hidden="true">{icon}</span><span><strong>{esc(short_name)}</strong><small>{esc(description)}</small></span><span class="check" aria-hidden="true">✓</span></button>')
+        buttons.append(f'<button type="button" class="app" id="choose-{key}" data-client="{key}" data-device="{device}" aria-controls="{key}" aria-pressed="{str(active).lower()}"' + (' hidden' if device != 'android' else '') + f'><span class="app-icon" aria-hidden="true">{icon}</span><span><strong>{esc(short_name)}</strong><small>{esc(description)}</small></span><span class="check" aria-hidden="true">✓</span></button>')
         panel = f'<section class="client-panel{" is-active" if active else ""}" id="{key}" aria-labelledby="choose-{key}"><div class="step"><span class="step-marker">1</span><div><h3>Установите {esc(item["name"])}</h3>'
-        if item.get('download_url'):
+        if key == 'happ-ios':
+            panel += '<p>Установите приложение из App Store, затем вернитесь на эту страницу.</p><a class="btn" href="' + esc(item['source']) + '" target="_blank" rel="noreferrer">Скачать в App Store ↗</a><details><summary>Приложение недоступно в моём регионе</summary><p>На <a href="https://happ.info" target="_blank" rel="noreferrer">сайте разработчика Happ</a> откройте Download → iOS и проверьте доступные варианты установки для своего региона.</p></details>'
+        elif item.get('download_url'):
             panel += f'<p>Скачайте файл на телефон и откройте его для установки.</p><div class="download-row"><a class="btn" href="{esc(item["download_url"])}" download><span aria-hidden="true">↓</span> Скачать для Android</a><span class="file-meta">APK · {item["size"] / 1024**2:.0f} МБ · v{esc(str(item["version"]).lstrip("v"))}</span></div>'
             panel += '<details><summary>Не получается установить?</summary><p>' + esc(INSTALL) + '</p>'
             if key == 'v2rayng':

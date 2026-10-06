@@ -163,6 +163,35 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('telegram_user_id', response.json()['items'][0])
 
+    def test_client_ips_hidden_on_all_subscription_endpoints_for_every_role(self):
+        for role in (UserRole.USER, UserRole.ADMIN):
+            self.actor.role = role
+            for operation in ('list', 'detail', 'create', 'action', 'request_renewal'):
+                with self.subTest(role=role, operation=operation):
+                    value = {'id': self.identity, 'contact_id': 12, 'device_limit': 3,
+                             'occupied_slots': 2, 'connections': [
+                                 {'ip': '203.0.113.42', 'connected_at': 1, 'nodes': 'pl'}]}
+                    self.control.return_value = {'items': [value]} if operation == 'list' else value
+                    self.db.get.return_value = SimpleNamespace(
+                        full_name='Visible contact', telegram_user_id=None, telegram_username=None)
+                    if operation == 'list':
+                        response = self.client.get('/api/v1/vpn/subscriptions?contact_id=12')
+                    elif operation == 'detail':
+                        response = self.client.get(f'/api/v1/vpn/subscriptions/{self.identity}')
+                    elif operation == 'create':
+                        response = self.client.post('/api/v1/vpn/subscriptions', json={'contact_id': 12})
+                    elif operation == 'action':
+                        response = self.client.post(f'/api/v1/vpn/subscriptions/{self.identity}/action',
+                                                    json={'action': 'set_device_limit', 'device_limit': 3})
+                    else:
+                        response = self.client.post('/api/v1/vpn/bot/requests/1/renew', json={'days': 7})
+                    self.assertIn(response.status_code, (200, 201))
+                    result = response.json()['items'][0] if operation == 'list' else response.json()
+                    self.assertNotIn('connections', result)
+                    self.assertNotIn('203.0.113.42', response.text)
+                    self.assertEqual(result['occupied_slots'], 2)
+                    self.assertEqual(result['device_limit'], 3)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -7,7 +7,7 @@ import { sendMessage } from '@/features/chats/api'
 import VpnPeriodPicker from '@/features/vpn/VpnPeriodPicker.vue'
 import VpnSubscriptionActions from '@/features/vpn/VpnSubscriptionActions.vue'
 import VpnConnections from '@/features/vpn/VpnConnections.vue'
-import type { ConnectionSlot, IssuanceEligibility } from '@/features/vpn/device-limit'
+import type { IssuanceEligibility } from '@/features/vpn/device-limit'
 import VpnDeviceLimitEditor from '@/features/vpn/VpnDeviceLimitEditor.vue'
 import { subscriptionKindLabels, validPeriod, vpnDeliveryText } from '@/features/vpn/period'
 import TrialVpnDialog from './TrialVpnDialog.vue'
@@ -15,7 +15,7 @@ import { useAuthStore } from '@/shared/store/auth'
 import { usePhoneChatsOnly } from '@/shared/lib/phone-mode'
 
 const props = defineProps<{ contactId: number; botId?: number | null; chatId?: number }>()
-interface Subscription { id: string; device_limit: number; occupied_slots: number; connections: ConnectionSlot[]; status: string; kind: string; expires_at: number; enabled: boolean; ready_nodes: number; total_nodes: number; source_bot_name?: string; happ_url: string; clash_url: string; guide_url: string; v2rayng_url: string; upload_bytes: number; download_bytes: number }
+interface Subscription { id: string; device_limit: number; occupied_slots: number; status: string; kind: string; expires_at: number; enabled: boolean; ready_nodes: number; total_nodes: number; source_bot_name?: string; happ_url: string; clash_url: string; guide_url: string; v2rayng_url: string; upload_bytes: number; download_bytes: number }
 const router = useRouter(), message = useMessage(), dialog = useDialog()
 const auth = useAuthStore()
 const phoneChatsOnly = usePhoneChatsOnly()
@@ -133,7 +133,7 @@ onUnmounted(() => { disposed = true; ++generation; ++setupSequence; if (timer) c
       <NCard v-for="item in items" :key="item.id" size="small">
         <header><b>{{ subscriptionKindLabels[item.kind] || 'Подписка' }}</b><NTag :type="item.status === 'active' ? 'success' : 'warning'">{{ labels[item.status] }}</NTag></header>
         <p>До {{ date(item.expires_at) }}</p>
-        <VpnConnections :occupied-slots="item.occupied_slots" :device-limit="item.device_limit" :connections="item.connections" />
+        <VpnConnections :occupied-slots="item.occupied_slots" :device-limit="item.device_limit" />
         <VpnDeviceLimitEditor v-if="auth.user?.permissions?.includes('contacts.update')" :subscription-id="item.id" :device-limit="item.device_limit" @saved="refresh" />
         <p>{{ item.source_bot_name || 'Менеджер CRM' }} · {{ ((item.upload_bytes + item.download_bytes) / 1024 ** 3).toFixed(2) }} ГБ</p>
         <VpnSubscriptionActions :subscription="item" :can-manage="!!auth.user?.permissions?.includes('contacts.update')" :can-send="!!chatId && !!auth.user?.permissions?.includes('chats.write')" :busy="busy" @copy="copy" @renew="renewalTarget = item; renewalDays = 30" @send="deliver(item)" @action="value => action(item, value)" />

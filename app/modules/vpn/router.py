@@ -145,11 +145,12 @@ async def renew_bot_request(
     if value["contact_id"] is None:
         raise ValidationError(message="Сначала привяжите заявку к контакту")
     await ContactService(db).get_contact(actor, value["contact_id"])
-    return await control(
+    result = await control(
         "POST",
         f"/internal/bot/requests/{identity}/renew",
         {"days": body.days, "actor_id": actor.id},
     )
+    return redact(result, actor)
 
 
 @router.post("/bot/prepare")
@@ -199,6 +200,8 @@ async def control(method: str, path: str, body: dict[str, Any] | None = None) ->
 
 
 def redact(value: dict[str, Any], actor: User) -> dict[str, Any]:
+    # Client addresses are private control-plane data, including for CRM admins.
+    value.pop("connections", None)
     if not can_see_telegram_user_id(actor):
         value.pop("telegram_user_id", None)
     return value

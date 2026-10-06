@@ -197,10 +197,8 @@ def subscription_view(row, db):
     value['download_bytes'] = sum(item['total'] for item in counters if item['metric'] in ('down', 'hy_down'))
     value['usage_by_node'] = counters
     value['online'] = [dict(item) for item in db.execute('SELECT * FROM usage_state WHERE subscription_id=?', (row['id'],))]
-    value['connections'] = [dict(item) for item in db.execute('''SELECT ip,MIN(created_at) AS connected_at,
-        GROUP_CONCAT(DISTINCT node_id) AS nodes FROM connection_leases
-        WHERE subscription_id=? AND expires_at>? GROUP BY ip ORDER BY connected_at,ip''', (row['id'], time.time()))]
-    value['occupied_slots'] = len(value['connections'])
+    value['occupied_slots'] = db.execute('''SELECT COUNT(DISTINCT ip) FROM connection_leases
+        WHERE subscription_id=? AND expires_at>?''', (row['id'], time.time())).fetchone()[0]
     return value
 
 

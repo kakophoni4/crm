@@ -27,7 +27,8 @@ class ConnectionLimitTests(unittest.TestCase):
         with self.control.database() as db:
             view = self.control.subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone(), db)
         self.assertEqual(view['occupied_slots'], 3)
-        self.assertEqual(view['connections'][0]['nodes'], 'pl,ch')
+        self.assertNotIn('connections', view)
+        self.assertNotIn('203.0.113.', str(view))
 
     def test_concurrent_nodes_cannot_overbook(self):
         value = self.create()
