@@ -7,6 +7,7 @@ import unittest
 import uuid
 import threading
 import urllib.request
+from urllib.parse import urlsplit, parse_qs
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
@@ -138,6 +139,17 @@ class RoomTests(unittest.TestCase):
             self.assertIn(label, text)
         self.assertIn('format=ghostlane', json.dumps(markup))
 
+    def test_native_import_preserves_subscription_payload_for_every_client(self):
+        subscription = 'https://vpn.example.com/sub/token%2Fwith%20escape'
+        for key in ('happ', 'happ-ios', 'ghostlane', 'ghostlane-ios', 'ghostlane-desktop', 'clashmeta', 'v2rayng', 'koala'):
+            link = client_guides.import_link(key, subscription)
+            expected_format = 'ghostlane' if key.startswith('ghostlane') else 'happ' if key.startswith('happ') else 'clash' if key in ('koala', 'clashmeta') else 'v2rayng'
+            payload = link.removeprefix('happ://add/') if key.startswith('happ') else parse_qs(urlsplit(link).query)['url'][0]
+            self.assertEqual(payload, subscription + '?format=' + expected_format)
+        page = client_guides.page('https://vpn.example.com', subscription)
+        for name in ('Happ', 'Ghostlane', 'Clash Meta', 'v2rayNG', 'Koala Clash'):
+            self.assertIn('Добавить в ' + name, page)
+        self.assertIsNone(client_guides.import_link('happ', None))
 
 if __name__ == '__main__':
     unittest.main()

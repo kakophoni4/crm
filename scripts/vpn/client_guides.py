@@ -55,6 +55,22 @@ def guide_text(key):
     return client['name'] + '\n\n' + '\n\n'.join(f'{index}. {step}' for index, step in enumerate(client['steps'], 1)) + '\n\n' + HELP
 
 
+def import_link(key, subscription):
+    """Native import; keep the complete subscription URL as one payload."""
+    client = CLIENTS.get(key) or {'happ-ios': HAPP_IOS,
+        'ghostlane-ios': GHOSTLANE_IOS, 'ghostlane-desktop': GHOSTLANE_DESKTOP}.get(key)
+    if not client or not subscription:
+        return None
+    url = subscription + '?format=' + client['format']
+    if client['format'] == 'ghostlane':
+        return 'proofkit://add?url=' + quote(url, safe='')
+    if client['format'] == 'happ':
+        return 'happ://add/' + url
+    schemes = {'clashmeta': 'clashmeta://install-config',
+               'v2rayng': 'v2rayng://install-sub', 'koala': 'koala-clash://install-config'}
+    return schemes[key] + '?url=' + quote(url, safe='') + '&name=BTT%20VPN'
+
+
 def page(public, subscription=None, bot_username=''):
     esc = html.escape
     bot_url = 'https://t.me/' + bot_username if bot_username else None
@@ -87,15 +103,19 @@ def page(public, subscription=None, bot_username=''):
         panel += '</div></div><div class="step"><span class="step-marker">2</span><div><h3>Добавьте свою подписку</h3>'
         if subscription:
             url = subscription + '?format=' + item['format']
-            if item['format'] == 'ghostlane':
-                import_url = 'proofkit://add?url=' + quote(url, safe='')
-                panel += '<p>Ghostlane уже установлен? Нажмите кнопку и подтвердите добавление подписки.</p>' + f'<a class="btn" href="{esc(import_url)}">Добавить в Ghostlane</a><p>Если приложение не открылось, скопируйте ссылку ниже и добавьте её вручную.</p>'
+            import_url = import_link(key, subscription)
+            if import_url:
+                panel += '<p>Приложение установлено? Нажмите кнопку и подтвердите добавление подписки.</p>' + f'<a class="btn" href="{esc(import_url)}">Добавить в {esc(short_name)}</a><p>Если приложение не открылось, откройте страницу в браузере или скопируйте ссылку ниже и добавьте её вручную.</p>'
+                if key == 'v2rayng':
+                    panel += '<p>Если список серверов пуст после добавления: «⋮» → «Обновить подписку».</p>'
+                panel += '<details><summary>Добавить вручную</summary><p>' + esc(item['steps'][2]) + '</p></details>'
             panel += '<p>Эта ссылка уже подготовлена для выбранного приложения.</p>' + f'<div class="copy-box"><textarea readonly rows="2" aria-label="Ссылка подписки для {esc(item["name"])}" id="url-{key}">{esc(url)}</textarea><button type="button" class="btn" data-copy="url-{key}">Копировать ссылку</button></div><div class="privacy">Не передавайте её другим людям.</div>'
         else:
             panel += '<p>В Telegram-кабинете нажмите «Подключить VPN», выберите приложение и скопируйте ссылку для ' + esc(item['name']) + '. Если подписку выдал менеджер, ссылка находится в его сообщении.</p>'
             if bot_url:
                 panel += '<a class="btn secondary" href="' + esc(bot_url) + '">Получить ссылку в боте ↗</a>'
-        panel += '</div></div><div class="step"><span class="step-marker">3</span><div><h3>Подключитесь в приложении</h3><ol class="instructions">' + ''.join('<li>' + esc(step) + '</li>' for step in item['steps'][2:]) + '</ol></div></div>'
+        start_step = 3 if subscription else 2
+        panel += '</div></div><div class="step"><span class="step-marker">3</span><div><h3>Подключитесь в приложении</h3><ol class="instructions">' + ''.join('<li>' + esc(step) + '</li>' for step in item['steps'][start_step:]) + '</ol></div></div>'
         panel += '<div class="done">✓ Готово. VPN включается и выключается в приложении.</div><a class="source-link" href="' + esc(item['source']) + '" rel="noreferrer" target="_blank">Официальные релизы ' + esc(item['name']) + ' ↗</a></section>'
         panels.append(panel)
     template = Path(__file__).with_name('connect.html').read_text(encoding='utf-8')

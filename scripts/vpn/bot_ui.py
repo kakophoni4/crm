@@ -108,20 +108,17 @@ def connect(value, public, key='happ'):
     client = next(item for item in client_guides.catalog(public) if item['id'] == key)
     url = value['subscription_url'] + '?format=' + client['format']
     steps = {
-        'ghostlane': '1. Откройте инструкцию ниже и установите Ghostlane.\n2. На этой странице нажмите «Добавить в Ghostlane». Если приложение не открылось, скопируйте ссылку и добавьте её вручную.\n3. Выберите режим и включите VPN.\n\n<b>Обычный VPN · все страны</b>\n«Наименьшая задержка / АВТО» — автоматический выбор. Можно выбрать страну вручную.\n\n<b>Обход ограничений · olcRTC</b>\nПри белых списках выберите «Подключиться · olcRTC».',
-        'happ': '1. Установите Happ.\n2. Скопируйте ссылку ниже → в Happ нажмите «+» → «Добавить из буфера».\n3. Выберите «Автовыбор» или страну и включите VPN.',
-        'clashmeta': '1. Установите Clash Meta.\n2. Скопируйте ссылку → «Профили» → «+» → «URL» → сохраните и выберите профиль.\n3. Включите VPN, в группе VPN выберите AUTO.',
-        'v2rayng': '1. Установите v2rayNG.\n2. Скопируйте ссылку → «☰» → «Группы» → «+» → сохраните. Затем «⋮» → «Обновить подписку».\n3. Выберите сервер и нажмите кнопку подключения.',
-        'koala': '1. Установите Koala Clash на компьютер.\n2. Добавьте профиль по скопированной ссылке.\n3. Включите TUN и выберите AUTO.',
+        'ghostlane': '<b>Обычный VPN · все страны</b>\nВыберите «Наименьшая задержка / АВТО» или страну.\n\n<b>Обход ограничений · olcRTC</b>\nПри белых списках выберите «Подключиться · olcRTC».',
+        'happ': 'После добавления выберите «Автовыбор» или страну и включите VPN.',
+        'clashmeta': 'После добавления выберите профиль, включите VPN и выберите AUTO в группе VPN.',
+        'v2rayng': 'После добавления обновите подписку через «⋮», выберите сервер и нажмите кнопку подключения.',
+        'koala': 'После добавления выберите профиль, включите TUN и выберите AUTO.',
     }
-    text = '<b>Подключение · ' + html.escape(client['name']) + '</b>\n\n' + steps[key]
+    short_name = 'Clash Meta' if key == 'clashmeta' else client['name']
+    text = '<b>Подключение · ' + html.escape(client['name']) + '</b>\n\nНажмите «Добавить в ' + html.escape(short_name) + '» ниже. На странице установите приложение, затем нажмите такую же кнопку для импорта подписки.\n\n' + steps[key]
     text += '\n\nВ системном запросе разрешите VPN.\nНе передавайте свою ссылку другим людям.'
-    download = client.get('download_url') or client['source']
-    if key == 'ghostlane':
-        download = value['guide_url'] + '#ghostlane'
-    return text, keyboard([button('↓ Скачать ' + client['name'], url=download, primary=True)],
+    return text, keyboard([button('📲 Добавить в ' + short_name, url=value['guide_url'] + '#' + key, primary=True)],
                          [button('Скопировать ссылку', copy=url)],
-                         [button('Пошаговая инструкция', url=value['guide_url'] + '#' + key)],
                          [button('Другое приложение', 'apps'), button('← Мой VPN', 'home')])
 
 
