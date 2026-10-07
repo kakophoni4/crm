@@ -32,6 +32,7 @@ def main():
     nodes = json.loads(Path('/etc/crm-vpn/nodes.json').read_text())['nodes']
     def install(node):
         ssh = ['ssh', '-F', '/etc/crm-vpn/ssh_config', 'vpn-' + node['id']]
+        run([*ssh, 'install -d -m 755 /usr/local/libexec; cat > /usr/local/libexec/olcrtc_node.py; chmod 644 /usr/local/libexec/olcrtc_node.py'], input=Path('/opt/crm-vpn/olcrtc_node.py').read_text())
         run([*ssh, 'install -d -m 755 /usr/local/libexec; cat > /usr/local/libexec/crm-vpn-agent; chmod 755 /usr/local/libexec/crm-vpn-agent'], input=Path('/opt/crm-vpn/node_agent.py').read_text())
         run([*ssh, 'python3 /usr/local/libexec/crm-vpn-agent --install'])
         line = f'from="{ssh_source}",restrict,command="/usr/local/libexec/crm-vpn-agent" ' + public
