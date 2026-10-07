@@ -26,6 +26,7 @@ except ImportError:
     import olcrtc_node
 
 STATE = Path('/etc/crm-vpn')
+PERMANENT_EXPIRY = 253402300799  # Panel uses 0; local auth uses an always-future sentinel.
 LEASE_LOCK = threading.RLock()
 LEASES = {}
 DIAGNOSTIC_LAST = {}
@@ -180,14 +181,14 @@ def panel(path, body=None):
 def sync(body):
     identity = str(uuid.UUID(body['id']))
     expiry = float(body['expires_at'])
-    if not 0 < expiry < 4102444800:
+    if not (0 < expiry < 4102444800 or expiry == PERMANENT_EXPIRY):
         raise ValueError('invalid_expiry')
     if not isinstance(body['enabled'], bool) or not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', body['password']):
         raise ValueError('invalid_credentials')
     config = json.loads((STATE / 'agent.json').read_text())
     email = 'crm-vpn-' + identity
     client = {'email': email, 'id': identity, 'subId': identity.replace('-', ''),
-              'enable': body['enabled'], 'expiryTime': int(expiry * 1000), 'totalGB': 0,
+              'enable': body['enabled'], 'expiryTime': 0 if expiry == PERMANENT_EXPIRY else int(expiry * 1000), 'totalGB': 0,
               'limitIp': 0, 'limitHwid': 0, 'flow': '', 'tgId': 0, 'comment': 'CRM VPN'}
     # Existence is determined locally without masking authentication/API failures as "absent".
     db = sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro', uri=True)

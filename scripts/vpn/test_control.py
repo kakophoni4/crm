@@ -59,6 +59,13 @@ class ControlTests(unittest.TestCase):
             token = first['subscription_url'].split('/sub/')[1]
             with urllib.request.urlopen(base + '/sub/' + token + '?format=happ') as response:
                 self.assertEqual(response.status, 200)
+                self.assertIn('expire=', response.headers['subscription-userinfo'])
+            with self.control.database() as db:
+                db.execute('UPDATE subscriptions SET expires_at=? WHERE id=?', (self.control.PERMANENT_EXPIRY, first['id']))
+                view = self.control.subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (first['id'],)).fetchone(), db)
+                self.assertTrue(view['unlimited_time'])
+            with urllib.request.urlopen(base + '/sub/' + token + '?format=happ') as response:
+                self.assertNotIn('expire=', response.headers['subscription-userinfo'])
         finally:
             server.shutdown(); thread.join(); server.server_close()
         for invalid in ({'hidden': 'true'}, {'contact_id': 12}, {'telegram_user_id': 123}):

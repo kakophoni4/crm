@@ -34,6 +34,7 @@ except ImportError:
     import client_guides
     import olcrtc_control
 
+PERMANENT_EXPIRY = 253402300799  # Internal unlimited sentinel; never publish as a date.
 HOME = Path(os.environ.get('VPN_STATE_DIR', '/var/lib/crm-vpn-control'))
 PUBLIC = os.environ.get('VPN_PUBLIC_BASE_URL', 'https://vpn.bttsrvvrs.org').rstrip('/')
 API_KEY = os.environ.get('VPN_CONTROL_TOKEN', '')
@@ -188,6 +189,7 @@ def subscription_view(row, db):
     value['delivery'] = deliveries
     value['ready_nodes'] = ready
     value['total_nodes'] = len(NODES)
+    value['unlimited_time'] = row['expires_at'] == PERMANENT_EXPIRY
     value['status'] = 'expired' if row['expires_at'] <= time.time() else 'revoked' if not row['enabled'] else 'active' if ready == len(NODES) else 'provisioning'
     value['subscription_url'] = PUBLIC + '/sub/' + row['token']
     value['happ_url'] = value['subscription_url'] + '?format=happ'
@@ -745,6 +747,8 @@ class Handler(BaseHTTPRequestHandler):
                 view = subscription_view(row, db)
             headers = {'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer', 'profile-title': 'base64:' + base64.b64encode('BTT VPN'.encode()).decode(), 'profile-update-interval': '1',
                        'subscription-userinfo': 'upload=' + str(view['upload_bytes']) + '; download=' + str(view['download_bytes']) + '; total=0; expire=' + str(int(row['expires_at']))}
+            if view['unlimited_time']:
+                headers['subscription-userinfo'] = headers['subscription-userinfo'].split('; expire=')[0]
             if not format_name:
                 agent = self.headers.get('User-Agent', '').lower()
                 format_name = 'clash' if any(name in agent for name in ('clash', 'mihomo', 'stash', 'koala')) else 'happ' if 'happ' in agent else 'base64'
