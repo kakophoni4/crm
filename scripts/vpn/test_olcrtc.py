@@ -34,14 +34,26 @@ class RoomTests(unittest.TestCase):
                 with urllib.request.urlopen(url + '?format=ghostlane') as response:
                     self.assertTrue(response.headers['announce'].startswith('base64:'))
                     self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
-                    self.assertNotIn('olcrtc://', response.read().decode())
+                    self.assertNotIn('Olcrtc', response.read().decode())
                 with self.control.database() as db:
                     db.execute('UPDATE olcrtc_rooms SET ready=1,checked_at=?', (time.time(),))
                 with urllib.request.urlopen(url + '?format=ghostlane') as response:
                     payload = response.read().decode()
-                    self.assertIn('olcrtc://', payload)
+                    self.assertIn('Olcrtc', payload)
                     self.assertIn('vless://', payload)
                     self.assertIn('hysteria2://', payload)
+                    config = json.loads(payload)
+                    self.assertEqual(config['version'], 4)
+                    self.assertIsNone(response.headers.get('profile-title'))
+                    groups = {item['metadata']['subscription']['name'] for item in config['locations']}
+                    self.assertEqual(len(groups), len(self.control.NODES))
+                    rtc_entries = [item for item in config['locations'] if item['kind'] == 'Olcrtc']
+                    self.assertEqual(len(rtc_entries), 1)
+                    self.assertEqual(rtc_entries[0]['auth_provider'], 'jitsi')
+                    self.assertEqual(rtc_entries[0]['transport']['type'], 'datachannel')
+                    self.assertEqual(len(rtc_entries[0]['endpoint']['key']), 64)
+                    self.assertEqual(config['active_location_id'], rtc_entries[0]['storage_id'])
+                    self.assertEqual(config['locations'][0]['kind'], 'Olcrtc')
                 with urllib.request.urlopen(url + '?format=happ') as response:
                     self.assertNotIn('olcrtc://', response.read().decode())
         finally:

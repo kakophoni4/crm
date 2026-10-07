@@ -529,6 +529,34 @@ def country_label(country):
     return (flags.get(node.get('id'), '') + ' ' + country).strip()
 
 
+def ghostlane_configs(proxies, links, rtc_links):
+    """Ghostlane v4 bundle: country folders preserve every imported transport."""
+    groups = {node['id']: [] for node in NODES}
+    names = {node['name']: node for node in NODES}
+    def entry(node, name, identity, **fields):
+        return {'storage_id': 'btt_' + hashlib.sha256(identity.encode()).hexdigest()[:24],
+                'name': node['id'].upper() + ' · ' + name,
+                'metadata': {'name': name, 'subscription': {'name': country_label(node['name'])}}, **fields}
+    for proxy, link in zip(proxies, links):
+        country, _, method = proxy['name'].partition(' · ')
+        node = names[country]
+        groups[node['id']].append(entry(node, method, link,
+            kind='Vless' if proxy['type'] == 'vless' else 'Hysteria2', raw_link=link))
+    for link in rtc_links:
+        prefix, label = link.rsplit('$', 1)
+        node_id = label.rsplit(' · ', 1)[-1].lower()
+        node = next(node for node in NODES if node['id'] == node_id)
+        room, key = prefix.removeprefix('olcrtc://jitsi?datachannel@').rsplit('#', 1)
+        groups[node_id].append(entry(node, 'olcRTC', room, kind='Olcrtc',
+            auth_provider='jitsi', transport={'type': 'datachannel'}, endpoint={'room_id': room, 'key': key}))
+    locations = [item for members in groups.values() for item in members]
+    # The native lowest-ping chooser skips RTC probes and stops after 3 failures.
+    # Keep the working private channel first among unmeasured choices and select
+    # it on a fresh import; this cannot override the application's measured ranks.
+    locations.sort(key=lambda item: item['kind'] != 'Olcrtc')
+    return {'version': 4, 'active_location_id': locations[0]['storage_id'] if locations else None, 'locations': locations}
+
+
 def clash_configs(proxies, automatic, expanded=False):
     # Legacy QQ pilots failed on the tested Mihomo core. Verified Chrome
     # variants participate in ordinary selection, including former pilots.
@@ -707,7 +735,10 @@ class Handler(BaseHTTPRequestHandler):
                     rtc_links = olcrtc_control.links(db, row)
                 notice = 'Обновите подписку через минуту: персональный канал готовится.' if not rtc_links else 'Персональный канал olcRTC готов.'
                 headers['announce'] = 'base64:' + base64.b64encode(notice.encode()).decode()
-                return self.reply(200, '\n'.join(rtc_links + links) + '\n', 'text/plain', headers)
+                # A global profile-title overwrites every entry's folder name.
+                headers.pop('profile-title', None)
+                config = ghostlane_configs(proxies, links, rtc_links)
+                return self.reply(200, config, 'application/json', headers)
             if format_name == 'clash':
                 config = clash_configs(proxies, automatic, expanded)
                 return self.reply(200, json.dumps(config, ensure_ascii=False, indent=2), 'application/yaml', headers)

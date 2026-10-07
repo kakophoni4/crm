@@ -1,7 +1,12 @@
 # Ghostlane / olcRTC
 
-The Ghostlane subscription (`?format=ghostlane`) combines the existing VLESS and
-Hysteria2 links with one personal Jitsi Datachannel room. Happ and Clash output
+The Ghostlane subscription (`?format=ghostlane`) uses the application's v4 JSON
+bundle to combine existing VLESS and Hysteria2 links with one personal Jitsi
+Datachannel room. Country names in each entry's subscription metadata produce
+foldable country folders; every transport is retained inside them. Do not send
+`profile-title` on this format: the application overwrites each folder's name
+with it. The private room is selected on a fresh import and listed first.
+Happ and Clash output
 remain unchanged: they do not support olcRTC.
 
 Rooms are allocated lazily when the Ghostlane subscription is first fetched.
@@ -63,3 +68,12 @@ Per-room byte counters are added to the existing traffic totals. Publishing a
 room link requires a recent successful node status poll. This confirms server
 readiness, not reachability from every mobile operator. Validate a connection
 from the affected mobile network before claiming that a restriction is bypassed.
+
+Ghostlane's built-in lowest-ping chooser skips RTC probes and limits connection
+attempts to three. It can exhaust those attempts on direct nodes without ever
+trying the working RTC channel. Subscription ordering helps unmeasured choices,
+but cannot override measured ranks or this app-side limit. On a restricted
+network, select the personal olcRTC entry directly and disable lowest-ping mode
+for the list if it overrides that selection. One visible profile per country
+with a nested URL-test group is a Happ/Clash feature; Ghostlane folders contain
+separate selectable transports.
