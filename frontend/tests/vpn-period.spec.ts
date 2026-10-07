@@ -14,10 +14,11 @@ describe('VPN subscription periods', () => {
     expect(validPeriod(3650)).toBe(true)
   })
   it('clearly identifies trial delivery and includes download instructions', () => {
-    const text = vpnDeliveryText({ kind: 'trial', expires_at: 2000, happ_url: 'happ-example', clash_url: 'clash-example', v2rayng_url: 'v2ray-example', guide_url: 'guide-example' })
+    const text = vpnDeliveryText({ kind: 'trial', expires_at: 2000, happ_url: 'happ-example', ghostlane_url: 'ghostlane-example', clash_url: 'clash-example', v2rayng_url: 'v2ray-example', guide_url: 'guide-example' })
     expect(text).toContain('пробный VPN')
     expect(text).toContain('guide-example')
     expect(text).toContain('happ-example')
+    expect(text).toContain('Ghostlane: ghostlane-example')
     expect(text).not.toContain('в подарок')
   })
 })

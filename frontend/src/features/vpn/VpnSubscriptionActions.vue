@@ -3,11 +3,12 @@ import { computed } from 'vue'
 import { NButton, NDropdown } from 'naive-ui'
 import { Ellipsis } from 'lucide-vue-next'
 const props = defineProps<{
-  subscription: { status: string; enabled: boolean; expires_at: number; happ_url: string; clash_url: string; v2rayng_url: string; guide_url: string }
+  subscription: { status: string; enabled: boolean; expires_at: number; happ_url: string; clash_url: string; v2rayng_url: string; guide_url: string; ghostlane_url?: string }
   canManage: boolean; canSend?: boolean; showManage?: boolean; busy?: boolean
 }>()
 const emit = defineEmits<{ copy: [url: string]; renew: []; manage: []; send: []; action: [action: string] }>()
 const links = computed(() => [
+  { key: props.subscription.ghostlane_url || props.subscription.happ_url?.replace('format=happ', 'format=ghostlane'), label: 'Ghostlane' },
   { key: props.subscription.happ_url, label: 'Happ' }, { key: props.subscription.clash_url, label: 'Koala Clash' },
   { key: props.subscription.v2rayng_url, label: 'v2rayNG' }, { key: props.subscription.guide_url, label: 'Инструкция и APK' },
 ])

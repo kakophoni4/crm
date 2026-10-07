@@ -20,6 +20,11 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+try:
+    from scripts.vpn import olcrtc_node
+except ImportError:
+    import olcrtc_node
+
 STATE = Path('/etc/crm-vpn')
 LEASE_LOCK = threading.RLock()
 LEASES = {}
@@ -256,9 +261,11 @@ class AuthHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if self.path not in ('/auth', '/guard') or not 0 < size <= 8192:
+            if self.path not in ('/auth', '/guard', '/olcrtc') or not 0 < size <= 8192:
                 raise ValueError('invalid_request')
             body = json.loads(self.rfile.read(size))
+            if self.path == '/olcrtc':
+                return self.reply(olcrtc_node.authorize(body, self.headers.get('Authorization', ''), central_lease))
             if self.path == '/guard':
                 lease_id = str(uuid.UUID(body['lease_id']))
                 action = body['action']
@@ -419,7 +426,7 @@ if __name__ == '__main__':
         try:
             body = json.loads(sys.stdin.buffer.read(65537))
             operation = body.get('operation')
-            result = sync(body) if operation == 'sync' else delete(body) if operation == 'delete' else metadata() if operation == 'metadata' else usage() if operation == 'usage' else None
+            result = sync(body) if operation == 'sync' else delete(body) if operation == 'delete' else metadata() if operation == 'metadata' else usage() if operation == 'usage' else olcrtc_node.reconcile(body) if operation == 'rtc_sync' else None
             if result is None:
                 raise ValueError('invalid_operation')
             print(json.dumps({'ok': True, **result}))

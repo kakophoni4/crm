@@ -19,21 +19,21 @@ vi.mock('naive-ui', async () => {
   }
 })
 
-const subscription = { id: 'sub-one', status: 'active', kind: 'purchase', device_limit: 3, occupied_slots: 1, connections: [{ ip: '203.0.113.1', nodes: 'pl,fi', connected_at: 2000000000 }], expires_at: 2000000000, enabled: true, upload_bytes: 0, download_bytes: 0 }
+const subscription = { id: 'sub-one', status: 'active', kind: 'purchase', device_limit: 3, occupied_slots: 1, connections: [{ ip: '203.0.113.1', nodes: 'pl,fi', connected_at: 2000000000 }], expires_at: 2000000000, enabled: true, upload_bytes: 0, download_bytes: 0, happ_url: 'https://vpn.example.com/sub/test?format=happ', ghostlane_url: 'https://vpn.example.com/sub/test?format=ghostlane', clash_url: 'https://vpn.example.com/sub/test?format=clash', v2rayng_url: 'https://vpn.example.com/sub/test?format=v2rayng', guide_url: 'https://vpn.example.com/sub/test?format=guide' }
 function panel(eligibility: { can_create: boolean; trial_available: boolean; trial_used: boolean }, items: unknown[] = []) {
   mocks.get.mockImplementation((url: string) => Promise.resolve({ data: url === '/vpn/subscriptions' ? { items, eligibility } : url.includes('/contacts/') ? { linked_bots: [] } : { items: [] } }))
   return mount(ContactVpnPanel, { props: { contactId: 12, chatId: 42 }, global: { stubs: { TrialVpnDialog: true, VpnPeriodPicker: true } } })
 }
 describe('VPN issuance and connection controls', () => {
   beforeEach(() => { vi.clearAllMocks() })
-  it('hides trial and issuance for an existing subscription while keeping renewal and IP usage visible', async () => {
+  it('hides trial and issuance for an existing subscription and shows slot counts without IP addresses', async () => {
     const wrapper = panel({ can_create: false, trial_available: false, trial_used: false }, [subscription])
     await flushPromises()
     expect(wrapper.text()).not.toContain('Отправить пробный VPN')
     expect(wrapper.findAll('button').some(b => ['Подарить VPN', 'Оформить продажу'].includes(b.text()))).toBe(false)
     expect(wrapper.text()).toContain('Продлить')
     expect(wrapper.text()).toContain('Занято 1 из 3 подключений')
-    expect(wrapper.text()).toContain('203.0.113.1')
+    expect(wrapper.text()).not.toContain('203.0.113.1')
     wrapper.unmount()
   })
   it('offers a first trial but removes it after it has been used', async () => {

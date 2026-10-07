@@ -24,7 +24,7 @@ interface Subscription {
   id: string; contact_id: number; contact_name: string; kind: string; status: string
   telegram_username?: string; source_bot_name?: string; created_by: number
   expires_at: number; ready_nodes: number; total_nodes: number; enabled: boolean
-  subscription_url: string; happ_url: string; clash_url: string; raw_url: string; guide_url: string; v2rayng_url: string
+  subscription_url: string; happ_url: string; clash_url: string; raw_url: string; guide_url: string; v2rayng_url: string; ghostlane_url?: string
   upload_bytes: number; download_bytes: number; recommended_nodes: string[]
   delivery: { node_id: string; status: string }[]
   online: { node_id: string; last_online: number; hy_online: number; checked_at: number }[]

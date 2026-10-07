@@ -108,6 +108,7 @@ def connect(value, public, key='happ'):
     client = next(item for item in client_guides.catalog(public) if item['id'] == key)
     url = value['subscription_url'] + '?format=' + client['format']
     steps = {
+        'ghostlane': '1. Установите Ghostlane.\n2. Скопируйте ссылку ниже и добавьте список серверов по ссылке.\n3. Обновите список, выберите olcRTC или обычный сервер и включите VPN.',
         'happ': '1. Установите Happ.\n2. Скопируйте ссылку ниже → в Happ нажмите «+» → «Добавить из буфера».\n3. Выберите «Автовыбор» или страну и включите VPN.',
         'clashmeta': '1. Установите Clash Meta.\n2. Скопируйте ссылку → «Профили» → «+» → «URL» → сохраните и выберите профиль.\n3. Включите VPN, в группе VPN выберите AUTO.',
         'v2rayng': '1. Установите v2rayNG.\n2. Скопируйте ссылку → «☰» → «Группы» → «+» → сохраните. Затем «⋮» → «Обновить подписку».\n3. Выберите сервер и нажмите кнопку подключения.',
@@ -116,6 +117,8 @@ def connect(value, public, key='happ'):
     text = '<b>Подключение · ' + html.escape(client['name']) + '</b>\n\n' + steps[key]
     text += '\n\nВ системном запросе разрешите VPN.\nНе передавайте свою ссылку другим людям.'
     download = client.get('download_url') or client['source']
+    if key == 'ghostlane':
+        download = value['guide_url'] + '#ghostlane'
     return text, keyboard([button('↓ Скачать ' + client['name'], url=download, primary=True)],
                          [button('Скопировать ссылку', copy=url)],
                          [button('Пошаговая инструкция', url=value['guide_url'] + '#' + key)],
@@ -125,6 +128,7 @@ def connect(value, public, key='happ'):
 def apps():
     return '<b>Выберите приложение</b>\n\nУстановите одно. Для Android рекомендуем Happ.', keyboard(
         [button('Happ · Android', 'client:happ')],
+        [button('Ghostlane · olcRTC', 'client:ghostlane')],
         [button('Clash Meta · Android', 'client:clashmeta'), button('v2rayNG · Android', 'client:v2rayng')],
         [button('Koala Clash · компьютер', 'client:koala')], [button('← Мой VPN', 'home')])
 

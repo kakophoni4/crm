@@ -31,7 +31,8 @@ function selectClient(key,updateHash=true){const selected=appButtons.find(button
 appButtons.forEach(button=>button.addEventListener('click',()=>selectClient(button.dataset.client)));
 platforms.forEach(button=>button.addEventListener('click',()=>selectClient(({android:'happ',ios:'happ-ios',desktop:'koala'})[button.dataset.platform])));
 const defaultClient=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)?'happ-ios':'happ';
-selectClient(location.hash.slice(1)||defaultClient,false);window.addEventListener('hashchange',()=>selectClient(location.hash.slice(1)||defaultClient,false));
+function initialClient(){const key=location.hash.slice(1);return key==='ghostlane'&&defaultClient==='happ-ios'?'ghostlane-ios':key||defaultClient}
+selectClient(initialClient(),false);window.addEventListener('hashchange',()=>selectClient(initialClient(),false));
 let toastTimer;function notify(text){const toast=document.querySelector('.toast');toast.textContent=text;toast.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.hidden=true,3000)}
 document.querySelectorAll('[data-copy]').forEach(button=>button.addEventListener('click',async()=>{const field=document.getElementById(button.dataset.copy);try{await navigator.clipboard.writeText(field.value);notify('Ссылка скопирована. Откройте приложение и добавьте подписку.')}catch{field.focus();field.select();notify('Ссылка выделена — нажмите «Копировать» в меню телефона.')}}));
 </script>

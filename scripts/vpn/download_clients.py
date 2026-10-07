@@ -10,6 +10,7 @@ from pathlib import Path
 
 TARGET = Path(os.environ.get('VPN_DOWNLOADS_DIR', '/opt/crm-vpn/downloads'))
 SOURCES = [
+    ('ghostlane', 'ghostlane-project/ghostlane', lambda name: name.startswith('Ghostlane-') and name.endswith('-android-release.apk'), 'ghostlane.apk'),
     ('happ', 'Happ-proxy/happ-android', lambda name: name == 'Happ.apk', 'happ.apk'),
     ('clashmeta', 'MetaCubeX/ClashMetaForAndroid', lambda name: name.endswith('-meta-universal-release.apk'), 'clashmeta.apk'),
     ('v2rayng', '2dust/v2rayNG', lambda name: name.endswith('_arm64-v8a.apk') and '-fdroid' not in name, 'v2rayng.apk'),

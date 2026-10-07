@@ -6,6 +6,8 @@ from pathlib import Path
 
 DOWNLOADS = Path(os.environ.get('VPN_DOWNLOADS_DIR', '/opt/crm-vpn/downloads'))
 CLIENTS = {
+    'ghostlane': {'name': 'Ghostlane', 'format': 'ghostlane', 'file': 'ghostlane.apk', 'source': 'https://github.com/ghostlane-project/ghostlane/releases',
+                 'steps': ['Установите Ghostlane и откройте приложение.', 'Скопируйте ссылку подписки для Ghostlane.', 'Добавьте список серверов по ссылке: вставьте скопированную ссылку и сохраните.', 'Обновите список серверов. Если канал olcRTC ещё готовится, обновите подписку через минуту.', 'Выберите olcRTC или обычный сервер и нажмите подключение. Разрешите создание VPN в системном запросе.', 'Чтобы отключиться, снова нажмите кнопку подключения.']},
     'happ': {'name': 'Happ', 'format': 'happ', 'file': 'happ.apk', 'source': 'https://github.com/Happ-proxy/happ-android/releases',
              'steps': ['Установите Happ и откройте приложение.', 'В боте нажмите «Подключить VPN» → «Скопировать ссылку» или используйте кнопку ниже.', 'В Happ нажмите «+» → «Добавить из буфера обмена». Если приложение предлагает импорт ссылки, подтвердите его.', 'Выберите «Автовыбор» или страну с флагом — способ подключения подберётся автоматически.', 'Нажмите кнопку подключения. В системном запросе на создание VPN нажмите «ОК».', 'Откройте нужный сайт. Чтобы выключить VPN, снова нажмите кнопку подключения.']},
     'clashmeta': {'name': 'Clash Meta for Android', 'format': 'clash', 'file': 'clashmeta.apk', 'source': 'https://github.com/MetaCubeX/ClashMetaForAndroid/releases',
@@ -27,6 +29,9 @@ HAPP_IOS = {
               'Нажмите кнопку подключения. Разрешите добавление конфигурации VPN и подтвердите действие код-паролем или Face ID.',
               'Откройте нужный сайт. Для отключения снова нажмите кнопку подключения в Happ.'],
 }
+GHOSTLANE_IOS = dict(CLIENTS['ghostlane'], id='ghostlane-ios', file=None,
+                    source='https://apps.apple.com/ru/app/ghostlane/id6795355210')
+GHOSTLANE_DESKTOP = dict(CLIENTS['ghostlane'], id='ghostlane-desktop', file=None)
 
 
 def catalog(public):
@@ -52,17 +57,21 @@ def guide_text(key):
 def page(public, subscription=None, bot_username=''):
     esc = html.escape
     bot_url = 'https://t.me/' + bot_username if bot_username else None
-    descriptions = {'happ': ('H', 'Рекомендуем · автовыбор'), 'happ-ios': ('H', 'iPhone · iPad · автовыбор'), 'clashmeta': ('C', 'Гибкие настройки'), 'v2rayng': ('V', 'Ручной выбор сервера'), 'koala': ('K', 'Windows · macOS · Linux')}
+    descriptions = {'ghostlane': ('G', 'olcRTC и обычный VPN'), 'ghostlane-ios': ('G', 'olcRTC и обычный VPN'), 'ghostlane-desktop': ('G', 'olcRTC и обычный VPN'), 'happ': ('H', 'Рекомендуем · автовыбор'), 'happ-ios': ('H', 'iPhone · iPad · автовыбор'), 'clashmeta': ('C', 'Гибкие настройки'), 'v2rayng': ('V', 'Ручной выбор сервера'), 'koala': ('K', 'Windows · macOS · Linux')}
     buttons, panels = [], []
-    for item in [*catalog(public), HAPP_IOS]:
+    for item in [*catalog(public), HAPP_IOS, GHOSTLANE_IOS, GHOSTLANE_DESKTOP]:
         key = item['id']
         active = key == 'happ'
         icon, description = descriptions[key]
-        device = 'ios' if key == 'happ-ios' else 'desktop' if key == 'koala' else 'android'
+        device = 'ios' if key.endswith('-ios') else 'desktop' if key in ('koala', 'ghostlane-desktop') else 'android'
         short_name = 'Clash Meta' if key == 'clashmeta' else item['name']
         buttons.append(f'<button type="button" class="app" id="choose-{key}" data-client="{key}" data-device="{device}" aria-controls="{key}" aria-pressed="{str(active).lower()}"' + (' hidden' if device != 'android' else '') + f'><span class="app-icon" aria-hidden="true">{icon}</span><span><strong>{esc(short_name)}</strong><small>{esc(description)}</small></span><span class="check" aria-hidden="true">✓</span></button>')
         panel = f'<section class="client-panel{" is-active" if active else ""}" id="{key}" aria-labelledby="choose-{key}"><div class="step"><span class="step-marker">1</span><div><h3>Установите {esc(item["name"])}</h3>'
-        if key == 'happ-ios':
+        if key == 'ghostlane-ios':
+            panel += '<p>Установите Ghostlane из App Store, затем вернитесь на эту страницу.</p><a class="btn" href="' + esc(item['source']) + '" target="_blank" rel="noreferrer">Скачать в App Store ↗</a>'
+        elif key == 'ghostlane-desktop':
+            panel += '<p>Выберите установщик Ghostlane для своей системы.</p><a class="btn" href="' + esc(item['source']) + '" target="_blank" rel="noreferrer">Скачать для компьютера ↗</a>'
+        elif key == 'happ-ios':
             panel += '<p>Установите приложение из App Store, затем вернитесь на эту страницу.</p><a class="btn" href="' + esc(item['source']) + '" target="_blank" rel="noreferrer">Скачать в App Store ↗</a><details><summary>Приложение недоступно в моём регионе</summary><p>На <a href="https://happ.info" target="_blank" rel="noreferrer">сайте разработчика Happ</a> откройте Download → iOS и проверьте доступные варианты установки для своего региона.</p></details>'
         elif item.get('download_url'):
             panel += f'<p>Скачайте файл на телефон и откройте его для установки.</p><div class="download-row"><a class="btn" href="{esc(item["download_url"])}" download><span aria-hidden="true">↓</span> Скачать для Android</a><span class="file-meta">APK · {item["size"] / 1024**2:.0f} МБ · v{esc(str(item["version"]).lstrip("v"))}</span></div>'

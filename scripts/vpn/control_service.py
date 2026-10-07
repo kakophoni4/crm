@@ -29,9 +29,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 try:
-    from scripts.vpn import client_guides
+    from scripts.vpn import client_guides, olcrtc_control
 except ImportError:
     import client_guides
+    import olcrtc_control
 
 HOME = Path(os.environ.get('VPN_STATE_DIR', '/var/lib/crm-vpn-control'))
 PUBLIC = os.environ.get('VPN_PUBLIC_BASE_URL', 'https://vpn.bttsrvvrs.org').rstrip('/')
@@ -120,6 +121,7 @@ def initialize():
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_request ON subscriptions(create_request_key)')
         if 'requested_days' not in {row[1] for row in db.execute('PRAGMA table_info(bot_requests)')}:
             db.execute('ALTER TABLE bot_requests ADD COLUMN requested_days INTEGER')
+        olcrtc_control.initialize(db)
     (HOME / 'control.sqlite').chmod(0o600)
 
 
@@ -193,10 +195,11 @@ def subscription_view(row, db):
     value['raw_url'] = value['subscription_url'] + '?format=raw'
     value['guide_url'] = value['subscription_url'] + '?format=guide'
     value['v2rayng_url'] = value['subscription_url'] + '?format=v2rayng'
+    value['ghostlane_url'] = value['subscription_url'] + '?format=ghostlane'
     value['recommended_nodes'] = ranked_nodes(row['id'], snapshot())
     counters = [dict(item) for item in db.execute('SELECT node_id,metric,total,checked_at FROM counters WHERE subscription_id=?', (row['id'],))]
-    value['upload_bytes'] = sum(item['total'] for item in counters if item['metric'] in ('up', 'hy_up'))
-    value['download_bytes'] = sum(item['total'] for item in counters if item['metric'] in ('down', 'hy_down'))
+    value['upload_bytes'] = sum(item['total'] for item in counters if item['metric'] in ('up', 'hy_up', 'rtc_up'))
+    value['download_bytes'] = sum(item['total'] for item in counters if item['metric'] in ('down', 'hy_down', 'rtc_down'))
     value['usage_by_node'] = counters
     value['online'] = [dict(item) for item in db.execute('SELECT * FROM usage_state WHERE subscription_id=?', (row['id'],))]
     value['occupied_slots'] = db.execute('''SELECT COUNT(DISTINCT ip) FROM connection_leases
@@ -414,6 +417,10 @@ def reconcile_node(node):
                                (identity, node_id, metric, current, total, time.time()))
                 db.execute('INSERT INTO usage_state VALUES(?,?,?,?,?) ON CONFLICT(subscription_id,node_id) DO UPDATE SET last_online=excluded.last_online,hy_online=excluded.hy_online,checked_at=excluded.checked_at',
                            (identity, node_id, (data.get('last_online') or 0) / 1000, data.get('hy_online', 0), time.time()))
+        try:
+            olcrtc_control.reconcile(database, node_call, node)
+        except Exception:
+            log.warning('Node %s room provisioning unavailable', node_id)
     except Exception:
         log.warning('Node %s control/usage unavailable', node_id)
 
@@ -605,7 +612,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', content_type + '; charset=utf-8')
         self.send_header('Content-Length', str(len(encoded)))
-        self.send_header('Cache-Control', 'no-store')
+        if not headers or 'Cache-Control' not in headers:
+            self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         for key, value in (headers or {}).items():
             self.send_header(key, value)
@@ -639,7 +647,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, connection_lease(node_id, body))
         if path.startswith('/downloads/') and self.command == 'GET':
             filename = path.removeprefix('/downloads/')
-            allowed = {'happ.apk', 'clashmeta.apk', 'v2rayng.apk', 'v2rayng-arm7.apk'}
+            allowed = {'ghostlane.apk', 'happ.apk', 'clashmeta.apk', 'v2rayng.apk', 'v2rayng-arm7.apk'}
             if filename not in allowed:
                 raise LookupError('not_found')
             apk = client_guides.DOWNLOADS / filename
@@ -666,6 +674,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/health' and self.command == 'GET':
             return self.reply(200, {'status': 'ok', 'bot_username': BOT_USERNAME})
         if path.startswith('/sub/') and self.command == 'GET':
+            format_name = query.get('format', [''])[0]
+            if not format_name and 'ghostlane' in self.headers.get('User-Agent', '').lower():
+                format_name = 'ghostlane'
             token = path.removeprefix('/sub/')
             if not 30 <= len(token) <= 100:
                 raise LookupError('not_found')
@@ -677,18 +688,26 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(403, {'error': 'subscription_inactive'})
                 if query.get('format', [''])[0] == 'guide':
                     return self.reply(200, client_guides.page(PUBLIC, PUBLIC + '/sub/' + row['token'], BOT_USERNAME), 'text/html', {'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow'})
+                if format_name == 'ghostlane':
+                    olcrtc_control.ensure(db, row, ranked_nodes(row['id'], snapshot()))
+                    WAKE.set()
                 proxies, links, automatic = connection_configs(row, db)
                 if not links:
                     return self.reply(503, {'error': 'subscription_provisioning'})
                 db.execute('UPDATE subscriptions SET last_fetch=? WHERE id=?', (time.time(), row['id']))
                 view = subscription_view(row, db)
-            headers = {'profile-title': 'base64:' + base64.b64encode('BTT VPN'.encode()).decode(), 'profile-update-interval': '1',
+            headers = {'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer', 'profile-title': 'base64:' + base64.b64encode('BTT VPN'.encode()).decode(), 'profile-update-interval': '1',
                        'subscription-userinfo': 'upload=' + str(view['upload_bytes']) + '; download=' + str(view['download_bytes']) + '; total=0; expire=' + str(int(row['expires_at']))}
-            format_name = query.get('format', [''])[0]
             if not format_name:
                 agent = self.headers.get('User-Agent', '').lower()
                 format_name = 'clash' if any(name in agent for name in ('clash', 'mihomo', 'stash', 'koala')) else 'happ' if 'happ' in agent else 'base64'
             expanded = query.get('view', [''])[0] == 'all'
+            if format_name == 'ghostlane':
+                with database() as db:
+                    rtc_links = olcrtc_control.links(db, row)
+                notice = 'Обновите подписку через минуту: персональный канал готовится.' if not rtc_links else 'Персональный канал olcRTC готов.'
+                headers['announce'] = 'base64:' + base64.b64encode(notice.encode()).decode()
+                return self.reply(200, '\n'.join(rtc_links + links) + '\n', 'text/plain', headers)
             if format_name == 'clash':
                 config = clash_configs(proxies, automatic, expanded)
                 return self.reply(200, json.dumps(config, ensure_ascii=False, indent=2), 'application/yaml', headers)
