@@ -40,20 +40,42 @@ class RoomTests(unittest.TestCase):
                 with urllib.request.urlopen(url + '?format=ghostlane') as response:
                     payload = response.read().decode()
                     self.assertIn('Olcrtc', payload)
-                    self.assertIn('vless://', payload)
+                    self.assertNotIn('vless://', payload)
                     self.assertIn('hysteria2://', payload)
                     config = json.loads(payload)
                     self.assertEqual(config['version'], 4)
                     self.assertIsNone(response.headers.get('profile-title'))
                     groups = {item['metadata']['subscription']['name'] for item in config['locations']}
-                    self.assertEqual(len(groups), len(self.control.NODES))
+                    self.assertEqual(groups, {'Обычный VPN · все страны', 'Обход ограничений · olcRTC'})
+                    self.assertIsNone(response.headers.get('announce'))
+                    ordinary = [item for item in config['locations'] if item['kind'] != 'Olcrtc']
+                    with self.control.database() as db:
+                        row = db.execute('SELECT * FROM subscriptions WHERE id=?', (value['id'],)).fetchone()
+                        expected_links = self.control.connection_configs(row, db)[1]
+                    self.assertEqual(len(ordinary), sum(link.startswith('hysteria2://') for link in expected_links))
+                    for item in ordinary:
+                        if item['kind'] == 'Hysteria2':
+                            link = item['raw_link']
+                            authority = link.split('://', 1)[1].split('?', 1)[0]
+                            self.assertNotIn('/', authority)
+                            self.assertNotIn('%3A', authority)
+                            self.assertIn(':', authority.split('@', 1)[0])
+                            int(authority.rsplit(':', 1)[1])
                     rtc_entries = [item for item in config['locations'] if item['kind'] == 'Olcrtc']
                     self.assertEqual(len(rtc_entries), 1)
+                    self.assertEqual(rtc_entries[0]['metadata']['name'], 'Подключиться · olcRTC')
+                    self.assertIn('белыми списками', rtc_entries[0]['metadata']['subscription']['announce'])
                     self.assertEqual(rtc_entries[0]['auth_provider'], 'jitsi')
                     self.assertEqual(rtc_entries[0]['transport']['type'], 'datachannel')
                     self.assertEqual(len(rtc_entries[0]['endpoint']['key']), 64)
                     self.assertEqual(config['active_location_id'], rtc_entries[0]['storage_id'])
                     self.assertEqual(config['locations'][0]['kind'], 'Olcrtc')
+                with urllib.request.urlopen(url + '?format=ghostlane&view=all') as response:
+                    advanced = json.load(response)
+                    ordinary = [item for item in advanced['locations'] if item['kind'] != 'Olcrtc']
+                    self.assertEqual(len(ordinary), len(expected_links))
+                    self.assertEqual({item['raw_link'] for item in ordinary if item['kind'] == 'Vless'},
+                        {link for link in expected_links if link.startswith('vless://')})
                 with urllib.request.urlopen(url + '?format=happ') as response:
                     self.assertNotIn('olcrtc://', response.read().decode())
         finally:

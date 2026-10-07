@@ -529,26 +529,47 @@ def country_label(country):
     return (flags.get(node.get('id'), '') + ' ' + country).strip()
 
 
-def ghostlane_configs(proxies, links, rtc_links):
-    """Ghostlane v4 bundle: country folders preserve every imported transport."""
+def ghostlane_configs(proxies, links, rtc_links, expanded=False):
+    """Two native sections: a direct RTC channel and one global VPN chooser."""
     groups = {node['id']: [] for node in NODES}
     names = {node['name']: node for node in NODES}
     def entry(node, name, identity, **fields):
         return {'storage_id': 'btt_' + hashlib.sha256(identity.encode()).hexdigest()[:24],
                 'name': node['id'].upper() + ' · ' + name,
-                'metadata': {'name': name, 'subscription': {'name': country_label(node['name'])}}, **fields}
+                'metadata': {'name': country_label(node['name']) + ' · ' + name,
+                    'subscription': {'name': 'Обычный VPN · все страны',
+                        'announce': 'АВТО / Наименьшая задержка — выбор среди всех стран. При ограничениях выберите olcRTC.'}}, **fields}
     for proxy, link in zip(proxies, links):
+        # Android/desktop Ghostlane ships Xray 25.3.6, whose REALITY handshake
+        # fails against these exits. Keep those transports in explicit advanced
+        # mode; the default chooser uses verified sing-box Hysteria2 exits.
+        if not expanded and proxy['type'] != 'hysteria2':
+            continue
         country, _, method = proxy['name'].partition(' · ')
         node = names[country]
-        groups[node['id']].append(entry(node, method, link,
-            kind='Vless' if proxy['type'] == 'vless' else 'Hysteria2', raw_link=link))
+        if proxy['type'] == 'hysteria2':
+            # Ghostlane's parser treats the entire authority suffix as a port
+            # and does not percent-decode userinfo. Its importer therefore needs
+            # :port? (without /) and the literal UUID:password credential.
+            parts = urllib.parse.urlsplit(link)
+            link = urllib.parse.urlunsplit((parts.scheme,
+                urllib.parse.unquote(parts.netloc), '', parts.query, parts.fragment))
+        item = entry(node, method, link,
+            kind='Vless' if proxy['type'] == 'vless' else 'Hysteria2', raw_link=link)
+        if not expanded:
+            item['metadata']['name'] = country_label(country) + (' · резерв' if groups[node['id']] else '')
+        groups[node['id']].append(item)
     for link in rtc_links:
         prefix, label = link.rsplit('$', 1)
         node_id = label.rsplit(' · ', 1)[-1].lower()
         node = next(node for node in NODES if node['id'] == node_id)
         room, key = prefix.removeprefix('olcrtc://jitsi?datachannel@').rsplit('#', 1)
-        groups[node_id].append(entry(node, 'olcRTC', room, kind='Olcrtc',
-            auth_provider='jitsi', transport={'type': 'datachannel'}, endpoint={'room_id': room, 'key': key}))
+        rtc = entry(node, 'olcRTC', room, kind='Olcrtc',
+            auth_provider='jitsi', transport={'type': 'datachannel'}, endpoint={'room_id': room, 'key': key})
+        rtc['metadata'] = {'name': 'Подключиться · olcRTC', 'subscription': {
+            'name': 'Обход ограничений · olcRTC',
+            'announce': 'Для сетей с белыми списками. Выберите «Подключиться · olcRTC» и включите VPN.'}}
+        groups[node_id].append(rtc)
     locations = [item for members in groups.values() for item in members]
     # The native lowest-ping chooser skips RTC probes and stops after 3 failures.
     # Keep the working private channel first among unmeasured choices and select
@@ -733,11 +754,12 @@ class Handler(BaseHTTPRequestHandler):
             if format_name == 'ghostlane':
                 with database() as db:
                     rtc_links = olcrtc_control.links(db, row)
-                notice = 'Обновите подписку через минуту: персональный канал готовится.' if not rtc_links else 'Персональный канал olcRTC готов.'
-                headers['announce'] = 'base64:' + base64.b64encode(notice.encode()).decode()
+                if not rtc_links:
+                    notice = 'Обновите подписку через минуту: канал обхода ограничений готовится.'
+                    headers['announce'] = 'base64:' + base64.b64encode(notice.encode()).decode()
                 # A global profile-title overwrites every entry's folder name.
                 headers.pop('profile-title', None)
-                config = ghostlane_configs(proxies, links, rtc_links)
+                config = ghostlane_configs(proxies, links, rtc_links, expanded)
                 return self.reply(200, config, 'application/json', headers)
             if format_name == 'clash':
                 config = clash_configs(proxies, automatic, expanded)
