@@ -116,6 +116,8 @@ def connect(value, public, key='happ'):
     }
     short_name = 'Clash Meta' if key == 'clashmeta' else client['name']
     text = '<b>Подключение · ' + html.escape(client['name']) + '</b>\n\nНажмите «Добавить в ' + html.escape(short_name) + '» ниже. На странице установите приложение, затем нажмите такую же кнопку для импорта подписки.\n\n' + steps[key]
+    if key == 'ghostlane':
+        text += '\n\n' + html.escape(client_guides.GHOSTLANE_RU_DIRECT)
     text += '\n\nВ системном запросе разрешите VPN.\nНе передавайте свою ссылку другим людям.'
     return text, keyboard([button('📲 Добавить в ' + short_name, url=value['guide_url'] + '#' + key, primary=True)],
                          [button('Скопировать ссылку', copy=url)],
