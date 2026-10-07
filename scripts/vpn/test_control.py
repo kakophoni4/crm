@@ -35,6 +35,36 @@ class ControlTests(unittest.TestCase):
         self.contact_sequence = getattr(self, 'contact_sequence', 11) + 1
         return self.control.create({'contact_id': self.contact_sequence, 'contact_name': 'Test contact', 'days': 30, 'kind': 'gift', 'actor_id': 5})
 
+    def test_private_subscriptions_work_without_being_visible_in_crm(self):
+        body = {'hidden': True, 'contact_id': 0, 'contact_name': 'Private subscription',
+                'days': 90, 'kind': 'gift', 'actor_id': 0}
+        first = self.control.create(body)
+        second = self.control.create(body)
+        self.assertNotEqual(first['subscription_url'], second['subscription_url'])
+        self.ready(first['id'])
+        admission = self.control.connection_lease('pl', {'action': 'acquire',
+            'lease_id': str(uuid.uuid4()), 'subscription_id': first['id'], 'ip': '203.0.113.42'})
+        self.assertTrue(admission['allowed'])
+        server = self.control.ThreadingHTTPServer(('127.0.0.1', 0), self.control.Handler)
+        thread = threading.Thread(target=server.serve_forever); thread.start()
+        base = 'http://127.0.0.1:' + str(server.server_port)
+        headers = {'Authorization': 'Bearer ' + self.control.API_KEY}
+        try:
+            for suffix in ('', '?contact_id=0'):
+                with urllib.request.urlopen(urllib.request.Request(base + '/internal/subscriptions' + suffix, headers=headers)) as response:
+                    self.assertEqual(json.load(response)['items'], [])
+            with self.assertRaises(urllib.error.HTTPError) as denied:
+                urllib.request.urlopen(urllib.request.Request(base + '/internal/subscriptions/' + first['id'], headers=headers))
+            self.assertEqual(denied.exception.code, 404)
+            token = first['subscription_url'].split('/sub/')[1]
+            with urllib.request.urlopen(base + '/sub/' + token + '?format=happ') as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            server.shutdown(); thread.join(); server.server_close()
+        for invalid in ({'hidden': 'true'}, {'contact_id': 12}, {'telegram_user_id': 123}):
+            with self.assertRaises(ValueError):
+                self.control.create({**body, **invalid})
+
     def ready(self, identity):
         with self.control.database() as db:
             db.execute("UPDATE deliveries SET version=1,status='synced' WHERE subscription_id=?", (identity,))

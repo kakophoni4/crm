@@ -113,6 +113,8 @@ def initialize():
         db.execute('CREATE INDEX IF NOT EXISTS leases_subscription ON connection_leases(subscription_id,expires_at)')
         if 'deleted_at' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
             db.execute('ALTER TABLE subscriptions ADD COLUMN deleted_at REAL')
+        if 'hidden' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
+            db.execute('ALTER TABLE subscriptions ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK(hidden IN (0,1))')
         if 'create_request_key' not in {row[1] for row in db.execute('PRAGMA table_info(subscriptions)')}:
             db.execute('ALTER TABLE subscriptions ADD COLUMN create_request_key TEXT')
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_request ON subscriptions(create_request_key)')
@@ -208,7 +210,7 @@ def issuance_state(db, contact_id, telegram_user_id=None):
     if telegram_user_id is not None:
         condition += ' OR telegram_user_id=?'
         parameters.append(int(telegram_user_id))
-    rows = db.execute('SELECT * FROM subscriptions WHERE ' + condition + ' ORDER BY created_at DESC', parameters).fetchall()
+    rows = db.execute('SELECT * FROM subscriptions WHERE hidden=0 AND (' + condition + ') ORDER BY created_at DESC', parameters).fetchall()
     existing = [row for row in rows if row['deleted_at'] is None]
     current = next((row for row in existing if row['enabled'] and row['expires_at'] > time.time()), existing[0] if existing else None)
     used = any(row['kind'] == 'trial' for row in rows)
@@ -267,7 +269,10 @@ def checked_device_limit(value):
 def create(body):
     limit = checked_device_limit(body.get('device_limit', 3))
     days = int(body['days'])
-    if not 1 <= days <= 3650 or body['kind'] not in ('gift', 'purchase', 'trial') or int(body['contact_id']) <= 0:
+    hidden = body.get('hidden', False)
+    if type(hidden) is not bool or hidden and (int(body['contact_id']) != 0 or body.get('telegram_user_id') is not None):
+        raise ValueError('invalid_private_subscription')
+    if not 1 <= days <= 3650 or body['kind'] not in ('gift', 'purchase', 'trial') or (int(body['contact_id']) <= 0 and not hidden):
         raise ValueError('invalid_subscription')
     request_key = str(uuid.UUID(body['idempotency_key'])) if body.get('idempotency_key') else None
     identity = str(uuid.uuid4()); now = time.time()
@@ -282,7 +287,7 @@ def create(body):
                     raise ValueError('creation_request_mismatch')
                 return subscription_view(existing, db)
         eligibility = issuance_state(db, body['contact_id'], body.get('telegram_user_id'))
-        if not eligibility['can_create']:
+        if not hidden and not eligibility['can_create']:
             raise ValueError('active_subscription_exists')
         if body['kind'] == 'trial' and not eligibility['trial_available']:
             raise ValueError('trial_already_used')
@@ -297,6 +302,7 @@ def create(body):
         db.execute('UPDATE subscriptions SET source_chat_id=? WHERE id=?', (body.get('source_chat_id'), identity))
         db.execute('UPDATE subscriptions SET create_request_key=? WHERE id=?', (request_key, identity))
         db.execute('UPDATE subscriptions SET device_limit=? WHERE id=?', (limit, identity))
+        db.execute('UPDATE subscriptions SET hidden=? WHERE id=?', (int(hidden), identity))
         event(db, identity, body['actor_id'], body['kind'], {'days': days, 'source_bot_id': body.get('source_bot_id'), 'source_chat_id': body.get('source_chat_id')})
         value = subscription_view(db.execute('SELECT * FROM subscriptions WHERE id=?', (identity,)).fetchone(), db)
     WAKE.set()
@@ -804,12 +810,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/internal/subscriptions' and self.command == 'GET':
             with database() as db:
                 contact = query.get('contact_id', [None])[0]
-                rows = db.execute('SELECT * FROM subscriptions WHERE contact_id=? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500', (int(contact),)) if contact else db.execute('SELECT * FROM subscriptions WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 500')
+                rows = db.execute('SELECT * FROM subscriptions WHERE contact_id=? AND deleted_at IS NULL AND hidden=0 ORDER BY created_at DESC LIMIT 500', (int(contact),)) if contact else db.execute('SELECT * FROM subscriptions WHERE deleted_at IS NULL AND hidden=0 ORDER BY created_at DESC LIMIT 500')
                 items = [subscription_view(row, db) for row in rows]
                 eligibility = issuance_state(db, int(contact), query.get('telegram_user_id', [None])[0]) if contact else None
                 return self.reply(200, {'items': items, 'eligibility': eligibility})
         if path.startswith('/internal/subscriptions/'):
             identity = str(uuid.UUID(path.removeprefix('/internal/subscriptions/')))
+            with database() as db:
+                private = db.execute('SELECT hidden FROM subscriptions WHERE id=?', (identity,)).fetchone()
+                if private and private['hidden']:
+                    raise LookupError('not_found')
             if self.command == 'POST':
                 return self.reply(200, mutate(identity, self.body()))
             with database() as db:
