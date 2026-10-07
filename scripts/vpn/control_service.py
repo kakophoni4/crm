@@ -529,7 +529,7 @@ def country_label(country):
     return (flags.get(node.get('id'), '') + ' ' + country).strip()
 
 
-def ghostlane_configs(proxies, links, rtc_links, expanded=False):
+def ghostlane_configs(proxies, links, rtc_links):
     """Two native sections: a direct RTC channel and one global VPN chooser."""
     groups = {node['id']: [] for node in NODES}
     names = {node['name']: node for node in NODES}
@@ -541,9 +541,9 @@ def ghostlane_configs(proxies, links, rtc_links, expanded=False):
                         'announce': 'АВТО / Наименьшая задержка — выбор среди всех стран. При ограничениях выберите olcRTC.'}}, **fields}
     for proxy, link in zip(proxies, links):
         # Android/desktop Ghostlane ships Xray 25.3.6, whose REALITY handshake
-        # fails against these exits. Keep those transports in explicit advanced
-        # mode; the default chooser uses verified sing-box Hysteria2 exits.
-        if not expanded and proxy['type'] != 'hysteria2':
+        # fails against these exits. Only publish verified sing-box Hysteria2
+        # exits, including when an old subscription URL contains view=all.
+        if proxy['type'] != 'hysteria2':
             continue
         country, _, method = proxy['name'].partition(' · ')
         node = names[country]
@@ -554,10 +554,8 @@ def ghostlane_configs(proxies, links, rtc_links, expanded=False):
             parts = urllib.parse.urlsplit(link)
             link = urllib.parse.urlunsplit((parts.scheme,
                 urllib.parse.unquote(parts.netloc), '', parts.query, parts.fragment))
-        item = entry(node, method, link,
-            kind='Vless' if proxy['type'] == 'vless' else 'Hysteria2', raw_link=link)
-        if not expanded:
-            item['metadata']['name'] = country_label(country) + (' · резерв' if groups[node['id']] else '')
+        item = entry(node, method, link, kind='Hysteria2', raw_link=link)
+        item['metadata']['name'] = country_label(country) + (' · резерв' if groups[node['id']] else '')
         groups[node['id']].append(item)
     for link in rtc_links:
         prefix, label = link.rsplit('$', 1)
@@ -759,7 +757,7 @@ class Handler(BaseHTTPRequestHandler):
                     headers['announce'] = 'base64:' + base64.b64encode(notice.encode()).decode()
                 # A global profile-title overwrites every entry's folder name.
                 headers.pop('profile-title', None)
-                config = ghostlane_configs(proxies, links, rtc_links, expanded)
+                config = ghostlane_configs(proxies, links, rtc_links)
                 return self.reply(200, config, 'application/json', headers)
             if format_name == 'clash':
                 config = clash_configs(proxies, automatic, expanded)

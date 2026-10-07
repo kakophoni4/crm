@@ -108,7 +108,7 @@ def connect(value, public, key='happ'):
     client = next(item for item in client_guides.catalog(public) if item['id'] == key)
     url = value['subscription_url'] + '?format=' + client['format']
     steps = {
-        'ghostlane': '1. Установите Ghostlane.\n2. Скопируйте ссылку ниже и добавьте список серверов по ссылке.\n3. Обновите список, выберите olcRTC или обычный сервер и включите VPN.',
+        'ghostlane': '1. Откройте инструкцию ниже и установите Ghostlane.\n2. На этой странице нажмите «Добавить в Ghostlane». Если приложение не открылось, скопируйте ссылку и добавьте её вручную.\n3. Выберите режим и включите VPN.\n\n<b>Обычный VPN · все страны</b>\n«Наименьшая задержка / АВТО» — автоматический выбор. Можно выбрать страну вручную.\n\n<b>Обход ограничений · olcRTC</b>\nПри белых списках выберите «Подключиться · olcRTC».',
         'happ': '1. Установите Happ.\n2. Скопируйте ссылку ниже → в Happ нажмите «+» → «Добавить из буфера».\n3. Выберите «Автовыбор» или страну и включите VPN.',
         'clashmeta': '1. Установите Clash Meta.\n2. Скопируйте ссылку → «Профили» → «+» → «URL» → сохраните и выберите профиль.\n3. Включите VPN, в группе VPN выберите AUTO.',
         'v2rayng': '1. Установите v2rayNG.\n2. Скопируйте ссылку → «☰» → «Группы» → «+» → сохраните. Затем «⋮» → «Обновить подписку».\n3. Выберите сервер и нажмите кнопку подключения.',
@@ -128,13 +128,13 @@ def connect(value, public, key='happ'):
 def apps():
     return '<b>Выберите приложение</b>\n\nУстановите одно. Для Android рекомендуем Happ.', keyboard(
         [button('Happ · Android', 'client:happ')],
-        [button('Ghostlane · olcRTC', 'client:ghostlane')],
+        [button('Ghostlane · VPN и обход ограничений', 'client:ghostlane')],
         [button('Clash Meta · Android', 'client:clashmeta'), button('v2rayNG · Android', 'client:v2rayng')],
         [button('Koala Clash · компьютер', 'client:koala')], [button('← Мой VPN', 'home')])
 
 
 def help_screen(requests):
-    text = '<b>Не получается подключиться?</b>\n\n1. Обновите подписку в приложении.\n2. Выберите «Автовыбор» / AUTO и переподключитесь.\n3. Попробуйте Wi-Fi вместо мобильной сети или наоборот.\n\n«н/д» при проверке пинга само по себе не означает, что VPN не работает.'
+    text = '<b>Не получается подключиться?</b>\n\n1. Обновите подписку в приложении.\n2. Выберите «Автовыбор» / AUTO и переподключитесь. В Ghostlane при ограничениях выберите «Подключиться · olcRTC» в разделе «Обход ограничений · olcRTC».\n3. Попробуйте Wi-Fi вместо мобильной сети или наоборот.\n\n«н/д» при проверке пинга само по себе не означает, что VPN не работает.'
     request = pending(requests, 'support')
     if request:
         text += '\n\n' + request_status(request)

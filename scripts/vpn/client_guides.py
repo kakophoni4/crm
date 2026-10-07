@@ -3,6 +3,7 @@ import html
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 DOWNLOADS = Path(os.environ.get('VPN_DOWNLOADS_DIR', '/opt/crm-vpn/downloads'))
 CLIENTS = {
@@ -86,6 +87,9 @@ def page(public, subscription=None, bot_username=''):
         panel += '</div></div><div class="step"><span class="step-marker">2</span><div><h3>Добавьте свою подписку</h3>'
         if subscription:
             url = subscription + '?format=' + item['format']
+            if item['format'] == 'ghostlane':
+                import_url = 'proofkit://add?url=' + quote(url, safe='')
+                panel += '<p>Ghostlane уже установлен? Нажмите кнопку и подтвердите добавление подписки.</p>' + f'<a class="btn" href="{esc(import_url)}">Добавить в Ghostlane</a><p>Если приложение не открылось, скопируйте ссылку ниже и добавьте её вручную.</p>'
             panel += '<p>Эта ссылка уже подготовлена для выбранного приложения.</p>' + f'<div class="copy-box"><textarea readonly rows="2" aria-label="Ссылка подписки для {esc(item["name"])}" id="url-{key}">{esc(url)}</textarea><button type="button" class="btn" data-copy="url-{key}">Копировать ссылку</button></div><div class="privacy">Не передавайте её другим людям.</div>'
         else:
             panel += '<p>В Telegram-кабинете нажмите «Подключить VPN», выберите приложение и скопируйте ссылку для ' + esc(item['name']) + '. Если подписку выдал менеджер, ссылка находится в его сообщении.</p>'

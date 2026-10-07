@@ -72,10 +72,7 @@ class RoomTests(unittest.TestCase):
                     self.assertEqual(config['locations'][0]['kind'], 'Olcrtc')
                 with urllib.request.urlopen(url + '?format=ghostlane&view=all') as response:
                     advanced = json.load(response)
-                    ordinary = [item for item in advanced['locations'] if item['kind'] != 'Olcrtc']
-                    self.assertEqual(len(ordinary), len(expected_links))
-                    self.assertEqual({item['raw_link'] for item in ordinary if item['kind'] == 'Vless'},
-                        {link for link in expected_links if link.startswith('vless://')})
+                    self.assertEqual(advanced, config)
                 with urllib.request.urlopen(url + '?format=happ') as response:
                     self.assertNotIn('olcrtc://', response.read().decode())
         finally:
@@ -133,10 +130,12 @@ class RoomTests(unittest.TestCase):
     def test_ghostlane_guide_covers_all_platforms_and_bot(self):
         value = self.create()
         page = client_guides.page('https://vpn.example.com', value['subscription_url'])
-        for marker in ('ghostlane-ios', 'ghostlane-desktop', 'format=ghostlane', 'id6795355210'):
+        for marker in ('ghostlane-ios', 'ghostlane-desktop', 'format=ghostlane', 'id6795355210', 'Добавить в Ghostlane', 'proofkit://add?url='):
             self.assertIn(marker, page)
         text, markup = bot_ui.connect(value, 'https://vpn.example.com', 'ghostlane')
         self.assertIn('olcRTC', text)
+        for label in ('Обход ограничений · olcRTC', 'Обычный VPN · все страны', 'Добавить в Ghostlane'):
+            self.assertIn(label, text)
         self.assertIn('format=ghostlane', json.dumps(markup))
 
 
