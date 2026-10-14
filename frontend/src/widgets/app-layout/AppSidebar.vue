@@ -8,6 +8,7 @@ import {
   FolderOpen,
   CheckSquare,
   FileSpreadsheet,
+  FileCheck2,
   LayoutDashboard,
   MessageSquare,
   Phone,
@@ -104,6 +105,15 @@ function blinkIcon(icon: unknown, blink: boolean) {
 }
 
 const menuOptions = computed(() => {
+  const companyTools: MenuOption = {
+    label: 'Лавки и парсеры', key: 'company-tools',
+    icon: () => h(NIcon, null, { default: () => h(Building2) }),
+    children: [
+      { label: 'Лавки и диры', key: 'lawyer-registry', icon: () => h(NIcon, null, { default: () => h(Building2) }) },
+      { label: 'Парсер продавцов', key: 'parser', icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }) },
+      { label: 'Проверка компаний', key: 'company-checks', icon: () => h(NIcon, null, { default: () => h(FileCheck2) }) },
+    ],
+  }
   const storageItem = { label: 'Хранилище', key: 'storage', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) }
   if (auth.isNulevka) return [storageItem]
   if (auth.isKesher) return [
@@ -152,16 +162,7 @@ const menuOptions = computed(() => {
         key: 'tickets',
         icon: () => h(NIcon, null, { default: () => h(Ticket) }),
       },
-      {
-        label: 'Лавки и диры',
-        key: 'lawyer-registry',
-        icon: () => h(NIcon, null, { default: () => h(Building2) }),
-      },
-      {
-        label: 'Парсер',
-        key: 'parser',
-        icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }),
-      },
+      companyTools,
     ]
     if (telephonyVisible.value) {
       lawyerItems.push({
@@ -297,16 +298,7 @@ const menuOptions = computed(() => {
   }
 
   if (auth.canParser) {
-    items.push({
-      label: 'Лавки и диры',
-      key: 'lawyer-registry',
-      icon: () => h(NIcon, null, { default: () => h(Building2) }),
-    })
-    items.push({
-      label: 'Парсер',
-      key: 'parser',
-      icon: () => h(NIcon, null, { default: () => h(FileSpreadsheet) }),
-    })
+    items.push(companyTools)
   }
 
   return items
@@ -332,6 +324,7 @@ const activeKey = computed(() => {
   if (route.name === 'cashroom') return 'cashroom'
   if (route.name === 'tickets') return 'tickets'
   if (route.name === 'parser') return 'parser'
+  if (route.name === 'company-checks') return 'company-checks'
   if (route.name === 'lawyer-registry') return 'lawyer-registry'
   if (route.name === 'telephony') return 'telephony'
   if (route.name === 'dashboard') return 'dashboard'
@@ -401,6 +394,11 @@ function onMenuUpdate(key: string): void {
   }
   if (key === 'parser') {
     void router.push({ name: 'parser' })
+    emit('closeDrawer')
+    return
+  }
+  if (key === 'company-checks') {
+    void router.push({ name: 'company-checks' })
     emit('closeDrawer')
     return
   }
@@ -505,6 +503,7 @@ watch(
           <NMenu
             :value="activeKey"
             :options="menuOptions"
+            :default-expanded-keys="['company-tools']"
             @update:value="onMenuUpdate"
           />
         </div>
@@ -529,7 +528,7 @@ watch(
         <BrandMark :collapsed="collapsed" />
       </div>
       <div class="app-sidebar__menu">
-        <NMenu :value="activeKey" :options="menuOptions" @update:value="onMenuUpdate" />
+        <NMenu :value="activeKey" :options="menuOptions" :default-expanded-keys="['company-tools']" @update:value="onMenuUpdate" />
       </div>
     </div>
   </NLayoutSider>

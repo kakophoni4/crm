@@ -188,6 +188,7 @@ async def fetch_result(actor: User, job_id: str) -> bytes:
                 start, stop, size = map(int, match.groups())
                 if (
                     start != offset
+                    or stop < start
                     or stop >= size
                     or stop > end
                     or size > MAX_RESULT

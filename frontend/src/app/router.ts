@@ -208,6 +208,12 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresParser: true },
 
       },
+      {
+        path: 'company-checks',
+        name: 'company-checks',
+        component: () => import('@/pages/company-checks/index.vue'),
+        meta: { requiresParser: true },
+      },
 
       {
 

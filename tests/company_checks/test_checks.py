@@ -112,3 +112,17 @@ async def test_authenticated_multipart_upload():
             assert response.status_code == 202
     assert mocked.call_args.kwargs["content"] == b"file-data"
     assert mocked.call_args.args[0].id == 42
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_empty_reversed_range(monkeypatch):
+    monkeypatch.setattr(checks.settings, "lavok_parser_checks_url", "http://parser/lavok/checks")
+    monkeypatch.setattr(checks.settings, "lavok_parser_ingest_token", "test")
+    responses = [
+        httpx.Response(206, headers={"Content-Range": "bytes 0-1/4", "ETag": "one"}, content=b"ab"),
+        httpx.Response(206, headers={"Content-Range": "bytes 2-1/4", "ETag": "one"}, content=b""),
+    ]
+    original = httpx.AsyncClient
+    with patch.object(checks.httpx, "AsyncClient", side_effect=lambda **kwargs: original(transport=httpx.MockTransport(lambda request: responses.pop(0)), **kwargs)):
+        with pytest.raises(AppError, match="размер"):
+            await checks.fetch_result(SimpleNamespace(id=42), "a" * 32)

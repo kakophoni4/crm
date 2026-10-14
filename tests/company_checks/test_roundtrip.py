@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +19,7 @@ from app.modules.lavok_parser import checks
 
 @pytest.mark.asyncio
 async def test_upload_progress_and_download(tmp_path, monkeypatch):
-    parser_root = Path(__file__).resolve().parents[3] / "firm-parser"
+    parser_root = Path(os.getenv("COMPANY_CHECKS_PARSER_ROOT", str(Path(__file__).resolve().parents[3] / "firm-parser")))
     if not parser_root.is_dir():
         pytest.skip("Requires sibling parser checkout")
     monkeypatch.syspath_prepend(str(parser_root))
