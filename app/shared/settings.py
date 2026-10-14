@@ -134,6 +134,7 @@ class Settings(BaseSettings):
     # Lavok parser: POST /lavok-parser/ingest (xlsx) or pull
     lavok_parser_ingest_token: str = ""
     lavok_parser_pull_url: str = ""
+    lavok_parser_checks_url: str = ""
     lavok_parser_pull_interval_seconds: int = 300
     lavok_parser_pull_timeout_seconds: float = 90.0
 

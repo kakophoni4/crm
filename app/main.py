@@ -145,6 +145,9 @@ def create_app() -> FastAPI:
     app.include_router(accounting_router)
     app.include_router(accounting_cards_router)
     app.include_router(tickets_router)
+    from app.modules.lavok_parser.checks import router as company_checks_router
+
+    app.include_router(company_checks_router)
     app.include_router(lavok_parser_router)
     app.include_router(lawyer_registry_router)
     app.include_router(notifications_router)

@@ -33,6 +33,7 @@ import {
 import { AppError } from '@/shared/api/http'
 import { VIRTUAL_DATA_TABLE_MAX_HEIGHT, VIRTUAL_DATA_TABLE_MIN_ROW_HEIGHT } from '@/shared/ui/virtual-data-table'
 import AppCard from '@/shared/ui/AppCard.vue'
+import CompanyChecks from '@/features/lavok-parser/CompanyChecks.vue'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -359,6 +360,8 @@ onMounted(() => {
         </NButton>
       </div>
     </header>
+
+    <CompanyChecks />
 
     <AppCard>
       <NTabs v-model:value="activeTab" type="line" @update:value="resetAndLoad">
