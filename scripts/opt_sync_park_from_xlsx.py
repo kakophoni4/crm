@@ -148,7 +148,7 @@ def write_sql(
             "UPDATE opt_units\n"
             f"SET name = '{name}',\n"
             f"    category_code = '{category_code}',\n"
-            f"    commission_rate_percent = {rate_sql},\n"
+            f"    commission_rate_percent = COALESCE({rate_sql}, commission_rate_percent),\n"
             "    is_active = TRUE\n"
             f"WHERE inn = '{inn}';\n"
             f"INSERT INTO opt_units (inn, name, category_code, commission_rate_percent, is_active)\n"

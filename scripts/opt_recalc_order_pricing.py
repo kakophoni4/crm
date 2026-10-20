@@ -10,6 +10,9 @@ Usage:
   docker exec crm-staging-api python /app/scripts/opt_recalc_order_pricing.py \\
     --supplier-inn 7734474261 --only-changed
 
+  # Explicit refresh (first run without --apply to inspect):
+  # --lead-id 185 --refresh-rates --expected-rate 3.7 [--apply]
+
   # apply those
   docker exec crm-staging-api python /app/scripts/opt_recalc_order_pricing.py \\
     --supplier-inn 7734474261 --only-changed --apply
@@ -38,6 +41,9 @@ from app.shared.db import get_session_factory
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--order-id", type=int)
+    parser.add_argument("--lead-id", type=int, help="Deal number shown as Сделка № in CRM")
+    parser.add_argument("--refresh-rates", action="store_true", help="Explicitly replace saved line rates with current shop rates")
+    parser.add_argument("--expected-rate", type=Decimal, help="Stop if any shop rate differs from this percentage")
     parser.add_argument("--buyer-inn", default="")
     parser.add_argument("--supplier-inn", default="")
     parser.add_argument("--only-changed", action="store_true")
@@ -45,12 +51,19 @@ async def main() -> int:
     parser.add_argument("--limit", type=int, default=500)
     args = parser.parse_args()
 
+    if args.refresh_rates and args.apply and (not (args.order_id or args.lead_id) or args.expected_rate is None):
+        parser.error("Applying refreshed rates requires --order-id or --lead-id and --expected-rate")
+    if args.expected_rate is not None and not args.refresh_rates:
+        parser.error("--expected-rate requires --refresh-rates")
+
     sf = get_session_factory()
     async with sf() as session:
         # Resolve order ids first (no expired-instance / greenlet issues after rollback).
         id_q = select(LeadOptOrder.id).where(LeadOptOrder.deleted_at.is_(None))
         if args.order_id:
             id_q = id_q.where(LeadOptOrder.id == args.order_id)
+        if args.lead_id:
+            id_q = id_q.where(LeadOptOrder.lead_id == args.lead_id)
         if args.buyer_inn:
             id_q = id_q.where(LeadOptOrder.buyer_inn == args.buyer_inn.strip())
         if args.supplier_inn:
@@ -78,17 +91,23 @@ async def main() -> int:
                     select(LeadOptOrder)
                     .where(LeadOptOrder.id == oid)
                     .options(selectinload(LeadOptOrder.lines))
+                    .with_for_update(of=LeadOptOrder)
                 )
             ).scalar_one_or_none()
             if order is None:
                 continue
 
+            if (order.order_kind or "standard") == "benik":
+                print(f"order={order.id} skipped: benik uses manual commission")
+                continue
+            old_rates = {ln.id: str(ln.pricing_rate_percent) for ln in order.lines}
             old_due = Decimal(str(order.commission_due or 0)).quantize(Decimal("0.01"))
-            await repo.apply_pricing_snapshot(order)
+            await repo.apply_pricing_snapshot(order, refresh_rates=args.refresh_rates, expected_rate=args.expected_rate)
             new_due = Decimal(str(order.commission_due or 0)).quantize(Decimal("0.01"))
             delta = (new_due - old_due).quantize(Decimal("0.01"))
 
-            if args.only_changed and delta == 0:
+            rate_changed = any(str(ln.pricing_rate_percent) != old_rates[ln.id] for ln in order.lines)
+            if args.only_changed and delta == 0 and not rate_changed:
                 unchanged_n += 1
                 if not args.apply:
                     await session.rollback()
@@ -101,9 +120,11 @@ async def main() -> int:
                 f"due {old_due} -> {new_due} delta={delta}"
             )
             print(f"  breakdown={order.volume_by_category}")
-            if args.supplier_inn or args.buyer_inn or args.order_id:
+            for ln in order.lines:
+                print(f"  line={ln.id} inn={ln.supplier_inn} saved_rate={old_rates[ln.id]} -> {ln.pricing_rate_percent}")
+            if args.supplier_inn or args.buyer_inn or args.order_id or args.lead_id:
                 inns = sorted({ln.supplier_inn for ln in order.lines})
-                units = await repo.get_units_by_inns(inns)
+                units = await repo.get_units_by_inns(inns, active_only=False)
                 for inn in inns:
                     u = units.get(inn)
                     print(

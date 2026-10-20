@@ -223,15 +223,19 @@ class OptOrderRepository:
             ),
         )
 
-    async def get_units_by_inns(self, inns: list[str]) -> dict[str, OptUnit]:
+    async def get_units_by_inns(self, inns: list[str], *, active_only: bool = True) -> dict[str, OptUnit]:
         if not inns:
             return {}
-        result = await self._session.execute(
-            select(OptUnit).where(OptUnit.inn.in_(inns), OptUnit.is_active.is_(True)),
-        )
+        query = select(OptUnit).where(OptUnit.inn.in_(inns))
+        if active_only:
+            query = query.where(OptUnit.is_active.is_(True))
+        result = await self._session.execute(query)
         return {unit.inn: unit for unit in result.scalars().all()}
 
-    async def apply_pricing_snapshot(self, order: LeadOptOrder) -> None:
+    async def apply_pricing_snapshot(
+        self, order: LeadOptOrder, *, refresh_rates: bool = False,
+        expected_rate: Decimal | None = None,
+    ) -> None:
         kind = getattr(order, "order_kind", None) or "standard"
         if kind == "benik":
             total_volume = sum(Decimal(str(line.amount or 0)) for line in order.lines)
@@ -246,14 +250,24 @@ class OptOrderRepository:
             )
             return
         inns = [line.supplier_inn for line in order.lines]
-        units = await self.get_units_by_inns(inns)
+        # Inactive shops still own their historical tariff; activity only gates new uploads.
+        units = await self.get_units_by_inns(inns, active_only=False)
         from app.modules.leads.opt.tariffs import normalize_category_code, rate_percent_for_unit
+        from app.shared.exceptions import ValidationError
+        updates = []
         for line in order.lines:
-            if line.pricing_rate_percent is None:
+            if refresh_rates or line.pricing_rate_percent is None:
                 unit = units.get(line.supplier_inn)
-                category = normalize_category_code(unit.category_code if unit else None)
-                line.pricing_rate_percent = rate_percent_for_unit(unit, category_code=category)
-                line.pricing_category = category
+                if unit is None:
+                    raise ValidationError(message=f"Не найдена ставка лавки {line.supplier_inn}; пересчёт остановлен")
+                category = normalize_category_code(unit.category_code)
+                rate = rate_percent_for_unit(unit, category_code=category)
+                if expected_rate is not None and rate != expected_rate:
+                    raise ValidationError(message=f"Ставка лавки {line.supplier_inn}: {rate}%, ожидалось {expected_rate}%; пересчёт остановлен")
+                updates.append((line, category, rate))
+        for line, category, rate in updates:
+            line.pricing_rate_percent = rate
+            line.pricing_category = category
         total_volume, base_commission, breakdown = compute_order_pricing(order.lines, units)
         adjustment = round_rubles(order.commission_adjustment or 0)
         commission_due = round_rubles(base_commission + adjustment)
